@@ -1617,3 +1617,14 @@
 - [x] เขียน vitest tests: 28 tests (urlsMatchDestination, VerificationResult, Pipeline success determination, Redirect chain analysis)
 - [x] อัปเดต shellless-attack.test.ts + telegram-only-notify.test.ts ให้สอดคล้องกับ logic ใหม่
 - [x] All 79 related tests passed (28 redirect-destination + 10 telegram + 13 shellless + 13 php-fallback + 15 pipeline-fixes)
+
+# BUG FIX: Shellless Attack "พบช่องทาง" แต่ไม่ execute + ไม่วางไฟล์
+- [x] ตรวจสอบ shellless methods: serverConfigInjection (cPanel/SSH) + aiCreativeAttack (AI vectors) แค่ detect ไม่ execute
+- [x] serverConfigInjection: เปลี่ยนจาก detect-only เป็น execute จริง (cPanel File Manager API วาง .htaccess + HTML redirect)
+- [x] serverConfigInjection: SSH credentials ไม่ return success=true แล้ว (ยังไม่รองรับ SSH execution)
+- [x] aiCreativeAttack: เปลี่ยนจาก suggest-only เป็น auto-execute high-likelihood vectors
+- [x] aiCreativeAttack: Execute open redirect (parameter pollution), HTTP verb tampering, SSRF/Host header injection
+- [x] aiCreativeAttack: ไม่ return success=true ถ้า execute ไม่สำเร็จ (แค่ analysis-only)
+- [x] Phase 5.5 Auto-Execute: เมื่อ shellless พบช่องทางแต่ redirect ไม่ทำงาน → ลอง PUT HTML/htaccess + MOVE/COPY methods
+- [x] Phase 5.5: verify redirect หลัง auto-execute + update uploadedFiles
+- [x] All 64 related tests passed (28 redirect-destination + 10 telegram + 13 shellless + 13 php-fallback)

