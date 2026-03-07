@@ -1,0 +1,490 @@
+{
+  "query": "DESCRIBE seo_projects;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute DESCRIBE seo_projects;",
+  "rows": [
+    {
+      "Field": "id",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "PRI",
+      "Default": "NULL",
+      "Extra": "auto_increment"
+    },
+    {
+      "Field": "userId",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "domain",
+      "Type": "varchar(255)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "name",
+      "Type": "varchar(255)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "niche",
+      "Type": "varchar(255)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "targetKeywords",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "seoStrategy",
+      "Type": "enum('grey_hat','black_hat','aggressive_grey','pbn_focused','tiered_links','parasite_seo')",
+      "Null": "NO",
+      "Key": "",
+      "Default": "grey_hat",
+      "Extra": ""
+    },
+    {
+      "Field": "seoProjectStatus",
+      "Type": "enum('setup','analyzing','active','paused','completed','penalized')",
+      "Null": "NO",
+      "Key": "",
+      "Default": "setup",
+      "Extra": ""
+    },
+    {
+      "Field": "currentDA",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentDR",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentSpamScore",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentBacklinks",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentReferringDomains",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentTrustFlow",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentCitationFlow",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentOrganicTraffic",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "currentOrganicKeywords",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "daTrend",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "drTrend",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "backlinkTrend",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "trafficTrend",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "overallTrend",
+      "Type": "enum('improving','stable','declining','critical')",
+      "Null": "YES",
+      "Key": "",
+      "Default": "stable",
+      "Extra": ""
+    },
+    {
+      "Field": "aiHealthScore",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "aiRiskLevel",
+      "Type": "enum('low','medium','high','critical')",
+      "Null": "YES",
+      "Key": "",
+      "Default": "medium",
+      "Extra": ""
+    },
+    {
+      "Field": "aiStrategy",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "aiLastAnalysis",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "aiNextActions",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "autoBacklink",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "1",
+      "Extra": ""
+    },
+    {
+      "Field": "autoContent",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "autoPbn",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "aggressiveness",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "5",
+      "Extra": ""
+    },
+    {
+      "Field": "monthlyBudget",
+      "Type": "decimal(12,2)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "totalBacklinksBuilt",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "totalContentCreated",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "totalActionsExecuted",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "lastAnalyzedAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "lastActionAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "createdAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": ""
+    },
+    {
+      "Field": "updatedAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+    },
+    {
+      "Field": "autoRunEnabled",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "autoRunDay",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "1",
+      "Extra": ""
+    },
+    {
+      "Field": "autoRunHour",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "3",
+      "Extra": ""
+    },
+    {
+      "Field": "lastAutoRunAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "nextAutoRunAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "autoRunCount",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "lastAutoRunResult",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "wpUsername",
+      "Type": "varchar(255)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "wpAppPassword",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "wpConnected",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "wpSeoPlugin",
+      "Type": "varchar(32)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignEnabled",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignPhase",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignTotalPhases",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "16",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignRunStatus",
+      "Type": "enum('idle','running','paused','completed','failed')",
+      "Null": "NO",
+      "Key": "",
+      "Default": "idle",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignProgress",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignLastPhaseResult",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignStartedAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "campaignCompletedAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "totalWpChanges",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "autoRunDays",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    }
+  ],
+  "messages": [],
+  "stdout": "Field\tType\tNull\tKey\tDefault\tExtra\nid\tint\tNO\tPRI\tNULL\tauto_increment\nuserId\tint\tNO\t\tNULL\t\ndomain\tvarchar(255)\tNO\t\tNULL\t\nname\tvarchar(255)\tYES\t\tNULL\t\nniche\tvarchar(255)\tYES\t\tNULL\t\ntargetKeywords\tjson\tYES\t\tNULL\t\nseoStrategy\tenum('grey_hat','black_hat','aggressive_grey','pbn_focused','tiered_links','parasite_seo')\tNO\t\tgrey_hat\t\nseoProjectStatus\tenum('setup','analyzing','active','paused','completed','penalized')\tNO\t\tsetup\t\ncurrentDA\tint\tYES\t\tNULL\t\ncurrentDR\tint\tYES\t\tNULL\t\ncurrentSpamScore\tint\tYES\t\tNULL\t\ncurrentBacklinks\tint\tYES\t\tNULL\t\ncurrentReferringDomains\tint\tYES\t\tNULL\t\ncurrentTrustFlow\tint\tYES\t\tNULL\t\ncurrentCitationFlow\tint\tYES\t\tNULL\t\ncurrentOrganicTraffic\tint\tYES\t\tNULL\t\ncurrentOrganicKeywords\tint\tYES\t\tNULL\t\ndaTrend\tint\tYES\t\t0\t\ndrTrend\tint\tYES\t\t0\t\nbacklinkTrend\tint\tYES\t\t0\t\ntrafficTrend\tint\tYES\t\t0\t\noverallTrend\tenum('improving','stable','declining','critical')\tYES\t\tstable\t\naiHealthScore\tint\tYES\t\tNULL\t\naiRiskLevel\tenum('low','medium','high','critical')\tYES\t\tmedium\t\naiStrategy\ttext\tYES\t\tNULL\t\naiLastAnalysis\ttext\tYES\t\tNULL\t\naiNextActions\tjson\tYES\t\tNULL\t\nautoBacklink\ttinyint(1)\tNO\t\t1\t\nautoContent\ttinyint(1)\tNO\t\t0\t\nautoPbn\ttinyint(1)\tNO\t\t0\t\naggressiveness\tint\tNO\t\t5\t\nmonthlyBudget\tdecimal(12,2)\tYES\t\t0\t\ntotalBacklinksBuilt\tint\tYES\t\t0\t\ntotalContentCreated\tint\tYES\t\t0\t\ntotalActionsExecuted\tint\tYES\t\t0\t\nlastAnalyzedAt\ttimestamp\tYES\t\tNULL\t\nlastActionAt\ttimestamp\tYES\t\tNULL\t\ncreatedAt\ttimestamp\tNO\t\tCURRENT_TIMESTAMP\t\nupdatedAt\ttimestamp\tNO\t\tCURRENT_TIMESTAMP\tDEFAULT_GENERATED on update CURRENT_TIMESTAMP\nautoRunEnabled\ttinyint(1)\tNO\t\t0\t\nautoRunDay\tint\tNO\t\t1\t\nautoRunHour\tint\tNO\t\t3\t\nlastAutoRunAt\ttimestamp\tYES\t\tNULL\t\nnextAutoRunAt\ttimestamp\tYES\t\tNULL\t\nautoRunCount\tint\tNO\t\t0\t\nlastAutoRunResult\tjson\tYES\t\tNULL\t\nwpUsername\tvarchar(255)\tYES\t\tNULL\t\nwpAppPassword\ttext\tYES\t\tNULL\t\nwpConnected\ttinyint(1)\tNO\t\t0\t\nwpSeoPlugin\tvarchar(32)\tYES\t\tNULL\t\ncampaignEnabled\ttinyint(1)\tNO\t\t0\t\ncampaignPhase\tint\tNO\t\t0\t\ncampaignTotalPhases\tint\tNO\t\t16\t\ncampaignRunStatus\tenum('idle','running','paused','completed','failed')\tNO\t\tidle\t\ncampaignProgress\tint\tNO\t\t0\t\ncampaignLastPhaseResult\tjson\tYES\t\tNULL\t\ncampaignStartedAt\ttimestamp\tYES\t\tNULL\t\ncampaignCompletedAt\ttimestamp\tYES\t\tNULL\t\ntotalWpChanges\tint\tYES\t\t0\t\nautoRunDays\tjson\tYES\t\tNULL\t\n",
+  "stderr": "",
+  "execution_time_ms": 1586
+}

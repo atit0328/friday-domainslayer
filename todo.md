@@ -1468,3 +1468,10 @@
 - [x] Add missing columns to users table (plan, company, passwordHash, phone)
 - [x] Push DB migration
 - [x] Verify login works with existing account (re-seeded superadmin)
+
+# Add API Keys for External Services
+- [x] Add Shodan API Key
+- [x] Add Moz API credentials
+- [ ] Add Ahrefs API Key (user did not provide)
+- [x] Add SerpAPI Key
+- [x] Add Telegram Bot Token + Chat ID
