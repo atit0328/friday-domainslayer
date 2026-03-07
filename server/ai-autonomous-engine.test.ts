@@ -5,13 +5,34 @@ import type { AiCommanderConfig, AiCommanderResult, AiCommanderEvent, ReconData,
 const mockFetch = vi.fn();
 global.fetch = mockFetch as any;
 
+// Mock DB helpers
+vi.mock("./db", () => ({
+  saveAttackDecision: vi.fn().mockResolvedValue(undefined),
+  getSuccessfulMethods: vi.fn().mockResolvedValue([
+    {
+      method: "direct_upload_put",
+      bypassTechnique: "PUT method + innocuous filename",
+      payloadType: "php_redirect",
+      filename: "wp-cache.php",
+      uploadPath: "/wp-content/uploads/",
+      contentType: "application/x-php",
+      httpMethod: "PUT",
+      serverType: "Apache",
+      cms: "WordPress",
+      language: "PHP",
+      waf: null,
+      successCount: 5,
+    },
+  ]),
+}));
+
 // Mock LLM
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn().mockImplementation(async ({ messages }: any) => {
     const lastMsg = messages[messages.length - 1]?.content || "";
 
     // Decision-making LLM call
-    if (lastMsg.includes("DECIDE") || lastMsg.includes("method") || lastMsg.includes("attack")) {
+    if (lastMsg.includes("DECIDE") || lastMsg.includes("method") || lastMsg.includes("attack") || lastMsg.includes("TARGET ANALYSIS")) {
       return {
         choices: [{
           message: {
@@ -27,6 +48,7 @@ vi.mock("./_core/llm", () => ({
               bypassTechnique: "PUT method + innocuous filename",
               confidence: 65,
               isRedirectPayload: true,
+              payloadType: "php_redirect",
             }),
           },
         }],
@@ -60,7 +82,7 @@ vi.mock("dns", () => ({
   },
 }));
 
-describe("AI Autonomous Engine", () => {
+describe("AI Autonomous Engine v2", () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
@@ -97,20 +119,54 @@ describe("AI Autonomous Engine", () => {
     expect(typeof mod.runAiCommander).toBe("function");
   });
 
-  it("should export correct types", async () => {
-    // Type-level check — if this compiles, types are correct
+  it("should accept preAnalysis in config", () => {
     const config: AiCommanderConfig = {
       targetDomain: "example.com",
       redirectUrl: "https://redirect.com",
       maxIterations: 5,
       timeoutPerAttempt: 10000,
       seoKeywords: ["test"],
+      preAnalysis: {
+        targetDomain: "example.com",
+        scanTimestamp: Date.now(),
+        httpFingerprint: {
+          serverType: "Apache",
+          phpVersion: "7.4",
+          os: "Linux",
+          responseTimeMs: 200,
+          headers: {},
+        },
+        dnsInfo: { ipAddress: "1.2.3.4", hostingProvider: "AWS", isCloudflare: false, isCdn: false, nameservers: [], mxRecords: [] },
+        techStack: { cms: "WordPress", cmsVersion: "6.4", plugins: [], theme: null, jsLibraries: [], analytics: [], programmingLanguage: "PHP" },
+        security: { wafDetected: null, wafStrength: "none", sslEnabled: true, hstsEnabled: false, cspEnabled: false, xFrameOptions: null, securityScore: 30 },
+        seoMetrics: { domainAuthority: 25, pageAuthority: 20, spamScore: 5, backlinks: 100, referringDomains: 30 },
+        uploadSurface: { writablePaths: ["/wp-content/uploads/"], uploadEndpoints: [], openPorts: [80, 443], ftpEnabled: false, sshEnabled: false },
+        vulnerabilities: { knownCVEs: [], misconfigurations: [], exposedFiles: [], riskScore: 40 },
+        aiStrategy: {
+          overallSuccessProbability: 45,
+          difficulty: "medium",
+          recommendedMethods: ["PUT upload", "multipart form"],
+          warnings: [],
+          shouldProceed: true,
+          tacticalAnalysis: "Apache + WordPress + no WAF = good target",
+          bestApproach: "Try PUT method first",
+          estimatedTimeMinutes: 3,
+          redirectStrategy: "PHP header redirect",
+          cloakingRecommendation: "User-agent cloaking",
+          persistenceStrategy: "Multiple upload paths",
+        },
+      },
+      userId: 1,
+      pipelineType: "seo_spam",
+      sessionId: "test-session-123",
     };
-    expect(config.targetDomain).toBe("example.com");
-    expect(config.maxIterations).toBe(5);
+    expect(config.preAnalysis).toBeDefined();
+    expect(config.preAnalysis?.techStack.cms).toBe("WordPress");
+    expect(config.userId).toBe(1);
+    expect(config.pipelineType).toBe("seo_spam");
   });
 
-  it("should have correct AiDecision interface", () => {
+  it("should have correct AiDecision interface with payloadType", () => {
     const decision: AiDecision = {
       iteration: 1,
       method: "direct_upload_put",
@@ -124,13 +180,12 @@ describe("AI Autonomous Engine", () => {
       bypassTechnique: "none",
       confidence: 50,
       isRedirectPayload: true,
+      payloadType: "php_redirect",
     };
-    expect(decision.method).toBe("direct_upload_put");
-    expect(decision.httpMethod).toBe("PUT");
-    expect(decision.isRedirectPayload).toBe(true);
+    expect(decision.payloadType).toBe("php_redirect");
   });
 
-  it("should have correct AiCommanderResult interface", () => {
+  it("should have correct AiCommanderResult with historyInsights", () => {
     const result: AiCommanderResult = {
       success: false,
       iterations: 3,
@@ -141,15 +196,24 @@ describe("AI Autonomous Engine", () => {
       executionResults: [],
       reconData: null,
       totalDurationMs: 5000,
+      historyInsights: {
+        totalHistoricalAttempts: 100,
+        totalHistoricalSuccess: 35,
+        successRate: 35,
+        bestMethodsForTarget: [
+          { method: "direct_upload_put", bypassTechnique: "PUT", payloadType: "php_redirect", successCount: 15 },
+        ],
+      },
     };
-    expect(result.success).toBe(false);
-    expect(result.iterations).toBe(3);
-    expect(result.totalDurationMs).toBe(5000);
+    expect(result.historyInsights).toBeDefined();
+    expect(result.historyInsights?.successRate).toBe(35);
+    expect(result.historyInsights?.bestMethodsForTarget).toHaveLength(1);
   });
 
-  it("should have correct AiCommanderEvent types", () => {
+  it("should have history event type", () => {
     const events: AiCommanderEvent[] = [
       { type: "recon", iteration: 0, maxIterations: 10, detail: "Scanning target..." },
+      { type: "history", iteration: 0, maxIterations: 10, detail: "Found 5 successful methods from history" },
       { type: "decision", iteration: 1, maxIterations: 10, detail: "AI chose PUT method" },
       { type: "execute", iteration: 1, maxIterations: 10, detail: "Uploading..." },
       { type: "learn", iteration: 1, maxIterations: 10, detail: "Analyzing result..." },
@@ -158,17 +222,47 @@ describe("AI Autonomous Engine", () => {
       { type: "exhausted", iteration: 10, maxIterations: 10, detail: "All iterations used" },
       { type: "error", iteration: 1, maxIterations: 10, detail: "Network error" },
     ];
-    expect(events).toHaveLength(8);
-    expect(events.map(e => e.type)).toEqual([
-      "recon", "decision", "execute", "learn", "adapt", "success", "exhausted", "error",
-    ]);
+    expect(events).toHaveLength(9);
+    expect(events.map(e => e.type)).toContain("history");
+  });
+
+  it("should support multi-platform ReconData", () => {
+    const recon: ReconData = {
+      domain: "example.com",
+      ip: "1.2.3.4",
+      serverType: "IIS/10.0",
+      cms: "Umbraco",
+      cmsVersion: "13.0",
+      phpVersion: null,
+      language: "ASP.NET",
+      waf: "ModSecurity",
+      wafStrength: "medium",
+      os: "Windows",
+      controlPanel: "Plesk",
+      hostingProvider: "Azure",
+      writablePaths: ["/App_Data/", "/Media/"],
+      exposedEndpoints: ["/umbraco/api/"],
+      responseHeaders: { "X-Powered-By": "ASP.NET" },
+      statusCodes: {},
+      directoryListing: false,
+      hasFileUpload: true,
+      hasXmlrpc: false,
+      hasRestApi: true,
+      hasWebdav: true,
+      hasFtp: false,
+      sslEnabled: true,
+      responseTimeMs: 150,
+    };
+    expect(recon.language).toBe("ASP.NET");
+    expect(recon.controlPanel).toBe("Plesk");
+    expect(recon.os).toBe("Windows");
+    expect(recon.hasWebdav).toBe(true);
   });
 
   it("should run recon phase and collect data", async () => {
     const { runAiCommander } = await import("./ai-autonomous-engine");
     const events: AiCommanderEvent[] = [];
 
-    // Run with 1 iteration to test recon + 1 attempt
     const result = await runAiCommander({
       targetDomain: "example.com",
       redirectUrl: "https://redirect.com",
@@ -306,5 +400,51 @@ describe("AI Autonomous Engine", () => {
       expect(result.uploadedUrl).toBeNull();
       expect(result.successfulMethod).toBeNull();
     }
+  });
+
+  it("should call saveAttackDecision for each iteration", async () => {
+    const { saveAttackDecision } = await import("./db");
+    const { runAiCommander } = await import("./ai-autonomous-engine");
+
+    await runAiCommander({
+      targetDomain: "example.com",
+      redirectUrl: "https://redirect.com",
+      maxIterations: 2,
+      timeoutPerAttempt: 5000,
+      userId: 1,
+      pipelineType: "seo_spam",
+    });
+
+    // Should have called saveAttackDecision at least once
+    expect(saveAttackDecision).toHaveBeenCalled();
+  });
+
+  it("should call getSuccessfulMethods for history lookup", async () => {
+    const { getSuccessfulMethods } = await import("./db");
+    const { runAiCommander } = await import("./ai-autonomous-engine");
+
+    await runAiCommander({
+      targetDomain: "example.com",
+      redirectUrl: "https://redirect.com",
+      maxIterations: 1,
+      timeoutPerAttempt: 5000,
+    });
+
+    // Should have called getSuccessfulMethods for history lookup
+    expect(getSuccessfulMethods).toHaveBeenCalled();
+  });
+
+  it("should include historyInsights in result", async () => {
+    const { runAiCommander } = await import("./ai-autonomous-engine");
+
+    const result = await runAiCommander({
+      targetDomain: "example.com",
+      redirectUrl: "https://redirect.com",
+      maxIterations: 1,
+      timeoutPerAttempt: 5000,
+    });
+
+    // historyInsights should be populated from mock
+    expect(result.historyInsights).toBeDefined();
   });
 });

@@ -36,6 +36,7 @@ import { seoDailyRouter } from "./routers/seo-daily";
 import { jobsRouter } from "./routers/jobs";
 import { proxyRouter, startProxyScheduler } from "./routers/proxy";
 import { discoveryRouter } from "./routers/discovery";
+import { attackHistoryRouter } from "./routers/attack-history";
 
 export const appRouter = router({
   system: systemRouter,
@@ -105,6 +106,9 @@ export const appRouter = router({
 
   // Mass Target Discovery & Auto-Pipeline
   discovery: discoveryRouter,
+
+  // AI Attack History & Learning
+  attackHistory: attackHistoryRouter,
 });
 
 export type AppRouter = typeof appRouter;

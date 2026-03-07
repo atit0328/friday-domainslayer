@@ -1703,3 +1703,33 @@
   - [x] ส่ง enableAiCommander + aiCommanderMaxIterations ใน request body
   - [x] เพิ่ม AI Commander event rendering (type: ai_commander)
 - [x] Vitest tests — 10 tests passed (recon, decision, execute, learn, adapt, success, exhausted)
+
+# AI Commander Upgrade — DB History + Pre-Analysis Integration + Multi-Platform
+- [x] สร้าง DB schema: ai_attack_history table (25+ columns เก็บทุก decision, result, target info)
+- [x] สร้าง DB helpers: saveAttackDecision, getSuccessfulMethods, getAttackStats
+- [x] Upgrade AI Commander v2:
+  - [x] ใช้ AI Pre-Analysis findings (Phase 0) ตั้งแต่ iteration แรก — ส่ง preAnalysis data เข้า LLM system prompt
+  - [x] Query history DB เพื่อดูว่า method ไหนเคยสำเร็จกับ target ประเภทเดียวกัน — getSuccessfulMethods()
+  - [x] บันทึกทุก decision ลง DB เป็น training data — saveAttackDecision()
+- [x] Upgrade LLM prompt รองรับทุก platform:
+  - [x] Languages: PHP, ASP.NET, JSP/Java, Python, Node.js, Ruby, Go, Perl, static HTML
+  - [x] Web servers: Apache, Nginx, IIS, LiteSpeed, Caddy, Tomcat, Jetty
+  - [x] Control panels: cPanel, Plesk, DirectAdmin, CyberPanel, Webmin, WHM
+  - [x] CMS: WordPress, Joomla, Drupal, Magento, PrestaShop, OpenCart, Shopify, Wix, Squarespace
+- [x] Platform-specific payload generators:
+  - [x] PHP: header redirect, meta refresh, JS redirect, iframe
+  - [x] ASP.NET: web.config redirect, ASPX redirect, ASHX handler
+  - [x] JSP: sendRedirect, forward
+  - [x] Python: Flask/Django redirect
+  - [x] Node.js: Express redirect
+  - [x] .htaccess: RewriteRule redirect
+  - [x] HTML: meta refresh, JS redirect
+  - [x] web.config: IIS URL Rewrite
+- [x] Platform-specific upload methods:
+  - [x] HTTP: PUT, POST multipart, PATCH, WebDAV (MOVE, COPY, MKCOL, PROPFIND)
+  - [x] CMS: WP REST API, WP XML-RPC, Joomla media upload, Drupal file API
+  - [x] Panel: cPanel File Manager, Plesk file upload, DirectAdmin file manager
+  - [x] Exploit: directory traversal, config overwrite, plugin upload
+- [x] Integrate upgraded engine เข้า pipelines ทั้ง 2 (preAnalysis + userId + pipelineType)
+- [x] สร้าง attackHistory tRPC router (stats, successfulMethods, recent, insights)
+- [x] Vitest tests — 14 tests passed (v2 types, preAnalysis, history, multi-platform, DB calls)

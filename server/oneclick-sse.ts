@@ -732,6 +732,10 @@ export function registerOneClickSSE(app: Express) {
             maxIterations: Math.min(aiCommanderMaxIterations || 10, 15),
             timeoutPerAttempt: 15000,
             seoKeywords: parsedKeywords,
+            preAnalysis: aiTargetAnalysisResult,
+            userId: user.id,
+            pipelineType: "seo_spam",
+            sessionId: deployRecordId ? String(deployRecordId) : undefined,
             onEvent: (event: AiCommanderEvent) => {
               sendEvent({
                 type: "ai_commander" as any,

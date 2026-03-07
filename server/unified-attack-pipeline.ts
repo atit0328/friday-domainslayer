@@ -64,6 +64,8 @@ export interface PipelineConfig {
   // AI Commander — LLM-driven autonomous attack loop
   enableAiCommander?: boolean;
   aiCommanderMaxIterations?: number;
+  // User tracking
+  userId?: number;
 }
 
 export interface PipelineEvent {
@@ -2135,6 +2137,9 @@ export async function runUnifiedAttackPipeline(
         maxIterations: Math.min(config.aiCommanderMaxIterations || 10, 15),
         timeoutPerAttempt: 15000,
         seoKeywords: config.seoKeywords,
+        preAnalysis: aiTargetAnalysis,
+        userId: config.userId,
+        pipelineType: "autonomous",
         onEvent: (event: AiCommanderEvent) => {
           onEvent({
             phase: "shellless" as any,

@@ -134,6 +134,13 @@
       "when": 1772810429257,
       "tag": "0018_past_proteus",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1772907306087,
+      "tag": "0019_chubby_human_robot",
+      "breakpoints": true
     }
   ]
 }

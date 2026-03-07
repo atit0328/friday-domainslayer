@@ -888,3 +888,56 @@ export const pipelineEvents = mysqlTable("pipeline_events", {
 
 export type PipelineEventRow = typeof pipelineEvents.$inferSelect;
 export type InsertPipelineEvent = typeof pipelineEvents.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// AI Attack History — Training data for AI Commander
+// เก็บทุก decision + result เพื่อให้ AI เรียนรู้ว่า method ไหนสำเร็จกับ target ประเภทไหน
+// ═══════════════════════════════════════════════
+export const aiAttackHistory = mysqlTable("ai_attack_history", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  // Target info
+  targetDomain: varchar("targetDomain", { length: 255 }).notNull(),
+  targetIp: varchar("targetIp", { length: 64 }),
+  serverType: varchar("serverType", { length: 128 }),       // Apache, Nginx, IIS, LiteSpeed, Caddy, Tomcat
+  serverVersion: varchar("serverVersion", { length: 64 }),
+  cms: varchar("cms", { length: 64 }),                       // WordPress, Joomla, Drupal, Magento, custom
+  cmsVersion: varchar("cmsVersion", { length: 32 }),
+  language: varchar("language", { length: 32 }),             // PHP, ASP.NET, JSP, Python, Node.js, Ruby, Go, static
+  os: varchar("os", { length: 64 }),                         // Linux, Windows, FreeBSD
+  waf: varchar("waf", { length: 64 }),                       // Cloudflare, ModSecurity, Sucuri, Wordfence
+  wafStrength: varchar("wafStrength", { length: 16 }),       // none, weak, moderate, strong, enterprise
+  hostingProvider: varchar("hostingProvider", { length: 128 }),
+  controlPanel: varchar("controlPanel", { length: 64 }),     // cPanel, Plesk, DirectAdmin, CyberPanel
+  sslEnabled: boolean("sslEnabled"),
+  // Attack info
+  redirectUrl: varchar("redirectUrl", { length: 512 }),
+  method: varchar("method", { length: 128 }).notNull(),      // direct_upload_put, multipart_form, webdav, etc.
+  filename: varchar("filename", { length: 255 }),
+  uploadPath: varchar("uploadPath", { length: 512 }),
+  contentType: varchar("contentType", { length: 128 }),
+  httpMethod: varchar("httpMethod", { length: 16 }),         // PUT, POST, PATCH, MOVE, COPY
+  bypassTechnique: varchar("bypassTechnique", { length: 255 }),
+  payloadType: varchar("payloadType", { length: 64 }),       // php_redirect, html_meta, js_redirect, htaccess, web_config, jsp, aspx
+  // Result
+  success: boolean("success").default(false).notNull(),
+  statusCode: int("statusCode"),
+  errorMessage: text("errorMessage"),
+  fileVerified: boolean("fileVerified").default(false),
+  redirectVerified: boolean("redirectVerified").default(false),
+  uploadedUrl: varchar("uploadedUrl", { length: 512 }),
+  durationMs: int("durationMs"),
+  // AI reasoning
+  aiReasoning: text("aiReasoning"),
+  aiConfidence: int("aiConfidence"),                          // 0-100
+  iteration: int("iteration"),                                // which iteration in the loop
+  // Pre-analysis data (from Phase 0)
+  preAnalysisData: json("preAnalysisData"),                   // Full AI Target Analysis result
+  // Metadata
+  pipelineType: varchar("pipelineType", { length: 32 }),     // seo_spam, autonomous, manual
+  sessionId: varchar("sessionId", { length: 64 }),           // group decisions from same attack session
+  createdAt: timestamp("historyCreatedAt").defaultNow().notNull(),
+});
+
+export type AiAttackHistoryRow = typeof aiAttackHistory.$inferSelect;
+export type InsertAiAttackHistory = typeof aiAttackHistory.$inferInsert;

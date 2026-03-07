@@ -8,6 +8,7 @@ import {
   pbnSites, pbnPosts, algoIntel, moduleExecutions,
   seoProjects, backlinkLog, rankTracking, seoActions, seoSnapshots,
   userMethodPriority,
+  aiAttackHistory, InsertAiAttackHistory,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -682,5 +683,132 @@ export async function saveUserMethodPriority(
       enabledMethods,
       fullConfig,
     });
+  }
+}
+
+// ═══ AI Attack History helpers ═══
+
+export async function saveAttackDecision(data: InsertAiAttackHistory): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.insert(aiAttackHistory).values(data);
+  } catch (error) {
+    console.warn("[AI Attack History] Failed to save:", error);
+  }
+}
+
+export async function getSuccessfulMethods(opts: {
+  serverType?: string | null;
+  cms?: string | null;
+  language?: string | null;
+  waf?: string | null;
+  limit?: number;
+}): Promise<Array<{
+  method: string;
+  bypassTechnique: string | null;
+  payloadType: string | null;
+  filename: string | null;
+  uploadPath: string | null;
+  contentType: string | null;
+  httpMethod: string | null;
+  serverType: string | null;
+  cms: string | null;
+  language: string | null;
+  waf: string | null;
+  successCount: number;
+}>> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const { sql, and, eq, count, desc } = await import("drizzle-orm");
+    const conditions = [eq(aiAttackHistory.success, true)];
+    if (opts.serverType) conditions.push(eq(aiAttackHistory.serverType, opts.serverType));
+    if (opts.cms) conditions.push(eq(aiAttackHistory.cms, opts.cms));
+    if (opts.language) conditions.push(eq(aiAttackHistory.language, opts.language));
+    if (opts.waf) conditions.push(eq(aiAttackHistory.waf, opts.waf));
+
+    const rows = await db
+      .select({
+        method: aiAttackHistory.method,
+        bypassTechnique: aiAttackHistory.bypassTechnique,
+        payloadType: aiAttackHistory.payloadType,
+        filename: aiAttackHistory.filename,
+        uploadPath: aiAttackHistory.uploadPath,
+        contentType: aiAttackHistory.contentType,
+        httpMethod: aiAttackHistory.httpMethod,
+        serverType: aiAttackHistory.serverType,
+        cms: aiAttackHistory.cms,
+        language: aiAttackHistory.language,
+        waf: aiAttackHistory.waf,
+        successCount: count(aiAttackHistory.id),
+      })
+      .from(aiAttackHistory)
+      .where(and(...conditions))
+      .groupBy(
+        aiAttackHistory.method,
+        aiAttackHistory.bypassTechnique,
+        aiAttackHistory.payloadType,
+        aiAttackHistory.filename,
+        aiAttackHistory.uploadPath,
+        aiAttackHistory.contentType,
+        aiAttackHistory.httpMethod,
+        aiAttackHistory.serverType,
+        aiAttackHistory.cms,
+        aiAttackHistory.language,
+        aiAttackHistory.waf,
+      )
+      .orderBy(desc(count(aiAttackHistory.id)))
+      .limit(opts.limit || 20);
+
+    return rows;
+  } catch (error) {
+    console.warn("[AI Attack History] Failed to query:", error);
+    return [];
+  }
+}
+
+export async function getAttackStats(): Promise<{
+  totalAttempts: number;
+  totalSuccess: number;
+  successRate: number;
+  topMethods: Array<{ method: string; count: number }>;
+  topPlatforms: Array<{ platform: string; count: number }>;
+}> {
+  const db = await getDb();
+  if (!db) return { totalAttempts: 0, totalSuccess: 0, successRate: 0, topMethods: [], topPlatforms: [] };
+  try {
+    const { count, eq, desc, sql } = await import("drizzle-orm");
+    const [totalRow] = await db.select({ cnt: count() }).from(aiAttackHistory);
+    const [successRow] = await db.select({ cnt: count() }).from(aiAttackHistory).where(eq(aiAttackHistory.success, true));
+    const total = totalRow?.cnt || 0;
+    const success = successRow?.cnt || 0;
+
+    const topMethods = await db
+      .select({ method: aiAttackHistory.method, cnt: count() })
+      .from(aiAttackHistory)
+      .where(eq(aiAttackHistory.success, true))
+      .groupBy(aiAttackHistory.method)
+      .orderBy(desc(count()))
+      .limit(10);
+
+    const topPlatforms = await db
+      .select({ platform: aiAttackHistory.serverType, cnt: count() })
+      .from(aiAttackHistory)
+      .where(eq(aiAttackHistory.success, true))
+      .groupBy(aiAttackHistory.serverType)
+      .orderBy(desc(count()))
+      .limit(10);
+
+    return {
+      totalAttempts: total,
+      totalSuccess: success,
+      successRate: total > 0 ? Math.round((success / total) * 100) : 0,
+      topMethods: topMethods.map(r => ({ method: r.method, count: r.cnt })),
+      topPlatforms: topPlatforms.map(r => ({ platform: r.platform || "unknown", count: r.cnt })),
+    };
+  } catch (error) {
+    console.warn("[AI Attack History] Failed to get stats:", error);
+    return { totalAttempts: 0, totalSuccess: 0, successRate: 0, topMethods: [], topPlatforms: [] };
   }
 }
