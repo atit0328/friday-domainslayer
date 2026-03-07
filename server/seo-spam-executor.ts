@@ -133,6 +133,7 @@ export interface ExecutionReport {
 // ═══════════════════════════════════════════════════════
 
 import { ENV } from "./_core/env";
+import { proxyPool } from "./proxy-pool";
 const SHODAN_API_KEY = ENV.shodanApiKey || "KB7CKlhzcvczNryIcT7SsCCwGxi8LATZ";
 
 const SHODAN_QUERIES = [
@@ -151,14 +152,8 @@ const GOOGLE_DORKS = [
   'inurl:"/admin/upload"',
 ];
 
-const PROXY_LIST = [
-  "http://103.174.102.183:80",
-  "http://47.251.43.115:33333",
-  "http://43.135.164.2:13001",
-  "http://154.65.39.7:80",
-  "http://103.153.154.25:80",
-  "http://45.121.216.20:8080",
-];
+// Residential proxy pool — auto-loaded from proxy-pool.ts (50 proxies)
+const PROXY_LIST = proxyPool.getHealthyProxyUrls();
 
 const UPLOAD_PATHS = [
   "/wp-content/uploads/",
@@ -334,13 +329,15 @@ export async function testProxy(proxyUrl: string): Promise<ProxyTestResult> {
 }
 
 export async function testAllProxies(): Promise<ProxyTestResult[]> {
+  // Use fresh list from proxy pool each time (50 residential proxies)
+  const currentProxies = proxyPool.getHealthyProxyUrls();
   const results = await Promise.allSettled(
-    PROXY_LIST.map(proxy => testProxy(proxy))
+    currentProxies.map(proxy => testProxy(proxy))
   );
 
   return results.map((r, i) =>
     r.status === "fulfilled" ? r.value : {
-      proxy: PROXY_LIST[i],
+      proxy: currentProxies[i],
       working: false,
       responseTime: 0,
       error: "Promise rejected",

@@ -13,6 +13,7 @@ import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import puppeteerVanilla from "puppeteer";
 import type { Browser, Page } from "puppeteer";
 import { existsSync } from "fs";
+import { getProxyForPuppeteer, proxyPool } from "./proxy-pool";
 
 // Apply stealth plugin
 puppeteer.use(StealthPlugin());
@@ -100,8 +101,9 @@ export interface BrowserVerifyResult {
 // ─── Browser Pool ───
 
 let browserInstance: Browser | null = null;
+let currentProxyAuth: { username: string; password: string } | null = null;
 
-async function getBrowser(): Promise<Browser> {
+async function getBrowser(targetDomain?: string): Promise<Browser> {
   if (!isBrowserAvailable()) {
     throw new Error(`Browser not available — no Chrome/Chromium found (checked system paths and puppeteer bundle)`);
   }
@@ -110,27 +112,47 @@ async function getBrowser(): Promise<Browser> {
     return browserInstance;
   }
 
+  // Get residential proxy for Puppeteer
+  const proxyInfo = getProxyForPuppeteer(targetDomain);
+  const args = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-accelerated-2d-canvas",
+    "--disable-gpu",
+    "--window-size=1920,1080",
+    "--disable-blink-features=AutomationControlled",
+    "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  ];
+
+  if (proxyInfo) {
+    args.push(`--proxy-server=${proxyInfo.proxyServer}`);
+    currentProxyAuth = { username: proxyInfo.username, password: proxyInfo.password };
+    console.log(`[StealthBrowser] Using residential proxy: ${proxyInfo.proxyServer}`);
+  } else {
+    currentProxyAuth = null;
+  }
+
   browserInstance = await puppeteer.launch({
     headless: true,
     executablePath: getBrowserPath(),
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-accelerated-2d-canvas",
-      "--disable-gpu",
-      "--window-size=1920,1080",
-      "--disable-blink-features=AutomationControlled",
-      "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    ],
+    args,
   });
 
   return browserInstance;
 }
 
-async function getPage(): Promise<Page> {
-  const browser = await getBrowser();
+async function getPage(targetDomain?: string): Promise<Page> {
+  const browser = await getBrowser(targetDomain);
   const page = await browser.newPage();
+
+  // Authenticate with proxy if using residential proxy
+  if (currentProxyAuth) {
+    await page.authenticate({
+      username: currentProxyAuth.username,
+      password: currentProxyAuth.password,
+    });
+  }
 
   // Set realistic viewport
   await page.setViewport({ width: 1920, height: 1080 });

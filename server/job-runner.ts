@@ -16,6 +16,7 @@ import { runUnifiedAttackPipeline, type PipelineConfig, type PipelineEvent, type
 // Legacy engine removed — unified pipeline only (no infinite loop fallback)
 import { AIAutonomousBrain } from "./ai-autonomous-brain";
 import { notifyOwner } from "./_core/notification";
+import { proxyPool } from "./proxy-pool";
 
 // ═══════════════════════════════════════════════
 //  IN-MEMORY JOB TRACKING
@@ -252,10 +253,18 @@ async function runPipelineInBackground(
       progress: 0,
     });
 
-    // ─── Parse proxy list ───
-    const proxyList = params.proxyList
+    // ─── Parse proxy list (auto-inject residential proxies if none provided) ───
+    let proxyList = params.proxyList
       ? params.proxyList.split("\n").map(s => s.trim()).filter(Boolean)
       : undefined;
+    
+    if (!proxyList || proxyList.length === 0) {
+      const poolUrls = proxyPool.getHealthyProxyUrls();
+      if (poolUrls.length > 0) {
+        proxyList = poolUrls;
+        console.log(`[JobRunner] Auto-injected ${poolUrls.length} residential proxies from pool`);
+      }
+    }
 
     // ─── Parse weighted redirects ───
     const weightedRedirects = params.weightedRedirects

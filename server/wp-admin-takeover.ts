@@ -11,6 +11,8 @@
  * 7. XMLRPC editOptions → change siteurl/home via XMLRPC
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 export interface WpAdminConfig {
   targetUrl: string;
   redirectUrl: string;

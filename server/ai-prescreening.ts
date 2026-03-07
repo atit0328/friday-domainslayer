@@ -6,6 +6,7 @@
 
 import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
+import { fetchWithPoolProxy } from "./proxy-pool";
 
 // ─── Types ───
 
@@ -174,12 +175,12 @@ async function fingerPrintServer(targetUrl: string, result: PreScreenResult): Pr
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(targetUrl, {
+    const domain = new URL(targetUrl).hostname;
+    const { response } = await fetchWithPoolProxy(targetUrl, {
       method: "HEAD",
-      signal: controller.signal,
       redirect: "follow",
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    });
+    }, { targetDomain: domain, timeout: 15000 });
     clearTimeout(timeout);
 
     // Server header
@@ -290,10 +291,10 @@ async function deepCmsFingerprint(targetUrl: string, result: PreScreenResult): P
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
-    const response = await fetch(targetUrl, {
-      signal: controller.signal,
+    const domain = new URL(targetUrl).hostname;
+    const { response } = await fetchWithPoolProxy(targetUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-    });
+    }, { targetDomain: domain, timeout: 15000 });
     clearTimeout(timeout);
     const html = await response.text();
 
@@ -346,11 +347,11 @@ async function detectWaf(targetUrl: string, result: PreScreenResult): Promise<vo
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000);
-      const res = await fetch(testPath, {
-        signal: controller.signal,
+      const domain = new URL(targetUrl).hostname;
+      const { response: res } = await fetchWithPoolProxy(testPath, {
         redirect: "manual",
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      });
+      }, { targetDomain: domain, timeout: 8000 });
       clearTimeout(timeout);
 
       if (res.status === 403 || res.status === 406 || res.status === 429) {
@@ -400,12 +401,12 @@ async function mapUploadSurface(targetUrl: string, result: PreScreenResult): Pro
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 6000);
-      const res = await fetch(`${targetUrl}${path}`, {
+      const domain = new URL(targetUrl).hostname;
+      const { response: res } = await fetchWithPoolProxy(`${targetUrl}${path}`, {
         method: "HEAD",
-        signal: controller.signal,
         redirect: "manual",
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      });
+      }, { targetDomain: domain, timeout: 6000 });
       clearTimeout(timeout);
       return { path, status: res.status, headers: Object.fromEntries(res.headers.entries()) };
     } catch {
@@ -446,11 +447,11 @@ async function mapUploadSurface(targetUrl: string, result: PreScreenResult): Pro
       const testFile = `${targetUrl}${path}test-${Date.now()}.txt`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(testFile, {
+      const domain = new URL(targetUrl).hostname;
+      const { response: res } = await fetchWithPoolProxy(testFile, {
         method: "OPTIONS",
-        signal: controller.signal,
         headers: { "User-Agent": "Mozilla/5.0" },
-      });
+      }, { targetDomain: domain, timeout: 5000 });
       clearTimeout(timeout);
 
       const allow = res.headers.get("allow") || "";

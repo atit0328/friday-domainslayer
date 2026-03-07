@@ -4,6 +4,7 @@
  * then uses AI to rank attack vectors by success probability.
  */
 import { invokeLLM } from "./_core/llm";
+import { fetchWithPoolProxy } from "./proxy-pool";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -196,12 +197,13 @@ const CDN_SIGNATURES: Record<string, string[]> = {
 
 async function safeFetch(url: string, options: RequestInit = {}): Promise<Response | null> {
   try {
-    return await fetch(url, {
+    const domain = url.includes("://") ? new URL(url).hostname : undefined;
+    const { response } = await fetchWithPoolProxy(url, {
       ...options,
       headers: { "User-Agent": UA, ...(options.headers || {}) },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT),
       redirect: "follow",
-    });
+    }, { targetDomain: domain, timeout: FETCH_TIMEOUT });
+    return response;
   } catch {
     return null;
   }

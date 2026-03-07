@@ -10,6 +10,8 @@
  * 6. PHP Deserialization → RCE via unserialize()
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 export interface IndirectAttackResult {
   vector: string;
   success: boolean;

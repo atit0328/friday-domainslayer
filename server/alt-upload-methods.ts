@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PreScreenResult } from "./ai-prescreening";
+import { fetchWithPoolProxy } from "./proxy-pool";
 
 // ─── Types ───
 

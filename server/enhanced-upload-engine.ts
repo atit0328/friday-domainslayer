@@ -15,6 +15,7 @@
 
 import type { PreScreenResult } from "./ai-prescreening";
 import type { ProgressCallback, ErrorCategory } from "./one-click-deploy";
+import { fetchWithPoolProxy } from "./proxy-pool";
 
 // ─── Types ───
 

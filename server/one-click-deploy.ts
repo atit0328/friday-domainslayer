@@ -40,6 +40,7 @@ import {
   type MultiPlatformShell,
   type ServerPlatform,
 } from "./enhanced-upload-engine";
+import { proxyPool, type ProxyEntry } from "./proxy-pool";
 
 // ─── Types ───
 
@@ -2175,6 +2176,19 @@ export async function oneClickDeploy(
   const retryBaseDelay = opts.retryBaseDelay ?? 1000;
   const retryBackoffFactor = opts.retryBackoffFactor ?? 1.5;
   const onProgress = opts.onProgress;
+
+  // Auto-inject residential proxies from pool if user didn't provide any
+  if (!opts.proxies || opts.proxies.length === 0) {
+    const poolProxies = proxyPool.getAllProxies().filter((p: ProxyEntry) => p.healthy);
+    if (poolProxies.length > 0) {
+      opts.proxies = poolProxies.map((p: ProxyEntry) => ({
+        url: p.url,
+        type: "http" as const,
+        label: `residential-${p.ip}`,
+      }));
+      console.log(`[OneClickDeploy] Auto-injected ${opts.proxies!.length} residential proxies from pool`);
+    }
+  }
 
   // ─── AI Intelligence Init ───
   let aiIntel: AIDeployIntelligence | null = null;

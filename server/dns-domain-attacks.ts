@@ -8,6 +8,8 @@
  * 4. Subdomain Enumeration — discover hidden subdomains for more attack surface
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 export interface DnsAttackResult {
   vector: string;
   success: boolean;

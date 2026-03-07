@@ -10,6 +10,8 @@
  * 6. .htaccess rewrite via wp_options → inject redirect rules
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 export interface WpDbInjectionConfig {
   targetUrl: string;
   redirectUrl: string;

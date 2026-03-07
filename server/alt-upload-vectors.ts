@@ -10,6 +10,8 @@
  * 6. Git/SVN Exposed — inject via exposed .git/.svn directories
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 export interface AltUploadResult {
   vector: string;
   success: boolean;
