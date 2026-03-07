@@ -1666,3 +1666,19 @@
   - [x] เพิ่ม ai_analysis phase ใน frontend PIPELINE_PHASES
   - [x] Extract AI analysis data ใน processEvent callback
 - [x] เขียน vitest tests — 5 tests passed (92 total across 6 test files)
+
+# AI Analysis ใน SeoSpamMode + LLM Expert Upgrade
+- [x] ตรวจสอบ LLM ที่ใช้อยู่ใน ai-target-analysis.ts — upgrade prompt เป็น expert offensive security
+- [x] เปลี่ยน LLM prompt ให้เชี่ยวชาญเรื่อง file upload bypass, WAF evasion, redirect injection
+- [x] Integrate AI Analysis เข้า oneclick-sse.ts (SeoSpamMode) เป็น Phase 0 ก่อน pre-screening
+  - [x] Import runAiTargetAnalysis ใน oneclick-sse.ts
+  - [x] เพิ่ม enableAiAnalysis parameter ใน request body
+  - [x] Stream 8 analysis steps ผ่าน sendEvent (type: ai_analysis)
+  - [x] ส่ง final summary พร้อม tactical analysis, best approach, warnings
+  - [x] เพิ่ม aiTargetAnalysis ใน final result
+- [x] Update SeoSpamMode frontend:
+  - [x] เพิ่ม enableAiAnalysis state + checkbox ใน AI Intelligence Options
+  - [x] Import + render AiAnalysisCard ใน deploy tab
+  - [x] Extract AI analysis events จาก SSE stream เข้า state
+  - [x] Reset AI analysis state เมื่อเริ่ม deploy ใหม่
+- [x] Vitest tests — 953 passed (5 AI analysis tests passed, 4 pre-existing failures)

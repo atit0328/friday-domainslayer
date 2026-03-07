@@ -15,6 +15,7 @@ import {
   type WeightedRedirect,
 } from "./one-click-deploy";
 import { preScreenTarget, type PreScreenResult } from "./ai-prescreening";
+import { runAiTargetAnalysis, type AiTargetAnalysis, type AnalysisStep } from "./ai-target-analysis";
 import { tryAllUploadMethods } from "./alt-upload-methods";
 import { smartRetryUpload, multiVectorParallelUpload, type ParallelUploadConfig } from "./enhanced-upload-engine";
 import { stealthVerifyBatch, stealthBypassWaf, closeBrowser, isBrowserAvailable } from "./stealth-browser";
@@ -184,6 +185,7 @@ export function registerOneClickSSE(app: Express) {
       enablePreScreening,
       enableAltMethods,
       enableStealthBrowser,
+      enableAiAnalysis,
       methodPriority,
     } = req.body;
 
@@ -311,12 +313,112 @@ export function registerOneClickSSE(app: Express) {
     let altMethodUsed: string | null = null;
     let stealthBrowserUsed = false;
     let preScreenResult: PreScreenResult | null = null;
+    let aiTargetAnalysisResult: AiTargetAnalysis | null = null;
 
     // ═══════════════════════════════════════════════
     //  MAIN PIPELINE — wrapped in a master try/catch
     //  that GUARANTEES a done or error event is sent
     // ═══════════════════════════════════════════════
     try {
+      // ═══ PHASE 0: AI Target Deep Analysis ═══
+      // Runs 8 intelligence-gathering steps before any attack
+      if (enableAiAnalysis !== false) {
+        sendEvent({
+          type: "step_detail",
+          step: "ai_analysis",
+          status: "running",
+          detail: "🧠 AI Target Analysis — เริ่มวิเคราะห์เป้าหมายอย่างละเอียด (8 steps)...",
+        });
+        try {
+          aiTargetAnalysisResult = await runAiTargetAnalysis(
+            targetDomain,
+            (step: AnalysisStep) => {
+              // Stream each analysis step to frontend
+              sendEvent({
+                type: "ai_analysis",
+                step: `ai_deep_${step.stepId}`,
+                status: step.status === "complete" ? "done" : step.status === "error" ? "warning" : "running",
+                detail: `[${step.stepName}] ${step.detail}`,
+                data: {
+                  stepId: step.stepId,
+                  stepName: step.stepName,
+                  status: step.status,
+                  progress: step.progress,
+                  duration: step.duration,
+                  ...(step.data || {}),
+                },
+              });
+            },
+          );
+
+          // Send final AI analysis summary
+          const strategy = aiTargetAnalysisResult.aiStrategy;
+          sendEvent({
+            type: "ai_analysis",
+            step: "ai_analysis_complete",
+            status: strategy.shouldProceed ? "done" : "warning",
+            detail: `🎯 AI Analysis Complete — โอกาสสำเร็จ: ${strategy.overallSuccessProbability}% | ความยาก: ${strategy.difficulty} | ความเสี่ยง: ${strategy.riskLevel} | วิธีแนะนำ: ${strategy.recommendedMethods.slice(0, 3).map(m => m.method).join(", ")}`,
+            data: {
+              analysis: aiTargetAnalysisResult,
+              shouldProceed: strategy.shouldProceed,
+              proceedReason: strategy.proceedReason,
+              tacticalAnalysis: strategy.tacticalAnalysis,
+              bestApproach: strategy.bestApproach,
+              recommendedMethods: strategy.recommendedMethods,
+              warnings: strategy.warnings,
+              recommendations: strategy.recommendations,
+              estimatedTime: strategy.estimatedTime,
+              // Key findings summary
+              httpFingerprint: aiTargetAnalysisResult.httpFingerprint,
+              dnsInfo: aiTargetAnalysisResult.dnsInfo,
+              techStack: aiTargetAnalysisResult.techStack,
+              security: aiTargetAnalysisResult.security,
+              seoMetrics: aiTargetAnalysisResult.seoMetrics,
+              uploadSurface: aiTargetAnalysisResult.uploadSurface,
+              vulnerabilities: aiTargetAnalysisResult.vulnerabilities,
+            },
+          });
+
+          // Log tactical analysis
+          if (strategy.tacticalAnalysis) {
+            sendEvent({
+              type: "step_detail",
+              step: "ai_tactical",
+              status: "done",
+              detail: `📝 กลยุทธ์: ${strategy.tacticalAnalysis}`,
+            });
+          }
+
+          // Log best approach
+          if (strategy.bestApproach) {
+            sendEvent({
+              type: "step_detail",
+              step: "ai_approach",
+              status: "done",
+              detail: `🎯 แนวทางที่ดีที่สุด: ${strategy.bestApproach}`,
+            });
+          }
+
+          // Log warnings
+          if (strategy.warnings.length > 0) {
+            sendEvent({
+              type: "step_detail",
+              step: "ai_warnings",
+              status: "warning",
+              detail: `⚠️ คำเตือน: ${strategy.warnings.join(" | ")}`,
+            });
+          }
+        } catch (e: any) {
+          console.error("[AI Analysis] Error:", e.message);
+          sendEvent({
+            type: "step_detail",
+            step: "ai_analysis",
+            status: "warning",
+            detail: `⚠️ AI Analysis failed: ${e.message} — ดำเนินการต่อโดยไม่มีผลวิเคราะห์`,
+          });
+        }
+      }
+
       // ─── AI Learning: Query past deploys for similar targets ───
       try {
         const learnings = await getDeployLearnings(targetDomain);
@@ -696,6 +798,9 @@ export function registerOneClickSSE(app: Express) {
       // ═══ SEND FINAL RESULT — GUARANTEED ═══
       cleanup();
       result.deployRecordId = deployRecordId;
+      if (aiTargetAnalysisResult) {
+        result.aiTargetAnalysis = aiTargetAnalysisResult;
+      }
       sendDone(result);
 
     } catch (error: any) {

@@ -827,7 +827,30 @@ async function aiStrategicAnalysis(result: AiTargetAnalysis): Promise<void> {
     messages: [
       {
         role: "system",
-        content: `You are an expert penetration tester and web security analyst. Analyze the target reconnaissance data and provide a tactical attack strategy. Be specific, data-driven, and actionable. ตอบเป็นภาษาไทยทั้งหมด (ยกเว้นชื่อเทคนิค/เครื่องมือ). Respond in JSON format.`,
+        content: `You are an elite offensive security specialist with 15+ years of experience in web application exploitation, specializing in:
+
+**Core Expertise:**
+- PHP webshell upload bypass: double extension (.php.jpg), null byte injection, content-type spoofing, .htaccess override, polyglot files (GIF89a header + PHP), EXIF metadata injection, ZIP slip, phar deserialization
+- WAF evasion: chunked transfer encoding, unicode normalization, HTTP parameter pollution, multipart boundary manipulation, case alternation, comment injection, URL encoding chains
+- WordPress exploitation: plugin/theme upload via wp-admin, XMLRPC multicall brute-force, REST API content injection, wp-cron abuse, user enumeration (author archives, REST users endpoint), application password exploitation, mu-plugins directory write
+- File manager exploitation: elfinder RCE, wp-file-manager arbitrary upload, adminer.php SQL injection
+- Redirect injection: PHP header() redirect, JavaScript window.location, meta refresh, iframe injection, .htaccess RewriteRule, wp_redirect hook, 301/302 chain redirect
+- Cloaking: geo-IP based content switching (PHP + JS), user-agent detection (Googlebot vs real users), referrer-based cloaking, cookie-based cloaking, JavaScript obfuscation (base64, eval, charCode)
+- Server-specific: Apache mod_rewrite bypass, Nginx alias traversal, LiteSpeed .htaccess tricks, IIS web.config manipulation
+
+**Analysis Rules:**
+1. เมื่อเห็น WordPress → ต้องวิเคราะห์ทุก plugin ว่ามี CVE หรือ exploit path ไหม
+2. เมื่อเห็น Apache/PHP → ต้องแนะนำ .htaccess override + double extension technique
+3. เมื่อเห็น Cloudflare → ต้องแนะนำ origin IP bypass + direct IP access
+4. เมื่อเห็น XMLRPC available → ต้องแนะนำ multicall brute-force
+5. เมื่อเห็น REST API available → ต้องแนะนำ content injection + user enumeration
+6. เมื่อเห็น file manager → ต้องแนะนำ elfinder/wp-file-manager exploit
+7. ต้องวิเคราะห์ว่า redirect จะทำงานได้ 100% ด้วยวิธีไหน (JS vs PHP vs .htaccess)
+8. ต้องแนะนำ cloaking strategy ที่เหมาะกับ target (geo-IP + user-agent + referrer)
+9. ต้องประเมินว่า shell จะอยู่รอดได้นานแค่ไหน (persistence analysis)
+10. ต้องแนะนำ backup attack path ถ้าวิธีหลักล้มเหลว
+
+วิเคราะห์อย่างละเอียด ตอบเป็นภาษาไทยทั้งหมด (ยกเว้นชื่อเทคนิค/เครื่องมือ). Respond in JSON format.`,
       },
       {
         role: "user",
@@ -879,16 +902,20 @@ Exposed Files: ${result.vulnerabilities.exposedFiles.join(", ") || "None"}
 Risk Score: ${result.vulnerabilities.totalRiskScore}/100
 
 Provide a comprehensive tactical analysis with:
-1. Overall success probability (0-100)
+1. Overall success probability (0-100) — โอกาสที่จะวางไฟล์ได้ 100% พร้อม redirect ทำงาน
 2. Difficulty assessment
 3. Risk level for the attacker
 4. Detection risk
 5. Should proceed (true/false with reason)
-6. Tactical analysis (2-4 sentences in Thai)
-7. Top 5 recommended attack methods with probability and reasoning
+6. Tactical analysis (4-6 sentences in Thai) — ต้องระบุว่าจะใช้ technique ไหนในการ upload shell, วิธี bypass WAF, วิธี inject redirect, และวิธี cloak
+7. Top 5-8 recommended attack methods with probability and reasoning — แต่ละวิธีต้องระบุว่า:
+   - จะ upload ด้วยเทคนิคไหน (double ext, polyglot, .htaccess, etc.)
+   - จะ bypass WAF ด้วยวิธีไหน
+   - redirect จะทำงานด้วยวิธีไหน (JS, PHP header, .htaccess, meta refresh)
+   - cloaking จะใช้แบบไหน (geo-IP, user-agent, referrer)
 8. Warnings and recommendations
 9. Estimated time to complete
-10. Best overall approach summary
+10. Best overall approach summary — ต้องระบุขั้นตอนทั้งหมดตั้งแต่ upload → verify → inject redirect → cloak → persistence
 
 Respond as JSON:
 {

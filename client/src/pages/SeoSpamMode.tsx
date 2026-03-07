@@ -22,6 +22,7 @@ import {
   Flame, LayoutGrid, RotateCcw, Gauge, Brain,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import AiAnalysisCard from "@/components/AiAnalysisCard";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 
@@ -103,6 +104,16 @@ export default function SeoSpamMode() {
   const [enablePreScreening, setEnablePreScreening] = useState(true);
   const [enableAltMethods, setEnableAltMethods] = useState(true);
   const [enableStealthBrowser, setEnableStealthBrowser] = useState(true);
+  const [enableAiAnalysis, setEnableAiAnalysis] = useState(true);
+  // AI Analysis state for AiAnalysisCard
+  const [aiAnalysisSteps, setAiAnalysisSteps] = useState<any[]>([]);
+  const [aiAnalysisData, setAiAnalysisData] = useState<any>(null);
+  const [aiAnalysisPhaseState, setAiAnalysisPhaseState] = useState<{
+    status: "idle" | "running" | "complete" | "error";
+    detail: string;
+    progress: number;
+    data?: Record<string, unknown>;
+  }>({ status: "idle", detail: "", progress: 0 });
 
   // Method Priority Configuration
   const [showMethodPriority, setShowMethodPriority] = useState(false);
@@ -342,6 +353,9 @@ export default function SeoSpamMode() {
     setSseEvents([]);
     setSseFinalResult(null);
     setSseError(null);
+    setAiAnalysisSteps([]);
+    setAiAnalysisData(null);
+    setAiAnalysisPhaseState({ status: "idle", detail: "", progress: 0 });
     setActiveTab("deploy");
     toast.info("Starting One-Click Deploy pipeline...");
 
@@ -366,6 +380,7 @@ export default function SeoSpamMode() {
           enablePreScreening,
           enableAltMethods,
           enableStealthBrowser,
+          enableAiAnalysis: enableAiAnalysis,
           methodPriority: methodPriority.filter(m => m.enabled).map(m => m.id),
         }),
       });
@@ -402,6 +417,40 @@ export default function SeoSpamMode() {
               toast.error(`ข้อผิดพลาด: ${evt.detail}`);
             } else {
               setSseEvents((prev) => [...prev, evt]);
+              // Extract AI analysis events for AiAnalysisCard
+              if (evt.type === "ai_analysis") {
+                if (evt.step === "ai_analysis_complete") {
+                  // Final AI analysis result
+                  setAiAnalysisPhaseState({ status: "complete", detail: evt.detail || "", progress: 100, data: evt.data });
+                  if (evt.data?.analysis) {
+                    setAiAnalysisData(evt.data.analysis);
+                  }
+                } else if (evt.step?.startsWith("ai_deep_")) {
+                  // Individual analysis step
+                  setAiAnalysisPhaseState(prev => ({ ...prev, status: "running", detail: evt.detail || "", progress: (evt.data?.progress || prev.progress) }));
+                  setAiAnalysisSteps(prev => {
+                    const stepId = evt.data?.stepId || evt.step;
+                    const existing = prev.findIndex(s => s.stepId === stepId);
+                    const stepData = {
+                      stepId: evt.data?.stepId || evt.step,
+                      stepName: evt.data?.stepName || evt.step,
+                      status: evt.data?.status || (evt.status === "done" ? "complete" : evt.status === "warning" ? "error" : "running"),
+                      detail: evt.detail || "",
+                      progress: evt.data?.progress || 0,
+                      duration: evt.data?.duration,
+                      data: evt.data,
+                    };
+                    if (existing >= 0) {
+                      const updated = [...prev];
+                      updated[existing] = stepData;
+                      return updated;
+                    }
+                    return [...prev, stepData];
+                  });
+                }
+              } else if (evt.step === "ai_analysis" && evt.status === "running") {
+                setAiAnalysisPhaseState({ status: "running", detail: evt.detail || "", progress: 0 });
+              }
               // Auto-scroll
               setTimeout(() => progressRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }), 100);
             }
@@ -910,7 +959,15 @@ export default function SeoSpamMode() {
               <Brain className="h-4 w-4 text-violet-400" />
               <span className="text-sm font-semibold text-violet-300">AI Intelligence Options</span>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-3">
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <input type="checkbox" checked={enableAiAnalysis} onChange={(e) => setEnableAiAnalysis(e.target.checked)}
+                  className="rounded border-rose-500/50 bg-gray-800 text-rose-500 focus:ring-rose-500" />
+                <div>
+                  <span className="text-xs font-medium text-gray-200 group-hover:text-rose-300">AI Deep Analysis</span>
+                  <p className="text-[10px] text-gray-500">8-step วิเคราะห์เชิงลึก + LLM strategy</p>
+                </div>
+              </label>
               <label className="flex items-center gap-2 cursor-pointer group">
                 <input type="checkbox" checked={enablePreScreening} onChange={(e) => setEnablePreScreening(e.target.checked)}
                   className="rounded border-violet-500/50 bg-gray-800 text-violet-500 focus:ring-violet-500" />
@@ -1928,6 +1985,15 @@ export default function SeoSpamMode() {
         </TabsContent>
         {/* ═══════════ ONE-CLICK DEPLOY RESULTS ═══════════ */}
         <TabsContent value="deploy" className="space-y-4">
+          {/* AI Target Analysis Card — shows before pipeline progress */}
+          {aiAnalysisPhaseState.status !== "idle" && (
+            <AiAnalysisCard
+              phaseState={aiAnalysisPhaseState}
+              analysisSteps={aiAnalysisSteps}
+              analysisData={aiAnalysisData}
+            />
+          )}
+
           {/* SSE Real-Time Progress */}
           {(sseRunning || sseEvents.length > 0 || sseFinalResult || sseError) && (
             <div className="space-y-4" ref={progressRef}>
