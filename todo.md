@@ -1577,3 +1577,17 @@
 - [x] ลบ email notification ออกจาก pbn-services.ts → Telegram only
 - [x] ให้ใช้ Telegram เป็น primary notification channel ทั้งโปรเจค
 - [x] เขียน vitest tests — 10 tests passed
+
+# BUG FIX: วางไฟล์ได้แต่ redirect ไม่ทำงาน (PHP ไม่ execute)
+- [x] ตรวจสอบ shell generation: redirect code ภายในไฟล์ PHP ใช้ conditional redirect (referer check + ?r=1)
+- [x] ตรวจสอบ verify logic: ตรวจทั้ง file existence + redirect (2-step verify)
+- [x] หาสาเหตุ: (1) PHP ไม่ถูก execute → server serve เป็น plain text (2) conditional redirect ต้อง referer จาก Google/Bing
+- [x] เพิ่ม PHP execution detection ใน verifyUploadedFile (ตรวจ raw PHP source: <?php, @ini_set, $_SERVER, header)
+- [x] เพิ่ม phpNotExecuting flag ใน verification result
+- [x] เพิ่ม generateUnconditionalHtmlRedirect (meta refresh + JS redirect ไม่มี condition)
+- [x] เพิ่ม generateUnconditionalHtaccessRedirect (Redirect 301 / ไม่มี condition)
+- [x] เพิ่ม auto-fallback: เมื่อ PHP verified=true แต่ phpNotExecuting → อัตโนมัติ upload .html + .htaccess ที่ path เดียวกัน
+- [x] เพิ่ม phpExecutionFailed tracking: skip PHP/steganography/polyglot shells เมื่อรู้ว่า PHP ไม่ execute
+- [x] Export individual shell generators (generateMetaRedirectHtml, generateJsRedirect, generateHtaccessRedirect) สำหรับ fallback
+- [x] เขียน vitest tests — 13 tests passed (unconditional HTML, unconditional htaccess, conditional vs unconditional, PHP detection, shell skipping)
+- [x] All 74 tests passed (13 php-fallback + 17 false-positive + 15 pipeline-fixes + 14 pipeline-timeout + 10 telegram-only + 5 deploy-success)
