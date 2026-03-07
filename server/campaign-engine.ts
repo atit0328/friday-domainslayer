@@ -10,7 +10,7 @@ import * as seoEngine from "./seo-engine";
 import * as serpTracker from "./serp-tracker";
 import { scrapeWebsite, extractKeywordsFromContent, type ScrapedContent } from "./web-scraper";
 import * as db from "./db";
-import { notifyOwner } from "./_core/notification";
+import { sendTelegramNotification } from "./telegram-notifier";
 
 // ═══ Phase Definitions ═══
 export const CAMPAIGN_PHASES = [
@@ -1052,20 +1052,17 @@ export async function runAllPhases(projectId: number): Promise<{
   try {
     const domain = project.domain;
     if (failed === 0) {
-      await notifyOwner({
-        title: `SEO Campaign Completed: ${domain}`,
-        content: `Campaign for ${domain} completed successfully!\n\n` +
-          `Phases: ${completed} completed, ${skipped} skipped\n` +
-          `WordPress changes: ${totalWpChanges}\n` +
-          `Duration: ${results.reduce((sum, r) => sum + r.duration, 0)}ms`,
+      await sendTelegramNotification({
+        type: "success",
+        targetUrl: domain,
+        details: `Campaign for ${domain} completed! Phases: ${completed} completed, ${skipped} skipped. WP changes: ${totalWpChanges}`,
       });
     } else {
-      await notifyOwner({
-        title: `SEO Campaign Issues: ${domain}`,
-        content: `Campaign for ${domain} finished with issues.\n\n` +
-          `Phases: ${completed} completed, ${failed} failed, ${skipped} skipped\n` +
-          `WordPress changes: ${totalWpChanges}\n` +
-          `Failed phases: ${results.filter(r => r.status === "failed").map(r => r.phaseName).join(", ")}`,
+      await sendTelegramNotification({
+        type: "partial",
+        targetUrl: domain,
+        errors: results.filter(r => r.status === "failed").map(r => r.phaseName),
+        details: `Campaign for ${domain} finished with issues. Phases: ${completed} completed, ${failed} failed, ${skipped} skipped`,
       });
     }
   } catch (notifErr: any) {

@@ -2,7 +2,7 @@
  * PBN Services — Health Check, Auto-Post, Expire Alerts, AI Metrics, Hot PBN Scorer
  */
 import { invokeLLM } from "./_core/llm";
-import { notifyOwner } from "./_core/notification";
+import { sendTelegramNotification } from "./telegram-notifier";
 import * as db from "./db";
 import * as pbnBridge from "./pbn-bridge";
 import { fetchDomainMetrics } from "./domain-metrics";
@@ -281,9 +281,11 @@ export async function sendExpireNotifications(userId: number): Promise<{ sent: n
   if (warningList) content += `⏰ WARNING (${warning}):\n${warningList}\n\n`;
   if (noticeList) content += `📋 NOTICE:\n${noticeList}\n`;
 
-  await notifyOwner({
-    title: `🔔 PBN Expire Alert: ${critical} critical, ${warning} warning`,
-    content,
+  await sendTelegramNotification({
+    type: critical > 0 ? "failure" : "partial",
+    targetUrl: "PBN Network",
+    details: `🔔 PBN Expire Alert: ${critical} critical, ${warning} warning\n${content}`,
+    errors: criticalList ? [`${critical} domains expiring soon`] : [],
   });
 
   return { sent: alerts.length };

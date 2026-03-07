@@ -1564,3 +1564,16 @@
 - [x] แก้ไข: job-runner.ts hasVerified/hasUploaded แยก real/shellless
 - [x] แก้ไข: email statusText แยก SUCCESS/PARTIAL(shellless redirect confirmed)/PARTIAL(unconfirmed)/FAILED
 - [x] เขียน vitest tests — 17 tests passed (shellless verified, deployed URLs, telegram type, world state, success criteria)
+
+# BUG FIX: Upload ล้มเหลวทั้งที่มี 5 writable paths + 8 shells
+- [x] ตรวจสอบ: server ไม่รับ PUT/POST — writable path ≠ uploadable path
+- [x] เพิ่ม XMLRPC brute force credentials (20+ คู่ + username discovery จาก /?author=1 และ /wp-json/wp/v2/users)
+- [x] เพิ่ม fallback upload paths 15 paths ครอบคลุม WordPress, CMS, generic directories
+
+# FEATURE: เปลี่ยนแจ้งเตือนเป็น Telegram เท่านั้น
+- [x] ลบ email notification ออกจาก unified-attack-pipeline.ts → Telegram only
+- [x] ลบ email notification ออกจาก job-runner.ts → Telegram only (3 notification points)
+- [x] ลบ email notification ออกจาก campaign-engine.ts → Telegram only
+- [x] ลบ email notification ออกจาก pbn-services.ts → Telegram only
+- [x] ให้ใช้ Telegram เป็น primary notification channel ทั้งโปรเจค
+- [x] เขียน vitest tests — 10 tests passed
