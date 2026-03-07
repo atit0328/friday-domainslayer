@@ -90,8 +90,15 @@ async function finalizeDeployRecord(
     const db = await getDb();
     if (!db) return;
 
-    const success = result.success && result.verifiedFiles.length > 0;
-    const partial = !success && result.uploadedFiles.length > 0;
+    // Separate real uploads from shellless for accurate counting
+    const realUploads = result.uploadedFiles.filter(f => !f.method.startsWith("shellless_"));
+    const shelllessRedirects = result.uploadedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
+    const realVerified = result.verifiedFiles.filter(f => !f.method.startsWith("shellless_"));
+    const shelllessVerified = result.verifiedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
+    const effectiveUploads = [...realUploads, ...shelllessRedirects];
+    const effectiveVerified = [...realVerified, ...shelllessVerified];
+    const success = result.success && effectiveVerified.length > 0;
+    const partial = !success && effectiveUploads.length > 0;
 
     await db.update(autonomousDeploys).set({
       status: success ? "success" : partial ? "partial" : "failed",
@@ -100,12 +107,12 @@ async function finalizeDeployRecord(
       vulnsFound: result.vulnScan?.misconfigurations?.length || 0,
       credsFound: 0,
       uploadPathsFound: result.vulnScan?.writablePaths?.length || 0,
-      shellUrlsFound: result.verifiedFiles.length,
-      filesDeployed: result.uploadedFiles.length,
-      filesVerified: result.verifiedFiles.length,
-      shellUrls: result.verifiedFiles.map(f => f.url),
-      deployedUrls: result.uploadedFiles.map(f => f.url),
-      verifiedUrls: result.verifiedFiles.map(f => f.url),
+      shellUrlsFound: effectiveVerified.length,
+      filesDeployed: effectiveUploads.length,
+      filesVerified: effectiveVerified.length,
+      shellUrls: effectiveVerified.map(f => f.url),
+      deployedUrls: effectiveUploads.map(f => f.url),
+      verifiedUrls: effectiveVerified.map(f => f.url),
       aiStrategyUsed: aiBrain.getStrategies(),
       aiDecisions: result.aiDecisions,
       aiAdaptations: aiBrain.getDecisions().length,
@@ -378,7 +385,7 @@ async function runPipelineInBackground(
       : partial
         ? `⚠️ Pipeline บางส่วนสำเร็จ — ${pipelineResult!.uploadedFiles.length} files uploaded แต่ยังไม่ verified`
         : shelllessSuccesses.length > 0
-          ? `⚠️ Shellless Attack สำเร็จ ${shelllessSuccesses.length} methods (ไม่ต้องวางไฟล์)`
+          ? `⚠️ Shellless Attack พบ ${shelllessSuccesses.length} ช่องทาง แต่ redirect ยังไม่ทำงาน (ไม่ต้องวางไฟล์)`
           : `❌ Pipeline ล้มเหลว — ไม่สามารถวางไฟล์ได้ + Shellless Attack ไม่สำเร็จ`;
 
     await persistEvent(deployId, {

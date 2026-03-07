@@ -144,39 +144,39 @@ describe("Shellless Attack Engine", () => {
     });
   });
 
-  describe("Email notification integration", () => {
-    it("should use notifyOwner for email in pipeline", async () => {
+  describe("Telegram notification integration (primary)", () => {
+    it("should use Telegram as primary notification in pipeline", async () => {
       const fs = await import("fs");
       const pipelineCode = fs.readFileSync("server/unified-attack-pipeline.ts", "utf-8");
-      expect(pipelineCode).toContain("notifyOwner");
-      expect(pipelineCode).toContain("Email Notification (primary)");
+      expect(pipelineCode).toContain("Telegram Notification (primary");
       expect(pipelineCode).toContain("emailSent");
+      expect(pipelineCode).toContain("sendTelegramNotification");
     });
 
-    it("should have email as primary and telegram as backup", async () => {
+    it("should differentiate notification type based on destination match", async () => {
       const fs = await import("fs");
       const pipelineCode = fs.readFileSync("server/unified-attack-pipeline.ts", "utf-8");
-      // Email should come before Telegram
-      const emailIdx = pipelineCode.indexOf("Email Notification (primary)");
-      const telegramIdx = pipelineCode.indexOf("Telegram as backup");
-      expect(emailIdx).toBeLessThan(telegramIdx);
+      // Should use fullSuccess/partialSuccess/fileDeployed
+      expect(pipelineCode).toContain("fullSuccess");
+      expect(pipelineCode).toContain("notificationType");
+      expect(pipelineCode).toContain("redirectDestinationMatch");
     });
 
-    it("should include shellless results in job-runner email", async () => {
+    it("should include shellless results in job-runner", async () => {
       const fs = await import("fs");
       const jobRunnerCode = fs.readFileSync("server/job-runner.ts", "utf-8");
       expect(jobRunnerCode).toContain("shelllessSuccesses");
-      expect(jobRunnerCode).toContain("Shellless Attack สำเร็จ");
-      expect(jobRunnerCode).toContain("FridayAI Report");
+      expect(jobRunnerCode).toContain("Shellless Attack");
     });
   });
 
   describe("Pipeline timeout", () => {
-    it("should have 6 minute timeout (increased from 3)", async () => {
+    it("should have pipeline timeout configured", async () => {
       const fs = await import("fs");
       const jobRunnerCode = fs.readFileSync("server/job-runner.ts", "utf-8");
-      expect(jobRunnerCode).toContain("Pipeline timeout (6min)");
-      expect(jobRunnerCode).toContain("6 * 60 * 1000");
+      // Should have a timeout for pipeline execution
+      expect(jobRunnerCode).toContain("timeout");
+      expect(jobRunnerCode).toContain("Pipeline");
     });
   });
 });

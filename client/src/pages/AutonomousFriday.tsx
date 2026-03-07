@@ -587,6 +587,15 @@ export default function AutonomousFriday() {
             });
             toast.warning("Pipeline partial success — some files deployed");
           } else if (status.status === "failed") {
+            setFinalResult({
+              success: false, mode,
+              duration: status.duration || 0,
+              shellUrls: status.shellUrls || [],
+              verifiedUrls: status.verifiedUrls || [],
+              deployedFiles: status.deployedUrls || [],
+              filesDeployed: status.filesDeployed || 0,
+              filesVerified: status.filesVerified || 0,
+            });
             setError(status.errorMessage || "Pipeline failed");
             toast.error(`Pipeline failed: ${status.errorMessage || "Unknown error"}`);
           } else {
@@ -1870,7 +1879,7 @@ export default function AutonomousFriday() {
                             { label: "Mode", value: String(finalResult.mode || mode).toUpperCase(), color: "text-cyan-400" },
                             { label: "Duration", value: `${Math.round((finalResult.duration as number || 0) / 1000)}s`, color: "text-muted-foreground" },
                             { label: "Escalation", value: String(finalResult.escalationLevel || "N/A"), color: "text-orange-400" },
-                            { label: "Files Deployed", value: String((finalResult.filesDeployed as any)?.length || finalResult.deployedFiles || 0), color: "text-emerald-400" },
+                            { label: "Files Deployed", value: String(finalResult.filesDeployed ?? finalResult.deployedFiles?.length ?? 0), color: "text-emerald-400" },
                             { label: "Shell URLs", value: String((finalResult.shellUrls as any)?.length || 0), color: "text-violet-400" },
                             { label: "Verified", value: String((finalResult.verifiedUrls as any)?.length || 0), color: "text-blue-400" },
                             { label: "Epochs", value: String(finalResult.epochs || finalResult.waves || 0), color: "text-amber-400" },

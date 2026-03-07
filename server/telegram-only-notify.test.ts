@@ -89,12 +89,12 @@ describe("Telegram notification type accuracy", () => {
     const fs = await import("fs");
     const content = fs.readFileSync("server/unified-attack-pipeline.ts", "utf-8");
     
-    // Should check hasRealSuccess for "success" type
-    expect(content).toContain("hasRealSuccess");
-    expect(content).toContain("hasShelllessRedirect");
+    // Should check fullSuccess/partialSuccess/fileDeployed for notification type
+    expect(content).toContain("fullSuccess");
+    expect(content).toContain("notificationType");
     
-    // Telegram type should differentiate real vs shellless
-    expect(content).toMatch(/hasRealSuccess.*"success"/);
+    // Telegram type should differentiate based on destination match
+    expect(content).toMatch(/fullSuccess.*"success"/);
   });
 
   it("job-runner should differentiate real vs shellless in Telegram", async () => {

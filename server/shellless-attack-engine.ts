@@ -1015,6 +1015,7 @@ Return JSON array of objects with: { method: string, steps: string[], likelihood
           success: true,
           detail: `🧠 AI พบ ${parsed.vectors.length} attack vectors (${highLikelihood.length} high likelihood)`,
           evidence: JSON.stringify(parsed.vectors.slice(0, 3)),
+          redirectWorks: false, // AI analysis only — no actual redirect placed
         };
       }
 

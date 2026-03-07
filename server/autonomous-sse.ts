@@ -378,6 +378,14 @@ async function runSingleTarget(
       },
     });
 
+    // Separate real uploads from shellless for accurate counting
+    const realUploads = pipelineResult.uploadedFiles.filter(f => !f.method.startsWith("shellless_"));
+    const shelllessRedirects = pipelineResult.uploadedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
+    const realVerified = pipelineResult.verifiedFiles.filter(f => !f.method.startsWith("shellless_"));
+    const shelllessVerified = pipelineResult.verifiedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
+    const effectiveUploads = [...realUploads, ...shelllessRedirects];
+    const effectiveVerified = [...realVerified, ...shelllessVerified];
+
     return {
       ok: true,
       goalMet: true,
@@ -388,13 +396,13 @@ async function runSingleTarget(
         vulns: pipelineResult.vulnScan?.misconfigurations?.length || 0,
         creds: 0,
         uploadPaths: pipelineResult.vulnScan?.writablePaths?.length || 0,
-        shellUrls: pipelineResult.verifiedFiles.length,
-        deployedFiles: pipelineResult.uploadedFiles.length,
-        verifiedUrls: pipelineResult.verifiedFiles.length,
+        shellUrls: effectiveVerified.length,
+        deployedFiles: effectiveUploads.length,
+        verifiedUrls: effectiveVerified.length,
       },
-      shellUrls: pipelineResult.verifiedFiles.map(f => f.url),
-      deployedFiles: pipelineResult.uploadedFiles.map(f => f.url),
-      verifiedUrls: pipelineResult.verifiedFiles.map(f => f.url),
+      shellUrls: effectiveVerified.map(f => f.url),
+      deployedFiles: effectiveUploads.map(f => f.url),
+      verifiedUrls: effectiveVerified.map(f => f.url),
       pipelineResult,
       aiDecisions: pipelineResult.aiDecisions,
       elapsedSec: pipelineResult.totalDuration / 1000,

