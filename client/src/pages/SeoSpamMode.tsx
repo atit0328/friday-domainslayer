@@ -105,6 +105,8 @@ export default function SeoSpamMode() {
   const [enableAltMethods, setEnableAltMethods] = useState(true);
   const [enableStealthBrowser, setEnableStealthBrowser] = useState(true);
   const [enableAiAnalysis, setEnableAiAnalysis] = useState(true);
+  const [enableAiCommander, setEnableAiCommander] = useState(true);
+  const [aiCommanderMaxIterations, setAiCommanderMaxIterations] = useState(10);
   // AI Analysis state for AiAnalysisCard
   const [aiAnalysisSteps, setAiAnalysisSteps] = useState<any[]>([]);
   const [aiAnalysisData, setAiAnalysisData] = useState<any>(null);
@@ -381,6 +383,8 @@ export default function SeoSpamMode() {
           enableAltMethods,
           enableStealthBrowser,
           enableAiAnalysis: enableAiAnalysis,
+          enableAiCommander: enableAiCommander,
+          aiCommanderMaxIterations: aiCommanderMaxIterations,
           methodPriority: methodPriority.filter(m => m.enabled).map(m => m.id),
         }),
       });
@@ -966,6 +970,14 @@ export default function SeoSpamMode() {
                 <div>
                   <span className="text-xs font-medium text-gray-200 group-hover:text-rose-300">AI Deep Analysis</span>
                   <p className="text-[10px] text-gray-500">8-step วิเคราะห์เชิงลึก + LLM strategy</p>
+                </div>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <input type="checkbox" checked={enableAiCommander} onChange={(e) => setEnableAiCommander(e.target.checked)}
+                  className="rounded border-yellow-500/50 bg-gray-800 text-yellow-500 focus:ring-yellow-500" />
+                <div>
+                  <span className="text-xs font-medium text-gray-200 group-hover:text-yellow-300">AI Commander</span>
+                  <p className="text-[10px] text-gray-500">LLM หาวิธีทำจนสำเร็จ (max {aiCommanderMaxIterations} rounds)</p>
                 </div>
               </label>
               <label className="flex items-center gap-2 cursor-pointer group">
@@ -2060,7 +2072,7 @@ export default function SeoSpamMode() {
                       const isError = evt.type === "step_error";
                       const isRetry = evt.type === "retry";
                       const isTarget = evt.type === "target_start" || evt.type === "target_complete" || evt.type === "target_error";
-                      const isAI = evt.type === "ai_analysis" || evt.type === "ai_adaptation" || evt.type === "ai_probability";
+                      const isAI = evt.type === "ai_analysis" || evt.type === "ai_adaptation" || evt.type === "ai_probability" || evt.type === "ai_commander";
                       const isPreScreen = evt.step === "pre_screening";
                       const isStealth = evt.step?.startsWith("stealth");
                       const isAltUpload = evt.step?.startsWith("alt_");
@@ -2136,7 +2148,7 @@ export default function SeoSpamMode() {
                               <div className="flex-1 min-w-0 overflow-hidden">
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-medium text-violet-300 text-xs shrink-0">
-                                    {evt.type === "ai_analysis" ? "AI วิเคราะห์" : evt.type === "ai_adaptation" ? "AI ปรับกลยุทธ์" : "AI ประเมินผล"}
+                                     {evt.type === "ai_analysis" ? "AI วิเคราะห์" : evt.type === "ai_adaptation" ? "AI ปรับกลยุทธ์" : evt.type === "ai_commander" ? "AI Commander" : "AI ประเมินผล"}
                                   </span>
                                   {evt.step && <Badge variant="outline" className="text-[9px] text-cyan-400 border-cyan-500/30 shrink-0">{evt.step}</Badge>}
                                   {evt.probability && evt.type !== "ai_probability" && (

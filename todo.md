@@ -1682,3 +1682,24 @@
   - [x] Extract AI analysis events จาก SSE stream เข้า state
   - [x] Reset AI analysis state เมื่อเริ่ม deploy ใหม่
 - [x] Vitest tests — 953 passed (5 AI analysis tests passed, 4 pre-existing failures)
+
+# AI Autonomous Attack Engine — LLM เป็นผู้บัญชาการ ลองจนกว่าจะสำเร็จ
+- [x] ออกแบบ architecture: AI Commander Loop (OODA: Observe → Orient → Decide → Act)
+- [x] สร้าง ai-autonomous-engine.ts (~600 lines):
+  - [x] AI Recon Phase: สแกน 20+ paths, ตรวจ vuln paths, DNS, headers, CMS detection
+  - [x] AI Decision Phase: LLM เลือก method + สร้าง custom payload (structured JSON output)
+  - [x] AI Execute Phase: ส่ง HTTP request จริง (PUT/POST/PATCH/MOVE/COPY)
+  - [x] AI Learn Phase: ส่ง error + response body กลับไปให้ LLM วิเคราะห์
+  - [x] AI Adapt Phase: LLM ปรับ strategy ตาม error — เลือก method/payload/filename ใหม่
+  - [x] AI Retry Loop: วนลูปจนสำเร็จ (max configurable iterations)
+  - [x] AI Custom Payload: LLM สร้าง PHP/HTML payload เฉพาะ target ทุก iteration
+  - [x] AI Filename Strategy: LLM เลือก bypass technique ตาม server type + WAF
+  - [x] AI Path Selection: LLM เลือก upload path ตาม recon findings
+  - [x] AI Redirect Verification: ตรวจสอบ redirect + destination match
+- [x] Integrate engine เข้า oneclick-sse.ts (SeoSpamMode) — fallback หลัง enhanced parallel
+- [x] Integrate engine เข้า unified-attack-pipeline.ts (AutonomousFriday) — fallback หลัง cloaking
+- [x] Update frontend:
+  - [x] เพิ่ม enableAiCommander checkbox + aiCommanderMaxIterations ใน SeoSpamMode
+  - [x] ส่ง enableAiCommander + aiCommanderMaxIterations ใน request body
+  - [x] เพิ่ม AI Commander event rendering (type: ai_commander)
+- [x] Vitest tests — 10 tests passed (recon, decision, execute, learn, adapt, success, exhausted)
