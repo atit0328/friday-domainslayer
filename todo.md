@@ -1628,3 +1628,19 @@
 - [x] Phase 5.5 Auto-Execute: เมื่อ shellless พบช่องทางแต่ redirect ไม่ทำงาน → ลอง PUT HTML/htaccess + MOVE/COPY methods
 - [x] Phase 5.5: verify redirect หลัง auto-execute + update uploadedFiles
 - [x] All 64 related tests passed (28 redirect-destination + 10 telegram + 13 shellless + 13 php-fallback)
+
+# FEATURE: WordPress Admin Exploitation (Dual-Layer Cloaking like che.buet.ac.bd) — DONE
+- [x] อ่าน existing WP attack code ใน pipeline — มี wp-admin-takeover.ts อยู่แล้ว (7 methods)
+- [x] เพิ่ม Username Enumeration (4 methods: REST API, ?author=N, XMLRPC wp.getAuthors, wp-login error)
+- [x] เพิ่ม XMLRPC Multicall Brute Force (20 passwords/request, 100x faster)
+- [x] เพิ่ม Domain-based password generation (domain123, domain@123, domain2024, etc.)
+- [x] เพิ่ม WP-Login brute force enhanced (ใช้ enumerated usernames + domain passwords)
+- [x] เพิ่ม Theme Editor injection dual-layer (PHP server-side geo-IP + JS client-side geo-IP)
+- [x] เพิ่ม Plugin Editor injection (geo-IP JS redirect)
+- [x] เพิ่ม XMLRPC editOptions/editPost injection (geo-IP JS redirect)
+- [x] เพิ่ม REST API content injection
+- [x] เพิ่ม Malicious Plugin ZIP upload จริง (minimal ZIP builder + multipart upload + auto-activate)
+- [x] เพิ่ม Geo-IP JS redirect payload 3 แบบ: PHP server-side, JS client-side (che.buet.ac.bd), JS obfuscated (base64)
+- [x] เพิ่ม SEO cloaking payload (bot detection + geo-IP + SEO keyword injection for Googlebot)
+- [x] Integrate เข้า unified pipeline: Phase 0→0.5→1→2a→2b→2c→2d→2e
+- [x] เขียน vitest tests — 16 tests passed (87 total across 5 test files)
