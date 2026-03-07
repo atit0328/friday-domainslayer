@@ -10,6 +10,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { startScheduler } from "../seo-scheduler";
+import { startProxyScheduler } from "../routers/proxy";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -68,6 +69,8 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     // Start SEO scheduler for weekly auto-run
     startScheduler();
+    // Start proxy health check scheduler (every 30 minutes)
+    startProxyScheduler(30 * 60 * 1000);
   });
 }
 

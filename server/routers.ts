@@ -34,6 +34,7 @@ import { rankDashboardRouter } from "./routers/rank-dashboard";
 import { autonomousRouter } from "./routers/autonomous";
 import { seoDailyRouter } from "./routers/seo-daily";
 import { jobsRouter } from "./routers/jobs";
+import { proxyRouter, startProxyScheduler } from "./routers/proxy";
 
 export const appRouter = router({
   system: systemRouter,
@@ -97,6 +98,9 @@ export const appRouter = router({
 
   // Background Jobs
   jobs: jobsRouter,
+
+  // Proxy Management
+  proxy: proxyRouter,
 });
 
 export type AppRouter = typeof appRouter;

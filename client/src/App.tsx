@@ -33,6 +33,7 @@ const UserManagement = lazy(() => import("./pages/UserManagement"));
 const RankDashboard = lazy(() => import("./pages/RankDashboard"));
 const AutonomousFriday = lazy(() => import("./pages/AutonomousFriday"));
 const AutonomousHistory = lazy(() => import("./pages/AutonomousHistory"));
+const ProxyDashboard = lazy(() => import("./pages/ProxyDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -124,6 +125,7 @@ function ProtectedRouter() {
         <Route path="/templates">{() => <SuperadminGuard><TemplateLibrary /></SuperadminGuard>}</Route>
         <Route path="/keyword-ranking">{() => <SuperadminGuard><KeywordRanking /></SuperadminGuard>}</Route>
         <Route path="/autonomous-history">{() => <SuperadminGuard><AutonomousHistory /></SuperadminGuard>}</Route>
+        <Route path="/proxy-dashboard">{() => <SuperadminGuard><ProxyDashboard /></SuperadminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

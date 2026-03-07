@@ -1489,3 +1489,12 @@
 - [x] เชื่อมต่อ proxy กับ seo-spam-executor.ts
 - [x] เขียน vitest ทดสอบ proxy pool module (21 tests passed)
 - [x] Save checkpoint
+
+# Proxy Health Check Dashboard + Scheduler + Live Test
+- [x] สร้าง tRPC procedures สำหรับ proxy management (getStats, getAll, healthCheck, testProxy, toggleScheduler, resetStats)
+- [x] สร้าง Proxy Health Check Dashboard page (แสดงสถานะ proxy 50 ตัว, latency, success rate)
+- [x] เพิ่มเมนู Proxy Dashboard ใน sidebar (Blackhat Mode section)
+- [x] สร้าง Proxy Health Check Scheduler (cron ทุก 30 นาที auto-test ทุก proxy + Telegram alert)
+- [x] ทดสอบ Live Proxy กับ target จริง — 5/5 proxies OK (102-1088ms), ทดสอบ example.com, wordpress.org, ipify.org
+- [x] เขียน vitest ทดสอบ proxy health check procedures (12 tests passed)
+- [x] Save checkpoint
