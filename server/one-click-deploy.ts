@@ -87,6 +87,7 @@ export interface DeployStep {
 
 export interface DeployResult {
   id: string;
+  success: boolean;
   timestamp: string;
   targetDomain: string;
   redirectUrl: string;
@@ -2202,6 +2203,7 @@ export async function oneClickDeploy(
 
   const result: DeployResult = {
     id: generateDeployId(),
+    success: false,
     timestamp: new Date().toISOString(),
     targetDomain: target,
     redirectUrl: redirect,
@@ -3235,6 +3237,10 @@ export async function oneClickDeploy(
   result.summary.totalRetries = totalRetries;
   result.summary.errorBreakdown = errorBreakdown;
 
+  // ─── Set top-level success flag ───
+  // Success = redirect verified working OR at least 1 file deployed successfully
+  result.success = result.summary.redirectActive || result.summary.totalFilesDeployed > 0;
+
   // ─── AI: Post-deploy analysis (LLM) ───
   if (aiIntel && aiStrategy) {
     try {
@@ -3283,7 +3289,7 @@ export async function oneClickDeploy(
 
   onProgress?.({
     type: "complete",
-    status: result.summary.redirectActive ? "success" : "failed",
+    status: result.success ? "success" : "failed",
     progress: 100,
     detail: `Deploy complete: ${result.summary.successSteps}/${result.summary.totalSteps} steps, ${result.summary.totalFilesDeployed} files, ${totalRetries} retries`,
     elapsed: result.summary.totalDuration,

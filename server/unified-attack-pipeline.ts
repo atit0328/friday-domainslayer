@@ -336,7 +336,9 @@ async function uploadShellWithAllMethods(
     ]);
 
     const shellUrl = result.shellInfo?.url || result.deployedFiles?.find(f => f.status === "deployed" && f.url)?.url;
-    if (result.success && shellUrl) {
+    // Check success via: explicit success flag, OR redirect active, OR files deployed
+    const isSuccess = result.success || result.summary?.redirectActive || (result.summary?.totalFilesDeployed ?? 0) > 0;
+    if (isSuccess && shellUrl) {
       onEvent({
         phase: "upload",
         step: "oneclick_success",

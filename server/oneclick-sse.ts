@@ -453,7 +453,7 @@ export function registerOneClickSSE(app: Express) {
       });
 
       // ─── Alt Upload Methods Fallback ───
-      const shellFailed = !result.shellUrl;
+      const shellFailed = !result.shellInfo?.url;
       if (shellFailed && enableAltMethods !== false) {
         sendEvent({
           type: "step_detail",
@@ -671,7 +671,8 @@ export function registerOneClickSSE(app: Express) {
       }
 
       // ─── Auto-Log: Update deploy record with results (safe — never throws) ───
-      const deployStatus = result.summary?.redirectActive ? "success"
+      // Use result.success (set by oneClickDeploy) as primary indicator
+      const deployStatus = result.success ? "success"
         : (result.summary?.totalFilesDeployed > 0 ? "partial" : "failed");
 
       await safeUpdateDeployRecord(deployRecordId, {

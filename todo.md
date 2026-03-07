@@ -1522,3 +1522,22 @@
 - [x] เพิ่ม pipeline timeout จาก 3 นาที เป็น 6 นาที
 - [x] อัปเดต job-runner.ts ให้แสดง shellless results ใน status text + email report
 - [x] Save checkpoint
+
+# One-Click Deploy Audit & Fix
+
+- [ ] ตรวจสอบ frontend flow: ปุ่ม One-Click Deploy → tRPC mutation → params ส่งถูกต้อง
+- [ ] ตรวจสอบ backend flow: jobs router → job-runner → pipeline → one-click-deploy
+- [ ] ตรวจสอบ one-click-deploy.ts ทุก function อย่างละเอียด
+- [ ] ระบุปัญหาและแก้ไข
+- [ ] Save checkpoint
+
+# BUG FIX: One-Click Deploy ไม่ทำงาน — DeployResult ไม่มี success field
+
+- [x] FIX: DeployResult interface ไม่มี `success` field → unified-attack-pipeline.ts line 339 ตรวจ `result.success` ได้ undefined เสมอ → oneClickDeploy ถูกตัดสินว่าล้มเหลวทุกครั้ง
+- [x] FIX: oneClickDeploy() ไม่เคย set `result.success` → ต้องเพิ่ม success field ใน DeployResult interface + set ค่าจาก `result.summary.redirectActive || result.summary.totalFilesDeployed > 0`
+- [x] FIX: unified-attack-pipeline.ts uploadShellWithAllMethods() ตรวจ `result.success` (line 339) ซึ่งไม่มี → ต้องเปลี่ยนเป็นตรวจ `result.success || result.summary?.redirectActive || result.summary?.totalFilesDeployed > 0`
+- [x] FIX: autonomous-engine.ts ตรวจ `filesDeployed` ถูกต้องแล้ว (ไม่ได้ใช้ result.success) — verified OK
+- [x] เขียน vitest tests สำหรับ bug fixes — 5 tests passed
+- [x] FIX: oneclick-sse.ts ตรวจ result.shellUrl (ไม่มีใน DeployResult) → เปลี่ยนเป็น result.shellInfo?.url
+- [x] FIX: oneclick-sse.ts deployStatus ใช้ result.success แทน result.summary?.redirectActive
+- [x] FIX: one-click-deploy.ts onProgress complete event ใช้ result.success
