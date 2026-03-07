@@ -1,0 +1,1 @@
+ALTER TABLE `seo_actions` MODIFY COLUMN `seoActionType` enum('analysis','keyword_research','onpage_audit','backlink_build','content_create','pbn_post','tier2_build','social_signal','index_request','disavow','strategy_update','rank_check','competitor_analysis','algorithm_check','risk_assessment','wp_fix','campaign_phase','schema_markup','internal_linking') NOT NULL;

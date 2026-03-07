@@ -1,0 +1,139 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1772472585054,
+      "tag": "0000_broken_celestials",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1772472788976,
+      "tag": "0001_supreme_power_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1772521164581,
+      "tag": "0002_careful_barracuda",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1772522777596,
+      "tag": "0003_zippy_silverclaw",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1772528148767,
+      "tag": "0004_bumpy_tarot",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1772529502140,
+      "tag": "0005_superb_power_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1772612392498,
+      "tag": "0006_parched_rattler",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1772622421748,
+      "tag": "0007_noisy_lorna_dane",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1772644911621,
+      "tag": "0008_complete_lester",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1772699281136,
+      "tag": "0009_safe_nicolaos",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1772699358471,
+      "tag": "0010_aberrant_azazel",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1772702863397,
+      "tag": "0011_serious_zodiak",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1772703274275,
+      "tag": "0012_equal_silver_sable",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1772709736347,
+      "tag": "0013_spotty_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "5",
+      "when": 1772719728068,
+      "tag": "0014_natural_kronos",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "5",
+      "when": 1772735907839,
+      "tag": "0015_complex_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "5",
+      "when": 1772771689509,
+      "tag": "0016_fine_shadowcat",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1772773594999,
+      "tag": "0017_solid_proteus",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1772810429257,
+      "tag": "0018_past_proteus",
+      "breakpoints": true
+    }
+  ]
+}

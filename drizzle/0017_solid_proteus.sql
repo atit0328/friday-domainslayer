@@ -1,0 +1,1 @@
+ALTER TABLE `seo_projects` ADD `autoRunDays` json;

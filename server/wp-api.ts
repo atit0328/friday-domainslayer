@@ -1,0 +1,539 @@
+/**
+ * WordPress REST API Client
+ * ใช้ Application Password เพื่อแก้ไขเว็บไซต์ WordPress จริง
+ * รองรับ: Posts, Pages, Meta (Yoast/RankMath), Options, Plugins, Media
+ */
+
+// ═══ Types ═══
+export interface WPCredentials {
+  siteUrl: string;      // e.g. https://example.com
+  username: string;
+  appPassword: string;  // WordPress Application Password
+}
+
+export interface WPPost {
+  id: number;
+  title: { rendered: string; raw?: string };
+  content: { rendered: string; raw?: string };
+  excerpt: { rendered: string; raw?: string };
+  slug: string;
+  status: string;
+  link: string;
+  date: string;
+  modified: string;
+  meta?: Record<string, any>;
+  yoast_head_json?: Record<string, any>;
+}
+
+export interface WPPage extends WPPost {
+  parent: number;
+  menu_order: number;
+}
+
+export interface WPPlugin {
+  plugin: string;
+  status: string;
+  name: string;
+  version: string;
+  description: { rendered: string };
+}
+
+export interface WPSiteInfo {
+  name: string;
+  description: string;
+  url: string;
+  home: string;
+  gmt_offset: number;
+  timezone_string: string;
+  namespaces: string[];
+  authentication: Record<string, any>;
+}
+
+export interface WPMedia {
+  id: number;
+  source_url: string;
+  alt_text: string;
+  title: { rendered: string };
+  mime_type: string;
+}
+
+export interface WPUpdateResult {
+  success: boolean;
+  action: string;
+  detail: string;
+  before?: any;
+  after?: any;
+  error?: string;
+}
+
+// ═══ WordPress API Client ═══
+export class WordPressAPI {
+  private baseUrl: string;
+  private authHeader: string;
+  private timeout = 15000;
+
+  constructor(creds: WPCredentials) {
+    // Normalize URL — remove trailing slash
+    this.baseUrl = creds.siteUrl.replace(/\/+$/, "");
+    // Basic auth with Application Password
+    const token = Buffer.from(`${creds.username}:${creds.appPassword}`).toString("base64");
+    this.authHeader = `Basic ${token}`;
+  }
+
+  // ═══ Core HTTP ═══
+  private async request<T>(
+    method: string,
+    endpoint: string,
+    body?: any,
+    extraHeaders?: Record<string, string>,
+  ): Promise<T> {
+    const url = `${this.baseUrl}/wp-json${endpoint}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+
+    try {
+      const headers: Record<string, string> = {
+        Authorization: this.authHeader,
+        "User-Agent": "FridayAI-SEO/1.0",
+        ...extraHeaders,
+      };
+      if (body && !(body instanceof FormData)) {
+        headers["Content-Type"] = "application/json";
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        let errMsg = `WP API Error ${res.status}: ${res.statusText}`;
+        try {
+          const errJson = JSON.parse(errText);
+          errMsg = errJson.message || errMsg;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      return (await res.json()) as T;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ═══ Connection Test ═══
+  async testConnection(): Promise<{ connected: boolean; siteName: string; wpVersion: string; hasYoast: boolean; hasRankMath: boolean; error?: string }> {
+    try {
+      const info = await this.request<any>("GET", "/wp/v2/settings");
+      // Also check available namespaces
+      const root = await this.request<WPSiteInfo>("GET", "/");
+      const namespaces = root.namespaces || [];
+      const hasYoast = namespaces.some((n: string) => n.startsWith("yoast"));
+      const hasRankMath = namespaces.some((n: string) => n.startsWith("rankmath"));
+
+      return {
+        connected: true,
+        siteName: info.title || root.name || "Unknown",
+        wpVersion: "detected",
+        hasYoast,
+        hasRankMath,
+      };
+    } catch (err: any) {
+      return {
+        connected: false,
+        siteName: "",
+        wpVersion: "",
+        hasYoast: false,
+        hasRankMath: false,
+        error: err.message,
+      };
+    }
+  }
+
+  // ═══ Site Info ═══
+  async getSiteInfo(): Promise<WPSiteInfo> {
+    return this.request<WPSiteInfo>("GET", "/");
+  }
+
+  async getSiteSettings(): Promise<Record<string, any>> {
+    return this.request<Record<string, any>>("GET", "/wp/v2/settings");
+  }
+
+  async updateSiteSettings(settings: Record<string, any>): Promise<Record<string, any>> {
+    return this.request<Record<string, any>>("POST", "/wp/v2/settings", settings);
+  }
+
+  // ═══ Posts ═══
+  async getPosts(params?: { per_page?: number; page?: number; status?: string; search?: string }): Promise<WPPost[]> {
+    const qs = new URLSearchParams();
+    if (params?.per_page) qs.set("per_page", String(params.per_page));
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.status) qs.set("status", params.status);
+    if (params?.search) qs.set("search", params.search);
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.request<WPPost[]>("GET", `/wp/v2/posts${query}`);
+  }
+
+  async getPost(id: number): Promise<WPPost> {
+    return this.request<WPPost>("GET", `/wp/v2/posts/${id}?context=edit`);
+  }
+
+  async createPost(data: {
+    title: string;
+    content: string;
+    status?: string;
+    excerpt?: string;
+    slug?: string;
+    categories?: number[];
+    tags?: number[];
+    meta?: Record<string, any>;
+  }): Promise<WPPost> {
+    return this.request<WPPost>("POST", "/wp/v2/posts", {
+      ...data,
+      status: data.status || "draft",
+    });
+  }
+
+  async updatePost(id: number, data: Partial<{
+    title: string;
+    content: string;
+    excerpt: string;
+    slug: string;
+    status: string;
+    meta: Record<string, any>;
+  }>): Promise<WPPost> {
+    return this.request<WPPost>("POST", `/wp/v2/posts/${id}`, data);
+  }
+
+  async deletePost(id: number): Promise<any> {
+    return this.request<any>("DELETE", `/wp/v2/posts/${id}?force=true`);
+  }
+
+  // ═══ Pages ═══
+  async getPages(params?: { per_page?: number; page?: number; status?: string }): Promise<WPPage[]> {
+    const qs = new URLSearchParams();
+    if (params?.per_page) qs.set("per_page", String(params.per_page));
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.status) qs.set("status", params.status);
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return this.request<WPPage[]>("GET", `/wp/v2/pages${query}`);
+  }
+
+  async getPage(id: number): Promise<WPPage> {
+    return this.request<WPPage>("GET", `/wp/v2/pages/${id}?context=edit`);
+  }
+
+  async updatePage(id: number, data: Partial<{
+    title: string;
+    content: string;
+    excerpt: string;
+    slug: string;
+    status: string;
+    meta: Record<string, any>;
+  }>): Promise<WPPage> {
+    return this.request<WPPage>("POST", `/wp/v2/pages/${id}`, data);
+  }
+
+  async createPage(data: {
+    title: string;
+    content: string;
+    status?: string;
+    slug?: string;
+    parent?: number;
+    meta?: Record<string, any>;
+  }): Promise<WPPage> {
+    return this.request<WPPage>("POST", "/wp/v2/pages", {
+      ...data,
+      status: data.status || "draft",
+    });
+  }
+
+  // ═══ Categories & Tags ═══
+  async getCategories(): Promise<any[]> {
+    return this.request<any[]>("GET", "/wp/v2/categories?per_page=100");
+  }
+
+  async createCategory(name: string, slug?: string, parent?: number): Promise<any> {
+    return this.request<any>("POST", "/wp/v2/categories", { name, slug, parent });
+  }
+
+  async getTags(): Promise<any[]> {
+    return this.request<any[]>("GET", "/wp/v2/tags?per_page=100");
+  }
+
+  async createTag(name: string, slug?: string): Promise<any> {
+    return this.request<any>("POST", "/wp/v2/tags", { name, slug });
+  }
+
+  // ═══ Media ═══
+  async getMedia(params?: { per_page?: number }): Promise<WPMedia[]> {
+    const qs = params?.per_page ? `?per_page=${params.per_page}` : "";
+    return this.request<WPMedia[]>("GET", `/wp/v2/media${qs}`);
+  }
+
+  async updateMedia(id: number, data: { alt_text?: string; title?: string; caption?: string }): Promise<WPMedia> {
+    return this.request<WPMedia>("POST", `/wp/v2/media/${id}`, data);
+  }
+
+  // ═══ Plugins ═══
+  async getPlugins(): Promise<WPPlugin[]> {
+    try {
+      return await this.request<WPPlugin[]>("GET", "/wp/v2/plugins");
+    } catch {
+      return []; // Plugin API may not be available
+    }
+  }
+
+  // ═══ SEO Plugin Detection & Meta ═══
+  async detectSEOPlugin(): Promise<"yoast" | "rankmath" | "aioseo" | "none"> {
+    try {
+      const root = await this.getSiteInfo();
+      const ns = root.namespaces || [];
+      if (ns.some((n: string) => n.startsWith("yoast"))) return "yoast";
+      if (ns.some((n: string) => n.startsWith("rankmath"))) return "rankmath";
+      // Check plugins list
+      const plugins = await this.getPlugins();
+      for (const p of plugins) {
+        if (p.plugin.includes("wordpress-seo") && p.status === "active") return "yoast";
+        if (p.plugin.includes("seo-by-rank-math") && p.status === "active") return "rankmath";
+        if (p.plugin.includes("all-in-one-seo") && p.status === "active") return "aioseo";
+      }
+    } catch {}
+    return "none";
+  }
+
+  // ═══ Yoast SEO Meta Updates ═══
+  async updateYoastMeta(postId: number, type: "post" | "page", meta: {
+    title?: string;
+    description?: string;
+    focusKeyword?: string;
+    canonical?: string;
+    ogTitle?: string;
+    ogDescription?: string;
+    ogImage?: string;
+    twitterTitle?: string;
+    twitterDescription?: string;
+    noindex?: boolean;
+    nofollow?: boolean;
+  }): Promise<WPUpdateResult> {
+    try {
+      const endpoint = type === "page" ? `/wp/v2/pages/${postId}` : `/wp/v2/posts/${postId}`;
+      const yoastMeta: Record<string, any> = {};
+
+      if (meta.title) yoastMeta["yoast_wpseo_title"] = meta.title;
+      if (meta.description) yoastMeta["yoast_wpseo_metadesc"] = meta.description;
+      if (meta.focusKeyword) yoastMeta["yoast_wpseo_focuskw"] = meta.focusKeyword;
+      if (meta.canonical) yoastMeta["yoast_wpseo_canonical"] = meta.canonical;
+      if (meta.ogTitle) yoastMeta["yoast_wpseo_opengraph-title"] = meta.ogTitle;
+      if (meta.ogDescription) yoastMeta["yoast_wpseo_opengraph-description"] = meta.ogDescription;
+      if (meta.noindex !== undefined) yoastMeta["yoast_wpseo_meta-robots-noindex"] = meta.noindex ? "1" : "0";
+      if (meta.nofollow !== undefined) yoastMeta["yoast_wpseo_meta-robots-nofollow"] = meta.nofollow ? "1" : "0";
+
+      const result = await this.request<any>("POST", endpoint, { meta: yoastMeta });
+      return { success: true, action: "update_yoast_meta", detail: `อัพเดท Yoast SEO meta สำหรับ ${type} #${postId}`, after: yoastMeta };
+    } catch (err: any) {
+      return { success: false, action: "update_yoast_meta", detail: err.message, error: err.message };
+    }
+  }
+
+  // ═══ RankMath SEO Meta Updates ═══
+  async updateRankMathMeta(postId: number, type: "post" | "page", meta: {
+    title?: string;
+    description?: string;
+    focusKeyword?: string;
+    canonical?: string;
+    robots?: string[];
+  }): Promise<WPUpdateResult> {
+    try {
+      const endpoint = type === "page" ? `/wp/v2/pages/${postId}` : `/wp/v2/posts/${postId}`;
+      const rmMeta: Record<string, any> = {};
+
+      if (meta.title) rmMeta["rank_math_title"] = meta.title;
+      if (meta.description) rmMeta["rank_math_description"] = meta.description;
+      if (meta.focusKeyword) rmMeta["rank_math_focus_keyword"] = meta.focusKeyword;
+      if (meta.canonical) rmMeta["rank_math_canonical_url"] = meta.canonical;
+      if (meta.robots) rmMeta["rank_math_robots"] = meta.robots;
+
+      const result = await this.request<any>("POST", endpoint, { meta: rmMeta });
+      return { success: true, action: "update_rankmath_meta", detail: `อัพเดท RankMath meta สำหรับ ${type} #${postId}`, after: rmMeta };
+    } catch (err: any) {
+      return { success: false, action: "update_rankmath_meta", detail: err.message, error: err.message };
+    }
+  }
+
+  // ═══ Generic SEO Meta Update (auto-detect plugin) ═══
+  async updateSEOMeta(postId: number, type: "post" | "page", meta: {
+    title?: string;
+    description?: string;
+    focusKeyword?: string;
+    canonical?: string;
+    ogTitle?: string;
+    ogDescription?: string;
+  }): Promise<WPUpdateResult> {
+    const plugin = await this.detectSEOPlugin();
+    if (plugin === "yoast") {
+      return this.updateYoastMeta(postId, type, meta);
+    } else if (plugin === "rankmath") {
+      return this.updateRankMathMeta(postId, type, meta);
+    } else {
+      // Fallback: update post excerpt as meta description
+      try {
+        const endpoint = type === "page" ? `/wp/v2/pages/${postId}` : `/wp/v2/posts/${postId}`;
+        const data: any = {};
+        if (meta.title) data.title = meta.title;
+        if (meta.description) data.excerpt = meta.description;
+        await this.request<any>("POST", endpoint, data);
+        return { success: true, action: "update_basic_meta", detail: `อัพเดท title/excerpt (ไม่มี SEO plugin) สำหรับ ${type} #${postId}` };
+      } catch (err: any) {
+        return { success: false, action: "update_basic_meta", detail: err.message, error: err.message };
+      }
+    }
+  }
+
+  // ═══ Inject Custom HTML/Script (via post content) ═══
+  async injectSchemaMarkup(postId: number, type: "post" | "page", jsonLd: object): Promise<WPUpdateResult> {
+    try {
+      const endpoint = type === "page" ? `/wp/v2/pages/${postId}` : `/wp/v2/posts/${postId}`;
+      const current = await this.request<any>("GET", `${endpoint}?context=edit`);
+      const currentContent = current.content?.raw || current.content?.rendered || "";
+
+      // Remove existing schema if present
+      const cleanContent = currentContent.replace(/<!-- friday-schema-start -->[\s\S]*?<!-- friday-schema-end -->/g, "").trim();
+
+      const schemaBlock = `\n<!-- friday-schema-start -->\n<script type="application/ld+json">\n${JSON.stringify(jsonLd, null, 2)}\n</script>\n<!-- friday-schema-end -->`;
+
+      await this.request<any>("POST", endpoint, {
+        content: cleanContent + schemaBlock,
+      });
+
+      return { success: true, action: "inject_schema", detail: `เพิ่ม JSON-LD Schema ใน ${type} #${postId}` };
+    } catch (err: any) {
+      return { success: false, action: "inject_schema", detail: err.message, error: err.message };
+    }
+  }
+
+  // ═══ Bulk Content Audit ═══
+  async auditAllContent(): Promise<{
+    posts: { id: number; title: string; slug: string; status: string; hasExcerpt: boolean; wordCount: number; hasFeaturedImage: boolean }[];
+    pages: { id: number; title: string; slug: string; status: string; hasExcerpt: boolean; wordCount: number }[];
+    totalPosts: number;
+    totalPages: number;
+    issues: string[];
+  }> {
+    const posts = await this.getPosts({ per_page: 100, status: "publish" });
+    const pages = await this.getPages({ per_page: 100, status: "publish" });
+    const issues: string[] = [];
+
+    const auditedPosts = posts.map(p => {
+      const content = p.content?.rendered || "";
+      const wordCount = content.replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean).length;
+      const hasExcerpt = !!(p.excerpt?.rendered && p.excerpt.rendered.replace(/<[^>]*>/g, "").trim());
+      const hasFeaturedImage = false; // Would need featured_media check
+
+      if (wordCount < 300) issues.push(`โพสต์ "${p.title.rendered}" มีเนื้อหาน้อยเกินไป (${wordCount} คำ)`);
+      if (!hasExcerpt) issues.push(`โพสต์ "${p.title.rendered}" ไม่มี excerpt/meta description`);
+      if (!p.slug || p.slug.includes("?")) issues.push(`โพสต์ "${p.title.rendered}" มี slug ไม่ดี`);
+
+      return { id: p.id, title: p.title.rendered, slug: p.slug, status: p.status, hasExcerpt, wordCount, hasFeaturedImage };
+    });
+
+    const auditedPages = pages.map(p => {
+      const content = p.content?.rendered || "";
+      const wordCount = content.replace(/<[^>]*>/g, "").split(/\s+/).filter(Boolean).length;
+      const hasExcerpt = !!(p.excerpt?.rendered && p.excerpt.rendered.replace(/<[^>]*>/g, "").trim());
+
+      if (wordCount < 100) issues.push(`หน้า "${p.title.rendered}" มีเนื้อหาน้อยเกินไป (${wordCount} คำ)`);
+      if (!hasExcerpt) issues.push(`หน้า "${p.title.rendered}" ไม่มี excerpt/meta description`);
+
+      return { id: p.id, title: p.title.rendered, slug: p.slug, status: p.status, hasExcerpt, wordCount };
+    });
+
+    return {
+      posts: auditedPosts,
+      pages: auditedPages,
+      totalPosts: auditedPosts.length,
+      totalPages: auditedPages.length,
+      issues,
+    };
+  }
+
+  // ═══ Add Internal Links to Content ═══
+  async addInternalLinks(postId: number, type: "post" | "page", links: { anchorText: string; targetUrl: string }[]): Promise<WPUpdateResult> {
+    try {
+      const endpoint = type === "page" ? `/wp/v2/pages/${postId}` : `/wp/v2/posts/${postId}`;
+      const current = await this.request<any>("GET", `${endpoint}?context=edit`);
+      let content = current.content?.raw || current.content?.rendered || "";
+
+      let addedCount = 0;
+      for (const link of links) {
+        // Only add link if anchor text exists in content and isn't already linked
+        const anchorRegex = new RegExp(`(?<!<a[^>]*>)${escapeRegex(link.anchorText)}(?!</a>)`, "i");
+        if (anchorRegex.test(content)) {
+          content = content.replace(anchorRegex, `<a href="${link.targetUrl}" title="${link.anchorText}">${link.anchorText}</a>`);
+          addedCount++;
+        }
+      }
+
+      if (addedCount === 0) {
+        return { success: true, action: "add_internal_links", detail: `ไม่พบข้อความที่ตรงกันใน ${type} #${postId} — ข้ามการเพิ่ม link` };
+      }
+
+      await this.request<any>("POST", endpoint, { content });
+      return { success: true, action: "add_internal_links", detail: `เพิ่ม ${addedCount} internal links ใน ${type} #${postId}` };
+    } catch (err: any) {
+      return { success: false, action: "add_internal_links", detail: err.message, error: err.message };
+    }
+  }
+
+  // ═══ Update Alt Text for Images ═══
+  async fixImageAltTexts(altTexts: { mediaId: number; altText: string }[]): Promise<WPUpdateResult[]> {
+    const results: WPUpdateResult[] = [];
+    for (const item of altTexts) {
+      try {
+        await this.updateMedia(item.mediaId, { alt_text: item.altText });
+        results.push({ success: true, action: "fix_alt_text", detail: `อัพเดท alt text สำหรับ media #${item.mediaId}` });
+      } catch (err: any) {
+        results.push({ success: false, action: "fix_alt_text", detail: err.message, error: err.message });
+      }
+    }
+    return results;
+  }
+
+  // ═══ Optimize Post Slug ═══
+  async optimizeSlug(postId: number, type: "post" | "page", newSlug: string): Promise<WPUpdateResult> {
+    try {
+      const endpoint = type === "page" ? `/wp/v2/pages/${postId}` : `/wp/v2/posts/${postId}`;
+      const before = await this.request<any>("GET", `${endpoint}?context=edit`);
+      await this.request<any>("POST", endpoint, { slug: newSlug });
+      return { success: true, action: "optimize_slug", detail: `เปลี่ยน slug: "${before.slug}" → "${newSlug}"`, before: before.slug, after: newSlug };
+    } catch (err: any) {
+      return { success: false, action: "optimize_slug", detail: err.message, error: err.message };
+    }
+  }
+
+  // ═══ Update Site Title & Tagline ═══
+  async updateSiteBranding(title?: string, description?: string): Promise<WPUpdateResult> {
+    try {
+      const settings: Record<string, any> = {};
+      if (title) settings.title = title;
+      if (description) settings.description = description;
+      await this.updateSiteSettings(settings);
+      return { success: true, action: "update_branding", detail: `อัพเดท Site Title/Tagline` };
+    } catch (err: any) {
+      return { success: false, action: "update_branding", detail: err.message, error: err.message };
+    }
+  }
+}
+
+// ═══ Helper ═══
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ═══ Factory ═══
+export function createWPClient(creds: WPCredentials): WordPressAPI {
+  return new WordPressAPI(creds);
+}

@@ -1,0 +1,18 @@
+export const ENV = {
+  appId: process.env.VITE_APP_ID ?? "",
+  cookieSecret: process.env.JWT_SECRET ?? "",
+  databaseUrl: process.env.DATABASE_URL ?? "",
+  oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
+  ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
+  isProduction: process.env.NODE_ENV === "production",
+  forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
+  forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  shodanApiKey: process.env.SHODAN_API_KEY ?? "",
+  mozAccessId: process.env.MOZ_ACCESS_ID ?? "",
+  mozSecretKey: process.env.MOZ_SECRET_KEY ?? "",
+  ahrefsApiToken: process.env.AHREFS_API_TOKEN ?? "",
+  serpApiKeyFree: process.env.SERPAPI_KEY_FREE ?? "",
+  serpApiKeyDev: process.env.SERPAPI_KEY_DEV ?? "",
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+  telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",
+};
