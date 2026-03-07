@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO `users` (`openId`, `name`, `email`, `loginMethod`, `role`, `plan`, `passwordHash`, `createdAt`, `updatedAt`, `lastSignedIn`) VALUES ('local_admin_sartids1984', 'Admin', 'sartids1984@gmail.com', 'local', 'superadmin', 'PRO', '$2b$12$0V4TVGJ57KAV6UXffmKNIOEVJJFopIF7keouVVISWn0S4Tx4wbAbm', NOW(), NOW(), NOW());",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute INSERT INTO `users` (`openId`, `name`, `email`, `loginMethod`, `role`, `plan`, `passwordHash`, `createdAt`, `updatedAt`, `lastSignedIn`) VALUES ('local_admin_sartids1984', 'Admin', 'sartids1984@gmail.com', 'local', 'superadmin', 'PRO', '$2b$12$0V4TVGJ57KAV6UXffmKNIOEVJJFopIF7keouVVISWn0S4Tx4wbAbm', NOW(), NOW(), NOW());",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1540
+}

@@ -1463,3 +1463,8 @@
 - [x] Verify frontend polling integration (pollJobEvents → processEvent → UI update)
 - [x] All 382+ AI Attack Engine tests passing (50 test files, 753 tests total)
 - [x] Build successful — Vite frontend + esbuild server bundle
+
+# Fix Login — Missing Users Table Columns
+- [x] Add missing columns to users table (plan, company, passwordHash, phone)
+- [x] Push DB migration
+- [x] Verify login works with existing account (re-seeded superadmin)
