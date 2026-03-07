@@ -318,8 +318,10 @@ async function runPipelineInBackground(
       });
     }
 
-    // ─── Check if pipeline succeeded ───
-    if (pipelineResult && pipelineResult.success && pipelineResult.verifiedFiles.length > 0) {
+    // ─── Check if pipeline succeeded (only real file uploads or shellless with confirmed redirect) ───
+    const pipelineRealVerified = pipelineResult?.verifiedFiles.filter(f => !f.method.startsWith("shellless_")) || [];
+    const pipelineShelllessRedirect = pipelineResult?.verifiedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks) || [];
+    if (pipelineResult && pipelineResult.success && (pipelineRealVerified.length > 0 || pipelineShelllessRedirect.length > 0)) {
       const duration = Date.now() - startTime;
       await finalizeDeployRecord(deployId, pipelineResult, aiBrain, duration);
       await persistEvent(deployId, {
@@ -344,9 +346,15 @@ async function runPipelineInBackground(
 
     // ─── Pipeline finished (no legacy fallback — single pass only) ───
     const duration = Date.now() - startTime;
-    const hasUploaded = pipelineResult && pipelineResult.uploadedFiles.length > 0;
-    const hasVerified = pipelineResult && pipelineResult.verifiedFiles.length > 0;
-    const partial = hasUploaded && !hasVerified;
+    // Separate real uploads from shellless for accurate status
+    const realUploads = pipelineResult?.uploadedFiles.filter(f => !f.method.startsWith("shellless_")) || [];
+    const shelllessWithRedirect = pipelineResult?.uploadedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks) || [];
+    const hasRealUploaded = realUploads.length > 0;
+    const hasRealVerified = pipelineResult ? pipelineResult.verifiedFiles.filter(f => !f.method.startsWith("shellless_")).length > 0 : false;
+    const hasShelllessRedirect = shelllessWithRedirect.length > 0;
+    const hasUploaded = hasRealUploaded || hasShelllessRedirect;
+    const hasVerified = hasRealVerified || hasShelllessRedirect;
+    const partial = hasRealUploaded && !hasRealVerified;
 
     // Finalize deploy record with whatever we got
     if (pipelineResult) {

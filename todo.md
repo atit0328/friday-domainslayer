@@ -1550,3 +1550,17 @@
 - [x] ตรวจสอบ pipeline timeout 6min → เพิ่มเป็น 10min (job-runner) + 8min (oneclick-sse)
 - [x] แก้ไข: (1) cloaking trigger ตรวจ realUploadedFiles ไม่ใช่ shellless (2) เพิ่ม 15 fallback upload paths (3) activeShellUrl ใช้ realUploadedFiles (4) WAF bypass fallback paths
 - [x] เขียน vitest tests — 15 tests passed (cloaking trigger, upload paths, timeout, DeployResult, PipelineResult)
+
+# BUG FIX: False Positive Deploy Success — Deployed URL = Target URL, ไม่ redirect จริง
+
+- [x] ตรวจสอบ verify function: shellless results ใช้ sr.success เป็น verified → แก้เป็น sr.redirectWorks
+- [x] ตรวจสอบ: deployed URL เป็น target URL เพราะ shellless push url: config.targetUrl → แก้ filter ออกจาก deployedUrls
+- [x] ตรวจสอบ: shellless results ถูกนับเป็น "deployed" → แก้ world_update + success calculation แยก real/shellless
+- [x] แก้ไข: shellless verified = sr.redirectWorks (ไม่ใช่ sr.success)
+- [x] แก้ไข: deployedUrls filter target URL ออก + แสดง method note สำหรับ shellless
+- [x] แก้ไข: success = realVerifiedFiles > 0 || shelllessVerifiedFiles(redirectWorks) > 0
+- [x] แก้ไข: Telegram type = "success" เฉพาะ real uploads, "partial" สำหรับ shellless
+- [x] แก้ไข: world_update shellUrls ไม่นับ shellless, deployedFiles นับเฉพาะ real + shellless(redirectWorks)
+- [x] แก้ไข: job-runner.ts hasVerified/hasUploaded แยก real/shellless
+- [x] แก้ไข: email statusText แยก SUCCESS/PARTIAL(shellless redirect confirmed)/PARTIAL(unconfirmed)/FAILED
+- [x] เขียน vitest tests — 17 tests passed (shellless verified, deployed URLs, telegram type, world state, success criteria)

