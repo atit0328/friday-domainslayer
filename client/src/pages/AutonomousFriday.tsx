@@ -11,7 +11,7 @@
  *   - Real-time pipeline visualization with event streaming
  *   - Background job support (close tab, come back later)
  */
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -195,7 +195,19 @@ export default function AutonomousFriday() {
   const [running, setRunning] = useState(false);
   const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const [events, setEvents] = useState<AutonomousEvent[]>([]);
-  const [finalResult, setFinalResult] = useState<Record<string, unknown> | null>(null);
+  const [finalResult, setFinalResult] = useState<{
+    success?: boolean;
+    mode?: string;
+    duration?: number;
+    shellUrls?: string[];
+    verifiedUrls?: string[];
+    deployedFiles?: string[];
+    filesDeployed?: number;
+    filesVerified?: number;
+    escalationLevel?: number;
+    aiSummary?: string;
+    [key: string]: unknown;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const lastEventIdRef = useRef<number>(0);
@@ -1850,7 +1862,7 @@ export default function AutonomousFriday() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {finalResult && (
+                    {finalResult ? (
                       <div className="space-y-3">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                           {[
@@ -1872,10 +1884,13 @@ export default function AutonomousFriday() {
                         </div>
 
                         {/* Deployed URLs */}
-                        {(finalResult.shellUrls as string[])?.length > 0 && (
+                        {((): React.ReactNode => {
+                          const shellUrls = finalResult.shellUrls;
+                          if (!Array.isArray(shellUrls) || shellUrls.length === 0) return null;
+                          return (
                           <div className="space-y-1.5">
                             <span className="text-xs font-semibold text-emerald-400">Deployed Shell URLs:</span>
-                            {(finalResult.shellUrls as string[]).map((url, i) => (
+                            {shellUrls.map((url, i) => (
                               <div key={i} className="flex items-center gap-2 p-1.5 rounded bg-emerald-500/10 border border-emerald-500/20">
                                 <Skull className="w-3 h-3 text-emerald-400 shrink-0" />
                                 <a
@@ -1895,10 +1910,10 @@ export default function AutonomousFriday() {
                               </div>
                             ))}
                           </div>
-                        )}
-
-                        {(() => {
-                          const urls = finalResult.verifiedUrls as string[] | undefined;
+                          );
+                        })()}
+                        {((): React.ReactNode => {
+                          const urls = finalResult.verifiedUrls;
                           if (!Array.isArray(urls) || urls.length === 0) return null;
                           return (
                             <div className="space-y-1.5">
@@ -1927,7 +1942,7 @@ export default function AutonomousFriday() {
                         })()}
 
                         {/* AI Summary */}
-                        {finalResult.aiSummary && (
+                        {finalResult.aiSummary ? (
                           <div className="p-2.5 rounded-lg bg-violet-500/10 border border-violet-500/20">
                             <div className="flex items-center gap-1.5 mb-1">
                               <Brain className="w-3.5 h-3.5 text-violet-400" />
@@ -1937,9 +1952,9 @@ export default function AutonomousFriday() {
                               {String(finalResult.aiSummary)}
                             </p>
                           </div>
-                        )}
+                        ) : null}
                       </div>
-                    )}
+                    ) : null}
                     {error && (
                       <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
                         <p className="text-sm text-red-400 font-mono">{error}</p>

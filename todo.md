@@ -1448,3 +1448,18 @@
 - [x] Add PageLoader fallback component (spinner + loading text)
 - [x] Verify build output — pages split into separate chunks (AutonomousFriday=112KB, SeoProjectDetail=299KB, etc.)
 - [x] Main bundle reduced: 3,451KB → 688KB (80% reduction)
+
+# AI Attack Engine — Real Logic 100%
+- [x] Fix PLACEHOLDER_PWD → dynamic password generation (crypto.randomBytes)
+- [x] Fix Database migrations — re-apply all 29 tables (seo_projects, deploys, pipeline_events, etc.)
+- [x] Fix SEO Scheduler error — table not found after migration
+- [x] Install missing packages (bcryptjs, puppeteer-extra, puppeteer-extra-plugin-stealth)
+- [x] Fix TS error — finalResult type from Record<string, unknown> to typed interface
+- [x] Remove unnecessary type casts (as string[]) in AutonomousFriday.tsx
+- [x] Fix aiSummary && (...) pattern — change to ternary to avoid unknown type
+- [x] Verify all 15+ engine files have real HTTP calls (fetch/axios) — no mock/simulated logic
+- [x] Verify SSE streaming endpoints (/api/oneclick/stream, /api/autonomous/stream, /api/autonomous/batch/stream)
+- [x] Verify tRPC jobs system (start, startBatch, cancel, cancelBatch, list, events, status)
+- [x] Verify frontend polling integration (pollJobEvents → processEvent → UI update)
+- [x] All 382+ AI Attack Engine tests passing (50 test files, 753 tests total)
+- [x] Build successful — Vite frontend + esbuild server bundle
