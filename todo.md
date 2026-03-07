@@ -1541,3 +1541,12 @@
 - [x] FIX: oneclick-sse.ts ตรวจ result.shellUrl (ไม่มีใน DeployResult) → เปลี่ยนเป็น result.shellInfo?.url
 - [x] FIX: oneclick-sse.ts deployStatus ใช้ result.success แทน result.summary?.redirectActive
 - [x] FIX: one-click-deploy.ts onProgress complete event ใช้ result.success
+
+# BUG FIX: Pipeline สร้าง HTML ได้แต่ Upload/Deploy ไม่ได้ — Upload Paths: 0, Deployed: 0
+
+- [x] ตรวจสอบ unified-attack-pipeline: Upload Paths = 0 เพราะ vuln scan ไม่พบ writable paths → fallback paths ไม่ครอบคลุมพอ
+- [x] ตรวจสอบ cloaking flow: cloaking ถูก trigger จาก shellless results (ไม่ใช่ real uploads) → แก้ condition ให้ตรวจเฉพาะ real uploads
+- [x] ตรวจสอบ oneClickDeploy: direct upload ล้มเหลวเพราะ server ไม่รับ PUT/POST → เพิ่ม fallback paths 15 paths
+- [x] ตรวจสอบ pipeline timeout 6min → เพิ่มเป็น 10min (job-runner) + 8min (oneclick-sse)
+- [x] แก้ไข: (1) cloaking trigger ตรวจ realUploadedFiles ไม่ใช่ shellless (2) เพิ่ม 15 fallback upload paths (3) activeShellUrl ใช้ realUploadedFiles (4) WAF bypass fallback paths
+- [x] เขียน vitest tests — 15 tests passed (cloaking trigger, upload paths, timeout, DeployResult, PipelineResult)

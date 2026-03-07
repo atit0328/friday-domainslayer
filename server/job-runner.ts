@@ -303,7 +303,7 @@ async function runPipelineInBackground(
     try {
       pipelineResult = await Promise.race([
         runUnifiedAttackPipeline(pipelineConfig, onEvent),
-        new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Pipeline timeout (6min)")), 6 * 60 * 1000)),
+        new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Pipeline timeout (10min)")), 10 * 60 * 1000)),
         new Promise<PipelineResult>((_, reject) => {
           signal.addEventListener("abort", () => reject(new Error("Job cancelled by user")));
         }),

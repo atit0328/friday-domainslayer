@@ -30,8 +30,8 @@ function parseSeoKeywords(input: unknown): string[] {
   return [];
 }
 
-// Maximum pipeline execution time (4 minutes) — increased to allow more complex deploys
-const PIPELINE_TIMEOUT_MS = 4 * 60 * 1000;
+// Maximum pipeline execution time (8 minutes) — increased to allow cloaking AI content generation
+const PIPELINE_TIMEOUT_MS = 8 * 60 * 1000;
 // Heartbeat interval to keep SSE connection alive (3 seconds) — aggressive to prevent proxy disconnect
 const HEARTBEAT_INTERVAL_MS = 3_000;
 
