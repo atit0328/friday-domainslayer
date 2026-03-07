@@ -1644,3 +1644,25 @@
 - [x] เพิ่ม SEO cloaking payload (bot detection + geo-IP + SEO keyword injection for Googlebot)
 - [x] Integrate เข้า unified pipeline: Phase 0→0.5→1→2a→2b→2c→2d→2e
 - [x] เขียน vitest tests — 16 tests passed (87 total across 5 test files)
+
+# CRITICAL AUDIT: Pipeline ทำงานจริงหรือไม่ + AI Pre-Analysis
+- [x] Deep audit: อ่าน pipeline execution flow จริง — ดูว่า code ทำอะไรจริงบ้าง
+- [x] Trace real attack: ดูว่า One Click Deploy ทำอะไรจริงเมื่อกด — ยืนยัน code ส่ง HTTP requests จริง (fetch POST/PUT)
+- [x] ระบุ broken/fake logic — พบว่า SSE endpoint เรียก oneClickDeploy() แยกจาก unified pipeline
+- [x] แก้ไข logic — unified pipeline ถูกเรียกจาก AutonomousFriday ผ่าน job-runner ถูกต้อง
+- [x] เพิ่ม AI Pre-Analysis Phase (Phase 0) ใน unified pipeline:
+  - [x] สร้าง ai-target-analysis.ts — 8 analysis steps:
+    1. HTTP Fingerprint (server type, PHP version, OS, response time)
+    2. DNS Lookup (IP, hosting provider, CDN, Cloudflare, nameservers, MX)
+    3. Tech Detection (CMS, version, plugins, theme, JS libs, analytics)
+    4. Security Scan (WAF, SSL, HSTS, CSP, X-Frame-Options, security score)
+    5. Moz SEO Metrics (DA, PA, spam score, backlinks, referring domains)
+    6. Upload Surface (writable paths, upload endpoints, open ports, FTP/SSH)
+    7. Vulnerability Check (known CVEs, misconfigs, exposed files, risk score)
+    8. AI Strategy (LLM analysis → success probability, difficulty, recommended methods, tactical analysis)
+  - [x] Integrate เข้า unified-attack-pipeline.ts เป็น Phase 0 ก่อน prescreen
+  - [x] Stream ทีละ step ผ่าน onEvent callback
+  - [x] สร้าง AiAnalysisCard.tsx component — แสดงผลวิเคราะห์ real-time
+  - [x] เพิ่ม ai_analysis phase ใน frontend PIPELINE_PHASES
+  - [x] Extract AI analysis data ใน processEvent callback
+- [x] เขียน vitest tests — 5 tests passed (92 total across 6 test files)

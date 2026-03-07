@@ -40,6 +40,7 @@ import {
   Siren, CircleDot, Fingerprint, ListOrdered, Hash,
   Copy, ArrowDown, ArrowUp, Minus, Power, Unplug,
 } from "lucide-react";
+import AiAnalysisCard from "@/components/AiAnalysisCard";
 
 // ─── Types ───
 interface AutonomousEvent {
@@ -133,6 +134,7 @@ const MODE_OPTIONS = [
 ];
 
 const PIPELINE_PHASES = [
+  { id: "ai_analysis", label: "AI Analysis", icon: Brain, color: "text-emerald-400", bgColor: "bg-emerald-500/10", borderColor: "border-emerald-500/30" },
   { id: "prescreen", label: "Pre-Screen", icon: Search, color: "text-blue-400", bgColor: "bg-blue-500/10", borderColor: "border-blue-500/30" },
   { id: "vuln_scan", label: "Vuln Scan", icon: Bug, color: "text-red-400", bgColor: "bg-red-500/10", borderColor: "border-red-500/30" },
   { id: "shell_gen", label: "Shell Gen", icon: FileCode, color: "text-violet-400", bgColor: "bg-violet-500/10", borderColor: "border-violet-500/30" },
@@ -232,6 +234,7 @@ export default function AutonomousFriday() {
 
   // ═══ Pipeline phase tracking ═══
   const [pipelinePhases, setPipelinePhases] = useState<Record<string, PipelinePhaseState>>({
+    ai_analysis: { status: "idle", detail: "", progress: 0 },
     prescreen: { status: "idle", detail: "", progress: 0 },
     vuln_scan: { status: "idle", detail: "", progress: 0 },
     cloaking: { status: "idle", detail: "", progress: 0 },
@@ -266,6 +269,13 @@ export default function AutonomousFriday() {
     cloakingDoorwayPages: 0,
     cloakingContentSize: 0,
   });
+
+  // ═══ AI Analysis state ═══
+  const [aiAnalysisSteps, setAiAnalysisSteps] = useState<Array<{
+    stepId: string; stepName: string; status: "running" | "complete" | "error" | "skipped";
+    detail: string; progress: number; data?: any; duration?: number;
+  }>>([]);
+  const [aiAnalysisData, setAiAnalysisData] = useState<any>(null);
 
   // ═══ Batch mode state ═══
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
@@ -377,6 +387,37 @@ export default function AutonomousFriday() {
         const d = evt.data as Record<string, unknown>;
         setPipelineIntel((prev) => {
           const next = { ...prev };
+          // Extract AI Target Analysis data
+          if (d.aiTargetAnalysis) {
+            const ai = d.aiTargetAnalysis as Record<string, any>;
+            if (ai.httpFingerprint) {
+              next.serverType = ai.httpFingerprint.serverType || prev.serverType;
+            }
+            if (ai.techStack) {
+              next.cms = ai.techStack.cms || prev.cms;
+            }
+            if (ai.security) {
+              next.waf = ai.security.wafDetected || prev.waf;
+            }
+            if (ai.aiStrategy) {
+              next.successProb = ai.aiStrategy.overallSuccessProbability || prev.successProb;
+            }
+            // Store full AI analysis data
+            setAiAnalysisData(ai);
+          }
+          // Extract AI analysis step data
+          if (d.analysisStep) {
+            const step = d.analysisStep as { stepId: string; stepName: string; status: string; detail: string; progress: number; data?: any; duration?: number };
+            setAiAnalysisSteps(prev => {
+              const existing = prev.findIndex(s => s.stepId === step.stepId);
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = step as any;
+                return updated;
+              }
+              return [...prev, step as any];
+            });
+          }
           if (d.prescreen) {
             const ps = d.prescreen as Record<string, unknown>;
             next.serverType = (ps.serverType as string) || prev.serverType;
@@ -433,7 +474,11 @@ export default function AutonomousFriday() {
     // Auto-detect layer from pipeline phase
     if (!evt.layer && evt.phase) {
       const phase = evt.phase;
-      if (["prescreen", "vuln_scan", "shell_gen", "upload", "verify"].includes(phase)) {
+      // AI Analysis runs before layers — update phase tracking only
+      if (phase === "ai_analysis") {
+        // Don't assign to any layer — it's Phase 0
+      }
+      else if (["prescreen", "vuln_scan", "shell_gen", "upload", "verify"].includes(phase)) {
         // Layer 1: AttackLoop (OODA)
         setLayers((prev) => {
           const layer = { ...prev[1] };
@@ -494,7 +539,10 @@ export default function AutonomousFriday() {
 
   // ─── Reset all pipeline state ───
   const resetPipelineState = () => {
+    setAiAnalysisSteps([]);
+    setAiAnalysisData(null);
     setPipelinePhases({
+      ai_analysis: { status: "idle", detail: "", progress: 0 },
       prescreen: { status: "idle", detail: "", progress: 0 },
       vuln_scan: { status: "idle", detail: "", progress: 0 },
       cloaking: { status: "idle", detail: "", progress: 0 },
@@ -1590,6 +1638,17 @@ export default function AutonomousFriday() {
                         {type}
                       </Badge>
                     ))}
+                  </div>
+                )}
+
+                {/* AI Analysis Card */}
+                {pipelinePhases.ai_analysis && pipelinePhases.ai_analysis.status !== "idle" && (
+                  <div className="mt-3">
+                    <AiAnalysisCard
+                      phaseState={pipelinePhases.ai_analysis}
+                      analysisSteps={aiAnalysisSteps}
+                      analysisData={aiAnalysisData}
+                    />
                   </div>
                 )}
               </CardContent>

