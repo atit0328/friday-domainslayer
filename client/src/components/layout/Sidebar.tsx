@@ -7,7 +7,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
-  History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield,
+  History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -35,6 +35,7 @@ const BLACKHAT_NAV = [
   { href: "/deploy-history", icon: History, label: "Deploy History" },
   { href: "/templates", icon: LayoutTemplate, label: "Template Library" },
   { href: "/keyword-ranking", icon: Target, label: "Keyword Ranking" },
+  { href: "/mass-discovery", icon: Crosshair, label: "Mass Discovery" },
   { href: "/proxy-dashboard", icon: Shield, label: "Proxy Dashboard" },
 ];
 

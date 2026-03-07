@@ -35,6 +35,7 @@ import { autonomousRouter } from "./routers/autonomous";
 import { seoDailyRouter } from "./routers/seo-daily";
 import { jobsRouter } from "./routers/jobs";
 import { proxyRouter, startProxyScheduler } from "./routers/proxy";
+import { discoveryRouter } from "./routers/discovery";
 
 export const appRouter = router({
   system: systemRouter,
@@ -101,6 +102,9 @@ export const appRouter = router({
 
   // Proxy Management
   proxy: proxyRouter,
+
+  // Mass Target Discovery & Auto-Pipeline
+  discovery: discoveryRouter,
 });
 
 export type AppRouter = typeof appRouter;
