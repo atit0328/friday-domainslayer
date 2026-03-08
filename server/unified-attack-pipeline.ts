@@ -32,6 +32,7 @@ import { generatePostUploadPayloads, deployPostUploadPayloads, runDetectionScan,
 import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./non-wp-exploits";
+import { runComprehensiveAttackVectors, type AttackVectorResult, type AttackVectorConfig } from "./comprehensive-attack-vectors";
 import { findOriginIP, type OriginIPResult } from "./cf-origin-bypass";
 import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCredentials } from "./wp-brute-force";
 
@@ -70,6 +71,8 @@ export interface PipelineConfig {
   aiCommanderMaxIterations?: number;
   // Post-upload payload deployment
   enablePostUpload?: boolean;
+  // Comprehensive attack vectors (SSTI, LDAP, NoSQL, IDOR, BOLA, BFLA, JWT, etc.)
+  enableComprehensiveAttacks?: boolean;
   // User tracking
   userId?: number;
   // Global pipeline timeout (ms) — default 20 minutes
@@ -77,7 +80,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -153,6 +156,8 @@ export interface PipelineResult {
   postUploadReport?: PostUploadReport | null;
   // Detection scan
   detectionScan?: { detections: any[]; liveChecks: any[] } | null;
+  // Comprehensive attack vectors (29 additional vectors)
+  comprehensiveResults?: AttackVectorResult[] | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -2455,6 +2460,7 @@ export async function runUnifiedAttackPipeline(
   // ═══ AI COMMANDER — LLM-Driven Autonomous Attack Loop ═══
   // Last resort: if ALL methods failed, let AI Commander try autonomously
   let aiCommanderResult: AiCommanderResult | null = null;
+  let comprehensiveResults: AttackVectorResult[] = [];
   const noSuccessfulUploads = uploadedFiles.filter(f => f.verified).length === 0;
   if (noSuccessfulUploads && config.enableAiCommander !== false && !shouldStop('ai_commander')) {
     const domain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
@@ -2543,6 +2549,68 @@ export async function runUnifiedAttackPipeline(
         step: "ai_commander_error",
         detail: `AI Commander error: ${error.message}`,
         progress: 99,
+      });
+    }
+  }
+
+  // ═══ COMPREHENSIVE ATTACK VECTORS (29 additional vectors) ═══
+  // Run SSTI, LDAP Injection, NoSQL Injection, IDOR, BOLA, BFLA, JWT Abuse, etc.
+  const comprehensiveEnabled = config.methodPriority
+    ? config.methodPriority.some(m => m.id === 'comprehensive' && m.enabled)
+    : config.enableComprehensiveAttacks !== false;
+  if (comprehensiveEnabled && !shouldStop('comprehensive')) {
+    onEvent({
+      phase: "comprehensive",
+      step: "start",
+      detail: `🔬 Comprehensive Attack Vectors: Running 29 additional attack categories (SSTI, LDAP, NoSQL, IDOR, BOLA, JWT, Prototype Pollution, etc.)...`,
+      progress: 93,
+    });
+    try {
+      const comprehensiveConfig: AttackVectorConfig = {
+        targetUrl: config.targetUrl,
+        timeout: config.timeoutPerMethod || 12000,
+        onProgress: (method: string, detail: string) => {
+          onEvent({
+            phase: "comprehensive",
+            step: method,
+            detail: `🔬 ${detail}`,
+            progress: 94,
+          });
+        },
+      };
+      comprehensiveResults = await Promise.race([
+        runComprehensiveAttackVectors(comprehensiveConfig),
+        new Promise<AttackVectorResult[]>((_, reject) =>
+          setTimeout(() => reject(new Error("Comprehensive attacks timeout")), 300000)
+        ),
+      ]);
+      const compSuccesses = comprehensiveResults.filter(r => r.success);
+      const compExploitable = comprehensiveResults.filter(r => r.exploitable);
+      if (compSuccesses.length > 0) {
+        aiDecisions.push(`🔬 Comprehensive: ${compSuccesses.length}/${comprehensiveResults.length} findings (${compExploitable.length} exploitable)`);
+        onEvent({
+          phase: "comprehensive",
+          step: "complete",
+          detail: `🔬 Comprehensive: พบ ${compSuccesses.length} vulnerabilities (${compExploitable.length} exploitable) จาก ${comprehensiveResults.length} tests`,
+          progress: 95,
+          data: { total: comprehensiveResults.length, findings: compSuccesses.length, exploitable: compExploitable.length },
+        });
+      } else {
+        aiDecisions.push(`🔬 Comprehensive: 0 findings from ${comprehensiveResults.length} tests`);
+        onEvent({
+          phase: "comprehensive",
+          step: "complete",
+          detail: `🔬 Comprehensive: ไม่พบ vulnerabilities จาก ${comprehensiveResults.length} tests`,
+          progress: 95,
+        });
+      }
+    } catch (err: any) {
+      errors.push(`Comprehensive attacks error: ${err.message}`);
+      onEvent({
+        phase: "comprehensive",
+        step: "error",
+        detail: `⚠️ Comprehensive attacks error: ${err.message}`,
+        progress: 95,
       });
     }
   }
@@ -2725,6 +2793,7 @@ export async function runUnifiedAttackPipeline(
     postUploadReport: postUploadReport || undefined,
     // Detection scan
     detectionScan: detectionScanResult || undefined,
+    comprehensiveResults: comprehensiveResults.length > 0 ? comprehensiveResults : undefined,
   };
 
   if (fullSuccess) {

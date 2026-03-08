@@ -38,7 +38,7 @@ import {
   FileText, Code, Wifi, HardDrive, Link2, ExternalLink,
   GripVertical, RotateCcw, TrendingUp, Bomb, Radar,
   Siren, CircleDot, Fingerprint, ListOrdered, Hash,
-  Copy, ArrowDown, ArrowUp, Minus, Power, Unplug,
+  Copy, ArrowDown, ArrowUp, Minus, Power, Unplug, Microscope,
 } from "lucide-react";
 import AiAnalysisCard from "@/components/AiAnalysisCard";
 
@@ -143,6 +143,7 @@ const PIPELINE_PHASES = [
   { id: "wp_admin", label: "WP Admin", icon: Lock, color: "text-orange-400", bgColor: "bg-orange-500/10", borderColor: "border-orange-500/30" },
   { id: "wp_db_inject", label: "DB Inject", icon: HardDrive, color: "text-rose-400", bgColor: "bg-rose-500/10", borderColor: "border-rose-500/30" },
   { id: "cloaking", label: "Cloaking", icon: Eye, color: "text-pink-400", bgColor: "bg-pink-500/10", borderColor: "border-pink-500/30" },
+  { id: "comprehensive", label: "Comprehensive", icon: Microscope, color: "text-cyan-400", bgColor: "bg-cyan-500/10", borderColor: "border-cyan-500/30" },
 ];
 
 // ─── Gambling Keyword Presets ───
@@ -165,6 +166,7 @@ const DEFAULT_METHOD_PRIORITY: MethodPriorityItem[] = [
   { id: "indirect", label: "Indirect Attacks", icon: "🎯", enabled: true, description: "Supply chain, CDN poisoning, DNS rebinding" },
   { id: "dns_attack", label: "DNS Attacks", icon: "🌐", enabled: false, description: "DNS takeover, subdomain hijacking" },
   { id: "config_exploit", label: "Config Exploits", icon: "⚙️", enabled: false, description: "Exposed .env, backup files, debug endpoints" },
+  { id: "comprehensive", label: "Comprehensive Vectors", icon: "🔬", enabled: true, description: "SSTI, LDAP, NoSQL, IDOR, BOLA, BFLA, JWT, Prototype Pollution, etc. (29 vectors)" },
 ];
 
 // ─── Component ───

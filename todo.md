@@ -1940,3 +1940,67 @@
 - [x] Push database schema changes (wp_error_scan, wp_error_fix enum values)
 - [x] Write vitest tests for wp_error_scan and wp_error_fix (34 tests passed)
 - [x] Verify all tests pass
+
+# Add 29 Missing Attack Vectors to AI Attack Engine
+
+## Batch 1: Injection & Template Attacks
+- [x] SSTI (Server-Side Template Injection) — Jinja2, Twig, Freemarker, Velocity, Pebble, Smarty
+- [x] Template Injection — generic template engine detection + exploitation
+- [x] LCE (Local Code Execution) — eval(), exec(), system() injection via params
+- [x] LDAP Injection — LDAP query manipulation via user input
+- [x] NoSQL Injection — MongoDB, CouchDB, Redis injection
+
+## Batch 2: Access Control & Auth Attacks
+- [x] IDOR (Insecure Direct Object Reference) — enumerate user IDs, order IDs, file IDs
+- [x] BOLA (Broken Object Level Authorization) — access other users' objects via API
+- [x] BFLA (Broken Function Level Authorization) — access admin functions as regular user
+- [x] OAuth Abuse — token theft, redirect URI manipulation, scope escalation
+- [x] MFA Fatigue — repeated push notification bombing
+- [x] Race Condition — TOCTOU, double-spend, parallel request abuse
+
+## Batch 3: Session & Token Attacks
+- [x] Session Fixation — force known session ID before auth
+- [x] Token Replay — capture and replay auth tokens
+- [x] JWT Abuse — none algorithm, weak secret, kid injection, jku/x5u manipulation
+
+## Batch 4: Network & Protocol Attacks
+- [x] MITM (Man-in-the-Middle) — SSL stripping, ARP spoofing detection, mixed content
+- [x] Slowloris — slow HTTP headers to exhaust connections
+- [x] Request Flooding — high-volume request generation
+
+## Batch 5: Supply Chain Attacks
+- [x] Dependency Confusion — private package name squatting
+- [x] Typosquatting — similar package name registration
+- [x] Magecart — payment skimmer injection via JS
+
+## Batch 6: Logic & Data Attacks
+- [x] Mass Assignment — modify protected fields via API params
+- [x] Prototype Pollution — __proto__ / constructor.prototype manipulation
+
+## Batch 7: Memory & Binary Attacks
+- [x] Memory Corruption — heap/stack corruption patterns
+- [x] Buffer Overflow — input length overflow testing
+- [x] Use-After-Free — dangling pointer exploitation patterns
+
+## Batch 8: Escape & Sandbox Attacks
+- [x] Sandbox Escape — break out of sandboxed environments
+- [x] Container Escape — Docker/K8s escape techniques
+- [x] VM Escape — hypervisor exploitation patterns
+
+## Batch 9: AI Security
+- [x] Model Poisoning — training data manipulation, adversarial examples
+
+## Integration
+- [x] Create comprehensive-attack-vectors.ts with all 28 vectors (3200+ lines real logic)
+- [x] Integrate into unified-attack-pipeline.ts (comprehensive phase)
+- [x] Add to AI Commander's available methods (methodPriority support)
+- [x] Update frontend AutonomousFriday.tsx (Comprehensive phase + method priority)
+- [x] Write vitest tests for all new vectors (37/37 passed)
+
+## Extra Vectors Added (beyond original 29)
+- [x] Open Redirect — redirect param fuzzing with 6 bypass payloads
+- [x] Host Header Injection — X-Forwarded-Host, Host override, X-Host
+- [x] Cache Poisoning — X-Forwarded-Host cache + Vary header analysis
+- [x] Deserialization — PHP unserialize, Java ObjectInputStream, Python pickle
+- [x] Privilege Escalation — admin endpoint access, role tampering, WP user enum
+- [x] Clickjacking — X-Frame-Options + CSP frame-ancestors check
