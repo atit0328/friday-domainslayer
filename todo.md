@@ -1820,3 +1820,16 @@
 - [x] เพิ่ม gambling-specific passwords (bet, casino, slot, spin, jackpot, lucky, win, vip + numbers)
 - [x] Vitest test — 49 tests passed (เพิ่ม 12 tests ใหม่สำหรับ password generation)
 - [x] Total: 42 → 419 passwords (10x increase), 546 → 6,285 combinations
+
+# Merge Blackhat Mode → AI Attack Engine
+- [x] Extract useful payloads from blackhat-engine.ts into payload-arsenal.ts (5 categories: persistence, cloaking, seo_manipulation, redirect, monetization)
+- [x] Integrate payload arsenal into unified-attack-pipeline (Phase: Post-Upload Payload Deployment)
+- [x] Add detection/defense scan to AI Attack Engine pipeline (UA cloaking check, backdoor path scan, redirect chain check)
+- [x] Merge Blackhat Mode UI tabs into AI Attack Engine frontend (Arsenal + Detect tabs)
+- [x] Redirect /blackhat → /ai-attack
+- [x] Remove Blackhat Mode from sidebar navigation
+- [x] Vitest tests — 21 tests passed (payload-arsenal.test.ts)
+
+# Change LLM Model
+- [x] เปลี่ยน model จาก gemini-2.5-flash เป็น claude-opus-4-5-20251101
+- [x] เพิ่ม thinking budget จาก 128 → 10,240 tokens (80x increase)

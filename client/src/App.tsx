@@ -120,7 +120,7 @@ function ProtectedRouter() {
         <Route path="/seo/:id" component={SeoProjectDetail} />
 
         {/* Superadmin-only routes (Blackhat section) */}
-        <Route path="/blackhat">{() => <SuperadminGuard><SeoBlackhatMode /></SuperadminGuard>}</Route>
+        <Route path="/blackhat">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/ai-attack">{() => <SuperadminGuard><AutonomousFriday /></SuperadminGuard>}</Route>
         <Route path="/deploy-history">{() => <SuperadminGuard><DeployHistory /></SuperadminGuard>}</Route>
         <Route path="/templates">{() => <SuperadminGuard><TemplateLibrary /></SuperadminGuard>}</Route>
@@ -131,6 +131,7 @@ function ProtectedRouter() {
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
+        <Route path="/blackhat-old">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/users">{() => <SuperadminGuard><UserManagement /></SuperadminGuard>}</Route>
 
         <Route path="/settings" component={Settings} />

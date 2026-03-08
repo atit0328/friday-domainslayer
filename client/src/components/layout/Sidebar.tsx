@@ -29,7 +29,6 @@ const AI_NAV = [
 ];
 
 const BLACKHAT_NAV = [
-  { href: "/blackhat", icon: Skull, label: "Blackhat Mode" },
   { href: "/ai-attack", icon: Cpu, label: "AI Attack Engine" },
   { href: "/autonomous-history", icon: Clock, label: "Attack History" },
   { href: "/deploy-history", icon: History, label: "Deploy History" },

