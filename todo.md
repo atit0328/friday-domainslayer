@@ -1752,3 +1752,20 @@
 - [x] Integrate non-wp-exploits.ts เข้า oneclick-sse.ts (ก่อน AI Commander)
 - [x] ส่ง nonWpFindings เข้า AI Decision prompt เพื่อให้ LLM ใช้ exploit findings ในการตัดสินใจ
 - [x] เขียน vitest tests — 9 tests passed (module exports, structure, severity, AI Commander integration, pipeline imports)
+
+# Deep Audit: Fix Placeholder/Fake Attack Code (ปัญหา: pattern ซ้ำ, ผลลัพธ์เหมือนกันทุกครั้ง)
+- [x] Audit unified-attack-pipeline.ts — Code ทำ HTTP call จริง (8 fetch calls, 2465 lines)
+- [x] Audit oneclick-sse.ts — Code ทำ HTTP call จริง
+- [x] Audit AI Commander executeDecision — Code ทำ fetch จริง (6 fetch calls, 1614 lines)
+- [x] Audit WAF bypass module — Code ทำ fetchWithPoolProxy จริง (3 calls) แต่ลอง path เดียว
+- [x] Audit shellless attack module — Code ทำ safeFetch จริง (30+ calls) แต่ขาด pre-conditions
+- [x] Audit one-click-deploy.ts — Code ทำ fetch จริง (19 calls, 3442 lines) แต่ใช้ proxy ผิดวิธี
+- [x] Document findings: PIPELINE_AUDIT_NOTES.md
+
+# Fix 5 Pipeline Bugs (จาก Deep Audit)
+- [x] Bug 1: one-click-deploy.ts ใช้ fetchWithProxy (HTTP_PROXY env hack) → แก้เป็น fetchWithPoolProxy (undici) — 16 fetch calls แก้แล้ว + เพิ่ม proxyFetch helper
+- [x] Bug 2: WAF bypass ลอง upload path เดียว → แก้ให้รับ uploadPaths array + rotate across paths + PUT method
+- [x] Bug 3: Pipeline ไม่ส่ง credentials → ย้าย Non-WP phase ขึ้นมาก่อน shellless + ส่ง enrichedCredentials
+- [x] Bug 4: oneClickDeploy skip เมื่อไม่มี shell → เพิ่ม fallback direct upload .htaccess + PHP redirect
+- [x] Bug 5: Pipeline timeout 8 min → เพิ่มเป็น 20 min
+- [x] Vitest: 22 tests passed (13 pipeline-bugfixes + 9 nonwp-integration)
