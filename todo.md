@@ -1810,3 +1810,13 @@
 - [x] Integrate เข้า AI Commander — Phase 2.5d + AI prompt injection + credentials passing
 - [x] Vitest tests — passed
 - [x] Live test: 168-topgame.net — enum 1 user (admins), XMLRPC blocked, wp-login lockout 2x (CF rate limit)
+
+# Upgrade WP Brute Force Password Generation
+- [x] เพิ่ม domain-based password สูตรฉลาด (ชื่อเว็บ + ตัวเลข + สัญลักษณ์) — 162 unique passwords จาก domain
+- [x] เพิ่ม leet speak variants (a→@, e→3, o→0, i→1, s→$, t→7, b→8)
+- [x] เพิ่ม CamelCase, UPPERCASE, lowercase variants
+- [x] เพิ่ม pattern ที่คนไทยชอบใช้ (เลขมงคล 168/888/777/999, ปีพ.ศ. 2567-2569, เลขคู่ 1688/6688/8888)
+- [x] เพิ่ม username-based password (admin→Admin123!, admins→Admins@2026) — 235 passwords จาก usernames
+- [x] เพิ่ม gambling-specific passwords (bet, casino, slot, spin, jackpot, lucky, win, vip + numbers)
+- [x] Vitest test — 49 tests passed (เพิ่ม 12 tests ใหม่สำหรับ password generation)
+- [x] Total: 42 → 419 passwords (10x increase), 546 → 6,285 combinations

