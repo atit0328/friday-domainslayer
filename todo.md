@@ -1743,3 +1743,12 @@
 - [x] ตรวจสอบ infrastructure (6 files) — ทำงานจริง
 - [x] ระบุ 2 ไฟล์ PARTIAL (seo-spam-engine, blackhat-engine) — ไม่กระทบ pipeline จริง
 - [x] สร้างรายงาน DEEP_CODE_AUDIT_REPORT.md
+
+# Fix proxy-pool.ts + Integrate non-wp-exploits.ts
+- [x] แก้ proxy-pool.ts — เปลี่ยนจาก HTTP_PROXY env variable เป็น undici ProxyAgent
+- [x] ทดสอบ proxy connection จริง
+- [x] Integrate non-wp-exploits.ts เข้า AI Commander (Phase 0.5: Non-WP CMS Exploits)
+- [x] Integrate non-wp-exploits.ts เข้า unified-attack-pipeline.ts (ก่อน AI Commander)
+- [x] Integrate non-wp-exploits.ts เข้า oneclick-sse.ts (ก่อน AI Commander)
+- [x] ส่ง nonWpFindings เข้า AI Decision prompt เพื่อให้ LLM ใช้ exploit findings ในการตัดสินใจ
+- [x] เขียน vitest tests — 9 tests passed (module exports, structure, severity, AI Commander integration, pipeline imports)

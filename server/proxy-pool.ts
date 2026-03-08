@@ -1,6 +1,10 @@
 /**
  * Residential Proxy Pool — Centralized Proxy Management
  * 
+ * Uses undici ProxyAgent for REAL proxy routing (not HTTP_PROXY env hack).
+ * Node.js native fetch() does NOT respect HTTP_PROXY env variable,
+ * so we use undici's fetch() + ProxyAgent for actual proxy connections.
+ * 
  * Features:
  *   - 50 residential proxies with auto-rotation
  *   - Health checking & auto-disable unhealthy proxies
@@ -11,7 +15,8 @@
  *   - Format: ip:port:user:pass → http://user:pass@ip:port
  */
 
-import { ENV } from "./_core/env";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
+import type { RequestInit as UndiciRequestInit } from "undici";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -151,7 +156,7 @@ class ProxyPool {
     }).filter(Boolean) as ProxyEntry[];
 
     this.initialized = true;
-    console.log(`[ProxyPool] Initialized with ${this.proxies.length} residential proxies`);
+    console.log(`[ProxyPool] Initialized with ${this.proxies.length} residential proxies (undici ProxyAgent)`);
   }
 
   // ─── Selection Strategies ───
@@ -184,7 +189,6 @@ class ProxyPool {
         break;
       }
       case "fastest": {
-        // Prefer proxies with lower latency (0 = untested, treat as medium)
         selected = healthy.reduce((a, b) => {
           const aLat = a.avgLatencyMs || 500;
           const bLat = b.avgLatencyMs || 500;
@@ -193,10 +197,9 @@ class ProxyPool {
         break;
       }
       case "weighted": {
-        // Weight by success rate — more successful proxies get picked more
         const weights = healthy.map(p => {
           const total = p.successCount + p.failCount;
-          if (total === 0) return 1; // untested = neutral weight
+          if (total === 0) return 1;
           return Math.max(0.1, p.successCount / total);
         });
         const totalWeight = weights.reduce((a, b) => a + b, 0);
@@ -231,7 +234,6 @@ class ProxyPool {
         proxy.lastUsed = Date.now();
         return proxy;
       }
-      // Pinned proxy is unhealthy — re-assign
       this.targetPinMap.delete(targetDomain);
     }
     const proxy = this.getProxy(strategy);
@@ -248,8 +250,6 @@ class ProxyPool {
     const healthy = this.proxies.filter(p => p.healthy);
     if (healthy.length === 0) return [];
     const n = Math.min(count, healthy.length);
-
-    // Shuffle and take first N
     const shuffled = [...healthy].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, n);
   }
@@ -292,47 +292,62 @@ class ProxyPool {
     }
   }
 
-  // ─── Health Check ───
+  // ─── Health Check (REAL via undici ProxyAgent) ───
 
   /**
-   * Check a single proxy connectivity
+   * Create undici ProxyAgent for a proxy entry
+   */
+  private createProxyAgent(proxy: ProxyEntry): ProxyAgent {
+    return new ProxyAgent({
+      uri: proxy.url,
+      requestTls: {
+        rejectUnauthorized: false,
+      },
+    });
+  }
+
+  /**
+   * Check a single proxy connectivity using undici ProxyAgent (REAL proxy test)
    */
   async checkProxy(proxy: ProxyEntry, timeout = 10000): Promise<{ ok: boolean; latencyMs: number; ip?: string }> {
     const start = Date.now();
+    let agent: ProxyAgent | null = null;
     try {
-      // Set proxy env temporarily and test connectivity
-      const originalHttp = process.env.HTTP_PROXY;
-      const originalHttps = process.env.HTTPS_PROXY;
-      try {
-        process.env.HTTP_PROXY = proxy.url;
-        process.env.HTTPS_PROXY = proxy.url;
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), timeout);
-        const resp = await fetch("http://httpbin.org/ip", {
-          signal: controller.signal,
-        });
-        clearTimeout(t);
-        const latencyMs = Date.now() - start;
-        if (resp.ok) {
-          const data = await resp.json().catch(() => ({}));
-          return { ok: true, latencyMs, ip: data.origin };
-        }
-        return { ok: false, latencyMs };
-      } finally {
-        if (originalHttp) process.env.HTTP_PROXY = originalHttp;
-        else delete process.env.HTTP_PROXY;
-        if (originalHttps) process.env.HTTPS_PROXY = originalHttps;
-        else delete process.env.HTTPS_PROXY;
+      agent = this.createProxyAgent(proxy);
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), timeout);
+
+      const resp = await undiciFetch("http://httpbin.org/ip", {
+        signal: controller.signal,
+        dispatcher: agent,
+      } as any);
+
+      clearTimeout(t);
+      const latencyMs = Date.now() - start;
+
+      if (resp.ok) {
+        const data = await resp.json().catch(() => ({})) as any;
+        return { ok: true, latencyMs, ip: data.origin };
       }
+      return { ok: false, latencyMs };
     } catch {
       return { ok: false, latencyMs: Date.now() - start };
+    } finally {
+      if (agent) {
+        try { await agent.close(); } catch { /* ignore */ }
+      }
     }
   }
 
   /**
-   * Health check all proxies (or a sample)
+   * Health check all proxies (or a sample) — REAL connectivity test
    */
-  async healthCheckAll(sampleSize?: number): Promise<{ checked: number; healthy: number; unhealthy: number; results: Array<{ label: string; ok: boolean; latencyMs: number; ip?: string }> }> {
+  async healthCheckAll(sampleSize?: number): Promise<{
+    checked: number;
+    healthy: number;
+    unhealthy: number;
+    results: Array<{ label: string; ok: boolean; latencyMs: number; ip?: string }>;
+  }> {
     const toCheck = sampleSize
       ? this.proxies.sort(() => Math.random() - 0.5).slice(0, sampleSize)
       : this.proxies;
@@ -370,9 +385,6 @@ class ProxyPool {
 
   // ─── Getters ───
 
-  /**
-   * Get pool statistics
-   */
   getStats(): ProxyStats {
     const healthy = this.proxies.filter(p => p.healthy);
     const totalRequests = this.proxies.reduce((s, p) => s + p.successCount + p.failCount, 0);
@@ -391,44 +403,26 @@ class ProxyPool {
     };
   }
 
-  /**
-   * Get all proxy entries (for display)
-   */
   getAllProxies(): ProxyEntry[] {
     return [...this.proxies];
   }
 
-  /**
-   * Get all proxy URLs as newline-separated string (for pipeline config)
-   */
   getProxyListString(): string {
     return this.proxies.filter(p => p.healthy).map(p => p.url).join("\n");
   }
 
-  /**
-   * Get all healthy proxy URLs as array
-   */
   getHealthyProxyUrls(): string[] {
     return this.proxies.filter(p => p.healthy).map(p => p.url);
   }
 
-  /**
-   * Get proxy count
-   */
   get count(): number {
     return this.proxies.length;
   }
 
-  /**
-   * Get healthy proxy count
-   */
   get healthyCount(): number {
     return this.proxies.filter(p => p.healthy).length;
   }
 
-  /**
-   * Reset all proxy stats
-   */
   resetStats(): void {
     for (const p of this.proxies) {
       p.successCount = 0;
@@ -450,11 +444,12 @@ class ProxyPool {
 export const proxyPool = new ProxyPool();
 
 // ═══════════════════════════════════════════════
-//  HELPER: Fetch with proxy from pool
+//  HELPER: Fetch with proxy from pool (REAL proxy via undici)
 // ═══════════════════════════════════════════════
 
 /**
  * Fetch with automatic proxy rotation from the pool.
+ * Uses undici ProxyAgent for REAL proxy routing.
  * Reports success/failure back to the pool for smart routing.
  */
 export async function fetchWithPoolProxy(
@@ -485,28 +480,131 @@ export async function fetchWithPoolProxy(
   }
 
   const start = Date.now();
-  const originalHttp = process.env.HTTP_PROXY;
-  const originalHttps = process.env.HTTPS_PROXY;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeout);
+  let agent: ProxyAgent | null = null;
 
   try {
-    process.env.HTTP_PROXY = proxy.url;
-    process.env.HTTPS_PROXY = proxy.url;
-    const response = await fetch(url, { ...init, signal: controller.signal });
+    agent = new ProxyAgent({
+      uri: proxy.url,
+      requestTls: {
+        rejectUnauthorized: false,
+      },
+    });
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+
+    // Convert RequestInit to undici-compatible format
+    const undiciInit: any = {
+      method: init.method || "GET",
+      headers: init.headers as any,
+      body: init.body as any,
+      signal: controller.signal,
+      dispatcher: agent,
+    };
+
+    // Remove undefined fields
+    if (!undiciInit.headers) delete undiciInit.headers;
+    if (!undiciInit.body) delete undiciInit.body;
+
+    const undiciResp = await undiciFetch(url, undiciInit);
+    clearTimeout(t);
+
     const latency = Date.now() - start;
     proxyPool.reportResult(proxy.id, true, latency);
+
+    // Convert undici Response to standard Response for compatibility
+    const responseBody = await undiciResp.arrayBuffer();
+    const standardResponse = new Response(responseBody, {
+      status: undiciResp.status,
+      statusText: undiciResp.statusText,
+      headers: Object.fromEntries(undiciResp.headers.entries()),
+    });
+
+    return { response: standardResponse, proxyUsed: proxy };
+  } catch (err) {
+    const latency = Date.now() - start;
+    proxyPool.reportResult(proxy.id, false, latency);
+    throw err;
+  } finally {
+    if (agent) {
+      try { await agent.close(); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Fetch with proxy using undici directly (returns undici Response).
+ * Use this when you need streaming or don't need standard Response compatibility.
+ */
+export async function fetchWithProxyRaw(
+  url: string,
+  init: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string | Buffer | Uint8Array;
+    timeout?: number;
+  } = {},
+  options: {
+    strategy?: RotationStrategy;
+    targetDomain?: string;
+  } = {},
+): Promise<{ response: Awaited<ReturnType<typeof undiciFetch>>; proxyUsed: ProxyEntry | null }> {
+  const { strategy = "weighted", targetDomain } = options;
+  const timeout = init.timeout || 15000;
+
+  const proxy = targetDomain
+    ? proxyPool.getProxyForTarget(targetDomain, strategy)
+    : proxyPool.getProxy(strategy);
+
+  if (!proxy) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await undiciFetch(url, {
+        method: init.method || "GET",
+        headers: init.headers,
+        body: init.body,
+        signal: controller.signal,
+      } as any);
+      return { response, proxyUsed: null };
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  const start = Date.now();
+  let agent: ProxyAgent | null = null;
+
+  try {
+    agent = new ProxyAgent({
+      uri: proxy.url,
+      requestTls: { rejectUnauthorized: false },
+    });
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+
+    const response = await undiciFetch(url, {
+      method: init.method || "GET",
+      headers: init.headers,
+      body: init.body,
+      signal: controller.signal,
+      dispatcher: agent,
+    } as any);
+
+    clearTimeout(t);
+    const latency = Date.now() - start;
+    proxyPool.reportResult(proxy.id, true, latency);
+
     return { response, proxyUsed: proxy };
   } catch (err) {
     const latency = Date.now() - start;
     proxyPool.reportResult(proxy.id, false, latency);
     throw err;
   } finally {
-    clearTimeout(t);
-    if (originalHttp) process.env.HTTP_PROXY = originalHttp;
-    else delete process.env.HTTP_PROXY;
-    if (originalHttps) process.env.HTTPS_PROXY = originalHttps;
-    else delete process.env.HTTPS_PROXY;
+    if (agent) {
+      try { await agent.close(); } catch { /* ignore */ }
+    }
   }
 }
 
@@ -533,3 +631,42 @@ export function getProxyForPuppeteer(targetDomain?: string): {
     proxyEntry: proxy,
   };
 }
+
+// ═══════════════════════════════════════════════
+//  SCHEDULED HEALTH CHECK
+// ═══════════════════════════════════════════════
+
+let healthCheckInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start periodic health checks (every 6 hours by default)
+ */
+export function startProxyHealthScheduler(intervalMs = 6 * 60 * 60 * 1000): void {
+  if (healthCheckInterval) return;
+
+  console.log(`[ProxyScheduler] Starting health check scheduler (every ${Math.round(intervalMs / 60000)}min)`);
+
+  healthCheckInterval = setInterval(async () => {
+    console.log("[ProxyScheduler] Running scheduled health check...");
+    try {
+      const result = await proxyPool.healthCheckAll();
+      console.log(`[ProxyScheduler] Health check complete: ${result.healthy}/${result.checked} healthy`);
+    } catch (err) {
+      console.error("[ProxyScheduler] Health check failed:", err);
+    }
+  }, intervalMs);
+}
+
+/**
+ * Stop periodic health checks
+ */
+export function stopProxyHealthScheduler(): void {
+  if (healthCheckInterval) {
+    clearInterval(healthCheckInterval);
+    healthCheckInterval = null;
+    console.log("[ProxyScheduler] Health check scheduler stopped");
+  }
+}
+
+// Auto-start scheduler
+startProxyHealthScheduler();

