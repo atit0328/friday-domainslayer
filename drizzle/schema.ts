@@ -1048,3 +1048,73 @@ export const seoContent = mysqlTable("seo_content", {
 
 export type SEOContent = typeof seoContent.$inferSelect;
 export type InsertSEOContent = typeof seoContent.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// Scheduled Attack Scans — Auto Vulnerability Scanning
+// Periodic scanning with Telegram alerts for new findings
+// ═══════════════════════════════════════════════
+export const scheduledScans = mysqlTable("scheduled_scans", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("scanUserId").notNull(),
+  // Target
+  domain: varchar("scanDomain", { length: 255 }).notNull(),
+  // Schedule
+  frequency: mysqlEnum("scanFrequency", ["daily", "weekly", "biweekly", "monthly"]).default("weekly").notNull(),
+  scheduleDays: json("scheduleDays"),                          // Array of day numbers (0=Sun, 1=Mon, ..., 6=Sat) for weekly
+  scheduleHour: int("scheduleHour").default(3).notNull(),      // Hour of day to run (0-23, default 3 AM)
+  // Attack config
+  attackTypes: json("scanAttackTypes"),                        // Array of attack vector names to include, null = all
+  enableComprehensive: boolean("enableComprehensive").default(true).notNull(),
+  enableIndirect: boolean("enableIndirect").default(true).notNull(),
+  enableShellless: boolean("enableShellless").default(true).notNull(),
+  enableDns: boolean("enableDns").default(false).notNull(),
+  // Notification
+  telegramAlert: boolean("telegramAlert").default(true).notNull(),
+  alertMinSeverity: mysqlEnum("alertMinSeverity", ["critical", "high", "medium", "low", "info"]).default("high").notNull(),
+  // Status
+  enabled: boolean("scanEnabled").default(true).notNull(),
+  lastRunAt: timestamp("lastRunAt"),
+  nextRunAt: timestamp("nextRunAt"),
+  lastRunStatus: mysqlEnum("lastRunStatus", ["success", "partial", "failed", "running"]),
+  totalRuns: int("totalRuns").default(0).notNull(),
+  // Metadata
+  createdAt: timestamp("scanCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("scanUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ScheduledScan = typeof scheduledScans.$inferSelect;
+export type InsertScheduledScan = typeof scheduledScans.$inferInsert;
+
+export const scanResults = mysqlTable("scan_results", {
+  id: int("id").autoincrement().primaryKey(),
+  scanId: int("scanId").notNull(),                             // FK to scheduled_scans
+  userId: int("resultUserId").notNull(),
+  domain: varchar("resultDomain", { length: 255 }).notNull(),
+  // Results summary
+  totalTests: int("totalTests").default(0).notNull(),
+  totalFindings: int("totalFindings").default(0).notNull(),
+  criticalCount: int("criticalCount").default(0).notNull(),
+  highCount: int("highCount").default(0).notNull(),
+  mediumCount: int("mediumCount").default(0).notNull(),
+  lowCount: int("lowCount").default(0).notNull(),
+  infoCount: int("infoCount").default(0).notNull(),
+  exploitableCount: int("exploitableCount").default(0).notNull(),
+  // Detailed findings
+  findings: json("findings"),                                  // AttackVectorResult[]
+  // Comparison with previous scan
+  newFindings: int("newFindings").default(0).notNull(),        // Count of NEW vulns since last scan
+  resolvedFindings: int("resolvedFindings").default(0).notNull(), // Count of RESOLVED vulns since last scan
+  newFindingsDetail: json("newFindingsDetail"),                // AttackVectorResult[] — only new ones
+  resolvedFindingsDetail: json("resolvedFindingsDetail"),      // AttackVectorResult[] — resolved ones
+  // Execution
+  durationMs: int("scanDurationMs"),
+  status: mysqlEnum("resultStatus", ["completed", "partial", "failed"]).default("completed").notNull(),
+  errorMessage: text("scanErrorMessage"),
+  // Notification
+  telegramSent: boolean("telegramSent").default(false),
+  // Metadata
+  createdAt: timestamp("resultCreatedAt").defaultNow().notNull(),
+});
+
+export type ScanResult = typeof scanResults.$inferSelect;
+export type InsertScanResult = typeof scanResults.$inferInsert;

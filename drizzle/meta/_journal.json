@@ -162,6 +162,13 @@
       "when": 1772985839174,
       "tag": "0022_fixed_multiple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1772989555497,
+      "tag": "0023_swift_hammerhead",
+      "breakpoints": true
     }
   ]
 }

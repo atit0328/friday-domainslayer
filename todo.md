@@ -2004,3 +2004,42 @@
 - [x] Deserialization — PHP unserialize, Java ObjectInputStream, Python pickle
 - [x] Privilege Escalation — admin endpoint access, role tampering, WP user enum
 - [x] Clickjacking — X-Frame-Options + CSP frame-ancestors check
+
+# Scheduled Attack Scan — Auto Vulnerability Scanning + Telegram Alerts
+
+## DB Schema
+- [x] Create scheduled_scans table (domain, schedule, attack types, enabled, last_run, next_run)
+- [x] Create scan_results table (scan_id, domain, findings JSON, total_vulns, critical/high/medium/low counts, created_at)
+- [x] Push DB migrations
+
+## Backend
+- [x] Build scan scheduler (server/scan-scheduler.ts) — cron-based periodic scanning
+- [x] Integrate with comprehensive-attack-vectors for actual scanning
+- [x] Store scan results in database
+- [x] Send Telegram alerts when new vulnerabilities found (critical/high severity)
+- [x] Compare with previous scan to detect NEW vulnerabilities only
+
+## tRPC Router
+- [x] scheduled-scans.list — list all scheduled scans
+- [x] scheduled-scans.create — create new scheduled scan
+- [x] scheduled-scans.update — update schedule/config
+- [x] scheduled-scans.delete — remove scheduled scan
+- [x] scheduled-scans.toggle — enable/disable scan
+- [x] scheduled-scans.results — get scan results history
+- [x] scheduled-scans.runNow — trigger immediate scan
+- [x] scheduled-scans.stats — dashboard statistics
+- [x] scheduled-scans.resultDetail — single result detail
+
+## Frontend UI
+- [x] Scheduled Scans page in sidebar (under Blackhat Mode section)
+- [x] Create/Edit scheduled scan dialog (domain, frequency, attack types, Telegram alerts)
+- [x] Scan results history with vulnerability counts and severity badges
+- [x] Comparison view: new vs resolved findings
+- [x] Quick "Run Now" button
+- [x] Toggle enable/disable
+- [x] Delete with confirmation
+- [x] Result detail view with severity/category filters
+
+## Testing
+- [x] Write vitest tests for scheduled scan procedures (36/36 passed)
+- [x] Verify Telegram notification integration (sendScanAlert with HTML formatting)

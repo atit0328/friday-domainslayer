@@ -38,6 +38,7 @@ import { proxyRouter, startProxyScheduler } from "./routers/proxy";
 import { discoveryRouter } from "./routers/discovery";
 import { attackHistoryRouter } from "./routers/attack-history";
 import { seoAgentRouter } from "./routers/seo-agent-router";
+import { scheduledScansRouter } from "./routers/scheduled-scans";
 
 export const appRouter = router({
   system: systemRouter,
@@ -113,6 +114,9 @@ export const appRouter = router({
 
   // SEO Agentic AI
   seoAgent: seoAgentRouter,
+
+  // Scheduled Vulnerability Scans
+  scheduledScans: scheduledScansRouter,
 });
 
 export type AppRouter = typeof appRouter;

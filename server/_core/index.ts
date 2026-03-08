@@ -11,6 +11,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { startScheduler } from "../seo-scheduler";
 import { startProxyScheduler } from "../routers/proxy";
+import { startScanScheduler } from "../scan-scheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -71,6 +72,8 @@ async function startServer() {
     startScheduler();
     // Start proxy health check scheduler (every 30 minutes)
     startProxyScheduler(30 * 60 * 1000);
+    // Start vulnerability scan scheduler (every 15 minutes)
+    startScanScheduler();
   });
 }
 
