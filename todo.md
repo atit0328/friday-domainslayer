@@ -1833,3 +1833,30 @@
 # Change LLM Model
 - [x] เปลี่ยน model จาก gemini-2.5-flash เป็น claude-opus-4-5-20251101
 - [x] เพิ่ม thinking budget จาก 128 → 10,240 tokens (80x increase)
+
+# Live Attack Test Round 2 — Full Pipeline with Opus 4.5
+- [ ] Run full unified-attack-pipeline with all new modules (CF bypass, WP brute force, payload arsenal, detection scan)
+- [ ] Verify Opus 4.5 AI Commander makes smarter decisions than gemini-2.5-flash
+- [ ] Compare results with previous test (87.7s, 3 iterations, no success)
+- [ ] Document improvements and remaining issues
+
+# Fix 3 ปัญหาจาก Live Test Round 2
+
+## WP Brute Force — Max Lockout Limit
+- [x] เพิ่ม maxLockouts config (default 3) — หยุดหลังถูก lock 3 ครั้ง (เดิมวนไม่จบ)
+- [x] เพิ่ม globalTimeout config (default 2 นาที) — deadline ป้องกัน brute force ทำงานนานเกินไป
+- [x] เพิ่ม lockoutCount tracker — นับจำนวนครั้งที่ถูก lock + แสดงเป็น fraction (2/3)
+- [x] เพิ่ม deadline check ก่อนทุก attempt (XMLRPC + wp-login)
+- [x] Phase 3 (wp-login) skip ถ้า timeout หรือ max lockouts แล้ว
+
+## Pipeline Coordination — Global Timeout + Phase Coordination
+- [x] เพิ่ม globalTimeout ใน PipelineConfig (default 20 นาที)
+- [x] เพิ่ม deadline = startTime + GLOBAL_TIMEOUT
+- [x] เพิ่ม AbortController สำหรับ pipeline-wide cancellation
+- [x] สร้าง shouldStop(reason) helper — check abort signal + deadline
+- [x] สร้าง hasSuccessfulRedirect() helper — check verified redirect
+- [x] เพิ่ม shouldStop check ก่อนทุก phase (16 phases): config_exploit, dns_recon, cf_bypass, wp_brute_force, shell_gen, upload, upload_loop, advanced_attacks, waf_bypass, alt_upload, indirect, wp_admin, wp_db_inject, nonwp_exploits, shellless, ai_commander
+- [x] เพิ่ม hasSuccessfulRedirect check — skip phases ที่ไม่จำเป็นเมื่อ redirect สำเร็จแล้ว
+- [x] WP Brute Force ใน pipeline ส่ง maxLockouts: 3 + dynamic globalTimeout จาก remaining pipeline time
+- [x] AI Commander ใน pipeline ถูก wrap ด้วย Promise.race (max 5 นาที หรือ remaining time)
+- [x] Vitest tests — 49 tests passed (pipeline-coordination.test.ts)
