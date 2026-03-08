@@ -79,9 +79,9 @@ export function calculateNextRunMultiDay(days: number[], hourUTC: number): Date 
 
 // ═══ SEO Projects Router ═══
 export const seoProjectsRouter = router({
-  // List all user's SEO projects
+  // List all user's SEO projects (user isolation: user sees only their own, admin sees all)
   list: protectedProcedure.query(async ({ ctx }) => {
-    return db.getUserSeoProjects(ctx.user.id);
+    return db.getUserScopesSeoProjects(ctx.user.id, ctx.user.role === "admin");
   }),
 
   // Get single project with full details
@@ -117,6 +117,8 @@ export const seoProjectsRouter = router({
       wpAppPassword: z.string().optional(),
       // Auto-start campaign after creation
       autoCampaign: z.boolean().default(false),
+      // Agentic AI: target days for SEO plan
+      targetDays: z.number().min(3).max(365).default(30),
     }))
     .mutation(async ({ ctx, input }) => {
       // Validate WP credentials if provided
@@ -162,6 +164,9 @@ export const seoProjectsRouter = router({
         campaignPhase: 0,
         campaignTotalPhases: 16,
         campaignProgress: 0,
+        // Agentic AI fields
+        targetDays: input.targetDays,
+        aiAgentStatus: "idle",
       });
 
       // Log the creation action

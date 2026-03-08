@@ -38,6 +38,7 @@ export default function SeoCommandCenter() {
   const [wpUsername, setWpUsername] = useState("");
   const [wpAppPassword, setWpAppPassword] = useState("");
   const [autoCampaign, setAutoCampaign] = useState(true);
+  const [targetDays, setTargetDays] = useState(30);
 
   const { data: projects, isLoading } = trpc.seoProjects.list.useQuery();
   const utils = trpc.useUtils();
@@ -158,6 +159,7 @@ export default function SeoCommandCenter() {
       wpUsername: wpUsername.trim() || undefined,
       wpAppPassword: wpAppPassword.trim() || undefined,
       autoCampaign,
+      targetDays,
     });
   };
 
@@ -283,6 +285,33 @@ export default function SeoCommandCenter() {
                     <SelectItem value="parasite_seo">Parasite SEO — ใช้เว็บ Authority สูง</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              {/* Target Days — AI จะประเมิน timeline จาก keyword difficulty */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Target className="w-4 h-4 text-emerald-400" />
+                  เป้าหมาย Timeline
+                </Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[{ days: 3, label: "3 วัน", desc: "เร่งด่วน" }, { days: 7, label: "7 วัน", desc: "เร็ว" }, { days: 30, label: "30 วัน", desc: "มาตรฐาน" }].map(opt => (
+                    <button
+                      key={opt.days}
+                      type="button"
+                      onClick={() => setTargetDays(opt.days)}
+                      className={`p-3 rounded-lg border text-center transition-all ${
+                        targetDays === opt.days
+                          ? "border-emerald-500 bg-emerald-500/10 text-emerald-400"
+                          : "border-border hover:border-emerald-500/50 text-muted-foreground"
+                      }`}
+                    >
+                      <div className="text-lg font-bold">{opt.label}</div>
+                      <div className="text-[10px]">{opt.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground">
+                  AI จะประเมิน timeline จริงจาก keyword difficulty หลังวิเคราะห์เสร็จ
+                </p>
               </div>
               <div>
                 <Label>ความก้าวร้าว: {aggressiveness}/10</Label>

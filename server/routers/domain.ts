@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
+import { router, protectedProcedure, adminProcedure } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { isGoDaddyConfigured, searchMarketplace, checkAvailability, validateCredentials, purchaseDomain, getAgreements, validatePurchase } from "../godaddy";
@@ -518,7 +518,7 @@ export const pbnRouter = router({
       return db.getUserPbnSites(ctx.user.id);
     }),
 
-  addSite: protectedProcedure
+  addSite: adminProcedure
     .input(z.object({
       name: z.string().min(1),
       url: z.string().min(1),
@@ -529,7 +529,7 @@ export const pbnRouter = router({
       return db.addPbnSite(ctx.user.id, input);
     }),
 
-  updateSite: protectedProcedure
+  updateSite: adminProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().optional(),
@@ -543,7 +543,7 @@ export const pbnRouter = router({
       return { success: true };
     }),
 
-  deleteSite: protectedProcedure
+  deleteSite: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await db.deletePbnSite(input.id);

@@ -1,0 +1,106 @@
+{
+  "totalTime": 1209.8,
+  "withinTimeLimit": false,
+  "success": false,
+  "metrics": {
+    "cfBypassRan": true,
+    "wpBruteForceRan": true,
+    "aiCommanderRan": false,
+    "uploadMethodsUsed": 0,
+    "shellsAttempted": 3,
+    "totalPhases": 14,
+    "deadlineExpiredCount": 0,
+    "successfulUploads": 0,
+    "verifiedRedirects": 0
+  },
+  "phaseTimings": {
+    "ai_analysis": {
+      "start": 1772979168506,
+      "end": 1772979249043,
+      "duration": 80.537
+    },
+    "prescreen": {
+      "start": 1772979249043,
+      "end": 1772979269734,
+      "duration": 20.691
+    },
+    "world_update": {
+      "start": 1772979269735
+    },
+    "vuln_scan": {
+      "start": 1772979269735,
+      "end": 1772979386217,
+      "duration": 116.482
+    },
+    "config_exploit": {
+      "start": 1772979386218
+    },
+    "dns_attack": {
+      "start": 1772979446221
+    },
+    "cf_bypass": {
+      "start": 1772979506225,
+      "end": 1772979536816,
+      "duration": 30.591
+    },
+    "wp_brute_force": {
+      "start": 1772979536816,
+      "end": 1772979661820,
+      "duration": 125.004
+    },
+    "shell_gen": {
+      "start": 1772979661820,
+      "end": 1772979818304,
+      "duration": 156.484
+    },
+    "upload": {
+      "start": 1772979818304
+    },
+    "error": {
+      "start": 1772980373514
+    },
+    "shellless": {
+      "start": 1772980373514
+    },
+    "cloaking": {
+      "start": 1772980373514
+    },
+    "complete": {
+      "start": 1772980373515
+    }
+  },
+  "phasesRan": [
+    "ai_analysis",
+    "prescreen",
+    "world_update",
+    "vuln_scan",
+    "config_exploit",
+    "dns_attack",
+    "cf_bypass",
+    "wp_brute_force",
+    "shell_gen",
+    "upload",
+    "error",
+    "shellless",
+    "cloaking",
+    "complete"
+  ],
+  "aiDecisions": [
+    "AI Analysis: Cloudflare server, CMS: WordPress, WAF: Cloudflare, DA: 1, Success: 85%",
+    "Pre-screen: Cloudflare server, CMS: WordPress, WAF: Cloudflare, Success probability: 85%",
+    "Deep scan: 2 writable paths, 4 upload endpoints, 5 attack vectors",
+    "Top vectors: แก้ไขไฟล์ธีม/ปลั๊กอินโดยตรงผ่าน WordPress Admin Editor (95%), อัปโหลด PHP Shell ผ่าน WordPress REST API (wp/v2/media) พร้อม WAF Bypass (85%), อัปโหลด PHP Shell ผ่าน WordPress Admin Media Uploader (media-new.php/async-upload.php) พร้อม WAF Bypass (75%)",
+    "Generated 10 shells: redirect_php, redirect_php, redirect_htaccess, redirect_js, redirect_html, seo_parasite, steganography, polyglot, redirect_php, redirect_php"
+  ],
+  "errors": [
+    "Config exploit failed: config exploit timeout",
+    "DNS attacks failed: dns attacks timeout",
+    "WP brute force failed: brute force timeout",
+    "global_timeout_during_upload_loop",
+    "global_timeout_during_advanced_attacks",
+    "global_timeout_during_wp_admin",
+    "global_timeout_during_shellless",
+    "global_timeout_during_ai_commander"
+  ],
+  "uploadedFiles": []
+}

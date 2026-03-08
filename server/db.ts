@@ -1,4 +1,4 @@
-import { eq, desc, asc, and, sql, like, inArray, gte, isNotNull } from "drizzle-orm";
+import { eq, desc, asc, and, or, sql, like, inArray, gte, lte, isNotNull, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -9,6 +9,8 @@ import {
   seoProjects, backlinkLog, rankTracking, seoActions, seoSnapshots,
   userMethodPriority,
   aiAttackHistory, InsertAiAttackHistory,
+  seoAgentTasks, InsertSEOAgentTask,
+  seoContent, InsertSEOContent,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -811,4 +813,210 @@ export async function getAttackStats(): Promise<{
     console.warn("[AI Attack History] Failed to get stats:", error);
     return { totalAttempts: 0, totalSuccess: 0, successRate: 0, topMethods: [], topPlatforms: [] };
   }
+}
+
+
+// ═══ SEO Agent Tasks ═══
+
+export async function createAgentTask(
+  projectId: number,
+  userId: number,
+  data: {
+    taskType: InsertSEOAgentTask["taskType"];
+    title: string;
+    description?: string;
+    priority?: number;
+    dependsOn?: string[];
+    scheduledFor?: Date;
+    aiReasoning?: string;
+    aiConfidence?: number;
+  },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const [result] = await db.insert(seoAgentTasks).values({
+    projectId,
+    userId,
+    taskType: data.taskType,
+    title: data.title,
+    description: data.description || null,
+    priority: data.priority || 5,
+    dependsOn: data.dependsOn || [],
+    scheduledFor: data.scheduledFor || null,
+    aiReasoning: data.aiReasoning || null,
+    aiConfidence: data.aiConfidence || null,
+  }).$returningId();
+  return result;
+}
+
+export async function getAgentTaskById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(seoAgentTasks).where(eq(seoAgentTasks.id, id)).limit(1);
+  return rows[0] || null;
+}
+
+export async function updateAgentTask(id: number, data: Partial<typeof seoAgentTasks.$inferInsert>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(seoAgentTasks).set(data).where(eq(seoAgentTasks.id, id));
+}
+
+export async function getPendingAgentTasks(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoAgentTasks)
+    .where(
+      and(
+        eq(seoAgentTasks.projectId, projectId),
+        eq(seoAgentTasks.status, "queued"),
+        or(
+          isNull(seoAgentTasks.scheduledFor),
+          lte(seoAgentTasks.scheduledFor, new Date()),
+        ),
+      ),
+    )
+    .orderBy(asc(seoAgentTasks.priority), asc(seoAgentTasks.scheduledFor));
+}
+
+export async function getUpcomingAgentTasks(projectId: number, limit: number = 5) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoAgentTasks)
+    .where(
+      and(
+        eq(seoAgentTasks.projectId, projectId),
+        eq(seoAgentTasks.status, "queued"),
+      ),
+    )
+    .orderBy(asc(seoAgentTasks.scheduledFor), asc(seoAgentTasks.priority))
+    .limit(limit);
+}
+
+export async function getProjectAgentTasks(projectId: number, limit: number = 100) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoAgentTasks)
+    .where(eq(seoAgentTasks.projectId, projectId))
+    .orderBy(desc(seoAgentTasks.createdAt))
+    .limit(limit);
+}
+
+export async function checkTaskDependencies(projectId: number, dependsOnTypes: string[]): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  for (const taskType of dependsOnTypes) {
+    const completed = await db.select().from(seoAgentTasks)
+      .where(
+        and(
+          eq(seoAgentTasks.projectId, projectId),
+          eq(seoAgentTasks.taskType, taskType as any),
+          eq(seoAgentTasks.status, "completed"),
+        ),
+      )
+      .limit(1);
+    if (completed.length === 0) return false;
+  }
+  return true;
+}
+
+export async function getAllActiveSeoProjects() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoProjects)
+    .where(
+      or(
+        eq(seoProjects.status, "active"),
+        eq(seoProjects.status, "analyzing"),
+      ),
+    )
+    .orderBy(desc(seoProjects.updatedAt));
+}
+
+// ═══ SEO Content ═══
+
+export async function createSeoContent(
+  projectId: number,
+  userId: number,
+  data: {
+    title: string;
+    content: string;
+    excerpt?: string;
+    targetKeyword?: string;
+    secondaryKeywords?: string[];
+    metaTitle?: string;
+    metaDescription?: string;
+    wordCount?: number;
+    seoScore?: number;
+    readabilityScore?: number;
+    aiModel?: string;
+    aiPrompt?: string;
+  },
+) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const [result] = await db.insert(seoContent).values({
+    projectId,
+    userId,
+    title: data.title,
+    content: data.content,
+    excerpt: data.excerpt || null,
+    targetKeyword: data.targetKeyword || null,
+    secondaryKeywords: data.secondaryKeywords || [],
+    metaTitle: data.metaTitle || null,
+    metaDescription: data.metaDescription || null,
+    wordCount: data.wordCount || 0,
+    seoScore: data.seoScore || null,
+    readabilityScore: data.readabilityScore || null,
+    aiModel: data.aiModel || null,
+    aiPrompt: data.aiPrompt || null,
+  }).$returningId();
+  return result;
+}
+
+export async function getUnpublishedContent(projectId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoContent)
+    .where(
+      and(
+        eq(seoContent.projectId, projectId),
+        or(
+          eq(seoContent.publishStatus, "draft"),
+          eq(seoContent.publishStatus, "ready"),
+        ),
+      ),
+    )
+    .orderBy(asc(seoContent.createdAt))
+    .limit(10);
+}
+
+export async function updateSeoContent(id: number, data: Partial<typeof seoContent.$inferInsert>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(seoContent).set(data).where(eq(seoContent.id, id));
+}
+
+export async function getProjectContent(projectId: number, limit: number = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(seoContent)
+    .where(eq(seoContent.projectId, projectId))
+    .orderBy(desc(seoContent.createdAt))
+    .limit(limit);
+}
+
+// ═══ User-scoped SEO Projects ═══
+
+export async function getUserScopesSeoProjects(userId: number, isAdmin: boolean) {
+  const db = await getDb();
+  if (!db) return [];
+  if (isAdmin) {
+    // Admin sees all projects
+    return db.select().from(seoProjects).orderBy(desc(seoProjects.updatedAt));
+  }
+  // Regular user sees only their own projects
+  return db.select().from(seoProjects)
+    .where(eq(seoProjects.userId, userId))
+    .orderBy(desc(seoProjects.updatedAt));
 }

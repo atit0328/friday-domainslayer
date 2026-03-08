@@ -430,6 +430,15 @@ export const seoProjects = mysqlTable("seo_projects", {
   campaignLastPhaseResult: json("campaignLastPhaseResult"),
   campaignStartedAt: timestamp("campaignStartedAt"),
   campaignCompletedAt: timestamp("campaignCompletedAt"),
+  // Agentic AI — Target & Plan
+  targetDays: int("targetDays").default(7).notNull(),           // User-selected: 3, 7, or 30 days
+  aiEstimatedDays: int("aiEstimatedDays"),                      // AI-estimated days to rank based on keyword difficulty
+  aiPlan: json("aiPlan"),                                       // Full AI strategy plan JSON (phases, timeline, actions)
+  aiPlanCreatedAt: timestamp("aiPlanCreatedAt"),                // When the plan was created
+  aiAgentStatus: mysqlEnum("aiAgentStatus", ["idle", "planning", "executing", "waiting", "completed", "failed"]).default("idle").notNull(),
+  aiAgentLastAction: text("aiAgentLastAction"),                 // Last action taken by AI agent
+  aiAgentNextAction: text("aiAgentNextAction"),                 // Next planned action
+  aiAgentError: text("aiAgentError"),                           // Last error if failed
   // Automation settings
   autoBacklink: boolean("autoBacklink").default(true).notNull(),
   autoContent: boolean("autoContent").default(false).notNull(),
@@ -941,3 +950,99 @@ export const aiAttackHistory = mysqlTable("ai_attack_history", {
 
 export type AiAttackHistoryRow = typeof aiAttackHistory.$inferSelect;
 export type InsertAiAttackHistory = typeof aiAttackHistory.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// SEO Agentic AI: Task Queue
+// Every action the AI agent takes is a task — keyword research, backlink build, content create, WP post, PBN post, etc.
+// ═══════════════════════════════════════════════
+export const seoAgentTasks = mysqlTable("seo_agent_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("projectId").notNull(),
+  userId: int("userId").notNull(),
+  // Task definition
+  taskType: mysqlEnum("seoTaskType", [
+    "domain_analysis",        // Initial domain scan + metrics
+    "keyword_research",       // Find target keywords + volume + difficulty
+    "keyword_gap_analysis",   // Compare vs competitors
+    "onpage_audit",           // Title, meta, schema, internal links
+    "content_plan",           // Plan articles/pages to create
+    "content_create",         // AI writes SEO content
+    "content_publish_wp",     // Publish content to WordPress
+    "backlink_plan",          // Plan backlink strategy (tier1/tier2)
+    "backlink_build_pbn",     // Build backlinks from PBN network
+    "backlink_build_web2",    // Build web 2.0 backlinks
+    "backlink_build_guest",   // Guest post outreach
+    "backlink_build_social",  // Social signals
+    "backlink_tier2",         // Build tier 2 links pointing to tier 1
+    "index_request",          // Request Google indexing
+    "rank_check",             // Check keyword rankings
+    "competitor_spy",         // Analyze competitor strategies
+    "wp_optimize",            // Optimize WordPress settings (SEO plugin, speed, schema)
+    "wp_fix_issues",          // Fix on-page issues found in audit
+    "schema_markup",          // Add/update structured data
+    "internal_linking",       // Optimize internal link structure
+    "strategy_review",        // AI reviews and adjusts strategy
+    "risk_assessment",        // Check for penalty risks
+    "report_generate",        // Generate progress report
+  ]).notNull(),
+  title: varchar("seoTaskTitle", { length: 500 }).notNull(),
+  description: text("seoTaskDescription"),
+  // Execution
+  status: mysqlEnum("seoTaskStatus", ["queued", "running", "completed", "failed", "skipped"]).default("queued").notNull(),
+  priority: int("seoTaskPriority").default(5).notNull(),        // 1=highest, 10=lowest
+  // Dependencies — wait for these tasks to complete first
+  dependsOn: json("dependsOn"),                                  // Array of task IDs
+  // Result
+  result: json("seoTaskResult"),                                 // Task-specific result data
+  errorMessage: text("seoTaskError"),
+  // AI reasoning
+  aiReasoning: text("seoTaskAiReasoning"),                       // Why AI chose this task
+  aiConfidence: int("seoTaskAiConfidence"),                       // 0-100
+  // Timing
+  scheduledFor: timestamp("scheduledFor"),                        // When to execute (null = ASAP)
+  startedAt: timestamp("seoTaskStartedAt"),
+  completedAt: timestamp("seoTaskCompletedAt"),
+  durationMs: int("seoTaskDurationMs"),
+  createdAt: timestamp("seoTaskCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("seoTaskUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SEOAgentTask = typeof seoAgentTasks.$inferSelect;
+export type InsertSEOAgentTask = typeof seoAgentTasks.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// SEO Agentic AI: Content Library
+// AI-generated content stored here before publishing to WordPress
+// ═══════════════════════════════════════════════
+export const seoContent = mysqlTable("seo_content", {
+  id: int("id").autoincrement().primaryKey(),
+  projectId: int("contentProjectId").notNull(),
+  userId: int("contentUserId").notNull(),
+  // Content
+  title: varchar("contentTitle", { length: 500 }).notNull(),
+  slug: varchar("contentSlug", { length: 500 }),
+  content: text("contentBody").notNull(),                        // Full HTML content
+  excerpt: text("contentExcerpt"),
+  // SEO metadata
+  targetKeyword: varchar("contentTargetKeyword", { length: 255 }),
+  secondaryKeywords: json("contentSecondaryKeywords"),           // string[]
+  metaTitle: varchar("contentMetaTitle", { length: 255 }),
+  metaDescription: text("contentMetaDescription"),
+  // Quality metrics
+  wordCount: int("contentWordCount").default(0).notNull(),
+  seoScore: int("contentSeoScore"),                              // 0-100
+  readabilityScore: int("contentReadabilityScore"),              // 0-100
+  // Publishing
+  publishStatus: mysqlEnum("contentPublishStatus", ["draft", "ready", "published", "failed"]).default("draft").notNull(),
+  wpPostId: int("wpPostId"),                                     // WordPress post ID after publishing
+  wpUrl: text("wpUrl"),                                          // Published URL
+  publishedAt: timestamp("contentPublishedAt"),
+  // AI
+  aiModel: varchar("contentAiModel", { length: 64 }),
+  aiPrompt: text("contentAiPrompt"),                             // Prompt used to generate
+  createdAt: timestamp("contentCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("contentUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type SEOContent = typeof seoContent.$inferSelect;
+export type InsertSEOContent = typeof seoContent.$inferInsert;

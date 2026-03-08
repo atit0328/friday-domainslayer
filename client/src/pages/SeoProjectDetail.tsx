@@ -406,6 +406,9 @@ export default function SeoProjectDetail() {
           <TabsTrigger value="timeline" className="text-sky-400">
             <Clock className="w-3 h-3 mr-1" /> Timeline
           </TabsTrigger>
+          <TabsTrigger value="agent" className="text-amber-400 font-bold">
+            <Sparkles className="w-3 h-3 mr-1" /> AI Agent
+          </TabsTrigger>
         </TabsList>
 
         {/* ═══ OVERVIEW TAB ═══ */}
@@ -1845,6 +1848,11 @@ export default function SeoProjectDetail() {
         <TabsContent value="timeline" className="space-y-4 mt-4">
           <TimelineTab projectId={projectId} project={project} />
         </TabsContent>
+
+        {/* ═══ AI AGENT TAB ═══ */}
+        <TabsContent value="agent" className="space-y-4 mt-4">
+          <AIAgentTab projectId={projectId} project={project} />
+        </TabsContent>
       </Tabs>
 
       {/* Content Generation Dialog */}
@@ -2756,6 +2764,320 @@ function TimelineTab({ projectId, project }: { projectId: number; project: any }
             </div>
           </CardContent>
         </Card>
+      )}
+    </div>
+  );
+}
+
+
+// ═══ AI AGENT TAB ═══
+function AIAgentTab({ projectId, project }: { projectId: number; project: any }) {
+  const utils = trpc.useUtils();
+  const { data: agentStatus, isLoading } = trpc.seoAgent.getStatus.useQuery({ projectId });
+  const { data: taskQueue } = trpc.seoAgent.getTaskQueue.useQuery({ projectId, limit: 50 });
+
+  const generatePlan = trpc.seoAgent.generatePlan.useMutation({
+    onSuccess: (result) => {
+      utils.seoAgent.getStatus.invalidate({ projectId });
+      utils.seoAgent.getTaskQueue.invalidate({ projectId });
+      toast.success(`AI Plan สร้างเสร็จ! ประเมิน ${result.estimatedDays} วัน (${result.totalTasks} tasks)`);
+    },
+    onError: (err) => toast.error(`Plan failed: ${err.message}`),
+  });
+
+  const runTasks = trpc.seoAgent.runTasks.useMutation({
+    onSuccess: (result) => {
+      utils.seoAgent.getStatus.invalidate({ projectId });
+      utils.seoAgent.getTaskQueue.invalidate({ projectId });
+      toast.success(`รัน ${result.tasksExecuted} tasks — ${result.tasksCompleted} สำเร็จ, ${result.tasksFailed} ล้มเหลว`);
+    },
+    onError: (err) => toast.error(`Run failed: ${err.message}`),
+  });
+
+  const skipTask = trpc.seoAgent.skipTask.useMutation({
+    onSuccess: () => {
+      utils.seoAgent.getTaskQueue.invalidate({ projectId });
+      toast.success("ข้าม task แล้ว");
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
+        <span className="ml-2 text-muted-foreground">กำลังโหลด AI Agent...</span>
+      </div>
+    );
+  }
+
+  const statusColors: Record<string, string> = {
+    idle: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30",
+    planning: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    executing: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    monitoring: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    completed: "bg-violet-500/20 text-violet-400 border-violet-500/30",
+    failed: "bg-red-500/20 text-red-400 border-red-500/30",
+  };
+
+  const taskStatusIcons: Record<string, React.ReactNode> = {
+    pending: <Clock className="w-4 h-4 text-zinc-400" />,
+    running: <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />,
+    completed: <CheckCircle className="w-4 h-4 text-emerald-400" />,
+    failed: <XCircle className="w-4 h-4 text-red-400" />,
+    skipped: <AlertCircle className="w-4 h-4 text-zinc-500" />,
+  };
+
+  const plan = agentStatus?.plan ? (typeof agentStatus.plan === "string" ? JSON.parse(agentStatus.plan) : agentStatus.plan) : null;
+
+  return (
+    <div className="space-y-4">
+      {/* Agent Status Header */}
+      <div className="grid md:grid-cols-4 gap-4">
+        <Card className="border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-transparent">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-muted-foreground">Agent Status</span>
+              <Badge variant="outline" className={statusColors[agentStatus?.status || "idle"]}>
+                {(agentStatus?.status || "idle").toUpperCase()}
+              </Badge>
+            </div>
+            <div className="text-2xl font-bold text-amber-400 flex items-center gap-2">
+              <Sparkles className="w-5 h-5" />
+              AI Agent
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground mb-2">Target / Estimated</div>
+            <div className="text-2xl font-bold">
+              <span className="text-emerald-400">{agentStatus?.targetDays || project.targetDays || 30}</span>
+              <span className="text-muted-foreground text-sm"> / </span>
+              <span className="text-amber-400">{agentStatus?.estimatedDays || "?"}</span>
+              <span className="text-xs text-muted-foreground ml-1">วัน</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground mb-2">Pending Tasks</div>
+            <div className="text-2xl font-bold text-blue-400">{agentStatus?.pendingTasks || 0}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-xs text-muted-foreground mb-2">Stats</div>
+            <div className="grid grid-cols-2 gap-1 text-xs">
+              <div><span className="text-emerald-400 font-bold">{agentStatus?.stats?.totalBacklinksBuilt || 0}</span> backlinks</div>
+              <div><span className="text-blue-400 font-bold">{agentStatus?.stats?.totalContentCreated || 0}</span> content</div>
+              <div><span className="text-violet-400 font-bold">{agentStatus?.stats?.totalWpChanges || 0}</span> WP changes</div>
+              <div><span className="text-amber-400 font-bold">{agentStatus?.stats?.totalActionsExecuted || 0}</span> actions</div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="flex gap-2">
+        <Button
+          onClick={() => generatePlan.mutate({ projectId })}
+          disabled={generatePlan.isPending}
+          className="bg-amber-600 hover:bg-amber-700"
+        >
+          {generatePlan.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Brain className="w-4 h-4 mr-2" />}
+          {plan ? "สร้างแผนใหม่" : "สร้างแผน AI"}
+        </Button>
+        <Button
+          onClick={() => runTasks.mutate({ projectId, maxTasks: 5 })}
+          disabled={runTasks.isPending || !plan}
+          variant="outline"
+          className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+        >
+          {runTasks.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+          รัน Tasks (5)
+        </Button>
+        <Button
+          onClick={() => runTasks.mutate({ projectId, maxTasks: 20 })}
+          disabled={runTasks.isPending || !plan}
+          variant="outline"
+          className="border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+        >
+          {runTasks.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
+          รัน All (20)
+        </Button>
+      </div>
+
+      {/* Error Display */}
+      {agentStatus?.error && (
+        <Card className="border-red-500/30 bg-red-500/5">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-red-400 mb-1">
+              <AlertTriangle className="w-4 h-4" />
+              <span className="font-semibold text-sm">Agent Error</span>
+            </div>
+            <p className="text-xs text-red-300">{agentStatus.error}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* AI Plan Visualization */}
+      {plan && (
+        <Card className="border-amber-500/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Brain className="w-4 h-4 text-amber-400" />
+              AI Strategic Plan
+              <Badge variant="outline" className="ml-auto text-xs">
+                Confidence: {plan.confidence || 0}%
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Reasoning */}
+            {plan.reasoning && (
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">
+                <p className="text-xs text-amber-200">{plan.reasoning}</p>
+              </div>
+            )}
+
+            {/* Risk Assessment */}
+            {plan.riskAssessment && (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-zinc-800/50 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground mb-1">Penalty Risk</div>
+                  <Badge variant="outline" className={
+                    plan.riskAssessment.penaltyRisk === "low" ? "bg-emerald-500/20 text-emerald-400" :
+                    plan.riskAssessment.penaltyRisk === "medium" ? "bg-yellow-500/20 text-yellow-400" :
+                    "bg-red-500/20 text-red-400"
+                  }>{plan.riskAssessment.penaltyRisk}</Badge>
+                </div>
+                <div className="bg-zinc-800/50 rounded-lg p-3">
+                  <div className="text-[10px] text-muted-foreground mb-1">Detection Risk</div>
+                  <Badge variant="outline" className={
+                    plan.riskAssessment.detectionRisk === "low" ? "bg-emerald-500/20 text-emerald-400" :
+                    plan.riskAssessment.detectionRisk === "medium" ? "bg-yellow-500/20 text-yellow-400" :
+                    "bg-red-500/20 text-red-400"
+                  }>{plan.riskAssessment.detectionRisk}</Badge>
+                </div>
+              </div>
+            )}
+
+            {/* Phases Timeline */}
+            {plan.phases && plan.phases.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold mb-2">Phases</div>
+                <div className="space-y-2">
+                  {plan.phases.map((phase: any, i: number) => (
+                    <div key={i} className="flex items-start gap-3 bg-zinc-800/30 rounded-lg p-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                        phase.priority === "critical" ? "bg-red-500/20 text-red-400" :
+                        phase.priority === "high" ? "bg-orange-500/20 text-orange-400" :
+                        phase.priority === "medium" ? "bg-yellow-500/20 text-yellow-400" :
+                        "bg-zinc-500/20 text-zinc-400"
+                      }`}>
+                        D{phase.day}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{phase.name}</span>
+                          <Badge variant="outline" className="text-[10px]">{phase.priority}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{phase.description}</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {phase.tasks?.map((t: string, j: number) => (
+                            <Badge key={j} variant="outline" className="text-[10px] bg-zinc-800/50">{t}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Task Queue */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <ClipboardList className="w-4 h-4 text-blue-400" />
+            Task Queue
+            <Badge variant="outline" className="ml-auto">{taskQueue?.length || 0} tasks</Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!taskQueue || taskQueue.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Bot className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">ยังไม่มี tasks — กด "สร้างแผน AI" เพื่อเริ่มต้น</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[500px] overflow-y-auto">
+              {taskQueue.map((task: any) => (
+                <div key={task.id} className="flex items-center gap-3 bg-zinc-800/30 rounded-lg p-3 group">
+                  <div className="shrink-0">{taskStatusIcons[task.status] || taskStatusIcons.pending}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium truncate">{task.title}</span>
+                      <Badge variant="outline" className="text-[10px] shrink-0">{task.taskType}</Badge>
+                      {task.priority && (
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                          task.priority === "critical" ? "text-red-400" :
+                          task.priority === "high" ? "text-orange-400" :
+                          "text-zinc-400"
+                        }`}>{task.priority}</Badge>
+                      )}
+                    </div>
+                    {task.description && (
+                      <p className="text-xs text-muted-foreground truncate mt-0.5">{task.description}</p>
+                    )}
+                    <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-1">
+                      <span>Day {task.scheduledDay || "?"}</span>
+                      {task.completedAt && <span>Completed: {new Date(task.completedAt).toLocaleString()}</span>}
+                    </div>
+                  </div>
+                  {task.status === "pending" && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="opacity-0 group-hover:opacity-100 text-xs text-zinc-400 hover:text-red-400"
+                      onClick={() => skipTask.mutate({ taskId: task.id, reason: "Manually skipped" })}
+                    >
+                      Skip
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Last/Next Action */}
+      {(agentStatus?.lastAction || agentStatus?.nextAction) && (
+        <div className="grid md:grid-cols-2 gap-4">
+          {agentStatus.lastAction && (
+            <Card className="border-emerald-500/20">
+              <CardContent className="p-4">
+                <div className="text-xs text-muted-foreground mb-1">Last Action</div>
+                <p className="text-sm">{agentStatus.lastAction}</p>
+              </CardContent>
+            </Card>
+          )}
+          {agentStatus.nextAction && (
+            <Card className="border-blue-500/20">
+              <CardContent className="p-4">
+                <div className="text-xs text-muted-foreground mb-1">Next Action</div>
+                <p className="text-sm">{agentStatus.nextAction}</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );

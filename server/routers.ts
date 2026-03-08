@@ -37,6 +37,7 @@ import { jobsRouter } from "./routers/jobs";
 import { proxyRouter, startProxyScheduler } from "./routers/proxy";
 import { discoveryRouter } from "./routers/discovery";
 import { attackHistoryRouter } from "./routers/attack-history";
+import { seoAgentRouter } from "./routers/seo-agent-router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -109,6 +110,9 @@ export const appRouter = router({
 
   // AI Attack History & Learning
   attackHistory: attackHistoryRouter,
+
+  // SEO Agentic AI
+  seoAgent: seoAgentRouter,
 });
 
 export type AppRouter = typeof appRouter;

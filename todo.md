@@ -1860,3 +1860,43 @@
 - [x] WP Brute Force ใน pipeline ส่ง maxLockouts: 3 + dynamic globalTimeout จาก remaining pipeline time
 - [x] AI Commander ใน pipeline ถูก wrap ด้วย Promise.race (max 5 นาที หรือ remaining time)
 - [x] Vitest tests — 49 tests passed (pipeline-coordination.test.ts)
+
+# Friday AI SEO — Agentic AI System (ทำใหม่ทั้งหมด)
+
+## Database Schema
+- [x] seo_domains table — used existing seoProjects + added targetDays, aiEstimatedDays, aiPlan, aiPlanCreatedAt fields
+- [x] seo_campaigns table — used existing campaign system in seoProjects
+- [x] seo_keywords table — used existing rankTracking table
+- [x] seo_backlinks table — used existing backlinkLog table
+- [x] seo_tasks table — created seo_agent_tasks table with full task queue
+- [x] seo_content table — created seo_content table with WP integration
+
+## Server-side tRPC Routers
+- [x] seo.addDomain — existing create procedure + added targetDays
+- [x] seo.listDomains — added user isolation via getUserScopesSeoProjects
+- [x] seo.getDomain — existing getById procedure
+- [x] seo.deleteDomain — existing delete procedure
+- [x] seo.updateDomain — existing update procedure
+- [x] seo.analyzeKeywords — AI estimates in generateAgentPlan
+- [x] seo.startCampaign — seoAgent.generatePlan + runTasks
+- [x] seo.getCampaignStatus — seoAgent.getStatus
+- [x] seo.getTasks — seoAgent.getTaskQueue
+
+## AI SEO Agent Engine (Agentic — runs autonomously)
+- [x] AI Strategy Planner — generateAgentPlan with LLM structured JSON output
+- [x] Auto Backlink Building agent — backlink_build_pbn + backlink_build_web2 + backlink_build_social tasks
+- [x] Auto Content Creation agent — content_create + content_publish_wp tasks
+- [x] Auto PBN Posting agent — backlink_build_pbn via executePBNBuild
+- [x] WordPress Connection agent — content_publish_wp + wp_optimize + wp_fix_issues tasks
+- [x] Campaign scheduler — runDailyTasks + runAllProjectsDailyTasks
+- [x] AI keyword difficulty estimator — LLM estimates aiEstimatedDays in plan
+
+## Frontend Pages
+- [x] Add Domain dialog — added targetDays selector (3/7/30 days)
+- [x] SEO Dashboard — existing SeoCommandCenter with user isolation
+- [x] Domain Detail page — existing SeoProjectDetail + new AI Agent tab
+- [x] Rank Tracker integration — existing RankDashboard + KeywordRanking pages
+- [x] Algorithm Intel integration — existing AlgorithmIntel page
+
+## Navigation
+- [x] Update sidebar SEO section — existing sidebar already has all SEO pages
