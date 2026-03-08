@@ -1,0 +1,15 @@
+{
+  "query": "SELECT COUNT(*) as cnt, MIN(id) as min_id, MAX(id) as max_id FROM pbn_sites",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COUNT(*) as cnt, MIN(id) as min_id, MAX(id) as max_id FROM pbn_sites",
+  "rows": [
+    {
+      "cnt": "0",
+      "min_id": "NULL",
+      "max_id": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "cnt\tmin_id\tmax_id\n0\tNULL\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 1654
+}

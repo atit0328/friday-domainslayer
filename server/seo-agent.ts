@@ -535,6 +535,105 @@ Provide specific, actionable results.` },
         break;
       }
 
+      case "wp_error_scan": {
+        // Scan WordPress site for errors (plugin conflicts, PHP errors, broken pages)
+        if (!project.wpUsername || !project.wpAppPassword) {
+          return { status: "skipped", detail: "No WordPress connection — cannot scan for errors" };
+        }
+        const scanClient = createWPClient({
+          siteUrl: `https://${project.domain}`,
+          username: project.wpUsername,
+          appPassword: project.wpAppPassword,
+        });
+        const health = await scanClient.getSiteHealth();
+        
+        // If critical errors found and allowWpEdit is enabled, create auto-fix task
+        if (health.errors.length > 0 && (project as any).allowWpEdit) {
+          await db.createAgentTask(project.id, project.userId, {
+            taskType: "wp_error_fix",
+            title: `Auto-fix ${health.errors.length} errors on ${project.domain}`,
+            description: `Errors: ${health.errors.map(e => e.message).join("; ")}`,
+            priority: 1,
+            scheduledFor: new Date(), // Run immediately
+          });
+        }
+        
+        result = {
+          status: health.status,
+          errorsCount: health.errors.length,
+          warningsCount: health.warnings.length,
+          pluginIssuesCount: health.pluginIssues.length,
+          errors: health.errors.slice(0, 10),
+          warnings: health.warnings.slice(0, 10),
+          pluginIssues: health.pluginIssues.slice(0, 10),
+          wpVersion: health.wpVersion,
+        };
+        detail = `Site health: ${health.status} — ${health.errors.length} errors, ${health.warnings.length} warnings, ${health.pluginIssues.length} plugin issues`;
+        break;
+      }
+
+      case "wp_error_fix": {
+        // Auto-fix WordPress errors (deactivate problematic plugins, fix conflicts, clear maintenance)
+        if (!project.wpUsername || !project.wpAppPassword) {
+          return { status: "skipped", detail: "No WordPress connection — cannot fix errors" };
+        }
+        if (!(project as any).allowWpEdit) {
+          return { status: "skipped", detail: "User has not granted permission to edit website" };
+        }
+        const fixClient = createWPClient({
+          siteUrl: `https://${project.domain}`,
+          username: project.wpUsername,
+          appPassword: project.wpAppPassword,
+        });
+        
+        // First scan for current errors
+        const currentHealth = await fixClient.getSiteHealth();
+        if (currentHealth.errors.length === 0 && currentHealth.pluginIssues.length === 0) {
+          return { status: "completed", detail: "No errors to fix — site is healthy" };
+        }
+        
+        // Auto-fix what we can
+        const fixes = await fixClient.autoFixErrors(currentHealth.errors, currentHealth.pluginIssues);
+        
+        // Use LLM to analyze remaining unfixable errors and provide recommendations
+        const unfixedErrors = currentHealth.errors.filter(e => 
+          !fixes.some(f => f.errorType === e.type && f.success)
+        );
+        let aiRecommendations = "";
+        if (unfixedErrors.length > 0) {
+          const aiResponse = await invokeLLM({
+            messages: [
+              { role: "system", content: "You are a WordPress expert. Analyze these website errors and provide specific fix instructions. Focus on plugin issues, theme conflicts, and PHP errors. Do NOT suggest server-level fixes." },
+              { role: "user", content: `Website: ${project.domain}\nErrors:\n${unfixedErrors.map(e => `- [${e.severity}] ${e.type}: ${e.message}`).join("\n")}\n\nProvide specific steps to fix each error (plugin-level or WP admin-level fixes only).` },
+            ],
+          });
+          aiRecommendations = typeof aiResponse.choices[0]?.message?.content === "string" 
+            ? aiResponse.choices[0].message.content.slice(0, 2000) 
+            : "";
+        }
+        
+        result = {
+          fixesApplied: fixes.filter(f => f.success).length,
+          fixesFailed: fixes.filter(f => !f.success).length,
+          fixes: fixes.slice(0, 10),
+          remainingErrors: unfixedErrors.length,
+          aiRecommendations,
+        };
+        detail = `Applied ${fixes.filter(f => f.success).length} fixes, ${unfixedErrors.length} errors remaining`;
+        
+        // Send notification if critical errors were fixed
+        if (fixes.some(f => f.success)) {
+          try {
+            await sendTelegramNotification({
+              type: "info",
+              targetUrl: `https://${project.domain}`,
+              details: `\u{1f527} WP Error Fix: ${project.domain}\nApplied ${fixes.filter(f => f.success).length} fixes:\n${fixes.filter(f => f.success).map(f => `\u2705 ${f.action}`).join("\n")}${unfixedErrors.length > 0 ? `\n\n\u26a0\ufe0f ${unfixedErrors.length} errors still need manual attention` : ""}`,
+            });
+          } catch {}
+        }
+        break;
+      }
+
       default:
         return { status: "skipped", detail: `Unknown task type: ${task.taskType}` };
     }

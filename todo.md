@@ -1918,3 +1918,25 @@
 ## Tests
 - [x] Vitest tests สำหรับ cron scheduler (6 tests)
 - [x] Vitest tests สำหรับ progress dashboard router + UI (32 tests)
+
+# Remove Niche + Add AI Website Error Fixing
+- [x] ลบ Niche / อุตสาหกรรม ออกจาก Add Domain dialog
+- [x] เพิ่ม AI website error detection + auto-fix (plugin errors, theme conflicts, PHP errors, broken pages)
+- [x] เพิ่ม toggle "อนุญาตให้ AI แก้ไขเว็บ" ใน Add Domain dialog
+- [x] เพิ่ม wp_error_scan + wp_error_fix task types ใน seo-agent
+- [ ] เพิ่ม UI แสดงผล error scan + fix results ใน AI Agent tab (deferred)
+- [x] Vitest tests (34 tests passed — wp-error-scan.test.ts)
+
+# Import PBN Sites from Google Sheets (New Batch)
+
+- [x] Fetch PBN data from Google Sheets spreadsheet (212 rows CSV)
+- [x] Parse and map data to pbn_sites schema (198 sites imported)
+- [x] Import new PBN sites into database
+- [x] Verify import in PBN Network Manager UI
+
+# Complete wp_error_scan and wp_error_fix Feature
+
+- [x] Fix TypeScript errors in seo-agent.ts (createAgentTask signature, TelegramNotification type)
+- [x] Push database schema changes (wp_error_scan, wp_error_fix enum values)
+- [x] Write vitest tests for wp_error_scan and wp_error_fix (34 tests passed)
+- [x] Verify all tests pass

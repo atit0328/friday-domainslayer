@@ -28,7 +28,7 @@ export default function SeoCommandCenter() {
   const [, navigate] = useLocation();
   const [showNewProject, setShowNewProject] = useState(false);
   const [newDomain, setNewDomain] = useState("");
-  const [newNiche, setNewNiche] = useState("");
+
   const [newStrategy, setNewStrategy] = useState<string>("grey_hat");
   const [aggressiveness, setAggressiveness] = useState(5);
   const [autoBacklink, setAutoBacklink] = useState(true);
@@ -48,7 +48,7 @@ export default function SeoCommandCenter() {
       utils.seoProjects.list.invalidate();
       setShowNewProject(false);
       setNewDomain("");
-      setNewNiche("");
+
       setNewKeywords("");
       setWpUsername("");
       setWpAppPassword("");
@@ -149,7 +149,7 @@ export default function SeoCommandCenter() {
     if (!newDomain.trim()) return;
     createProject.mutate({
       domain: newDomain.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, ""),
-      niche: newNiche || undefined,
+
       strategy: newStrategy as any,
       aggressiveness,
       autoBacklink,
@@ -251,15 +251,7 @@ export default function SeoCommandCenter() {
                   className="mt-1"
                 />
               </div>
-              <div>
-                <Label>Niche / อุตสาหกรรม</Label>
-                <Input
-                  placeholder="e.g. crypto, health, finance..."
-                  value={newNiche}
-                  onChange={e => setNewNiche(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
+
               <div>
                 <Label>Keywords เป้าหมาย</Label>
                 <Input

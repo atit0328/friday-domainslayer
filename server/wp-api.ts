@@ -517,6 +517,218 @@ export class WordPressAPI {
     }
   }
 
+  // ═══ Plugin Management ═══
+  async activatePlugin(pluginSlug: string): Promise<WPUpdateResult> {
+    try {
+      await this.request<any>("POST", `/wp/v2/plugins/${encodeURIComponent(pluginSlug)}`, { status: "active" });
+      return { success: true, action: "activate_plugin", detail: `Activated plugin: ${pluginSlug}` };
+    } catch (err: any) {
+      return { success: false, action: "activate_plugin", detail: err.message, error: err.message };
+    }
+  }
+
+  async deactivatePlugin(pluginSlug: string): Promise<WPUpdateResult> {
+    try {
+      await this.request<any>("POST", `/wp/v2/plugins/${encodeURIComponent(pluginSlug)}`, { status: "inactive" });
+      return { success: true, action: "deactivate_plugin", detail: `Deactivated plugin: ${pluginSlug}` };
+    } catch (err: any) {
+      return { success: false, action: "deactivate_plugin", detail: err.message, error: err.message };
+    }
+  }
+
+  async deletePlugin(pluginSlug: string): Promise<WPUpdateResult> {
+    try {
+      await this.request<any>("DELETE", `/wp/v2/plugins/${encodeURIComponent(pluginSlug)}`);
+      return { success: true, action: "delete_plugin", detail: `Deleted plugin: ${pluginSlug}` };
+    } catch (err: any) {
+      return { success: false, action: "delete_plugin", detail: err.message, error: err.message };
+    }
+  }
+
+  // ═══ Site Health & Error Detection ═══
+  async getSiteHealth(): Promise<{
+    status: string;
+    errors: SiteError[];
+    warnings: SiteError[];
+    pluginIssues: PluginIssue[];
+    phpVersion?: string;
+    wpVersion?: string;
+  }> {
+    const errors: SiteError[] = [];
+    const warnings: SiteError[] = [];
+    const pluginIssues: PluginIssue[] = [];
+    let phpVersion: string | undefined;
+    let wpVersion: string | undefined;
+
+    try {
+      // 1. Check site info
+      const siteInfo = await this.getSiteInfo();
+      // WP version not directly available from REST API root, leave undefined
+    } catch (err: any) {
+      errors.push({ type: "site_unreachable", message: `Cannot reach WP REST API: ${err.message}`, severity: "critical" });
+    }
+
+    try {
+      // 2. Check plugins for issues
+      const plugins = await this.getPlugins();
+      for (const p of plugins) {
+        // Check for known problematic plugins
+        if (p.status === "active" && isKnownProblematicPlugin(p.plugin)) {
+          pluginIssues.push({
+            plugin: p.plugin,
+            name: p.name,
+            status: p.status,
+            issue: "known_problematic",
+            description: `Plugin "${p.name}" is known to cause issues (conflicts, performance, security)`,
+            suggestedAction: "deactivate",
+          });
+        }
+        // Check for outdated/inactive plugins (security risk)
+        if (p.status === "inactive") {
+          pluginIssues.push({
+            plugin: p.plugin,
+            name: p.name,
+            status: p.status,
+            issue: "inactive_installed",
+            description: `Plugin "${p.name}" is inactive but still installed — security risk`,
+            suggestedAction: "delete",
+          });
+        }
+      }
+
+      // Check for conflicting plugins
+      const activePlugins = plugins.filter(p => p.status === "active");
+      const seoPlugins = activePlugins.filter(p => 
+        p.plugin.includes("wordpress-seo") || p.plugin.includes("seo-by-rank-math") || 
+        p.plugin.includes("all-in-one-seo") || p.plugin.includes("squirrly-seo")
+      );
+      if (seoPlugins.length > 1) {
+        warnings.push({
+          type: "plugin_conflict",
+          message: `Multiple SEO plugins active: ${seoPlugins.map(p => p.name).join(", ")} — this causes conflicts`,
+          severity: "high",
+        });
+      }
+
+      const cachePlugins = activePlugins.filter(p =>
+        p.plugin.includes("w3-total-cache") || p.plugin.includes("wp-super-cache") ||
+        p.plugin.includes("wp-fastest-cache") || p.plugin.includes("litespeed-cache") ||
+        p.plugin.includes("wp-rocket")
+      );
+      if (cachePlugins.length > 1) {
+        warnings.push({
+          type: "plugin_conflict",
+          message: `Multiple cache plugins active: ${cachePlugins.map(p => p.name).join(", ")} — this causes conflicts`,
+          severity: "high",
+        });
+      }
+    } catch (err: any) {
+      warnings.push({ type: "plugin_check_failed", message: `Cannot check plugins: ${err.message}`, severity: "medium" });
+    }
+
+    try {
+      // 3. Check for broken pages (HTTP errors)
+      const pages = await this.getPages({ per_page: 50, status: "publish" });
+      for (const page of pages) {
+        const content = page.content?.rendered || "";
+        if (content.includes("Fatal error") || content.includes("Parse error") || content.includes("Warning:")) {
+          errors.push({
+            type: "php_error_in_content",
+            message: `Page "${page.title.rendered}" contains PHP error output`,
+            severity: "critical",
+            context: { pageId: page.id, slug: page.slug },
+          });
+        }
+        if (content.trim().length < 50) {
+          warnings.push({
+            type: "empty_page",
+            message: `Page "${page.title.rendered}" appears empty or broken (${content.trim().length} chars)`,
+            severity: "medium",
+            context: { pageId: page.id, slug: page.slug },
+          });
+        }
+      }
+    } catch (err: any) {
+      warnings.push({ type: "page_check_failed", message: `Cannot check pages: ${err.message}`, severity: "medium" });
+    }
+
+    try {
+      // 4. Check homepage for errors via fetch
+      const homeRes = await fetch(`${this.baseUrl}`, { signal: AbortSignal.timeout(15000) });
+      if (!homeRes.ok) {
+        errors.push({
+          type: "homepage_error",
+          message: `Homepage returns HTTP ${homeRes.status} ${homeRes.statusText}`,
+          severity: "critical",
+        });
+      } else {
+        const html = await homeRes.text();
+        if (html.includes("Fatal error") || html.includes("Parse error")) {
+          errors.push({ type: "homepage_php_error", message: "Homepage contains PHP fatal/parse error", severity: "critical" });
+        }
+        if (html.includes("Error establishing a database connection")) {
+          errors.push({ type: "db_connection_error", message: "Database connection error on homepage", severity: "critical" });
+        }
+        if (html.includes("Briefly unavailable for scheduled maintenance")) {
+          errors.push({ type: "maintenance_mode", message: "Site is stuck in maintenance mode", severity: "critical" });
+        }
+        if (html.includes("There has been a critical error on this website")) {
+          errors.push({ type: "wp_critical_error", message: "WordPress critical error detected on homepage", severity: "critical" });
+        }
+      }
+    } catch (err: any) {
+      errors.push({ type: "homepage_unreachable", message: `Cannot reach homepage: ${err.message}`, severity: "critical" });
+    }
+
+    const status = errors.length > 0 ? "critical" : warnings.length > 0 ? "warning" : "healthy";
+    return { status, errors, warnings, pluginIssues, phpVersion, wpVersion };
+  }
+
+  // ═══ Auto-Fix Site Errors ═══
+  async autoFixErrors(errors: SiteError[], pluginIssues: PluginIssue[]): Promise<FixResult[]> {
+    const fixes: FixResult[] = [];
+
+    // Fix plugin conflicts — deactivate duplicates
+    for (const issue of pluginIssues) {
+      if (issue.suggestedAction === "deactivate") {
+        const result = await this.deactivatePlugin(issue.plugin);
+        fixes.push({
+          errorType: issue.issue,
+          action: `Deactivated plugin: ${issue.name}`,
+          success: result.success,
+          detail: result.detail,
+        });
+      } else if (issue.suggestedAction === "delete") {
+        // First deactivate, then delete
+        if (issue.status === "active") {
+          await this.deactivatePlugin(issue.plugin);
+        }
+        const result = await this.deletePlugin(issue.plugin);
+        fixes.push({
+          errorType: issue.issue,
+          action: `Deleted inactive plugin: ${issue.name}`,
+          success: result.success,
+          detail: result.detail,
+        });
+      }
+    }
+
+    // Fix maintenance mode — try to delete .maintenance file via WP-CLI or settings
+    for (const error of errors) {
+      if (error.type === "maintenance_mode") {
+        // Try to toggle maintenance off via settings API
+        try {
+          await this.updateSiteSettings({ maintenance_mode: false });
+          fixes.push({ errorType: "maintenance_mode", action: "Disabled maintenance mode via settings API", success: true, detail: "Maintenance mode disabled" });
+        } catch {
+          fixes.push({ errorType: "maintenance_mode", action: "Could not disable maintenance mode — may need manual .maintenance file deletion", success: false, detail: "Settings API cannot toggle maintenance" });
+        }
+      }
+    }
+
+    return fixes;
+  }
+
   // ═══ Update Site Title & Tagline ═══
   async updateSiteBranding(title?: string, description?: string): Promise<WPUpdateResult> {
     try {
@@ -531,9 +743,48 @@ export class WordPressAPI {
   }
 }
 
-// ═══ Helper ═══
+// ═══ Types for Site Health ═══
+export interface SiteError {
+  type: string;
+  message: string;
+  severity: "critical" | "high" | "medium" | "low";
+  context?: Record<string, any>;
+}
+
+export interface PluginIssue {
+  plugin: string;
+  name: string;
+  status: string;
+  issue: "known_problematic" | "inactive_installed" | "conflict" | "outdated";
+  description: string;
+  suggestedAction: "deactivate" | "delete" | "update" | "none";
+}
+
+export interface FixResult {
+  errorType: string;
+  action: string;
+  success: boolean;
+  detail: string;
+}
+
+// ═══ Helpers ═══
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const KNOWN_PROBLEMATIC_PLUGINS = [
+  "hello-dolly",
+  "akismet",  // Not problematic per se, but often unused on gambling sites
+  "jetpack",  // Heavy, conflicts with many plugins
+  "broken-link-checker", // Extremely resource-heavy
+  "wp-statistics", // Can slow down sites significantly
+  "wordfence", // Can block legitimate bots and SEO crawlers
+  "ithemes-security", // Can block WP REST API
+  "sucuri-scanner", // Can interfere with API access
+];
+
+function isKnownProblematicPlugin(pluginSlug: string): boolean {
+  return KNOWN_PROBLEMATIC_PLUGINS.some(p => pluginSlug.toLowerCase().includes(p));
 }
 
 // ═══ Factory ═══

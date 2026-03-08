@@ -984,6 +984,8 @@ export const seoAgentTasks = mysqlTable("seo_agent_tasks", {
     "strategy_review",        // AI reviews and adjusts strategy
     "risk_assessment",        // Check for penalty risks
     "report_generate",        // Generate progress report
+    "wp_error_scan",          // Scan for WP errors (plugin conflicts, PHP errors, broken pages)
+    "wp_error_fix",           // Auto-fix WP errors when user grants permission
   ]).notNull(),
   title: varchar("seoTaskTitle", { length: 500 }).notNull(),
   description: text("seoTaskDescription"),
