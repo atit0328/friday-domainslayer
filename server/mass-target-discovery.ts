@@ -248,10 +248,10 @@ async function searchShodan(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
       
-      const response = await fetch(url, {
+      const { response } = await fetchWithPoolProxy(url, {
         signal: controller.signal,
         headers: { Accept: "application/json" },
-      });
+      }, { targetDomain: "api.shodan.io", timeout: 15000 });
       clearTimeout(timeout);
 
       if (response.ok) {
@@ -336,7 +336,7 @@ async function searchSerpApi(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 20000);
       
-      const response = await fetch(url, { signal: controller.signal });
+      const { response } = await fetchWithPoolProxy(url, { signal: controller.signal }, { targetDomain: "serpapi.com", timeout: 20000 });
       clearTimeout(timeout);
 
       if (response.ok) {

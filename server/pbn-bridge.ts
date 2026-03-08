@@ -9,8 +9,22 @@
  * - Tracks backlink status (pending → built → indexed → active/lost)
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
+
+// Helper: wrap fetch with proxy pool
+async function pbnBridgeFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
 
 // ═══ Types ═══
 
@@ -325,7 +339,7 @@ export async function postToWordPress(
     // Base64 encode credentials for WordPress Application Password auth
     const credentials = Buffer.from(`${username}:${appPassword}`).toString("base64");
     
-    const response = await fetch(apiUrl, {
+    const response = await pbnBridgeFetch(apiUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

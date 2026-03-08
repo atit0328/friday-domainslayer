@@ -1,11 +1,20 @@
 /**
  * PBN Services — Health Check, Auto-Post, Expire Alerts, AI Metrics, Hot PBN Scorer
  */
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import { sendTelegramNotification } from "./telegram-notifier";
 import * as db from "./db";
 import * as pbnBridge from "./pbn-bridge";
 import { fetchDomainMetrics } from "./domain-metrics";
+
+// Helper: wrap fetch with proxy pool
+async function pbnFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
 
 // ═══ 1. Bulk Health Check ═══
 export interface HealthCheckResult {
@@ -23,7 +32,7 @@ export async function checkSiteHealth(site: { id: number; url: string; name: str
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000); // 10s timeout
-    const res = await fetch(site.url, {
+    const res = await pbnFetch(site.url, {
       method: "HEAD",
       signal: controller.signal,
       redirect: "follow",

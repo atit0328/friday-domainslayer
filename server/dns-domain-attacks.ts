@@ -10,6 +10,19 @@
 
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool
+async function dnsFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
+
 export interface DnsAttackResult {
   vector: string;
   success: boolean;
@@ -42,7 +55,7 @@ async function dnsLookup(domain: string, type: string = "A", timeout: number = 1
 
   for (const url of providers) {
     try {
-      const resp = await fetch(url, {
+      const resp = await dnsFetch(url, {
         headers: { "Accept": "application/dns-json" },
         signal: AbortSignal.timeout(timeout),
       });
@@ -170,7 +183,7 @@ async function discoverOriginIp(config: DnsAttackConfig): Promise<DnsAttackResul
 
   for (const apiUrl of historyApis) {
     try {
-      const resp = await fetch(apiUrl, {
+      const resp = await dnsFetch(apiUrl, {
         headers: { "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(timeout),
       });
@@ -194,7 +207,7 @@ async function discoverOriginIp(config: DnsAttackConfig): Promise<DnsAttackResul
   log("origin_ip", "Checking Shodan for exposed services...");
   try {
     const shodanUrl = `https://api.shodan.io/dns/resolve?hostnames=${domain}`;
-    const resp = await fetch(shodanUrl, {
+    const resp = await dnsFetch(shodanUrl, {
       signal: AbortSignal.timeout(timeout),
     });
     if (resp.status === 200) {
@@ -216,7 +229,7 @@ async function discoverOriginIp(config: DnsAttackConfig): Promise<DnsAttackResul
 
   for (const ip of Array.from(candidateIps)) {
     try {
-      const resp = await fetch(`http://${ip}/`, {
+      const resp = await dnsFetch(`http://${ip}/`, {
         headers: { "Host": domain },
         redirect: "follow",
         signal: AbortSignal.timeout(5000),
@@ -322,7 +335,7 @@ async function checkSubdomainTakeover(config: DnsAttackConfig): Promise<DnsAttac
         if (fp.cnames.some(c => cname.includes(c))) {
           // Verify by checking if the subdomain returns the fingerprint
           try {
-            const resp = await fetch(`http://${fullDomain}`, {
+            const resp = await dnsFetch(`http://${fullDomain}`, {
               redirect: "follow",
               signal: AbortSignal.timeout(5000),
             });
@@ -400,7 +413,7 @@ async function enumerateSubdomains(config: DnsAttackConfig): Promise<DnsAttackRe
 
   for (const apiUrl of ctApis) {
     try {
-      const resp = await fetch(apiUrl, {
+      const resp = await dnsFetch(apiUrl, {
         signal: AbortSignal.timeout(timeout),
         headers: { "User-Agent": "Mozilla/5.0" },
       });

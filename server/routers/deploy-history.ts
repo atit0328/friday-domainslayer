@@ -3,6 +3,7 @@
  * Stores all deploy logs, manages template library, tracks keyword rankings
  */
 import { z } from "zod";
+import { fetchWithPoolProxy } from "../proxy-pool";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { eq, desc, and, sql, like, gte, lte, count } from "drizzle-orm";
@@ -503,11 +504,11 @@ const keywordRankingRouter = router({
 
       try {
         // Check if the parasite page is accessible
-        const response = await fetch(kw.parasitePageUrl, {
+        const { response } = await fetchWithPoolProxy(kw.parasitePageUrl, {
           method: "HEAD",
           signal: AbortSignal.timeout(10000),
           redirect: "manual",
-        });
+        }, { targetDomain: kw.parasitePageUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, ""), timeout: 10000 });
         if (response.status === 200 || response.status === 301 || response.status === 302) {
           isIndexed = true;
         }
@@ -657,11 +658,11 @@ const keywordRankingRouter = router({
         // Simple accessibility check
         let isIndexed = false;
         try {
-          const response = await fetch(kw.parasitePageUrl, {
+          const { response } = await fetchWithPoolProxy(kw.parasitePageUrl, {
             method: "HEAD",
             signal: AbortSignal.timeout(5000),
             redirect: "manual",
-          });
+          }, { targetDomain: kw.parasitePageUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, ""), timeout: 5000 });
           isIndexed = response.status === 200 || response.status === 301 || response.status === 302;
         } catch { /* not accessible */ }
 

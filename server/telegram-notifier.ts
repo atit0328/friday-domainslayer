@@ -10,6 +10,7 @@
  */
 
 import { ENV } from "./_core/env";
+import { fetchWithPoolProxy } from "./proxy-pool";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -52,7 +53,7 @@ async function sendTelegramMessage(
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
     
-    const response = await fetch(url, {
+    const { response } = await fetchWithPoolProxy(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -62,7 +63,7 @@ async function sendTelegramMessage(
         disable_web_page_preview: false,
       }),
       signal: AbortSignal.timeout(10000),
-    });
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
 
     const result = await response.json() as any;
     
@@ -321,7 +322,7 @@ export async function sendBatchSummary(
 export async function verifyTelegramBot(botToken: string): Promise<{ valid: boolean; botName?: string; error?: string }> {
   try {
     const url = `https://api.telegram.org/bot${botToken}/getMe`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const { response } = await fetchWithPoolProxy(url, { signal: AbortSignal.timeout(5000) }, { targetDomain: "api.telegram.org", timeout: 5000 });
     const result = await response.json() as any;
     
     if (result.ok) {

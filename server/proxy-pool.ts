@@ -450,7 +450,14 @@ export const proxyPool = new ProxyPool();
 /**
  * Fetch with automatic proxy rotation from the pool.
  * Uses undici ProxyAgent for REAL proxy routing.
- * Reports success/failure back to the pool for smart routing.
+ * 
+ * RETRY STRATEGY:
+ *   1. Try with selected proxy
+ *   2. If proxy fails → try with a DIFFERENT proxy (up to maxRetries)
+ *   3. If all proxies fail → fallback to DIRECT fetch (no proxy)
+ *   4. Report all failures back to pool for smart routing
+ * 
+ * This ensures attacks NEVER fail just because proxies are dead.
  */
 export async function fetchWithPoolProxy(
   url: string,
@@ -459,41 +466,108 @@ export async function fetchWithPoolProxy(
     strategy?: RotationStrategy;
     targetDomain?: string;
     timeout?: number;
+    maxRetries?: number;
+    fallbackDirect?: boolean; // default true — fallback to direct if all proxies fail
   } = {},
-): Promise<{ response: Response; proxyUsed: ProxyEntry | null }> {
-  const { strategy = "weighted", targetDomain, timeout = 15000 } = options;
+): Promise<{ response: Response; proxyUsed: ProxyEntry | null; method: "proxy" | "direct" | "no-proxy" }> {
+  const { 
+    strategy = "weighted", 
+    targetDomain, 
+    timeout = 15000, 
+    maxRetries = 2,
+    fallbackDirect = true 
+  } = options;
 
-  const proxy = targetDomain
-    ? proxyPool.getProxyForTarget(targetDomain, strategy)
-    : proxyPool.getProxy(strategy);
+  // Track which proxies we've tried to avoid repeats
+  const triedProxyIds = new Set<number>();
+  const errors: Array<{ proxyLabel: string; error: string; latencyMs: number }> = [];
 
-  if (!proxy) {
-    // No proxy available — direct fetch
+  // ─── Attempt with proxies (try up to maxRetries different proxies) ───
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const proxy = targetDomain
+      ? proxyPool.getProxyForTarget(targetDomain, strategy)
+      : proxyPool.getProxy(strategy);
+
+    if (!proxy || triedProxyIds.has(proxy.id)) {
+      // No more untried proxies — try to get a different one
+      const allHealthy = proxyPool.getAllProxies().filter(p => p.healthy && !triedProxyIds.has(p.id));
+      if (allHealthy.length === 0) break; // No more proxies to try
+      const altProxy = allHealthy[Math.floor(Math.random() * allHealthy.length)];
+      if (!altProxy || triedProxyIds.has(altProxy.id)) break;
+      triedProxyIds.add(altProxy.id);
+      
+      const result = await _tryProxyFetch(url, init, altProxy, timeout);
+      if (result.success) {
+        return { response: result.response!, proxyUsed: altProxy, method: "proxy" };
+      }
+      errors.push({ proxyLabel: altProxy.label, error: result.error!, latencyMs: result.latencyMs });
+      continue;
+    }
+
+    triedProxyIds.add(proxy.id);
+    const result = await _tryProxyFetch(url, init, proxy, timeout);
+    if (result.success) {
+      return { response: result.response!, proxyUsed: proxy, method: "proxy" };
+    }
+    errors.push({ proxyLabel: proxy.label, error: result.error!, latencyMs: result.latencyMs });
+  }
+
+  // ─── All proxies failed → fallback to direct fetch ───
+  if (fallbackDirect) {
+    if (errors.length > 0) {
+      console.log(`[ProxyPool] ${errors.length} proxies failed for ${url.substring(0, 80)} — falling back to direct fetch`);
+    }
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
-      return { response, proxyUsed: null };
+      return { response, proxyUsed: null, method: "direct" };
+    } catch (directErr) {
+      // Even direct fetch failed — this means the TARGET is unreachable
+      clearTimeout(t);
+      const allErrors = errors.map(e => `${e.proxyLabel}: ${e.error} (${e.latencyMs}ms)`).join("; ");
+      throw new Error(
+        `All fetch attempts failed for ${url}. ` +
+        `Proxy errors: [${allErrors}]. ` +
+        `Direct error: ${directErr instanceof Error ? directErr.message : String(directErr)}`
+      );
     } finally {
       clearTimeout(t);
     }
   }
 
+  // No proxy available and no fallback — direct fetch
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return { response, proxyUsed: null, method: "no-proxy" };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
+ * Internal: Try a single proxy fetch, return success/failure without throwing
+ */
+async function _tryProxyFetch(
+  url: string,
+  init: RequestInit,
+  proxy: ProxyEntry,
+  timeout: number,
+): Promise<{ success: boolean; response?: Response; error?: string; latencyMs: number }> {
   const start = Date.now();
   let agent: ProxyAgent | null = null;
 
   try {
     agent = new ProxyAgent({
       uri: proxy.url,
-      requestTls: {
-        rejectUnauthorized: false,
-      },
+      requestTls: { rejectUnauthorized: false },
     });
 
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeout);
 
-    // Convert RequestInit to undici-compatible format
     const undiciInit: any = {
       method: init.method || "GET",
       headers: init.headers as any,
@@ -501,18 +575,16 @@ export async function fetchWithPoolProxy(
       signal: controller.signal,
       dispatcher: agent,
     };
-
-    // Remove undefined fields
     if (!undiciInit.headers) delete undiciInit.headers;
     if (!undiciInit.body) delete undiciInit.body;
 
     const undiciResp = await undiciFetch(url, undiciInit);
     clearTimeout(t);
 
-    const latency = Date.now() - start;
-    proxyPool.reportResult(proxy.id, true, latency);
+    const latencyMs = Date.now() - start;
+    proxyPool.reportResult(proxy.id, true, latencyMs);
 
-    // Convert undici Response to standard Response for compatibility
+    // Convert undici Response to standard Response
     const responseBody = await undiciResp.arrayBuffer();
     const standardResponse = new Response(responseBody, {
       status: undiciResp.status,
@@ -520,11 +592,15 @@ export async function fetchWithPoolProxy(
       headers: Object.fromEntries(undiciResp.headers.entries()),
     });
 
-    return { response: standardResponse, proxyUsed: proxy };
+    return { success: true, response: standardResponse, latencyMs };
   } catch (err) {
-    const latency = Date.now() - start;
-    proxyPool.reportResult(proxy.id, false, latency);
-    throw err;
+    const latencyMs = Date.now() - start;
+    proxyPool.reportResult(proxy.id, false, latencyMs);
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : String(err), 
+      latencyMs 
+    };
   } finally {
     if (agent) {
       try { await agent.close(); } catch { /* ignore */ }
@@ -670,3 +746,18 @@ export function stopProxyHealthScheduler(): void {
 
 // Auto-start scheduler
 startProxyHealthScheduler();
+
+// Run startup health check immediately (sample 5 proxies)
+// This ensures we know which proxies are alive BEFORE any attack
+(async () => {
+  try {
+    console.log("[ProxyPool] Running startup health check (5 proxy sample)...");
+    const result = await proxyPool.healthCheckAll(5);
+    console.log(`[ProxyPool] Startup check: ${result.healthy}/${result.checked} healthy`);
+    if (result.healthy === 0) {
+      console.warn("[ProxyPool] WARNING: No healthy proxies detected! All requests will use direct fetch fallback.");
+    }
+  } catch (err) {
+    console.error("[ProxyPool] Startup health check failed:", err);
+  }
+})();

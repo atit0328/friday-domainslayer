@@ -442,9 +442,9 @@ async function httpFingerprint(targetUrl: string, domain: string, result: AiTarg
 async function dnsAnalysis(domain: string, result: AiTargetAnalysis): Promise<void> {
   // DNS resolution via public DNS API
   try {
-    const dnsRes = await fetch(`https://dns.google/resolve?name=${domain}&type=A`, {
+    const { response: dnsRes } = await fetchWithPoolProxy(`https://dns.google/resolve?name=${domain}&type=A`, {
       signal: AbortSignal.timeout(10000),
-    });
+    }, { targetDomain: "dns.google", timeout: 10000 });
     if (dnsRes.ok) {
       const data = await dnsRes.json() as { Answer?: { data: string; type: number }[] };
       if (data.Answer) {
@@ -456,9 +456,9 @@ async function dnsAnalysis(domain: string, result: AiTargetAnalysis): Promise<vo
 
   // NS records
   try {
-    const nsRes = await fetch(`https://dns.google/resolve?name=${domain}&type=NS`, {
+    const { response: nsRes } = await fetchWithPoolProxy(`https://dns.google/resolve?name=${domain}&type=NS`, {
       signal: AbortSignal.timeout(10000),
-    });
+    }, { targetDomain: "dns.google", timeout: 10000 });
     if (nsRes.ok) {
       const data = await nsRes.json() as { Answer?: { data: string; type: number }[] };
       if (data.Answer) {
@@ -469,9 +469,9 @@ async function dnsAnalysis(domain: string, result: AiTargetAnalysis): Promise<vo
 
   // MX records
   try {
-    const mxRes = await fetch(`https://dns.google/resolve?name=${domain}&type=MX`, {
+    const { response: mxRes } = await fetchWithPoolProxy(`https://dns.google/resolve?name=${domain}&type=MX`, {
       signal: AbortSignal.timeout(10000),
-    });
+    }, { targetDomain: "dns.google", timeout: 10000 });
     if (mxRes.ok) {
       const data = await mxRes.json() as { Answer?: { data: string; type: number }[] };
       if (data.Answer) {
@@ -482,9 +482,9 @@ async function dnsAnalysis(domain: string, result: AiTargetAnalysis): Promise<vo
 
   // TXT records (SPF, DMARC, etc.)
   try {
-    const txtRes = await fetch(`https://dns.google/resolve?name=${domain}&type=TXT`, {
+    const { response: txtRes } = await fetchWithPoolProxy(`https://dns.google/resolve?name=${domain}&type=TXT`, {
       signal: AbortSignal.timeout(10000),
-    });
+    }, { targetDomain: "dns.google", timeout: 10000 });
     if (txtRes.ok) {
       const data = await txtRes.json() as { Answer?: { data: string; type: number }[] };
       if (data.Answer) {
@@ -515,9 +515,9 @@ async function dnsAnalysis(domain: string, result: AiTargetAnalysis): Promise<vo
   // Shodan IP lookup for ports
   if (result.dnsInfo.ipAddress && ENV.shodanApiKey) {
     try {
-      const hostRes = await fetch(`https://api.shodan.io/shodan/host/${result.dnsInfo.ipAddress}?key=${ENV.shodanApiKey}`, {
+      const { response: hostRes } = await fetchWithPoolProxy(`https://api.shodan.io/shodan/host/${result.dnsInfo.ipAddress}?key=${ENV.shodanApiKey}`, {
         signal: AbortSignal.timeout(15000),
-      });
+      }, { targetDomain: "api.shodan.io", timeout: 15000 });
       if (hostRes.ok) {
         const hostData = await hostRes.json() as {
           data?: { port: number; product?: string }[];

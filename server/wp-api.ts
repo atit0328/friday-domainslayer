@@ -4,6 +4,8 @@
  * รองรับ: Posts, Pages, Meta (Yoast/RankMath), Options, Plugins, Media
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
+
 // ═══ Types ═══
 export interface WPCredentials {
   siteUrl: string;      // e.g. https://example.com
@@ -101,12 +103,13 @@ export class WordPressAPI {
         headers["Content-Type"] = "application/json";
       }
 
-      const res = await fetch(url, {
+      const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+      const { response: res } = await fetchWithPoolProxy(url, {
         method,
         headers,
         body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
-      });
+      }, { targetDomain: domain, timeout: this.timeout });
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");

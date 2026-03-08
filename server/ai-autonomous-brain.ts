@@ -9,9 +9,23 @@
 //  6. Post-Deploy Optimization: improve after success
 // ═══════════════════════════════════════════════════════════════
 
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import type { PreScreenResult } from "./ai-prescreening";
 import type { WorldState, EscalationLevel, GoalType, AutonomousCallback } from "./autonomous-engine";
+
+// Helper: wrap fetch with proxy pool
+async function brainFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
 
 // ─── Types ───
 
@@ -303,7 +317,7 @@ Return JSON: { "action": string, "reasoning": string, "suggestedMethod": string|
 
     for (const url of urls) {
       try {
-        const resp = await fetch(url, {
+        const resp = await brainFetch(url, {
           method: "GET",
           signal: AbortSignal.timeout(15000),
           redirect: "manual",

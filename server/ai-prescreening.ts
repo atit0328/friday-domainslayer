@@ -8,6 +8,19 @@ import { invokeLLM } from "./_core/llm";
 import { ENV } from "./_core/env";
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool
+async function preScreenFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
+
 // ─── Types ───
 
 export interface PreScreenResult {
@@ -241,7 +254,7 @@ async function scanPortsViaShodan(domain: string, result: PreScreenResult): Prom
 
   try {
     // First resolve domain to IP
-    const dnsRes = await fetch(`https://api.shodan.io/dns/resolve?hostnames=${domain}&key=${shodanKey}`, {
+    const dnsRes = await preScreenFetch(`https://api.shodan.io/dns/resolve?hostnames=${domain}&key=${shodanKey}`, {
       signal: AbortSignal.timeout(10000),
     });
     const dnsData = await dnsRes.json() as Record<string, string>;
@@ -250,7 +263,7 @@ async function scanPortsViaShodan(domain: string, result: PreScreenResult): Prom
     result.ipAddress = ip;
 
     // Get host info
-    const hostRes = await fetch(`https://api.shodan.io/shodan/host/${ip}?key=${shodanKey}`, {
+    const hostRes = await preScreenFetch(`https://api.shodan.io/shodan/host/${ip}?key=${shodanKey}`, {
       signal: AbortSignal.timeout(15000),
     });
     if (!hostRes.ok) return;

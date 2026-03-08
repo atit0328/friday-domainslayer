@@ -1769,3 +1769,13 @@
 - [x] Bug 4: oneClickDeploy skip เมื่อไม่มี shell → เพิ่ม fallback direct upload .htaccess + PHP redirect
 - [x] Bug 5: Pipeline timeout 8 min → เพิ่มเป็น 20 min
 - [x] Vitest: 22 tests passed (13 pipeline-bugfixes + 9 nonwp-integration)
+
+# Fix HTTP 0 fetch failed + AI Failure Analysis
+- [x] Diagnose root cause: fetch failed (HTTP 0, 13ms) — proxy connection level failure
+- [x] Fix proxy-pool.ts — ensure fetch actually reaches target (fallback to direct if proxy dead)
+- [x] Add smart fallback: proxy → direct fetch → different proxy → error with diagnosis
+- [x] Add AI failure analysis — LLM analyzes WHY attack failed + suggests new strategy (aiLearn uses invokeLLM)
+- [x] Add file deployment verification — confirm file exists after upload (verifyUploadedFile uses proxy)
+- [x] Vitest tests — 50 tests passed (proxy-fetch-integration)
+- [x] Replace ALL direct fetch() in 24 attack files with fetchWithPoolProxy (100+ calls fixed)
+- [x] Files fixed: ai-autonomous-engine, unified-attack-pipeline, wp-admin-takeover, wp-db-injection, wp-api, indirect-attack-engine, php-injector, seo-spam-engine, seo-spam-executor, seo-daily-engine, enhanced-upload-engine, alt-upload-vectors, alt-upload-methods, config-exploitation, dns-domain-attacks, autonomous-engine, cloaking-shell-generator, pbn-services, pbn-bridge, ai-prescreening, ai-autonomous-brain, telegram-notifier, mass-target-discovery, deploy-history

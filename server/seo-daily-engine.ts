@@ -10,11 +10,20 @@
  * ทุกขั้นตอนทำจริง ตรวจสอบได้ ไม่มั่ว ไม่เดา
  */
 
+import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import * as seoEngine from "./seo-engine";
 import * as serpTracker from "./serp-tracker";
 import * as db from "./db";
 import { scrapeWebsite, extractKeywordsFromContent } from "./web-scraper";
+
+// Helper: wrap fetch with proxy pool
+async function dailyFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+  return response;
+}
+
 
 // ═══ Types ═══
 
@@ -544,7 +553,7 @@ async function executeTechnical(
 
   // Check robots.txt
   try {
-    const robotsRes = await fetch(`https://${project.domain}/robots.txt`, { 
+    const robotsRes = await dailyFetch(`https://${project.domain}/robots.txt`, { 
       signal: AbortSignal.timeout(10000) 
     });
     checks.push({
@@ -558,7 +567,7 @@ async function executeTechnical(
 
   // Check sitemap.xml
   try {
-    const sitemapRes = await fetch(`https://${project.domain}/sitemap.xml`, { 
+    const sitemapRes = await dailyFetch(`https://${project.domain}/sitemap.xml`, { 
       signal: AbortSignal.timeout(10000) 
     });
     const sitemapText = sitemapRes.ok ? await sitemapRes.text() : "";
@@ -574,7 +583,7 @@ async function executeTechnical(
 
   // Check SSL
   try {
-    const sslRes = await fetch(`https://${project.domain}`, { 
+    const sslRes = await dailyFetch(`https://${project.domain}`, { 
       signal: AbortSignal.timeout(10000),
       redirect: "follow",
     });
@@ -590,7 +599,7 @@ async function executeTechnical(
   // Check page load time
   try {
     const start = Date.now();
-    await fetch(`https://${project.domain}`, { signal: AbortSignal.timeout(15000) });
+    await dailyFetch(`https://${project.domain}`, { signal: AbortSignal.timeout(15000) });
     const loadTime = Date.now() - start;
     checks.push({
       check: "Page Speed",

