@@ -1077,6 +1077,13 @@ export const scheduledScans = mysqlTable("scheduled_scans", {
   nextRunAt: timestamp("nextRunAt"),
   lastRunStatus: mysqlEnum("lastRunStatus", ["success", "partial", "failed", "running"]),
   totalRuns: int("totalRuns").default(0).notNull(),
+  // Auto-Remediation
+  autoRemediationEnabled: boolean("autoRemediationEnabled").default(false).notNull(),
+  autoRemediationCategories: json("autoRemediationCategories"),  // Array of FixCategory strings
+  autoRemediationDryRun: boolean("autoRemediationDryRun").default(true).notNull(), // Dry run by default for safety
+  lastRemediationAt: timestamp("lastRemediationAt"),
+  totalRemediations: int("totalRemediations").default(0).notNull(),
+  totalFixesApplied: int("totalFixesApplied").default(0).notNull(),
   // Metadata
   createdAt: timestamp("scanCreatedAt").defaultNow().notNull(),
   updatedAt: timestamp("scanUpdatedAt").defaultNow().onUpdateNow().notNull(),

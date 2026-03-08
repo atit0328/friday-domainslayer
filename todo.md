@@ -2043,3 +2043,38 @@
 ## Testing
 - [x] Write vitest tests for scheduled scan procedures (36/36 passed)
 - [x] Verify Telegram notification integration (sendScanAlert with HTML formatting)
+
+# Auto-Remediation — AI Auto-Fix Vulnerabilities via WP API
+
+## Review & Design
+- [x] Review existing WP API methods (wp-api.ts) for available fix capabilities
+- [x] Identify auto-fixable vulnerability types from comprehensive attack vectors
+- [x] Design fix strategies per vulnerability category (10 categories: security_headers, ssl_tls, clickjacking, plugin_management, session_security, open_redirect, information_disclosure, maintenance_mode, mixed_content, misconfiguration)
+
+## Backend
+- [x] Build auto-remediation engine (server/auto-remediation.ts) — 500+ lines real logic
+- [x] Implement fix strategies: security headers, SSL, plugin updates, misconfiguration (10 fix strategies with pattern matching)
+- [x] Integrate with WP REST API for applying fixes (plugin deactivation, settings update, .htaccess headers)
+- [x] Track fix attempts and results in database (autoRemediation fields in scheduled_scans)
+- [x] LLM-assisted analysis for complex vulnerabilities that can't be auto-fixed
+
+## Integration
+- [x] Hook auto-remediation into scan scheduler (post-scan auto-fix)
+- [x] Respect WP credentials check before applying WP-dependent fixes
+- [x] Send Telegram notification with fix results (HTML formatted)
+
+## tRPC Router
+- [x] scheduledScans.create/update — includes autoRemediation settings (enabled, categories, dryRun)
+- [x] scheduledScans.runRemediation — manually trigger auto-fix for a scan
+- [x] scheduledScans.fixCategories — list all available fix categories with descriptions
+- [x] scheduledScans.remediationHistory — view fix history per scan
+
+## Frontend UI
+- [x] Auto-Remediation settings in Create/Edit Scheduled Scan dialog (toggle, categories, dry run)
+- [x] "Run Auto-Fix" button in Scan Results view with dialog (dry run mode, category selection)
+- [x] Fix category grid with WP-dependent markers
+- [x] Warning banner for non-dry-run mode
+
+## Testing
+- [x] Write vitest tests for auto-remediation logic (31/31 passed)
+- [x] Test fix strategy selection, category filtering, dry run, edge cases, Telegram notification

@@ -169,6 +169,13 @@
       "when": 1772989555497,
       "tag": "0023_swift_hammerhead",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1772990871801,
+      "tag": "0024_smiling_scourge",
+      "breakpoints": true
     }
   ]
 }

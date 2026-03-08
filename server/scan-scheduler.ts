@@ -15,6 +15,7 @@ import { scheduledScans, scanResults } from "../drizzle/schema";
 import { eq, and, lte, isNull, or } from "drizzle-orm";
 import { runComprehensiveAttackVectors, type AttackVectorResult, type AttackVectorConfig } from "./comprehensive-attack-vectors";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { runAutoRemediation, getWPCredentialsForDomain, type FixCategory } from "./auto-remediation";
 
 const SCHEDULER_INTERVAL_MS = 15 * 60 * 1000; // Check every 15 minutes
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
@@ -203,6 +204,41 @@ async function executeScan(scan: ScheduledScan) {
         await database.update(scanResults).set({
           telegramSent: true,
         }).where(eq(scanResults.id, Number(insertResult.insertId)));
+      }
+    }
+
+    // ═══ Auto-Remediation ═══
+    if (scan.autoRemediationEnabled && totalFindings > 0) {
+      console.log(`[ScanScheduler] 🔧 Running auto-remediation for ${scan.domain}...`);
+      try {
+        const wpCreds = await getWPCredentialsForDomain(scan.domain);
+        const categories = (scan.autoRemediationCategories as FixCategory[]) || [
+          "security_headers", "ssl_tls", "plugin_management", "clickjacking",
+          "session_security", "information_disclosure", "maintenance_mode", "mixed_content",
+        ];
+
+        const remediationResult = await runAutoRemediation({
+          domain: scan.domain,
+          userId: scan.userId,
+          scanResultId: insertResult.insertId ? Number(insertResult.insertId) : undefined,
+          findings,
+          wpCredentials: wpCreds || undefined,
+          autoFixEnabled: true,
+          fixCategories: categories,
+          dryRun: scan.autoRemediationDryRun,
+          notifyTelegram: scan.telegramAlert,
+        });
+
+        // Update scan with remediation stats
+        await database.update(scheduledScans).set({
+          lastRemediationAt: new Date(),
+          totalRemediations: (scan.totalRemediations || 0) + 1,
+          totalFixesApplied: (scan.totalFixesApplied || 0) + remediationResult.fixedCount,
+        }).where(eq(scheduledScans.id, scan.id));
+
+        console.log(`[ScanScheduler] ✓ Remediation complete: ${remediationResult.fixedCount} fixed, ${remediationResult.failedCount} failed, ${remediationResult.skippedCount} skipped`);
+      } catch (remErr) {
+        console.error(`[ScanScheduler] ✗ Remediation failed:`, remErr instanceof Error ? remErr.message : String(remErr));
       }
     }
 

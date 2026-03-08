@@ -51,6 +51,9 @@ import {
   ArrowDownRight,
   BarChart3,
   RefreshCw,
+  Wrench,
+  Zap,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -349,6 +352,21 @@ function CreateScanDialog({ onClose, onCreated }: { onClose: () => void; onCreat
   const [enableIndirect, setEnableIndirect] = useState(true);
   const [enableShellless, setEnableShellless] = useState(true);
   const [enableDns, setEnableDns] = useState(false);
+  // Auto-Remediation
+  const [autoRemediationEnabled, setAutoRemediationEnabled] = useState(false);
+  const [autoRemediationDryRun, setAutoRemediationDryRun] = useState(true);
+  const [autoRemediationCategories, setAutoRemediationCategories] = useState<string[]>([
+    "security_headers", "ssl_tls", "clickjacking", "information_disclosure",
+    "mixed_content", "session_security",
+  ]);
+
+  const { data: fixCategories } = trpc.scheduledScans.fixCategories.useQuery();
+
+  const toggleFixCategory = (cat: string) => {
+    setAutoRemediationCategories(prev =>
+      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+    );
+  };
 
   const createMutation = trpc.scheduledScans.create.useMutation({
     onSuccess: () => {
@@ -382,6 +400,9 @@ function CreateScanDialog({ onClose, onCreated }: { onClose: () => void; onCreat
       enableIndirect,
       enableShellless,
       enableDns,
+      autoRemediationEnabled,
+      autoRemediationDryRun,
+      autoRemediationCategories: autoRemediationEnabled ? autoRemediationCategories : undefined,
     });
   };
 
@@ -484,6 +505,54 @@ function CreateScanDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           </div>
         </div>
 
+        {/* Auto-Remediation */}
+        <div className="space-y-2 border-t border-border/50 pt-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-amber-400" />
+              <Label className="text-xs font-mono uppercase text-muted-foreground">Auto-Remediation</Label>
+            </div>
+            <Switch checked={autoRemediationEnabled} onCheckedChange={setAutoRemediationEnabled} />
+          </div>
+          {autoRemediationEnabled && (
+            <div className="space-y-3 pl-1">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm">โหมด Dry Run (ทดสอบก่อนแก้จริง)</p>
+                  <p className="text-xs text-muted-foreground">แสดงสิ่งที่จะแก้ไขโดยไม่แก้จริง</p>
+                </div>
+                <Switch checked={autoRemediationDryRun} onCheckedChange={setAutoRemediationDryRun} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">ประเภทการแก้ไขอัตโนมัติ</Label>
+                <div className="grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
+                  {(fixCategories || []).map((cat: { value: string; label: string; description: string; requiresWP: boolean }) => (
+                    <button
+                      key={cat.value}
+                      onClick={() => toggleFixCategory(cat.value)}
+                      className={`text-left px-2.5 py-1.5 rounded text-xs transition-colors ${
+                        autoRemediationCategories.includes(cat.value)
+                          ? "bg-amber-600/20 text-amber-300 border border-amber-500/30"
+                          : "bg-muted/30 text-muted-foreground hover:bg-muted/50 border border-transparent"
+                      }`}
+                      title={cat.description}
+                    >
+                      <span className="font-medium">{cat.label}</span>
+                      {cat.requiresWP && <span className="ml-1 text-[10px] opacity-60">(WP)</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {!autoRemediationDryRun && (
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded p-2 text-xs text-amber-300">
+                  <AlertTriangle className="w-3 h-3 inline mr-1" />
+                  <strong>โหมดแก้ไขจริง:</strong> AI จะแก้ไข vulnerability ที่พบโดยอัตโนมัติ (ต้องมี WP credentials สำหรับบางประเภท)
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Telegram Alert */}
         <div className="space-y-2 border-t border-border/50 pt-3">
           <div className="flex items-center justify-between">
@@ -544,11 +613,35 @@ function ScanResultsView({
   setShowResultDetail: (id: number | null) => void;
 }) {
   const [page, setPage] = useState(1);
+  const [showRemediationDialog, setShowRemediationDialog] = useState(false);
+  const [remDryRun, setRemDryRun] = useState(true);
+  const utils = trpc.useUtils();
   const { data: scanData, isLoading: scanLoading } = trpc.scheduledScans.get.useQuery({ id: scanId });
   const { data: resultsData, isLoading: resultsLoading } = trpc.scheduledScans.results.useQuery({
     scanId,
     page,
     limit: 20,
+  });
+  const { data: fixCategories } = trpc.scheduledScans.fixCategories.useQuery();
+  const [selectedFixCats, setSelectedFixCats] = useState<string[]>([
+    "security_headers", "ssl_tls", "clickjacking", "information_disclosure",
+    "mixed_content", "session_security",
+  ]);
+
+  const remediationMutation = trpc.scheduledScans.runRemediation.useMutation({
+    onSuccess: (data) => {
+      utils.scheduledScans.list.invalidate();
+      utils.scheduledScans.results.invalidate();
+      setShowRemediationDialog(false);
+      if (data.fixedCount > 0) {
+        toast.success(`Auto-Remediation: ${data.fixedCount} fixes applied, ${data.skippedCount} skipped`);
+      } else if (data.fixableCount > 0) {
+        toast.info(`Dry Run: ${data.totalFindings} vulnerabilities analyzed, ${data.fixableCount} fixable`);
+      } else {
+        toast.info("No auto-fixable vulnerabilities found");
+      }
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   if (showResultDetail !== null) {
@@ -567,7 +660,7 @@ function ScanResultsView({
         <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8">
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <div>
+        <div className="flex-1">
           <h2 className="text-xl font-bold flex items-center gap-2">
             <Shield className="w-5 h-5 text-emerald-400" />
             {scanData?.domain || "Loading..."}
@@ -576,6 +669,85 @@ function ScanResultsView({
             {scanData ? `${FREQUENCY_LABELS[scanData.frequency]} — ${scanData.totalResults} runs` : ""}
           </p>
         </div>
+        {/* Run Remediation Button */}
+        <Dialog open={showRemediationDialog} onOpenChange={setShowRemediationDialog}>
+          <DialogTrigger asChild>
+            <Button
+              variant="outline"
+              className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+              disabled={!scanData?.latestResult}
+            >
+              <Wrench className="w-4 h-4 mr-2" />
+              Run Auto-Fix
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-amber-400" />
+                Auto-Remediation
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Dry Run Mode</p>
+                  <p className="text-xs text-muted-foreground">\u0e41\u0e2a\u0e14\u0e07\u0e2a\u0e34\u0e48\u0e07\u0e17\u0e35\u0e48\u0e08\u0e30\u0e41\u0e01\u0e49\u0e44\u0e02\u0e42\u0e14\u0e22\u0e44\u0e21\u0e48\u0e41\u0e01\u0e49\u0e08\u0e23\u0e34\u0e07</p>
+                </div>
+                <Switch checked={remDryRun} onCheckedChange={setRemDryRun} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-mono uppercase text-muted-foreground">Fix Categories</Label>
+                <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto">
+                  {(fixCategories || []).map((cat: { value: string; label: string; description: string; requiresWP: boolean }) => (
+                    <button
+                      key={cat.value}
+                      onClick={() => setSelectedFixCats(prev =>
+                        prev.includes(cat.value) ? prev.filter(c => c !== cat.value) : [...prev, cat.value]
+                      )}
+                      className={`text-left px-2.5 py-1.5 rounded text-xs transition-colors ${
+                        selectedFixCats.includes(cat.value)
+                          ? "bg-amber-600/20 text-amber-300 border border-amber-500/30"
+                          : "bg-muted/30 text-muted-foreground hover:bg-muted/50 border border-transparent"
+                      }`}
+                      title={cat.description}
+                    >
+                      <span className="font-medium">{cat.label}</span>
+                      {cat.requiresWP && <span className="ml-1 text-[10px] opacity-60">(WP)</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {!remDryRun && (
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded p-2 text-xs text-amber-300">
+                  <AlertTriangle className="w-3 h-3 inline mr-1" />
+                  <strong>\u0e42\u0e2b\u0e21\u0e14\u0e41\u0e01\u0e49\u0e44\u0e02\u0e08\u0e23\u0e34\u0e07:</strong> AI \u0e08\u0e30\u0e41\u0e01\u0e49\u0e44\u0e02 vulnerability \u0e42\u0e14\u0e22\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button variant="outline">\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01</Button>
+              </DialogClose>
+              <Button
+                className="bg-amber-600 hover:bg-amber-700"
+                onClick={() => remediationMutation.mutate({
+                  scanId,
+                  dryRun: remDryRun,
+                  categories: selectedFixCats,
+                })}
+                disabled={remediationMutation.isPending}
+              >
+                {remediationMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Zap className="w-4 h-4 mr-2" />
+                )}
+                {remDryRun ? "Run Dry Test" : "Apply Fixes"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       {/* Latest result summary */}

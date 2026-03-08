@@ -8,6 +8,8 @@ import { getDb } from "../db";
 import { scheduledScans, scanResults } from "../../drizzle/schema";
 import { desc, eq, and, count, sql } from "drizzle-orm";
 import { calculateNextRun, runScanNow } from "../scan-scheduler";
+import { runAutoRemediation, getWPCredentialsForDomain, ALL_FIX_CATEGORIES, type FixCategory } from "../auto-remediation";
+import type { AttackVectorResult } from "../comprehensive-attack-vectors";
 
 export const scheduledScansRouter = router({
   // ─── List all scheduled scans ─────────────────────
@@ -74,6 +76,10 @@ export const scheduledScansRouter = router({
       enableDns: z.boolean().default(false),
       telegramAlert: z.boolean().default(true),
       alertMinSeverity: z.enum(["critical", "high", "medium", "low", "info"]).default("high"),
+      // Auto-Remediation
+      autoRemediationEnabled: z.boolean().default(false),
+      autoRemediationCategories: z.array(z.string()).optional(),
+      autoRemediationDryRun: z.boolean().default(true),
     }))
     .mutation(async ({ ctx, input }) => {
       const database = await getDb();
@@ -102,6 +108,9 @@ export const scheduledScansRouter = router({
         enableDns: input.enableDns,
         telegramAlert: input.telegramAlert,
         alertMinSeverity: input.alertMinSeverity,
+        autoRemediationEnabled: input.autoRemediationEnabled,
+        autoRemediationCategories: input.autoRemediationCategories || null,
+        autoRemediationDryRun: input.autoRemediationDryRun,
         enabled: true,
         nextRunAt,
       });
@@ -124,6 +133,10 @@ export const scheduledScansRouter = router({
       enableDns: z.boolean().optional(),
       telegramAlert: z.boolean().optional(),
       alertMinSeverity: z.enum(["critical", "high", "medium", "low", "info"]).optional(),
+      // Auto-Remediation
+      autoRemediationEnabled: z.boolean().optional(),
+      autoRemediationCategories: z.array(z.string()).optional(),
+      autoRemediationDryRun: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const database = await getDb();
@@ -159,6 +172,9 @@ export const scheduledScansRouter = router({
       if (updates.enableDns !== undefined) updateData.enableDns = updates.enableDns;
       if (updates.telegramAlert !== undefined) updateData.telegramAlert = updates.telegramAlert;
       if (updates.alertMinSeverity !== undefined) updateData.alertMinSeverity = updates.alertMinSeverity;
+      if (updates.autoRemediationEnabled !== undefined) updateData.autoRemediationEnabled = updates.autoRemediationEnabled;
+      if (updates.autoRemediationCategories !== undefined) updateData.autoRemediationCategories = updates.autoRemediationCategories;
+      if (updates.autoRemediationDryRun !== undefined) updateData.autoRemediationDryRun = updates.autoRemediationDryRun;
 
       // Recalculate next run
       if (updates.frequency || updates.scheduleDays !== undefined || updates.scheduleHour !== undefined) {
@@ -317,6 +333,75 @@ export const scheduledScansRouter = router({
 
       return { success: true, message: "Scan started in background" };
     }),
+
+  // ─── Run auto-remediation on latest scan result ───
+  runRemediation: protectedProcedure
+    .input(z.object({
+      scanId: z.number(),
+      dryRun: z.boolean().default(false),
+      categories: z.array(z.string()).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const database = await getDb();
+      if (!database) throw new Error("Database not available");
+
+      // Verify ownership
+      const [scan] = await database
+        .select()
+        .from(scheduledScans)
+        .where(and(
+          eq(scheduledScans.id, input.scanId),
+          eq(scheduledScans.userId, ctx.user.id),
+        ));
+
+      if (!scan) throw new Error("Scan not found");
+
+      // Get latest scan result
+      const [latestResult] = await database
+        .select()
+        .from(scanResults)
+        .where(eq(scanResults.scanId, input.scanId))
+        .orderBy(desc(scanResults.createdAt))
+        .limit(1);
+
+      if (!latestResult || !latestResult.findings) {
+        throw new Error("No scan results found. Run a scan first.");
+      }
+
+      const findings = latestResult.findings as AttackVectorResult[];
+      const wpCreds = await getWPCredentialsForDomain(scan.domain);
+
+      const result = await runAutoRemediation({
+        domain: scan.domain,
+        userId: ctx.user.id,
+        scanResultId: latestResult.id,
+        findings,
+        wpCredentials: wpCreds || undefined,
+        autoFixEnabled: true,
+        fixCategories: (input.categories as FixCategory[]) || [
+          "security_headers", "ssl_tls", "plugin_management", "clickjacking",
+          "session_security", "information_disclosure", "maintenance_mode", "mixed_content",
+        ],
+        dryRun: input.dryRun,
+        notifyTelegram: scan.telegramAlert,
+      });
+
+      // Update scan stats
+      if (result.fixedCount > 0) {
+        await database.update(scheduledScans).set({
+          lastRemediationAt: new Date(),
+          totalRemediations: (scan.totalRemediations || 0) + 1,
+          totalFixesApplied: (scan.totalFixesApplied || 0) + result.fixedCount,
+        }).where(eq(scheduledScans.id, input.scanId));
+      }
+
+      return result;
+    }),
+
+  // ─── Get available fix categories ─────────────────
+  fixCategories: protectedProcedure.query(() => {
+    return ALL_FIX_CATEGORIES;
+  }),
 
   // ─── Dashboard stats ──────────────────────────────
   stats: protectedProcedure.query(async ({ ctx }) => {
