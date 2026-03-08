@@ -21,6 +21,8 @@ import {
 import { seoProjects } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { calculateNextRunMultiDay } from "./routers/seo-automation";
+import { runAllProjectsDailyTasks } from "./seo-agent";
+import { sendTelegramNotification } from "./telegram-notifier";
 
 const SCHEDULER_INTERVAL_MS = 30 * 60 * 1000; // Check every 30 minutes (was 60 min)
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
@@ -69,6 +71,7 @@ export async function runScheduledJobs(): Promise<{
   checked: number;
   executed: number;
   results: { projectId: number; domain: string; status: string; detail: string }[];
+  agentResult: { projectsProcessed: number; totalTasks: number; totalCompleted: number; totalFailed: number };
 }> {
   const projects = await getScheduledProjects();
   const now = new Date();
@@ -133,7 +136,31 @@ export async function runScheduledJobs(): Promise<{
     console.log(`[SEO Scheduler] ✅ รันเสร็จ ${executed}/${projects.length} โปรเจค`);
   }
 
-  return { checked: projects.length, executed, results };
+  // ═══ Run AI Agent Tasks for ALL projects ═══
+  let agentResult = { projectsProcessed: 0, totalTasks: 0, totalCompleted: 0, totalFailed: 0 };
+  try {
+    agentResult = await runAllProjectsDailyTasks();
+    if (agentResult.totalTasks > 0) {
+      console.log(`[SEO Scheduler] 🤖 AI Agent: ${agentResult.totalCompleted}/${agentResult.totalTasks} tasks สำเร็จ (${agentResult.projectsProcessed} projects)`);
+      
+      // Send daily summary notification
+      try {
+        await sendTelegramNotification({
+          type: "info",
+          targetUrl: "SEO Agent Daily Summary",
+          details: `🤖 AI Agent Daily Report\n` +
+            `📊 Projects: ${agentResult.projectsProcessed}\n` +
+            `✅ Completed: ${agentResult.totalCompleted}/${agentResult.totalTasks}\n` +
+            `❌ Failed: ${agentResult.totalFailed}\n` +
+            `📅 Legacy SEO: ${executed}/${projects.length} projects`,
+        });
+      } catch {}
+    }
+  } catch (err: any) {
+    console.error("[SEO Scheduler] AI Agent daily tasks failed:", err.message);
+  }
+
+  return { checked: projects.length, executed, results, agentResult };
 }
 
 /**

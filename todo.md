@@ -1900,3 +1900,21 @@
 
 ## Navigation
 - [x] Update sidebar SEO section — existing sidebar already has all SEO pages
+
+# Cron Job + Progress Dashboard
+
+## Cron Job — Auto Daily AI Agent Tasks
+- [x] เพิ่ม cron scheduler ใน server เรียก runAllProjectsDailyTasks() ทุก 30 นาที
+- [ ] รองรับ user-selectable days (เลือกวันที่จะรัน) — ยังไม่ได้ทำ (future)
+- [x] ส่ง Telegram notification สรุปผลรายวัน
+- [x] Log ผลการรันลง database (ผ่าน seo_agent_tasks table)
+
+## Progress Dashboard — SEO Command Center
+- [x] เพิ่ม tRPC procedure getProgressDashboard สำหรับดึง agent progress ทุก domain
+- [x] แสดง real-time progress cards ทุก domain (% completion, tasks remaining, estimated days left)
+- [x] แสดง overall stats (total domains, active campaigns, tasks today, backlinks, content)
+- [x] แสดง recent activity feed (latest 20 tasks executed)
+
+## Tests
+- [x] Vitest tests สำหรับ cron scheduler (6 tests)
+- [x] Vitest tests สำหรับ progress dashboard router + UI (32 tests)

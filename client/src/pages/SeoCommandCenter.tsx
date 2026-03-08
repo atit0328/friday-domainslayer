@@ -534,6 +534,9 @@ export default function SeoCommandCenter() {
         </Card>
       )}
 
+      {/* AI Agent Progress Dashboard */}
+      <AgentProgressDashboard />
+
       {/* Project List */}
       {isLoading ? (
         <div className="flex items-center justify-center py-20">
@@ -861,6 +864,271 @@ export default function SeoCommandCenter() {
             </Card>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * AI Agent Progress Dashboard — Real-time progress for all domains
+ * Shows overall stats, per-domain progress, and recent activity
+ */
+function AgentProgressDashboard() {
+  const [, navigate] = useLocation();
+  const { data, isLoading } = trpc.seoAgent.getProgressDashboard.useQuery(undefined, {
+    refetchInterval: 30_000, // Auto-refresh every 30s
+  });
+
+  if (isLoading) {
+    return (
+      <Card className="bg-card/50 border-emerald-500/20">
+        <CardContent className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-emerald-400 mr-2" />
+          <span className="text-sm text-muted-foreground">กำลังโหลด AI Agent Dashboard...</span>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!data || data.projects.length === 0) return null;
+
+  const { projects, overall, recentActivity } = data;
+
+  // Task type labels
+  const taskTypeLabels: Record<string, string> = {
+    domain_analysis: "วิเคราะห์โดเมน",
+    keyword_research: "วิจัย Keywords",
+    keyword_gap_analysis: "Gap Analysis",
+    onpage_audit: "On-Page Audit",
+    content_plan: "วางแผน Content",
+    content_create: "สร้าง Content",
+    content_publish_wp: "โพส WordPress",
+    backlink_plan: "วางแผน Backlink",
+    backlink_build_pbn: "สร้าง PBN Link",
+    backlink_build_web2: "สร้าง Web 2.0",
+    backlink_build_guest: "Guest Post",
+    backlink_build_social: "Social Signals",
+    backlink_tier2: "Tier 2 Links",
+    index_request: "ขอ Index",
+    rank_check: "เช็คอันดับ",
+    competitor_spy: "สอดแนมคู่แข่ง",
+    strategy_review: "ทบทวนกลยุทธ์",
+    wp_optimize: "Optimize WP",
+    wp_fix_issues: "แก้ไข WP",
+    schema_markup: "Schema Markup",
+    internal_linking: "Internal Links",
+    risk_assessment: "ประเมินความเสี่ยง",
+    report_generate: "สร้างรายงาน",
+  };
+
+  const getTaskLabel = (type: string) => taskTypeLabels[type] || type;
+
+  // Agent status colors
+  const agentStatusConfig: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
+    idle: { color: "text-zinc-400 border-zinc-500/20 bg-zinc-500/10", label: "รอคำสั่ง", icon: <Clock className="w-3 h-3" /> },
+    planning: { color: "text-blue-400 border-blue-500/20 bg-blue-500/10", label: "วางแผน", icon: <Brain className="w-3 h-3 animate-pulse" /> },
+    executing: { color: "text-amber-400 border-amber-500/20 bg-amber-500/10", label: "กำลังทำงาน", icon: <Zap className="w-3 h-3 animate-pulse" /> },
+    monitoring: { color: "text-emerald-400 border-emerald-500/20 bg-emerald-500/10", label: "ติดตามผล", icon: <Activity className="w-3 h-3" /> },
+    paused: { color: "text-orange-400 border-orange-500/20 bg-orange-500/10", label: "หยุดชั่วคราว", icon: <Clock className="w-3 h-3" /> },
+    failed: { color: "text-red-400 border-red-500/20 bg-red-500/10", label: "ล้มเหลว", icon: <AlertTriangle className="w-3 h-3" /> },
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Section Header */}
+      <div className="flex items-center gap-2">
+        <Brain className="w-5 h-5 text-amber-400" />
+        <h2 className="text-lg font-semibold">AI Agent Progress</h2>
+        <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/20">
+          LIVE
+        </Badge>
+      </div>
+
+      {/* Overall Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <Card className="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border-emerald-500/20">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tasks Today</p>
+            <p className="text-xl font-bold text-emerald-400">{overall.tasksToday}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 border-blue-500/20">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Completed</p>
+            <p className="text-xl font-bold text-blue-400">{overall.tasksCompleted}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-red-500/10 to-red-500/5 border-red-500/20">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Failed</p>
+            <p className="text-xl font-bold text-red-400">{overall.tasksFailed}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-violet-500/10 to-violet-500/5 border-violet-500/20">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Backlinks</p>
+            <p className="text-xl font-bold text-violet-400">{overall.totalBacklinks}</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-amber-500/10 to-amber-500/5 border-amber-500/20">
+          <CardContent className="p-3 text-center">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Content</p>
+            <p className="text-xl font-bold text-amber-400">{overall.totalContent}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Per-Domain Progress Cards */}
+      <div className="grid gap-3">
+        {projects.map((project) => {
+          const statusCfg = agentStatusConfig[project.agentStatus] || agentStatusConfig.idle;
+          const daysLeft = project.estimatedDays
+            ? Math.max(0, project.estimatedDays - Math.floor((Date.now() - new Date(project.createdAt).getTime()) / 86400000))
+            : null;
+
+          return (
+            <Card
+              key={project.id}
+              className="bg-card/50 border-emerald-500/10 hover:border-emerald-500/30 transition-all cursor-pointer"
+              onClick={() => navigate(`/seo/${project.id}`)}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start gap-4">
+                  {/* Domain Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Globe className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="font-mono text-sm font-semibold truncate">{project.domain}</span>
+                      <Badge variant="outline" className={`text-[10px] ${statusCfg.color}`}>
+                        {statusCfg.icon}
+                        <span className="ml-1">{statusCfg.label}</span>
+                      </Badge>
+                      {project.autoRunEnabled && (
+                        <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                          <RefreshCw className="w-2.5 h-2.5 mr-1" />AUTO
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="flex-1 h-2 bg-muted/50 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ${
+                            project.progressPercent >= 100 ? "bg-emerald-400" :
+                            project.progressPercent >= 50 ? "bg-blue-400" :
+                            project.progressPercent >= 25 ? "bg-amber-400" :
+                            "bg-violet-400"
+                          }`}
+                          style={{ width: `${project.progressPercent}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-mono font-bold text-emerald-400 shrink-0">
+                        {project.progressPercent}%
+                      </span>
+                    </div>
+
+                    {/* Stats Row */}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                      {project.currentPhase && (
+                        <span className="flex items-center gap-1">
+                          <Zap className="w-3 h-3 text-amber-400" />
+                          Phase: <span className="text-foreground font-medium">{project.currentPhase}</span>
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <BarChart3 className="w-3 h-3 text-blue-400" />
+                        Tasks: <span className="text-foreground">{project.stats.completed}/{project.stats.totalTasks}</span>
+                      </span>
+                      {project.stats.pending > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-zinc-400" />
+                          Pending: <span className="text-amber-400">{project.stats.pending}</span>
+                        </span>
+                      )}
+                      {project.stats.todayCompleted > 0 && (
+                        <span className="flex items-center gap-1">
+                          <TrendingUp className="w-3 h-3 text-emerald-400" />
+                          Today: <span className="text-emerald-400">+{project.stats.todayCompleted}</span>
+                        </span>
+                      )}
+                      {project.stats.failed > 0 && (
+                        <span className="flex items-center gap-1">
+                          <AlertTriangle className="w-3 h-3 text-red-400" />
+                          Failed: <span className="text-red-400">{project.stats.failed}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Side — Metrics */}
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {project.targetDays && (
+                      <div className="text-right">
+                        <p className="text-[10px] text-muted-foreground">Target</p>
+                        <p className="text-sm font-bold text-amber-400">{project.targetDays}d</p>
+                      </div>
+                    )}
+                    {daysLeft !== null && daysLeft >= 0 && (
+                      <div className="text-right">
+                        <p className="text-[10px] text-muted-foreground">Remaining</p>
+                        <p className={`text-sm font-bold ${daysLeft <= 3 ? "text-red-400" : daysLeft <= 7 ? "text-amber-400" : "text-emerald-400"}`}>
+                          {daysLeft}d
+                        </p>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      {project.metrics.da > 0 && (
+                        <span className="text-[10px] font-mono bg-muted/50 px-1.5 py-0.5 rounded">DA:{project.metrics.da}</span>
+                      )}
+                      {project.metrics.backlinks > 0 && (
+                        <span className="text-[10px] font-mono bg-violet-500/10 text-violet-400 px-1.5 py-0.5 rounded">
+                          <Link2 className="w-2.5 h-2.5 inline mr-0.5" />{project.metrics.backlinks}
+                        </span>
+                      )}
+                    </div>
+                    <ArrowUpRight className="w-4 h-4 text-muted-foreground mt-1" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Recent Activity Feed */}
+      {recentActivity.length > 0 && (
+        <Card className="bg-card/50 border-zinc-500/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Activity className="w-4 h-4 text-emerald-400" />
+              Recent AI Activity
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              {recentActivity.map((activity: any) => (
+                <div
+                  key={activity.id}
+                  className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/30 transition-colors text-xs"
+                >
+                  <div className={`w-2 h-2 rounded-full shrink-0 ${
+                    activity.status === "completed" ? "bg-emerald-400" : "bg-red-400"
+                  }`} />
+                  <span className="font-mono text-muted-foreground shrink-0">{activity.domain}</span>
+                  <span className="text-foreground font-medium">{getTaskLabel(activity.taskType)}</span>
+                  {activity.description && (
+                    <span className="text-muted-foreground truncate flex-1">{activity.description}</span>
+                  )}
+                  <span className="text-muted-foreground shrink-0">
+                    {activity.completedAt ? new Date(activity.completedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }) : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );
