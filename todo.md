@@ -1789,3 +1789,24 @@
 - [x] Add getPoolStats() and getDomainIntelStats() exports
 - [x] Document test results: AI Commander 87.7s, 32 events, LLM correctly identifies root causes
 - [x] Fix AiCommanderConfig params mismatch (targetDomain not targetUrl, onEvent in config not callback arg)
+
+# Cloudflare Origin IP Bypass
+- [x] สร้าง cf-origin-bypass.ts — module หา real IP ของ server ที่ซ่อนหลัง Cloudflare
+- [x] ใช้ Shodan API ค้นหา SSL cert fingerprint → หา origin IP
+- [x] ใช้ DNS history (SecurityTrails, ViewDNS) หา IP เก่าก่อนย้ายมา CF
+- [x] ใช้ subdomain enumeration (mail., ftp., cpanel.) ที่อาจไม่ผ่าน CF
+- [x] ตรวจสอบ IP จริงด้วย direct HTTP request (Host header bypass)
+- [x] Integrate เข้า AI Commander pipeline — Phase 2.5c + AI prompt injection
+- [x] Vitest tests — 37 tests passed (cf-wpbrute-integration)
+- [x] Live test: 168-topgame.net — สแกน Shodan/DNS/Subdomain/MX ใน 24.7s (ไม่พบ origin IP — domain ซ่อนดี)
+
+# WP-Admin Brute Force
+- [x] สร้าง wp-brute-force.ts — module ลอง login WP-Admin ด้วย weak credentials
+- [x] รวม default username list (admin, administrator, wp-admin, ชื่อ domain) — 13 usernames
+- [x] รวม common password list (admin123, password, 123456, domain-based passwords) — 42 passwords
+- [x] ลอง login ผ่าน /wp-login.php (form POST) + /xmlrpc.php (wp.getUsersBlogs)
+- [x] ถ้า login สำเร็จ → ใช้ auth cookie/nonce สำหรับ REST API upload (wpAuthenticatedUpload)
+- [x] Rate limiting protection — ช้าลงถ้าเจอ lockout (30s lockout delay)
+- [x] Integrate เข้า AI Commander — Phase 2.5d + AI prompt injection + credentials passing
+- [x] Vitest tests — passed
+- [x] Live test: 168-topgame.net — enum 1 user (admins), XMLRPC blocked, wp-login lockout 2x (CF rate limit)
