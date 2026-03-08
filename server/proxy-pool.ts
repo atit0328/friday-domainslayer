@@ -444,6 +444,105 @@ class ProxyPool {
 export const proxyPool = new ProxyPool();
 
 // ═══════════════════════════════════════════════
+//  DOMAIN INTELLIGENCE CACHE
+//  Remembers which domains block proxies (e.g. Cloudflare)
+//  so we skip proxy attempts and go direct immediately.
+// ═══════════════════════════════════════════════
+
+interface DomainIntel {
+  directOnly: boolean;        // true = skip proxy, go direct
+  reason: string;             // why (e.g. "cloudflare_blocks_proxy")
+  proxyFailCount: number;     // how many proxy attempts failed
+  lastUpdated: number;        // timestamp
+  ttlMs: number;              // how long to cache this intel
+}
+
+const domainIntelCache = new Map<string, DomainIntel>();
+const DOMAIN_INTEL_DEFAULT_TTL = 30 * 60 * 1000; // 30 minutes
+const PROXY_FAIL_THRESHOLD = 3; // After 3 proxy failures for same domain → mark as direct-only
+
+/**
+ * Check if a domain should skip proxy and go direct
+ */
+function shouldSkipProxy(domain: string): { skip: boolean; reason?: string } {
+  const intel = domainIntelCache.get(domain);
+  if (!intel) return { skip: false };
+  
+  // Check if intel has expired
+  if (Date.now() - intel.lastUpdated > intel.ttlMs) {
+    domainIntelCache.delete(domain);
+    return { skip: false };
+  }
+  
+  if (intel.directOnly) {
+    return { skip: true, reason: intel.reason };
+  }
+  return { skip: false };
+}
+
+/**
+ * Record a proxy failure for a domain — after threshold, mark as direct-only
+ */
+function recordProxyFailure(domain: string, reason: string = "proxy_blocked"): void {
+  const existing = domainIntelCache.get(domain);
+  const failCount = (existing?.proxyFailCount || 0) + 1;
+  
+  domainIntelCache.set(domain, {
+    directOnly: failCount >= PROXY_FAIL_THRESHOLD,
+    reason,
+    proxyFailCount: failCount,
+    lastUpdated: Date.now(),
+    ttlMs: DOMAIN_INTEL_DEFAULT_TTL,
+  });
+  
+  if (failCount >= PROXY_FAIL_THRESHOLD) {
+    console.log(`[DomainIntel] ${domain} marked as DIRECT-ONLY (${failCount} proxy failures: ${reason})`);
+  }
+}
+
+/**
+ * Manually mark a domain as direct-only (e.g. after detecting Cloudflare)
+ */
+export function markDomainDirectOnly(domain: string, reason: string = "manual"): void {
+  domainIntelCache.set(domain, {
+    directOnly: true,
+    reason,
+    proxyFailCount: PROXY_FAIL_THRESHOLD,
+    lastUpdated: Date.now(),
+    ttlMs: DOMAIN_INTEL_DEFAULT_TTL,
+  });
+  console.log(`[DomainIntel] ${domain} manually marked as DIRECT-ONLY (${reason})`);
+}
+
+/**
+ * Get domain intelligence stats
+ */
+export function getDomainIntelStats(): { total: number; directOnly: number; domains: Array<{ domain: string; directOnly: boolean; reason: string; failCount: number }> } {
+  const domains: Array<{ domain: string; directOnly: boolean; reason: string; failCount: number }> = [];
+  const entries = Array.from(domainIntelCache.entries());
+  for (let i = 0; i < entries.length; i++) {
+    const [d, intel] = entries[i];
+    if (Date.now() - intel.lastUpdated <= intel.ttlMs) {
+      domains.push({ domain: d, directOnly: intel.directOnly, reason: intel.reason, failCount: intel.proxyFailCount });
+    }
+  }
+  return { total: domains.length, directOnly: domains.filter(d => d.directOnly).length, domains };
+}
+
+/**
+ * Export pool stats as standalone function
+ */
+export function getPoolStats(): { total: number; healthy: number; dead: number; avgSuccessRate: number } {
+  const stats = proxyPool.getStats();
+  return {
+    total: stats.total,
+    healthy: stats.healthy,
+    dead: stats.unhealthy,
+    avgSuccessRate: stats.successRate / 100,
+  };
+}
+
+// ═══════════════════════════════════════════════
 //  HELPER: Fetch with proxy from pool (REAL proxy via undici)
 // ═══════════════════════════════════════════════
 
@@ -477,6 +576,27 @@ export async function fetchWithPoolProxy(
     maxRetries = 2,
     fallbackDirect = true 
   } = options;
+
+  // ─── Domain Intelligence: skip proxy if domain is known to block them ───
+  const domain = options.targetDomain || new URL(url).hostname;
+  const intelCheck = shouldSkipProxy(domain);
+  if (intelCheck.skip) {
+    // Domain is known to block proxies — go direct immediately
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      return { response, proxyUsed: null, method: "direct" as const };
+    } catch (directErr) {
+      clearTimeout(t);
+      throw new Error(
+        `Direct fetch failed for ${url} (domain intel: ${intelCheck.reason}). ` +
+        `Error: ${directErr instanceof Error ? directErr.message : String(directErr)}`
+      );
+    } finally {
+      clearTimeout(t);
+    }
+  }
 
   // Track which proxies we've tried to avoid repeats
   const triedProxyIds = new Set<number>();
@@ -512,7 +632,10 @@ export async function fetchWithPoolProxy(
     errors.push({ proxyLabel: proxy.label, error: result.error!, latencyMs: result.latencyMs });
   }
 
-  // ─── All proxies failed → fallback to direct fetch ───
+  // ─── All proxies failed → record domain intel + fallback to direct fetch ───
+  if (errors.length > 0) {
+    recordProxyFailure(domain, `${errors.length}_proxies_failed`);
+  }
   if (fallbackDirect) {
     if (errors.length > 0) {
       console.log(`[ProxyPool] ${errors.length} proxies failed for ${url.substring(0, 80)} — falling back to direct fetch`);
