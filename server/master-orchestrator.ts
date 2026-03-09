@@ -39,6 +39,19 @@ import {
   type AiTaskQueueRow,
 } from "../drizzle/schema";
 import { eq, desc, sql, and, gte, lte, count, isNull, or } from "drizzle-orm";
+import {
+  emitStateChanged,
+  emitCycleStart,
+  emitCyclePhase,
+  emitCycleComplete,
+  emitCycleError,
+  emitTaskQueued,
+  emitTaskStarted,
+  emitTaskCompleted,
+  emitTaskFailed,
+  emitDecisionMade,
+  emitMetricsUpdate,
+} from "./orchestrator-sse";
 
 // ─── Types ───
 export interface WorldState {
@@ -600,6 +613,7 @@ async function processTaskQueue(maxConcurrent: number) {
       await taskDb.update(aiTaskQueue)
         .set({ status: "running", startedAt: new Date() })
         .where(eq(aiTaskQueue.id, task.id));
+      emitTaskStarted(task.id, task.taskType);
 
       // Execute the task based on type
       const result = await executeTask(task);
@@ -612,6 +626,7 @@ async function processTaskQueue(maxConcurrent: number) {
           result: result,
         })
         .where(eq(aiTaskQueue.id, task.id));
+      emitTaskCompleted(task.id, task.taskType, result);
 
     } catch (err: any) {
       const errorMsg = err?.message || String(err);
@@ -621,10 +636,12 @@ async function processTaskQueue(maxConcurrent: number) {
         await taskDb.update(aiTaskQueue)
           .set({ status: "failed", error: errorMsg, completedAt: new Date() })
           .where(eq(aiTaskQueue.id, task.id));
+        emitTaskFailed(task.id, task.taskType, errorMsg);
       } else {
         await taskDb.update(aiTaskQueue)
           .set({ status: "queued", error: errorMsg, retryCount: newRetry })
           .where(eq(aiTaskQueue.id, task.id));
+        emitTaskFailed(task.id, task.taskType, `${errorMsg} (retry ${newRetry}/${task.maxRetries})`);
       }
     }
   }
@@ -761,26 +778,32 @@ export async function runOodaCycle(): Promise<{
     const cycle = state.currentCycle + 1;
 
     console.log(`[Orchestrator] ═══ OODA Cycle #${cycle} START ═══`);
+    emitCycleStart(cycle);
 
     // Phase 1: OBSERVE
     console.log("[Orchestrator] Phase 1: OBSERVE — Collecting world state...");
+    emitCyclePhase(cycle, "observe", { message: "Collecting world state from all subsystems..." });
     const worldState = await observe();
     await logDecision(cycle, "observe", "global", "World state collected", 
       `Collected state from all subsystems`, 100, null, { summary: `SEO:${worldState.seo.activeProjects} PBN:${worldState.pbn.activeSites} Rank:${worldState.rank.totalTracked}` }, 0, "low");
 
     // Phase 2: ORIENT
     console.log("[Orchestrator] Phase 2: ORIENT — AI analyzing situation...");
+    emitCyclePhase(cycle, "orient", { message: "AI analyzing situation and priorities..." });
     const analysis = await orient(worldState, state);
     await logDecision(cycle, "orient", "global", "Strategic analysis complete",
       analysis, 90, worldState, null, 0, "medium");
 
     // Phase 3: DECIDE
     console.log("[Orchestrator] Phase 3: DECIDE — AI making decisions...");
+    emitCyclePhase(cycle, "decide", { message: "AI making strategic decisions..." });
     const decisions = await decide(worldState, analysis, state);
     console.log(`[Orchestrator] AI made ${decisions.length} decisions`);
+    decisions.forEach(d => emitDecisionMade({ subsystem: d.subsystem, action: d.action, priority: d.priority, confidence: d.confidence, reasoning: d.reasoning }));
 
     // Phase 4: ACT
     console.log("[Orchestrator] Phase 4: ACT — Creating tasks...");
+    emitCyclePhase(cycle, "act", { message: "Creating and dispatching tasks..." });
     const tasksCreated = await act(decisions, cycle);
     console.log(`[Orchestrator] Created ${tasksCreated} tasks`);
 
@@ -804,6 +827,8 @@ export async function runOodaCycle(): Promise<{
 
     const duration = ((Date.now() - cycleStart) / 1000).toFixed(1);
     console.log(`[Orchestrator] ═══ OODA Cycle #${cycle} COMPLETE (${duration}s) — ${tasksCreated} tasks created ═══`);
+    emitCycleComplete(cycle, { duration: parseFloat(duration), tasksCreated, decisionsCount: decisions.length });
+    emitMetricsUpdate({ cycle, tasksCreated, decisions: decisions.length, duration: parseFloat(duration) });
 
     // Send Telegram notification for significant cycles
     if (tasksCreated > 0) {
@@ -820,6 +845,8 @@ export async function runOodaCycle(): Promise<{
   } catch (err) {
     console.error("[Orchestrator] OODA Cycle error:", err);
     await updateOrchestratorState({ status: "error" });
+    emitCycleError(0, (err as Error)?.message || String(err));
+    emitStateChanged("error", { error: (err as Error)?.message || String(err) });
     throw err;
   } finally {
     isRunningCycle = false;
@@ -840,6 +867,7 @@ export async function startOrchestrator() {
 
   await updateOrchestratorState({ status: "running" });
   console.log("[Orchestrator] 🚀 Starting autonomous orchestrator...");
+  emitStateChanged("running", { message: "Orchestrator started" });
 
   // Run first cycle immediately
   try {
@@ -880,6 +908,7 @@ export async function stopOrchestrator() {
   }
   await updateOrchestratorState({ status: "stopped" });
   console.log("[Orchestrator] ⏹ Stopped");
+  emitStateChanged("stopped", { message: "Orchestrator stopped" });
 }
 
 export async function pauseOrchestrator() {
@@ -889,6 +918,7 @@ export async function pauseOrchestrator() {
   }
   await updateOrchestratorState({ status: "paused" });
   console.log("[Orchestrator] ⏸ Paused");
+  emitStateChanged("paused", { message: "Orchestrator paused" });
 }
 
 export function isOrchestratorRunning(): boolean {

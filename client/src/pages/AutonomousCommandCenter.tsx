@@ -9,6 +9,7 @@
 import { useState, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { useOrchestratorSSE, type ActivityMessage } from "@/hooks/useOrchestratorSSE";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -47,12 +48,15 @@ export default function AutonomousCommandCenter() {
   const [activeTab, setActiveTab] = useState("overview");
   const [detailSubsystem, setDetailSubsystem] = useState<"seo" | "attack" | "pbn" | "discovery" | "rank" | "autobid" | null>(null);
 
-  // ─── Data Queries ───
+  // ─── Real-time SSE Connection ───
+  const sse = useOrchestratorSSE({ enabled: true });
+
+  // ─── Data Queries (SSE auto-invalidates, so longer intervals are fine) ───
   const stateQuery = trpc.orchestrator.getState.useQuery(undefined, {
-    refetchInterval: 10000, // Refresh every 10s
+    refetchInterval: 30000, // SSE handles real-time updates
   });
   const taskStatsQuery = trpc.orchestrator.getTaskStats.useQuery(undefined, {
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
   const decisionsQuery = trpc.orchestrator.getDecisions.useQuery({ limit: 20 });
   const taskQueueQuery = trpc.orchestrator.getTaskQueue.useQuery({ limit: 30 });
@@ -114,6 +118,8 @@ export default function AutonomousCommandCenter() {
   const taskStats = taskStatsQuery.data;
   const worldState = worldStateQuery.data as Record<string, any> | null;
 
+  const sseStatusDot = sse.status === "connected" ? "bg-emerald-400" : sse.status === "reconnecting" ? "bg-yellow-400 animate-pulse" : "bg-gray-500";
+
   const statusColor = {
     running: "bg-emerald-500",
     stopped: "bg-red-500",
@@ -150,6 +156,18 @@ export default function AutonomousCommandCenter() {
                   Cycle #{state.currentCycle} | {state.totalCycles} total
                 </span>
               ) : null}
+              {/* SSE Status + Live Phase */}
+              <div className="flex items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${sseStatusDot}`} />
+                <span className="text-xs text-muted-foreground">
+                  {sse.status === "connected" ? "Live" : sse.status === "reconnecting" ? "Reconnecting..." : "Offline"}
+                </span>
+                {sse.isCycleRunning && sse.currentPhase && (
+                  <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-400 animate-pulse">
+                    {sse.currentPhase.toUpperCase()}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -219,6 +237,10 @@ export default function AutonomousCommandCenter() {
           </TabsTrigger>
           <TabsTrigger value="tasks" className="data-[state=active]:bg-blue-500/20 data-[state=active]:text-blue-400">
             <ListTodo className="h-4 w-4 mr-1" /> Task Queue
+          </TabsTrigger>
+          <TabsTrigger value="live" className="data-[state=active]:bg-emerald-500/20 data-[state=active]:text-emerald-400">
+            <Activity className="h-4 w-4 mr-1" /> Live Feed
+            {sse.isCycleRunning && <span className="ml-1 h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
           </TabsTrigger>
           <TabsTrigger value="settings" className="data-[state=active]:bg-zinc-500/20 data-[state=active]:text-zinc-300">
             <Settings2 className="h-4 w-4 mr-1" /> Settings
@@ -421,6 +443,43 @@ export default function AutonomousCommandCenter() {
               </Card>
             ))
           )}
+        </TabsContent>
+
+        {/* ─── Live Feed Tab ─── */}
+        <TabsContent value="live" className="space-y-4">
+          <Card className="bg-zinc-900/50 border-zinc-800">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-emerald-400" />
+                  Live Activity Feed
+                  <span className={`h-2 w-2 rounded-full ${sseStatusDot}`} />
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {sse.activityFeed.length} events
+                  </span>
+                  <Button variant="ghost" size="sm" onClick={sse.clearEvents} className="text-xs">
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {sse.activityFeed.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Activity className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">No events yet. Start the AI or run an OODA cycle to see live activity.</p>
+                </div>
+              ) : (
+                <div className="space-y-1 max-h-[600px] overflow-y-auto">
+                  {sse.activityFeed.map((msg) => (
+                    <LiveActivityRow key={msg.id} message={msg} />
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* ─── Settings Tab ─── */}
@@ -705,5 +764,35 @@ function PriorityBadge({ priority }: { priority: string }) {
     <Badge variant="outline" className={`text-xs ${config[priority] || config.medium}`}>
       {priority}
     </Badge>
+  );
+}
+
+function LiveActivityRow({ message }: { message: ActivityMessage }) {
+  const typeColors: Record<string, string> = {
+    info: "border-l-blue-500",
+    success: "border-l-emerald-500",
+    warning: "border-l-yellow-500",
+    error: "border-l-red-500",
+    phase: "border-l-purple-500",
+  };
+
+  const time = new Date(message.timestamp);
+  const timeStr = time.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  return (
+    <div
+      className={`flex items-start gap-3 px-3 py-2 rounded-md bg-zinc-800/30 border-l-2 ${typeColors[message.type] || "border-l-zinc-600"} hover:bg-zinc-800/50 transition-colors`}
+    >
+      <span className="text-base leading-none mt-0.5">{message.icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-white">{message.message}</span>
+        </div>
+        {message.details && (
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">{message.details}</p>
+        )}
+      </div>
+      <span className="text-xs text-muted-foreground whitespace-nowrap font-mono">{timeStr}</span>
+    </div>
   );
 }

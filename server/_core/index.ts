@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerOneClickSSE } from "../oneclick-sse";
 import { registerAutonomousSSE } from "../autonomous-sse";
+import { registerOrchestratorSSE } from "../orchestrator-sse";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -44,6 +45,8 @@ async function startServer() {
   registerOneClickSSE(app);
   // SSE streaming for Autonomous Friday
   registerAutonomousSSE(app);
+  // SSE streaming for AI Command Center (real-time orchestrator events)
+  registerOrchestratorSSE(app);
   // tRPC API
   app.use(
     "/api/trpc",

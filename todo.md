@@ -2354,3 +2354,13 @@
 - [x] Rank Tracking detail: tracked keywords, position changes, trends
 - [x] Auto-Bid detail: active rules, recent bids, budget usage
 - [x] Backend procedures to fetch subsystem-specific data (getSubsystemDetail)
+
+# Real-time Dashboard Updates (SSE)
+- [x] Create SSE event emitter system (server/orchestrator-sse.ts)
+- [x] Create SSE Express endpoint (/api/sse/orchestrator)
+- [x] Hook orchestrator events: cycle_start, cycle_complete, task_queued, task_started, task_completed, task_failed, decision_made, state_changed
+- [x] Create useOrchestratorSSE React hook for consuming SSE stream
+- [x] Update AI Command Center to use real-time data from SSE (auto-invalidate queries on events)
+- [x] Add live status indicators (pulse animations, LIVE badge, connection status)
+- [x] Add real-time Live Activity Feed tab with color-coded event timeline
+- [x] Write vitest tests for SSE event system (19 tests, all passing)
