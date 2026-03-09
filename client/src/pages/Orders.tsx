@@ -53,7 +53,7 @@ export default function Orders() {
         </div>
         <div className="flex gap-2">
           <Select value={filter} onValueChange={setFilter}>
-            <SelectTrigger className="w-[150px] bg-muted/30 border-border/50 text-xs">
+            <SelectTrigger className="w-full sm:w-[150px] bg-muted/30 border-border/50 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

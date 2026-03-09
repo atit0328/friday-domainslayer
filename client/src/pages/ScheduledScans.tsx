@@ -192,7 +192,7 @@ export default function ScheduledScans() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Card className="bg-card/50 border-border/50">
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
@@ -776,7 +776,7 @@ function ScanResultsView({
             <CardTitle className="text-sm font-mono uppercase text-muted-foreground">Latest Scan Result</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
               <div className="text-center">
                 <p className="text-2xl font-bold">{scanData.latestResult.totalFindings}</p>
                 <p className="text-xs text-muted-foreground">Total Findings</p>
@@ -994,7 +994,7 @@ function ResultDetailView({ resultId, onBack }: { resultId: number; onBack: () =
       </div>
 
       {/* Severity summary */}
-      <div className="grid grid-cols-7 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-3">
         {[
           { label: "Total", count: result.totalFindings, color: "text-foreground" },
           { label: "Critical", count: result.criticalCount, color: "text-red-400" },
@@ -1068,7 +1068,7 @@ function ResultDetailView({ resultId, onBack }: { resultId: number; onBack: () =
       {/* Filters */}
       <div className="flex gap-3">
         <Select value={filterSeverity} onValueChange={setFilterSeverity}>
-          <SelectTrigger className="w-[160px] bg-background/50">
+          <SelectTrigger className="w-full sm:w-[160px] bg-background/50">
             <SelectValue placeholder="Severity" />
           </SelectTrigger>
           <SelectContent>
@@ -1081,7 +1081,7 @@ function ResultDetailView({ resultId, onBack }: { resultId: number; onBack: () =
           </SelectContent>
         </Select>
         <Select value={filterCategory} onValueChange={setFilterCategory}>
-          <SelectTrigger className="w-[200px] bg-background/50">
+          <SelectTrigger className="w-full sm:w-[200px] bg-background/50">
             <SelectValue placeholder="Category" />
           </SelectTrigger>
           <SelectContent>
@@ -1214,7 +1214,7 @@ function FixHistoryView({ onBack }: { onBack: () => void }) {
       {/* Filters */}
       <div className="flex gap-3">
         <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-[160px] bg-background/50">
+          <SelectTrigger className="w-full sm:w-[160px] bg-background/50">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -1229,7 +1229,7 @@ function FixHistoryView({ onBack }: { onBack: () => void }) {
           placeholder="Filter by domain..."
           value={filterDomain}
           onChange={(e) => setFilterDomain(e.target.value)}
-          className="w-[250px] bg-background/50"
+          className="w-full sm:w-[250px] bg-background/50"
         />
         {historyData && (
           <span className="text-xs text-muted-foreground flex items-center ml-2">

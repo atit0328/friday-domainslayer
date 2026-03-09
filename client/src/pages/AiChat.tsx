@@ -80,8 +80,8 @@ export default function AiChat() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] max-w-[900px]">
-      <div className="flex items-center justify-between mb-4">
+    <div className="flex flex-col h-[calc(100vh-120px)] h-[calc(100dvh-120px)] max-w-[900px]">
+      <div className="flex items-center justify-between mb-3 sm:mb-4">
         <div className="flex items-center gap-2">
           <div className="w-1 h-5 bg-violet rounded-full" />
           <h1 className="text-lg font-bold tracking-tight">Friday AI Chat</h1>
@@ -104,7 +104,7 @@ export default function AiChat() {
               <p className="text-sm text-muted-foreground mb-6 max-w-md">
                 ผมเป็น AI SEO Expert ถามผมได้ทุกเรื่องเกี่ยวกับ SEO, Domain, Link Building, Content Strategy
               </p>
-              <div className="grid grid-cols-2 gap-2 max-w-lg">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full px-2 sm:px-0">
                 {QUICK_PROMPTS.map((p) => (
                   <button
                     key={p}
@@ -126,7 +126,7 @@ export default function AiChat() {
                   <Bot className="w-4 h-4 text-violet" />
                 </div>
               )}
-              <div className={`max-w-[75%] ${msg.role === "user" ? "bg-emerald/10 border border-emerald/20" : "bg-muted/30 border border-border/50"} rounded-xl px-4 py-3`}>
+              <div className={`max-w-[85%] sm:max-w-[75%] ${msg.role === "user" ? "bg-emerald/10 border border-emerald/20" : "bg-muted/30 border border-border/50"} rounded-xl px-3 sm:px-4 py-2.5 sm:py-3`}>
                 {msg.role === "assistant" ? (
                   <div className="prose prose-sm prose-invert max-w-none text-sm [&_p]:my-1 [&_li]:my-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_code]:text-violet [&_code]:bg-violet/10 [&_code]:px-1 [&_code]:rounded">
                     <Streamdown>{msg.content}</Streamdown>
@@ -164,17 +164,17 @@ export default function AiChat() {
         </div>
 
         {/* Input */}
-        <div className="p-4 border-t border-border/50">
+        <div className="p-3 sm:p-4 border-t border-border/50">
           <div className="flex gap-2">
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
               placeholder="ถาม Friday AI เรื่อง SEO..."
-              className="flex-1 bg-muted/30 border border-border/50 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-violet/50"
+              className="flex-1 bg-muted/30 border border-border/50 rounded-lg px-3 sm:px-4 py-3 sm:py-2.5 text-sm focus:outline-none focus:ring-1 focus:ring-violet/50"
               disabled={loading}
             />
-            <Button onClick={() => handleSend()} disabled={loading || !input.trim()} className="bg-violet text-white hover:bg-violet/90">
+            <Button onClick={() => handleSend()} disabled={loading || !input.trim()} className="bg-violet text-white hover:bg-violet/90 h-auto px-4">
               <Send className="w-4 h-4" />
             </Button>
           </div>

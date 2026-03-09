@@ -124,7 +124,7 @@ export default function DomainScanner() {
   const scanning = scanMutation.isPending || bulkScanMutation.isPending || rescanAllMutation.isPending;
 
   return (
-    <div className="space-y-6 max-w-[1200px]">
+    <div className="space-y-4 sm:space-y-6 max-w-[1200px]">
       <div className="flex items-center gap-2">
         <div className="w-1 h-5 bg-emerald rounded-full" />
         <h1 className="text-lg font-bold tracking-tight">Domain Scanner</h1>
@@ -152,7 +152,7 @@ export default function DomainScanner() {
                   />
                 </div>
                 <Select value={useCase} onValueChange={setUseCase}>
-                  <SelectTrigger className="w-[180px] bg-muted/30 border-border/50">
+                  <SelectTrigger className="w-full sm:w-[180px] bg-muted/30 border-border/50">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -183,7 +183,7 @@ export default function DomainScanner() {
                 <Card className="glass-card border-emerald/20 glow-emerald md:col-span-1">
                   <CardContent className="p-5 text-center">
                     <p className="text-xs font-mono text-muted-foreground mb-2">TRUST SCORE</p>
-                    <div className="text-5xl font-bold font-mono text-emerald">{result.trustScore ?? "—"}</div>
+                    <div className="text-2xl sm:text-4xl sm:text-5xl font-bold font-mono text-emerald">{result.trustScore ?? "—"}</div>
                     <div className="mt-2">
                       <Badge className={`${GRADE_COLORS[result.grade] || "bg-muted"} font-mono text-lg px-3`}>
                         {result.grade || "—"}
@@ -285,7 +285,7 @@ export default function DomainScanner() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-3">
                      <MetricCard label="DA" value={result.da} icon={TrendingUp} color="emerald" suffix="Moz" />
                      <MetricCard label="PA" value={(result as any).pa} icon={TrendingUp} color="emerald" suffix="Moz" />
                      <MetricCard label="DR" value={result.dr} icon={TrendingUp} color="cyan" />
@@ -340,7 +340,7 @@ export default function DomainScanner() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-3xl font-bold font-mono text-cyan">
+                    <div className="text-xl sm:text-3xl font-bold font-mono text-cyan">
                       {result.indexedPages != null ? result.indexedPages.toLocaleString() : "—"}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">Estimated indexed pages</p>
@@ -355,7 +355,7 @@ export default function DomainScanner() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-3xl font-bold font-mono text-amber">
+                    <div className="text-xl sm:text-3xl font-bold font-mono text-amber">
                       {result.waybackSnapshots != null ? result.waybackSnapshots.toLocaleString() : "—"}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
@@ -377,7 +377,7 @@ export default function DomainScanner() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4">
-                    <div className="text-4xl font-bold font-mono text-emerald">{result.healthScore ?? "—"}</div>
+                    <div className="text-2xl sm:text-4xl font-bold font-mono text-emerald">{result.healthScore ?? "—"}</div>
                     <div className="flex-1">
                       <ScoreBar value={result.healthScore ?? 0} color="emerald" />
                     </div>
@@ -453,7 +453,7 @@ export default function DomainScanner() {
               />
               <div className="flex items-center gap-3">
                 <Select value={useCase} onValueChange={setUseCase}>
-                  <SelectTrigger className="w-[180px] bg-muted/30 border-border/50">
+                  <SelectTrigger className="w-full sm:w-[180px] bg-muted/30 border-border/50">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

@@ -1,5 +1,6 @@
 /**
  * Design: Obsidian Intelligence — Top Header Bar
+ * Mobile: full-width notification dropdown, touch-friendly buttons
  */
 import { useState, useRef, useEffect } from "react";
 import { Menu, Bell, CheckCircle, X, BellOff, ExternalLink } from "lucide-react";
@@ -73,13 +74,6 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
     setShowNotifications(false);
   };
 
-  const typeColors = {
-    info: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-    success: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-    warning: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-    error: "bg-red-500/20 text-red-400 border-red-500/30",
-  };
-
   const typeDots = {
     info: "bg-blue-400",
     success: "bg-emerald-400",
@@ -88,35 +82,43 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
   };
 
   return (
-    <header className="h-[56px] bg-card/50 backdrop-blur-md border-b border-border flex items-center justify-between px-4 shrink-0 sticky top-0 z-40">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon" className="lg:hidden" onClick={onToggleSidebar}>
+    <header className="h-[56px] bg-card/50 backdrop-blur-md border-b border-border flex items-center justify-between px-3 sm:px-4 shrink-0 sticky top-0 z-30">
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Hamburger — visible on mobile */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="lg:hidden w-10 h-10 shrink-0"
+          onClick={onToggleSidebar}
+        >
           <Menu className="w-5 h-5" />
         </Button>
-        <div className="hidden sm:flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-3.5 h-3.5 text-emerald" />
-            <span className="font-mono text-[11px] text-muted-foreground">
+
+        {/* Status indicators — hidden on small mobile */}
+        <div className="hidden sm:flex items-center gap-3 lg:gap-4">
+          <div className="flex items-center gap-1.5 lg:gap-2">
+            <CheckCircle className="w-3 h-3 lg:w-3.5 lg:h-3.5 text-emerald" />
+            <span className="font-mono text-[10px] lg:text-[11px] text-muted-foreground">
               Backend: <span className="text-emerald">Unified tRPC</span>
             </span>
           </div>
-          <div className="w-px h-4 bg-border" />
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-3.5 h-3.5 text-violet" />
-            <span className="font-mono text-[11px] text-muted-foreground">
+          <div className="w-px h-4 bg-border hidden md:block" />
+          <div className="hidden md:flex items-center gap-1.5 lg:gap-2">
+            <CheckCircle className="w-3 h-3 lg:w-3.5 lg:h-3.5 text-violet" />
+            <span className="font-mono text-[10px] lg:text-[11px] text-muted-foreground">
               AI: <span className="text-violet">Built-in LLM</span>
             </span>
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 sm:gap-2">
         {/* Notification Bell with Dropdown */}
         <div className="relative" ref={dropdownRef}>
           <Button
             variant="ghost"
             size="icon"
-            className="relative"
+            className="relative w-10 h-10"
             onClick={() => setShowNotifications(!showNotifications)}
           >
             <Bell className="w-4 h-4" />
@@ -127,28 +129,36 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
             )}
           </Button>
 
-          {/* Dropdown */}
+          {/* Dropdown — full-width on mobile, positioned on desktop */}
           {showNotifications && (
-            <div className="absolute right-0 top-full mt-2 w-80 bg-card border border-border rounded-xl shadow-2xl shadow-black/40 overflow-hidden z-50">
+            <div className="fixed sm:absolute inset-x-0 sm:inset-x-auto sm:right-0 top-[56px] sm:top-full sm:mt-2 sm:w-80 bg-card border-b sm:border border-border sm:rounded-xl shadow-2xl shadow-black/40 overflow-hidden z-50">
               {/* Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
                 <span className="text-sm font-semibold">การแจ้งเตือน</span>
                 <div className="flex items-center gap-1">
                   {unreadCount > 0 && (
-                    <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2" onClick={markAllRead}>
+                    <Button variant="ghost" size="sm" className="h-7 text-[11px] px-2" onClick={markAllRead}>
                       อ่านทั้งหมด
                     </Button>
                   )}
                   {notifications.length > 0 && (
-                    <Button variant="ghost" size="sm" className="h-6 text-[10px] px-2 text-muted-foreground" onClick={clearAll}>
+                    <Button variant="ghost" size="sm" className="h-7 text-[11px] px-2 text-muted-foreground" onClick={clearAll}>
                       ล้าง
                     </Button>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0 sm:hidden"
+                    onClick={() => setShowNotifications(false)}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
                 </div>
               </div>
 
               {/* Notification List */}
-              <div className="max-h-80 overflow-y-auto">
+              <div className="max-h-[60vh] sm:max-h-80 overflow-y-auto overscroll-contain">
                 {notifications.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                     <BellOff className="w-8 h-8 mb-2 opacity-30" />
@@ -158,7 +168,7 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
                   notifications.map((notification) => (
                     <div
                       key={notification.id}
-                      className={`px-4 py-3 border-b border-border/50 hover:bg-muted/30 transition-colors cursor-pointer ${
+                      className={`px-4 py-3.5 sm:py-3 border-b border-border/50 hover:bg-muted/30 active:bg-muted/50 transition-colors cursor-pointer ${
                         !notification.read ? "bg-muted/10" : ""
                       }`}
                       onClick={() => {
@@ -189,7 +199,7 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-2 ml-2">
+        <div className="flex items-center gap-2 ml-1 sm:ml-2">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald/30 to-violet/30 border border-border flex items-center justify-center">
             <span className="text-xs font-bold">{user?.name?.[0]?.toUpperCase() || "?"}</span>
           </div>

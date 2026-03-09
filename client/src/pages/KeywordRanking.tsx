@@ -235,7 +235,7 @@ export default function KeywordRanking() {
                   <Label className="text-xs">Redirect URL (optional)</Label>
                   <Input value={addRedirectUrl} onChange={e => setAddRedirectUrl(e.target.value)} placeholder="https://your-site.com" className="mt-1 text-xs" />
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div>
                     <Label className="text-xs">Search Engine</Label>
                     <Select value={addEngine} onValueChange={setAddEngine}>
@@ -350,10 +350,10 @@ export default function KeywordRanking() {
           placeholder="Filter by domain..."
           value={domainFilter}
           onChange={(e) => { setDomainFilter(e.target.value); setPage(0); }}
-          className="w-[180px] bg-card border-border"
+          className="w-full sm:w-[180px] bg-card border-border"
         />
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
-          <SelectTrigger className="w-[140px] bg-card border-border">
+          <SelectTrigger className="w-full sm:w-[140px] bg-card border-border">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
@@ -364,7 +364,7 @@ export default function KeywordRanking() {
           </SelectContent>
         </Select>
         <Select value={sortBy} onValueChange={(v) => { setSortBy(v); setPage(0); }}>
-          <SelectTrigger className="w-[140px] bg-card border-border">
+          <SelectTrigger className="w-full sm:w-[140px] bg-card border-border">
             <SelectValue placeholder="Sort" />
           </SelectTrigger>
           <SelectContent>

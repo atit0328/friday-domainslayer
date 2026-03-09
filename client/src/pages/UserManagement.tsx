@@ -224,7 +224,7 @@ export default function UserManagement() {
               value={roleFilter}
               onValueChange={(v) => { setRoleFilter(v as typeof roleFilter); setPage(0); }}
             >
-              <SelectTrigger className="w-[180px] bg-background/50">
+              <SelectTrigger className="w-full sm:w-[180px] bg-background/50">
                 <SelectValue placeholder="กรอง Role" />
               </SelectTrigger>
               <SelectContent>

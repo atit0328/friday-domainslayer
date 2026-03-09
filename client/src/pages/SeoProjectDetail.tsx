@@ -353,7 +353,7 @@ export default function SeoProjectDetail() {
       </div>
 
       {/* Metrics Overview Cards */}
-      <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3">
         {[
           { label: "DA", value: project.currentDA, color: getMetricColor(project.currentDA, [20, 40]) },
           { label: "DR", value: project.currentDR, color: getMetricColor(project.currentDR, [20, 40]) },
@@ -444,7 +444,7 @@ export default function SeoProjectDetail() {
               </CardHeader>
               <CardContent>
                 {blStats || data?.blStats ? (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {[
                       { label: "Total", value: (blStats || data?.blStats)?.total || 0, color: "text-foreground" },
                       { label: "Active", value: (blStats || data?.blStats)?.active || 0, color: "text-emerald-400" },
@@ -1091,7 +1091,7 @@ export default function SeoProjectDetail() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-3 gap-4 mb-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-3">
                   <div className="text-center">
                     <p className="text-2xl font-bold text-emerald-400">{pbnBuildMut.data.totalBuilt}</p>
                     <p className="text-[10px] text-muted-foreground">Success</p>
@@ -1557,7 +1557,7 @@ export default function SeoProjectDetail() {
             <CardContent>
               {latestRankings.length > 0 ? (
                 <>
-                  <div className="grid grid-cols-4 gap-3 mb-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                     <div className="text-center p-2 rounded-lg bg-card/30">
                       <p className="text-[10px] text-muted-foreground">Top 10</p>
                       <p className="text-lg font-bold text-emerald-400">{latestRankings.filter(r => r.position && r.position <= 10).length}</p>
@@ -2487,7 +2487,7 @@ function DailyAITab({ projectId, project }: { projectId: number; project: any })
               return (
                 <div className="space-y-3">
                   {/* Summary */}
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div className="p-2 bg-zinc-900/30 rounded text-center">
                       <p className="text-lg font-bold text-emerald-400">{report.summary.completed}</p>
                       <p className="text-[10px] text-muted-foreground">สำเร็จ</p>

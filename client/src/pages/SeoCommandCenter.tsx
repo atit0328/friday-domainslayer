@@ -284,7 +284,7 @@ export default function SeoCommandCenter() {
                   <Target className="w-4 h-4 text-emerald-400" />
                   เป้าหมาย Timeline
                 </Label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {[{ days: 3, label: "3 วัน", desc: "เร่งด่วน" }, { days: 7, label: "7 วัน", desc: "เร็ว" }, { days: 30, label: "30 วัน", desc: "มาตรฐาน" }].map(opt => (
                     <button
                       key={opt.days}
@@ -597,7 +597,7 @@ export default function SeoCommandCenter() {
                   </div>
 
                   {/* Metrics Grid */}
-                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4">
                     <div className="text-center">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">DA</p>
                       <p className="text-lg font-bold text-emerald-400">{project.currentDA ?? "—"}</p>
@@ -686,7 +686,7 @@ export default function SeoCommandCenter() {
                           {/* Multi-Day Selector */}
                           <div className="space-y-2">
                             <Label className="text-xs text-zinc-300">วันที่รัน</Label>
-                            <div className="grid grid-cols-7 gap-1">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-1">
                               {[
                                 { day: 0, label: "อา" },
                                 { day: 1, label: "จ" },

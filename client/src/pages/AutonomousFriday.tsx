@@ -1015,7 +1015,7 @@ export default function AutonomousFriday() {
       </div>
 
       {/* ═══ Quick Stats Dashboard ═══ */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
         {[
           { label: "Total Deploys", value: stats.total, icon: Rocket, color: "text-blue-400", bgColor: "bg-blue-500/10", borderColor: "border-blue-500/20" },
           { label: "Success", value: stats.success, icon: CheckCircle2, color: "text-emerald-400", bgColor: "bg-emerald-500/10", borderColor: "border-emerald-500/20" },
@@ -1024,11 +1024,11 @@ export default function AutonomousFriday() {
           { label: "Success Rate", value: `${successRate}%`, icon: TrendingUp, color: successRate >= 50 ? "text-emerald-400" : "text-amber-400", bgColor: successRate >= 50 ? "bg-emerald-500/10" : "bg-amber-500/10", borderColor: successRate >= 50 ? "border-emerald-500/20" : "border-amber-500/20" },
         ].map((stat) => (
           <Card key={stat.label} className={`${stat.borderColor} ${stat.bgColor} border`}>
-            <CardContent className="p-3 flex items-center gap-3">
-              <stat.icon className={`w-5 h-5 ${stat.color} shrink-0`} />
-              <div>
-                <div className={`text-lg font-bold font-mono ${stat.color}`}>{stat.value}</div>
-                <div className="text-[10px] text-muted-foreground">{stat.label}</div>
+            <CardContent className="p-2.5 sm:p-3 flex items-center gap-2 sm:gap-3">
+              <stat.icon className={`w-4 h-4 sm:w-5 sm:h-5 ${stat.color} shrink-0`} />
+              <div className="min-w-0">
+                <div className={`text-base sm:text-lg font-bold font-mono ${stat.color}`}>{stat.value}</div>
+                <div className="text-[9px] sm:text-[10px] text-muted-foreground truncate">{stat.label}</div>
               </div>
             </CardContent>
           </Card>
@@ -1037,37 +1037,42 @@ export default function AutonomousFriday() {
 
       {/* ═══ Main Tabs ═══ */}
       <Tabs value={mainTab} onValueChange={(v) => setMainTab(v as any)}>
-        <TabsList className="w-full md:w-auto">
-          <TabsTrigger value="launch" className="gap-1.5">
-            <Rocket className="w-3.5 h-3.5" />
-            Launch
-          </TabsTrigger>
-          <TabsTrigger value="monitor" className="gap-1.5">
-            <Activity className="w-3.5 h-3.5" />
-            Monitor
-            {running && <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
-          </TabsTrigger>
-          <TabsTrigger value="history" className="gap-1.5">
-            <Clock className="w-3.5 h-3.5" />
-            Recent
-          </TabsTrigger>
-          <TabsTrigger value="arsenal" className="gap-1.5">
-            <Bomb className="w-3.5 h-3.5" />
-            Arsenal
-          </TabsTrigger>
-          <TabsTrigger value="detect" className="gap-1.5">
-            <Shield className="w-3.5 h-3.5" />
-            Detect
-          </TabsTrigger>
-          <TabsTrigger value="dashboard" className="gap-1.5">
-            <BarChart3 className="w-4 h-4" />
-            Stats
-          </TabsTrigger>
-          <TabsTrigger value="logs" className="gap-1.5">
-            <FileText className="w-3.5 h-3.5" />
-            Logs
-          </TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 scrollbar-hide">
+          <TabsList className="w-max sm:w-full md:w-auto">
+            <TabsTrigger value="launch" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <Rocket className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden xs:inline">Launch</span>
+              <span className="xs:hidden">Go</span>
+            </TabsTrigger>
+            <TabsTrigger value="monitor" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <Activity className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden sm:inline">Monitor</span>
+              <span className="sm:hidden">Live</span>
+              {running && <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
+            </TabsTrigger>
+            <TabsTrigger value="history" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden sm:inline">Recent</span>
+              <span className="sm:hidden">Hist</span>
+            </TabsTrigger>
+            <TabsTrigger value="arsenal" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <Bomb className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span>Arsenal</span>
+            </TabsTrigger>
+            <TabsTrigger value="detect" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <Shield className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span>Detect</span>
+            </TabsTrigger>
+            <TabsTrigger value="dashboard" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <BarChart3 className="w-3 h-3 sm:w-4 sm:h-4" />
+              <span>Stats</span>
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="gap-1 sm:gap-1.5 text-xs sm:text-sm px-2 sm:px-3">
+              <FileText className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span>Logs</span>
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* ═══════════════════════════════════════════════ */}
         {/* ═══ LAUNCH TAB ═══ */}

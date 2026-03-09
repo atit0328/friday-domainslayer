@@ -38,25 +38,25 @@ export default function Dashboard() {
   const s = stats || { scans: 0, orders: 0, watchlistCount: 0, campaigns: 0, chatMessages: 0, pbnSites: 0 };
 
   return (
-    <div className="space-y-6 max-w-[1200px]">
+    <div className="space-y-4 sm:space-y-6 max-w-[1200px]">
       {/* Hero Section */}
-      <div className="relative rounded-xl overflow-hidden h-[180px] md:h-[200px]">
+      <div className="relative rounded-xl overflow-hidden h-[200px] sm:h-[180px] md:h-[200px]">
         <img src={HERO_BG} alt="Friday AI x DomainSlayer ศูนย์บัญชาการ SEO" className="absolute inset-0 w-full h-full object-cover opacity-35" />
         <div className="absolute inset-0 bg-gradient-to-r from-background via-background/85 to-background/30" />
-        <div className="relative z-10 h-full flex flex-col justify-center px-6 md:px-8">
+        <div className="relative z-10 h-full flex flex-col justify-center px-4 sm:px-6 md:px-8">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-7 h-7 rounded-md bg-emerald/15 border border-emerald/30 flex items-center justify-center">
               <Sparkles className="w-3.5 h-3.5 text-emerald" />
             </div>
             <span className="font-mono text-[10px] text-emerald/70 tracking-widest uppercase">Command Center</span>
           </div>
-          <h1 className="text-xl md:text-2xl font-bold tracking-tight">
+          <h1 className="text-lg sm:text-xl md:text-2xl font-bold tracking-tight">
             Friday<span className="text-emerald">AI</span> x Domain<span className="text-violet">Slayer</span>
           </h1>
-          <p className="text-muted-foreground text-sm mt-1 max-w-lg">
+          <p className="text-muted-foreground text-xs sm:text-sm mt-1 max-w-lg">
             ศูนย์บัญชาการ SEO & Domain Intelligence — รวมทุกเครื่องมือไว้ในที่เดียว
           </p>
-          <div className="flex gap-3 mt-4">
+          <div className="flex gap-2 sm:gap-3 mt-3 sm:mt-4">
             <Button size="sm" className="bg-emerald text-background hover:bg-emerald/90 font-semibold text-xs h-8" onClick={() => navigate("/scanner")}>
               <Search className="w-3.5 h-3.5 mr-1.5" /> Scan Domain
             </Button>
@@ -68,7 +68,7 @@ export default function Dashboard() {
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
         {[
           { label: "Domains Scanned", value: s.scans, icon: Globe, color: "text-emerald", bg: "bg-emerald/10 border-emerald/20" },
           { label: "Active Orders", value: s.orders, icon: ShoppingCart, color: "text-cyan", bg: "bg-cyan/10 border-cyan/20" },
@@ -79,11 +79,11 @@ export default function Dashboard() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{stat.label}</p>
+                  <p className="text-[9px] sm:text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{stat.label}</p>
                   {isLoading ? (
                     <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mt-2" />
                   ) : (
-                    <p className="text-2xl font-bold mt-1 font-mono">{stat.value}</p>
+                    <p className="text-xl sm:text-2xl font-bold mt-1 font-mono">{stat.value}</p>
                   )}
                 </div>
                 <div className={`w-10 h-10 rounded-lg border flex items-center justify-center ${stat.bg}`}>
@@ -164,9 +164,9 @@ export default function Dashboard() {
       {/* System Status */}
       <Card className="glass-card border-border/50">
         <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="w-2 h-2 rounded-full bg-emerald animate-pulse" />
-            <span className="text-xs text-muted-foreground">All systems operational — Backend integrated, AI ready</span>
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div className="w-2 h-2 rounded-full bg-emerald animate-pulse shrink-0" />
+            <span className="text-[11px] sm:text-xs text-muted-foreground">All systems operational</span>
             <Badge variant="outline" className="text-[10px] font-mono ml-auto">v2.0 Unified</Badge>
           </div>
         </CardContent>

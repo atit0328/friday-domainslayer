@@ -488,7 +488,7 @@ export default function AutonomousHistory() {
           {/* Filter */}
           <div className="flex items-center gap-3">
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-              <SelectTrigger className="w-[160px]">
+              <SelectTrigger className="w-full sm:w-[160px]">
                 <SelectValue placeholder="Filter status" />
               </SelectTrigger>
               <SelectContent>

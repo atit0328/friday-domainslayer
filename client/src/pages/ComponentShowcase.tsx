@@ -230,7 +230,7 @@ export default function ComponentsShowcase() {
     <div className="min-h-screen bg-background text-foreground">
       <main className="container max-w-6xl mx-auto">
         <div className="space-y-2 justify-between flex">
-          <h2 className="text-3xl font-bold tracking-tight mb-6">
+          <h2 className="text-xl sm:text-3xl font-bold tracking-tight mb-6">
             Shadcn/ui Component Library
           </h2>
           <Button variant="outline" size="icon" onClick={toggleTheme}>
@@ -891,7 +891,7 @@ export default function ComponentsShowcase() {
           <section className="space-y-4">
             <h3 className="text-2xl font-semibold">Tabs</h3>
             <Tabs defaultValue="account" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3">
                 <TabsTrigger value="account">Account</TabsTrigger>
                 <TabsTrigger value="password">Password</TabsTrigger>
                 <TabsTrigger value="settings">Settings</TabsTrigger>
@@ -1196,7 +1196,7 @@ export default function ComponentsShowcase() {
                         <div className="p-1">
                           <Card>
                             <CardContent className="flex aspect-square items-center justify-center p-6">
-                              <span className="text-4xl font-semibold">
+                              <span className="text-2xl sm:text-4xl font-semibold">
                                 {index + 1}
                               </span>
                             </CardContent>

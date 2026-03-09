@@ -96,8 +96,8 @@ export default function Marketplace() {
   });
 
   return (
-    <div className="space-y-6 max-w-[1200px]">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 sm:space-y-6 max-w-[1200px]">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div className="w-1 h-5 bg-emerald rounded-full" />
           <h1 className="text-lg font-bold tracking-tight">Domain Marketplace</h1>
@@ -122,8 +122,8 @@ export default function Marketplace() {
       {/* Search Form */}
       <Card className="glass-card border-border/50">
         <CardContent className="p-5">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-            <div className="md:col-span-2">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 sm:gap-3">
+            <div className="col-span-2 md:col-span-2">
               <Input
                 placeholder="Keyword (e.g. crypto, ai, tech)"
                 value={keyword}
@@ -157,9 +157,9 @@ export default function Marketplace() {
               Search
             </Button>
           </div>
-          <div className="flex items-center gap-3 mt-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-3">
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-[200px] bg-muted/30 border-border/50 text-xs">
+              <SelectTrigger className="w-full sm:w-[200px] bg-muted/30 border-border/50 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -194,9 +194,11 @@ export default function Marketplace() {
       {/* Quick Domain Check */}
       <Card className="glass-card border-border/50">
         <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <Globe className="w-4 h-4 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Quick Check:</span>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-2">
+              <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="text-xs text-muted-foreground whitespace-nowrap">Quick Check:</span>
+            </div>
             <div className="flex-1 flex gap-2">
               <Input
                 placeholder="example.com"
@@ -226,7 +228,7 @@ export default function Marketplace() {
 
       {/* Results */}
       {sortedResults.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
           {sortedResults.map((item, i) => (
             <Card key={i} className="glass-card border-border/50 hover:border-emerald/30 transition-all group">
               <CardContent className="p-4">

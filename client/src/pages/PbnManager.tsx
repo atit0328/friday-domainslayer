@@ -367,7 +367,7 @@ export default function PbnManager() {
               <Input placeholder="Search domains, hosting..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-9 bg-muted/30 border-border/50" />
             </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[130px] bg-muted/30 border-border/50"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[130px] bg-muted/30 border-border/50"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="active">Active</SelectItem>
@@ -377,7 +377,7 @@ export default function PbnManager() {
               </SelectContent>
             </Select>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-[130px] bg-muted/30 border-border/50"><SelectValue placeholder="Type" /></SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[130px] bg-muted/30 border-border/50"><SelectValue placeholder="Type" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Types</SelectItem>
                 <SelectItem value="main">Main Sites</SelectItem>
@@ -523,7 +523,7 @@ export default function PbnManager() {
                       </div>
 
                       {/* SEO Metrics */}
-                      <div className="grid grid-cols-4 gap-2 mb-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                         <div className="bg-muted/20 rounded-md p-1.5 text-center">
                           <p className="text-[9px] text-muted-foreground">DA</p>
                           <p className={`text-sm font-bold font-mono ${getDaColor(site.da)}`}>{site.da ?? "—"}</p>
@@ -682,23 +682,23 @@ export default function PbnManager() {
 
               {healthCheckMutation.data && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="bg-muted/20 rounded-lg p-4 text-center">
-                      <p className="text-3xl font-bold font-mono text-violet">{healthCheckMutation.data.total}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-violet">{healthCheckMutation.data.total}</p>
                       <p className="text-xs text-muted-foreground">Total Checked</p>
                     </div>
                     <div className="bg-emerald-500/10 rounded-lg p-4 text-center border border-emerald-500/20">
-                      <p className="text-3xl font-bold font-mono text-emerald-400">{healthCheckMutation.data.online}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-emerald-400">{healthCheckMutation.data.online}</p>
                       <p className="text-xs text-emerald-400">Online</p>
                     </div>
                     <div className="bg-red-500/10 rounded-lg p-4 text-center border border-red-500/20">
-                      <p className="text-3xl font-bold font-mono text-red-400">{healthCheckMutation.data.offline}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-red-400">{healthCheckMutation.data.offline}</p>
                       <p className="text-xs text-red-400">Offline</p>
                     </div>
                   </div>
 
-                  <div className="max-h-[400px] overflow-y-auto rounded-lg border border-border/50">
-                    <table className="w-full text-xs">
+                  <div className="max-h-[400px] overflow-y-auto overflow-x-auto rounded-lg border border-border/50">
+                    <table className="w-full text-xs min-w-[500px]">
                       <thead className="sticky top-0 bg-background">
                         <tr className="border-b border-border/50">
                           <th className="text-left p-2">Domain</th>
@@ -804,7 +804,7 @@ export default function PbnManager() {
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Writing Tone</label>
                   <Select value={autoPostForm.writingTone} onValueChange={v => setAutoPostForm(p => ({ ...p, writingTone: v }))}>
-                    <SelectTrigger className="w-[140px] bg-muted/30 border-border/50"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full sm:w-[140px] bg-muted/30 border-border/50"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="professional">Professional</SelectItem>
                       <SelectItem value="casual">Casual</SelectItem>
@@ -817,7 +817,7 @@ export default function PbnManager() {
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">Number of Posts</label>
                   <Select value={String(autoPostForm.count)} onValueChange={v => setAutoPostForm(p => ({ ...p, count: Number(v) }))}>
-                    <SelectTrigger className="w-[100px] bg-muted/30 border-border/50"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full sm:w-[100px] bg-muted/30 border-border/50"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {[1, 3, 5, 10, 15, 20, 30, 50].map(n => (
                         <SelectItem key={n} value={String(n)}>{n} posts</SelectItem>
@@ -844,7 +844,7 @@ export default function PbnManager() {
 
               {autoPostMutation.data && (
                 <div className="space-y-3 mt-4 border-t border-border/30 pt-4">
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="bg-muted/20 rounded-lg p-3 text-center">
                       <p className="text-xl font-bold font-mono">{autoPostMutation.data.totalPlanned}</p>
                       <p className="text-[10px] text-muted-foreground">Planned</p>
@@ -901,17 +901,17 @@ export default function PbnManager() {
 
               {expireData && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="bg-red-500/10 rounded-lg p-4 text-center border border-red-500/20">
-                      <p className="text-3xl font-bold font-mono text-red-400">{expireData.critical}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-red-400">{expireData.critical}</p>
                       <p className="text-xs text-red-400">Critical (&lt; 7 days)</p>
                     </div>
                     <div className="bg-orange-500/10 rounded-lg p-4 text-center border border-orange-500/20">
-                      <p className="text-3xl font-bold font-mono text-orange-400">{expireData.warning}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-orange-400">{expireData.warning}</p>
                       <p className="text-xs text-orange-400">Warning (7-14 days)</p>
                     </div>
                     <div className="bg-yellow-500/10 rounded-lg p-4 text-center border border-yellow-500/20">
-                      <p className="text-3xl font-bold font-mono text-yellow-400">{expireData.notice}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-yellow-400">{expireData.notice}</p>
                       <p className="text-xs text-yellow-400">Notice (14-30 days)</p>
                     </div>
                   </div>
@@ -992,17 +992,17 @@ export default function PbnManager() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-muted/20 rounded-lg p-4 text-center">
-                      <p className="text-3xl font-bold font-mono text-violet">{aiMetricsMutation.data.total}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-violet">{aiMetricsMutation.data.total}</p>
                       <p className="text-xs text-muted-foreground">Total Analyzed</p>
                     </div>
                     <div className="bg-purple-500/10 rounded-lg p-4 text-center border border-purple-500/20">
-                      <p className="text-3xl font-bold font-mono text-purple-400">{aiMetricsMutation.data.updated}</p>
+                      <p className="text-xl sm:text-3xl font-bold font-mono text-purple-400">{aiMetricsMutation.data.updated}</p>
                       <p className="text-xs text-purple-400">Metrics Updated</p>
                     </div>
                   </div>
 
-                  <div className="max-h-[400px] overflow-y-auto rounded-lg border border-border/50">
-                    <table className="w-full text-xs">
+                  <div className="max-h-[400px] overflow-y-auto overflow-x-auto rounded-lg border border-border/50">
+                    <table className="w-full text-xs min-w-[500px]">
                       <thead className="sticky top-0 bg-background">
                         <tr className="border-b border-border/50">
                           <th className="text-left p-2">Domain</th>
@@ -1073,7 +1073,7 @@ export default function PbnManager() {
 
               {hotData && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="bg-amber-500/10 rounded-lg p-3 text-center border border-amber-500/20">
                       <p className="text-xl font-bold font-mono text-amber-400">{hotData.avg5Star}</p>
                       <div className="flex justify-center mt-1"><StarRating stars={5} /></div>

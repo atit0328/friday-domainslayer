@@ -430,7 +430,7 @@ export default function RankDashboard() {
                     : "Select a keyword to view history"}
               </CardTitle>
               <Select value={String(chartDays)} onValueChange={v => setChartDays(Number(v))}>
-                <SelectTrigger className="w-[100px] h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full sm:w-[100px] h-7 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="7">7 days</SelectItem>
                   <SelectItem value="30">30 days</SelectItem>
@@ -509,7 +509,7 @@ export default function RankDashboard() {
           />
         </div>
         <Select value={selectedProject} onValueChange={setSelectedProject}>
-          <SelectTrigger className="w-[200px] bg-card border-border">
+          <SelectTrigger className="w-full sm:w-[200px] bg-card border-border">
             <SelectValue placeholder="All Projects" />
           </SelectTrigger>
           <SelectContent>

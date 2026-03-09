@@ -107,7 +107,7 @@ export default function DeployHistory() {
               />
             </div>
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
-              <SelectTrigger className="w-[160px] bg-card border-border">
+              <SelectTrigger className="w-full sm:w-[160px] bg-card border-border">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>

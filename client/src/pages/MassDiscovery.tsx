@@ -98,7 +98,7 @@ function DiscoverySearchTab() {
           <CardDescription>ค้นหาเป้าหมายอัตโนมัติจาก Shodan, SerpAPI, Google Dorks</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Custom Queries (1 ต่อบรรทัด)</Label>
               <textarea
@@ -143,7 +143,7 @@ function DiscoverySearchTab() {
             </div>
           </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-6">
             <div className="flex items-center gap-2">
               <Switch checked={useShodan} onCheckedChange={setUseShodan} />
               <Label>Shodan</Label>
@@ -227,7 +227,7 @@ function DiscoverySearchTab() {
                       </div>
                       <div className="flex items-center gap-3">
                         {/* Indicators */}
-                        <div className="flex gap-1">
+                        <div className="flex flex-wrap gap-1">
                           {target.hasOpenUpload && <Badge className="bg-red-900/50 text-red-400 text-[10px]">Upload</Badge>}
                           {target.hasExposedConfig && <Badge className="bg-orange-900/50 text-orange-400 text-[10px]">Config</Badge>}
                           {target.hasVulnerableCms && <Badge className="bg-yellow-900/50 text-yellow-400 text-[10px]">VulnCMS</Badge>}
@@ -429,7 +429,7 @@ function AutoPipelineTab() {
           {/* Attack Settings */}
           <div className="border border-zinc-800 rounded-lg p-3 space-y-3">
             <div className="text-sm font-medium text-zinc-300">Attack Settings</div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="flex items-center gap-2">
                 <Switch checked={autoAttack} onCheckedChange={setAutoAttack} disabled={isRunning} />
                 <Label className="text-xs">Auto Attack</Label>
@@ -491,7 +491,7 @@ function AutoPipelineTab() {
       {pipeline && (
         <>
           {/* Stats Cards */}
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
             {[
               { label: "Discovered", value: pipeline.stats.totalDiscovered, icon: Search, color: "text-blue-400" },
               { label: "Scored", value: pipeline.stats.totalScored, icon: BarChart3, color: "text-yellow-400" },
@@ -596,7 +596,8 @@ function AutoPipelineTab() {
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[400px]">
-                  <table className="w-full text-sm">
+                  <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[700px]">
                     <thead className="text-xs text-zinc-500 border-b border-zinc-800">
                       <tr>
                         <th className="text-left py-2 px-2">#</th>
@@ -654,6 +655,7 @@ function AutoPipelineTab() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </ScrollArea>
               </CardContent>
             </Card>

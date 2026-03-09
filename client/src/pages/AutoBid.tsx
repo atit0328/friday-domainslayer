@@ -515,7 +515,7 @@ export default function AutoBid() {
             <div className="mt-4 p-4 rounded-lg bg-background/50 border space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="text-3xl font-bold text-violet-400">{analyzeMutation.data.seoScore}</div>
+                  <div className="text-xl sm:text-3xl font-bold text-violet-400">{analyzeMutation.data.seoScore}</div>
                   <div>
                     <div className="text-sm font-semibold">SEO Score</div>
                     <Badge className={VERDICT_COLORS[analyzeMutation.data.aiVerdict] || ""}>
@@ -529,7 +529,7 @@ export default function AutoBid() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">{analyzeMutation.data.aiReasoning}</p>
-              <div className="grid grid-cols-4 md:grid-cols-8 gap-2 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2 text-xs">
                 <div className="p-2 rounded bg-card text-center">
                   <div className="text-muted-foreground">DA</div>
                   <div className="font-bold text-lg">{analyzeMutation.data.estimatedDA}</div>
@@ -741,7 +741,7 @@ export default function AutoBid() {
                       </div>
 
                       {/* SEO Criteria Display */}
-                      <div className="grid grid-cols-4 md:grid-cols-7 gap-2 text-xs">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2 text-xs">
                         <div className="p-1.5 rounded bg-background text-center">
                           <div className="text-muted-foreground">DA≥</div>
                           <div className="font-bold">{rule.minDA ?? 0}</div>

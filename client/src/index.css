@@ -179,3 +179,34 @@
     animation: pulse-glow 2s ease-in-out infinite;
   }
 }
+
+/* ═══ Mobile Utilities ═══ */
+
+/* Hide scrollbar but keep scrolling */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Touch-friendly tap targets */
+@media (pointer: coarse) {
+  button, a, [role="button"], [role="tab"] {
+    min-height: 36px;
+  }
+}
+
+/* Safe area padding for notched devices */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Prevent text overflow on mobile */
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

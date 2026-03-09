@@ -563,7 +563,7 @@ export default function SeoSpamMode() {
               </div>
 
               {/* Title */}
-              <h2 className={`text-3xl font-black text-center mb-2 ${
+              <h2 className={`text-xl sm:text-3xl font-black text-center mb-2 ${
                 sseFinalResult?.summary?.redirectActive
                   ? "text-green-400"
                   : sseError && !sseFinalResult
@@ -716,7 +716,7 @@ export default function SeoSpamMode() {
 
               {/* Stats row */}
               {sseFinalResult?.summary && (
-                <div className="grid grid-cols-4 gap-2 mb-6">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-6">
                   {[
                     { label: "สำเร็จ", value: sseFinalResult.summary.successSteps || 0, color: "text-green-400" },
                     { label: "ล้มเหลว", value: sseFinalResult.summary.failedSteps || 0, color: "text-red-400" },
@@ -963,7 +963,7 @@ export default function SeoSpamMode() {
               <Brain className="h-4 w-4 text-violet-400" />
               <span className="text-sm font-semibold text-violet-300">AI Intelligence Options</span>
             </div>
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <label className="flex items-center gap-2 cursor-pointer group">
                 <input type="checkbox" checked={enableAiAnalysis} onChange={(e) => setEnableAiAnalysis(e.target.checked)}
                   className="rounded border-rose-500/50 bg-gray-800 text-rose-500 focus:ring-rose-500" />
@@ -1428,13 +1428,13 @@ export default function SeoSpamMode() {
                 <Card className="border-gray-800 bg-gray-900/50">
                   <CardContent className="pt-4">
                     <p className="text-[10px] uppercase text-gray-500">Shodan Matches</p>
-                    <p className="text-3xl font-bold text-cyan-400">{shodanSearchMut.data.totalMatches}</p>
+                    <p className="text-xl sm:text-3xl font-bold text-cyan-400">{shodanSearchMut.data.totalMatches}</p>
                   </CardContent>
                 </Card>
                 <Card className="border-gray-800 bg-gray-900/50">
                   <CardContent className="pt-4">
                     <p className="text-[10px] uppercase text-gray-500">Dork Targets</p>
-                    <p className="text-3xl font-bold text-orange-400">{shodanSearchMut.data.totalDorkTargets}</p>
+                    <p className="text-xl sm:text-3xl font-bold text-orange-400">{shodanSearchMut.data.totalDorkTargets}</p>
                   </CardContent>
                 </Card>
               </div>
@@ -1514,13 +1514,13 @@ export default function SeoSpamMode() {
                 <Card className="border-gray-800 bg-gray-900/50">
                   <CardContent className="pt-4">
                     <p className="text-[10px] uppercase text-gray-500">Working</p>
-                    <p className="text-3xl font-bold text-green-400">{testAllProxiesMut.data.working}</p>
+                    <p className="text-xl sm:text-3xl font-bold text-green-400">{testAllProxiesMut.data.working}</p>
                   </CardContent>
                 </Card>
                 <Card className="border-gray-800 bg-gray-900/50">
                   <CardContent className="pt-4">
                     <p className="text-[10px] uppercase text-gray-500">Total Tested</p>
-                    <p className="text-3xl font-bold text-blue-400">{testAllProxiesMut.data.total}</p>
+                    <p className="text-xl sm:text-3xl font-bold text-blue-400">{testAllProxiesMut.data.total}</p>
                   </CardContent>
                 </Card>
               </div>

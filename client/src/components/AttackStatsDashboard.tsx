@@ -48,10 +48,10 @@ export default function AttackStatsDashboard() {
   return (
     <div className="space-y-4">
       {/* Header with period selector */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2 sm:gap-3">
           <Select value={String(days)} onValueChange={(v) => setDays(Number(v))}>
-            <SelectTrigger className="w-[140px] bg-zinc-900/50 border-zinc-700">
+            <SelectTrigger className="w-full sm:w-[140px] bg-zinc-900/50 border-zinc-700">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -73,14 +73,14 @@ export default function AttackStatsDashboard() {
       </div>
 
       {/* ═══ KPI Cards ═══ */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
         {/* Total Deploys */}
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardContent className="pt-4 pb-3">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-zinc-500 uppercase tracking-wider">Total Attacks</p>
-                <p className="text-2xl font-bold text-white mt-1">{deployStats.total}</p>
+                <p className="text-xl sm:text-2xl font-bold text-white mt-1">{deployStats.total}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
                 <Target className="w-5 h-5 text-blue-400" />
@@ -95,7 +95,7 @@ export default function AttackStatsDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-zinc-500 uppercase tracking-wider">Success Rate</p>
-                <p className="text-2xl font-bold text-white mt-1">{successRate}%</p>
+                <p className="text-xl sm:text-2xl font-bold text-white mt-1">{successRate}%</p>
               </div>
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
                 successRate >= 50 ? "bg-green-500/10" : successRate >= 25 ? "bg-yellow-500/10" : "bg-red-500/10"
@@ -119,7 +119,7 @@ export default function AttackStatsDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-zinc-500 uppercase tracking-wider">Successful</p>
-                <p className="text-2xl font-bold text-green-400 mt-1">{deployStats.success + deployStats.partial}</p>
+                <p className="text-xl sm:text-2xl font-bold text-green-400 mt-1">{deployStats.success + deployStats.partial}</p>
                 <p className="text-xs text-zinc-600 mt-0.5">
                   {deployStats.success} full + {deployStats.partial} partial
                 </p>
@@ -137,7 +137,7 @@ export default function AttackStatsDashboard() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-zinc-500 uppercase tracking-wider">Failed</p>
-                <p className="text-2xl font-bold text-red-400 mt-1">{deployStats.failed}</p>
+                <p className="text-xl sm:text-2xl font-bold text-red-400 mt-1">{deployStats.failed}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-red-500/10 flex items-center justify-center">
                 <XCircle className="w-5 h-5 text-red-400" />
@@ -336,7 +336,7 @@ export default function AttackStatsDashboard() {
                     }`} />
                     
                     {/* Domain */}
-                    <span className="text-xs text-zinc-300 font-mono w-40 truncate">{d.domain}</span>
+                    <span className="text-xs text-zinc-300 font-mono w-24 sm:w-40 truncate">{d.domain}</span>
                     
                     {/* Status badge */}
                     <Badge variant="outline" className={`text-xs ${
@@ -357,13 +357,13 @@ export default function AttackStatsDashboard() {
                     
                     {/* Duration */}
                     {d.duration && (
-                      <span className="text-[10px] text-zinc-600 ml-auto">
+                      <span className="text-[10px] text-zinc-600 ml-auto hidden sm:inline">
                         {(d.duration / 1000).toFixed(1)}s
                       </span>
                     )}
                     
                     {/* Time */}
-                    <span className="text-[10px] text-zinc-600">
+                    <span className="text-[10px] text-zinc-600 hidden sm:inline">
                       {d.createdAt ? new Date(d.createdAt).toLocaleString("th-TH", { 
                         month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" 
                       }) : "N/A"}

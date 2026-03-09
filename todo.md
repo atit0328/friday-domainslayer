@@ -2185,3 +2185,38 @@
 - [x] Write vitest tests for pipeline integration (36 tests)
 - [x] Write vitest tests for smart fallback integration
 - [x] All 36 tests passing
+
+# Mobile Responsive Design
+
+## DashboardLayout (Sidebar)
+- [x] Add hamburger menu button for mobile (lg:hidden)
+- [x] Make sidebar slide-in overlay on mobile (fixed z-50 with translate-x animation)
+- [x] Add backdrop overlay when sidebar is open on mobile (bg-black/60 backdrop-blur-sm)
+- [x] Touch-friendly nav items (py-3 tap targets, w-5 h-5 icons)
+- [x] Auto-close sidebar on navigation on mobile (useEffect on location)
+- [x] User profile section responsive (hidden name on mobile)
+
+## All Pages
+- [x] Home/Dashboard — responsive grid (2-col mobile, 4-col desktop), cards stack on mobile
+- [x] Domain Scanner — form responsive (sm:grid-cols-2), results responsive
+- [x] Marketplace — grid responsive, filters full-width on mobile
+- [x] Auto-Bid — responsive layout (batch-fixed grids)
+- [x] Watchlist — responsive table with overflow-x-auto
+- [x] Orders — responsive table with overflow-x-auto
+- [x] AI Chat — full-screen chat on mobile
+- [x] SEO Automation — responsive layout (batch-fixed grids)
+- [x] SEO Modules — responsive grid (batch-fixed)
+- [x] PBN Manager — responsive layout + overflow-x-auto tables
+- [x] Algorithm Intel — responsive layout (batch-fixed)
+- [x] Rank Tracker — responsive layout (batch-fixed)
+- [x] AI Attack Engine — tabs scrollable (overflow-x-auto), forms responsive, monitor responsive
+- [x] Attack Stats Dashboard — cards stack on mobile (grid-cols-1 sm:grid-cols-2)
+- [x] Attack Log Viewer — responsive log display with scrollable filter bar
+- [x] Settings — responsive layout
+
+## Global
+- [x] Typography scales properly on mobile (text-3xl/4xl/5xl → responsive breakpoints)
+- [x] Buttons and inputs have proper touch targets (min h-10 w-10)
+- [x] Tables have overflow-x-auto wrappers for horizontal scroll on mobile
+- [x] SelectTrigger widths responsive (w-full sm:w-[NNNpx])
+- [x] Scroll areas work properly on mobile (scrollbar-hide utility added)

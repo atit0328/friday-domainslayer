@@ -1,6 +1,7 @@
 /**
  * Design: Obsidian Intelligence — Sidebar Navigation
  * Two sections: DomainSlayer (emerald) + Friday AI (violet)
+ * Mobile: full-height overlay with smooth animation, touch-friendly tap targets
  */
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -8,6 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock,
+  X,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -50,12 +52,19 @@ const ADMIN_NAV = [
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const [location] = useLocation();
   const { user } = useAuth();
   const isSuperadmin = user?.role === "superadmin";
+
+  const handleNavClick = () => {
+    // Close mobile sidebar on navigation
+    if (onMobileClose) onMobileClose();
+  };
 
   const renderNavItem = (item: typeof DOMAIN_NAV[0], color: "emerald" | "violet" | "zinc") => {
     const active = item.href === "/" ? location === "/" : location.startsWith(item.href);
@@ -63,44 +72,59 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     const colorClasses = {
       emerald: active
         ? "bg-emerald/10 text-emerald border-l-emerald"
-        : "text-muted-foreground hover:text-emerald hover:bg-emerald/5 border-l-transparent",
+        : "text-muted-foreground hover:text-emerald hover:bg-emerald/5 active:bg-emerald/15 border-l-transparent",
       violet: active
         ? "bg-violet/10 text-violet border-l-violet"
-        : "text-muted-foreground hover:text-violet hover:bg-violet/5 border-l-transparent",
+        : "text-muted-foreground hover:text-violet hover:bg-violet/5 active:bg-violet/15 border-l-transparent",
       zinc: active
         ? "bg-muted text-foreground border-l-foreground"
-        : "text-muted-foreground hover:text-foreground hover:bg-muted/50 border-l-transparent",
+        : "text-muted-foreground hover:text-foreground hover:bg-muted/50 active:bg-muted border-l-transparent",
     };
 
     return (
-      <Link key={item.href} href={item.href}>
+      <Link key={item.href} href={item.href} onClick={handleNavClick}>
         <div
-          className={`flex items-center gap-3 px-3 py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${colorClasses[color]} ${collapsed ? "justify-center px-2" : ""}`}
+          className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${colorClasses[color]} ${collapsed ? "justify-center px-2" : ""}`}
         >
-          <Icon className="w-[18px] h-[18px] shrink-0" />
-          {!collapsed && <span className="text-[13px] font-medium truncate">{item.label}</span>}
+          <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
+          {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
         </div>
       </Link>
     );
   };
 
-  return (
+  const sidebarContent = (
     <aside
-      className={`${collapsed ? "w-[60px]" : "w-[230px]"} bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 shrink-0 sticky top-0 h-screen overflow-y-auto`}
+      className={`
+        ${collapsed ? "w-[60px]" : "w-[280px] lg:w-[230px]"}
+        bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 shrink-0
+        h-screen overflow-y-auto overscroll-contain
+      `}
     >
       {/* Logo */}
       <div className="h-[56px] flex items-center px-3 border-b border-sidebar-border shrink-0">
         {!collapsed ? (
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-emerald/15 border border-emerald/30 flex items-center justify-center">
-              <span className="font-mono font-bold text-emerald text-sm">F</span>
-            </div>
-            <div className="leading-tight">
-              <div className="font-bold text-sm tracking-tight">
-                FRIDAY<span className="text-emerald">AI</span>
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-emerald/15 border border-emerald/30 flex items-center justify-center">
+                <span className="font-mono font-bold text-emerald text-sm">F</span>
               </div>
-              <div className="font-mono text-[9px] text-emerald/50 tracking-widest">x DOMAINSLAYER</div>
+              <div className="leading-tight">
+                <div className="font-bold text-sm tracking-tight">
+                  FRIDAY<span className="text-emerald">AI</span>
+                </div>
+                <div className="font-mono text-[9px] text-emerald/50 tracking-widest">x DOMAINSLAYER</div>
+              </div>
             </div>
+            {/* Mobile close button */}
+            {onMobileClose && (
+              <button
+                onClick={onMobileClose}
+                className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-muted/50 active:bg-muted transition-colors"
+              >
+                <X className="w-5 h-5 text-muted-foreground" />
+              </button>
+            )}
           </div>
         ) : (
           <div className="w-8 h-8 rounded-lg bg-emerald/15 border border-emerald/30 flex items-center justify-center mx-auto">
@@ -151,16 +175,16 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             const active = location.startsWith(item.href);
             const Icon = item.icon;
             return (
-              <Link key={item.href} href={item.href}>
+              <Link key={item.href} href={item.href} onClick={handleNavClick}>
                 <div
-                  className={`flex items-center gap-3 px-3 py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
+                  className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
                     active
                       ? "bg-red-500/10 text-red-500 border-l-red-500"
-                      : "text-muted-foreground hover:text-red-500 hover:bg-red-500/5 border-l-transparent"
+                      : "text-muted-foreground hover:text-red-500 hover:bg-red-500/5 active:bg-red-500/15 border-l-transparent"
                   } ${collapsed ? "justify-center px-2" : ""}`}
                 >
-                  <Icon className="w-[18px] h-[18px] shrink-0" />
-                  {!collapsed && <span className="text-[13px] font-medium truncate">{item.label}</span>}
+                  <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
+                  {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
                 </div>
               </Link>
             );
@@ -184,8 +208,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Collapse Toggle */}
-      <div className="p-2 border-t border-sidebar-border">
+      {/* Collapse Toggle — desktop only */}
+      <div className="hidden lg:block p-2 border-t border-sidebar-border">
         <button
           onClick={onToggle}
           className="w-full flex items-center justify-center py-2 text-muted-foreground hover:text-foreground transition-colors rounded-md hover:bg-muted/50"
@@ -193,6 +217,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       </div>
+
+      {/* Mobile: safe area bottom padding */}
+      <div className="lg:hidden h-6 shrink-0" />
     </aside>
   );
+
+  return sidebarContent;
 }

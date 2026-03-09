@@ -247,7 +247,7 @@ export default function AttackLogViewer({
         }`}
       >
         {/* Timestamp */}
-        <span className="text-muted-foreground shrink-0 w-[60px]">{ts}</span>
+        <span className="text-muted-foreground shrink-0 w-[50px] sm:w-[60px] text-[9px] sm:text-[10px]">{ts}</span>
 
         {/* Severity icon */}
         <span className={`shrink-0 mt-0.5 ${sev.color}`}>{sev.icon}</span>
@@ -378,7 +378,7 @@ export default function AttackLogViewer({
   return (
     <div className={`space-y-3 ${compact ? "" : ""}`}>
       {/* ─── Header / Controls ─── */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
         {/* Deploy ID input */}
         {!deployId && (
           <div className="flex items-center gap-1.5">
@@ -395,7 +395,7 @@ export default function AttackLogViewer({
 
         {/* Phase filter */}
         <Select value={filterPhase} onValueChange={setFilterPhase}>
-          <SelectTrigger className="w-[130px] h-7 text-xs">
+          <SelectTrigger className="w-full sm:w-[130px] h-8 sm:h-7 text-xs">
             <Filter className="w-3 h-3 mr-1" />
             <SelectValue placeholder="Phase" />
           </SelectTrigger>
@@ -409,7 +409,7 @@ export default function AttackLogViewer({
 
         {/* Severity filter */}
         <Select value={filterSeverity} onValueChange={setFilterSeverity}>
-          <SelectTrigger className="w-[120px] h-7 text-xs">
+          <SelectTrigger className="w-full sm:w-[120px] h-8 sm:h-7 text-xs">
             <SelectValue placeholder="Severity" />
           </SelectTrigger>
           <SelectContent>
@@ -423,7 +423,7 @@ export default function AttackLogViewer({
         </Select>
 
         {/* Search */}
-        <div className="relative flex-1 min-w-[150px]">
+        <div className="relative flex-1 min-w-[120px] sm:min-w-[150px]">
           <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
           <Input
             placeholder="Search logs..."
