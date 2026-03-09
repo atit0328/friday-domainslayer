@@ -39,6 +39,7 @@ import { discoveryRouter } from "./routers/discovery";
 import { attackHistoryRouter } from "./routers/attack-history";
 import { seoAgentRouter } from "./routers/seo-agent-router";
 import { scheduledScansRouter } from "./routers/scheduled-scans";
+import { attackLogsRouter } from "./routers/attack-logs";
 
 export const appRouter = router({
   system: systemRouter,
@@ -117,6 +118,9 @@ export const appRouter = router({
 
   // Scheduled Vulnerability Scans
   scheduledScans: scheduledScansRouter,
+
+  // Attack Pipeline Logs
+  attackLogs: attackLogsRouter,
 });
 
 export type AppRouter = typeof appRouter;

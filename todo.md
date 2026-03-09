@@ -2114,3 +2114,45 @@
 - [x] Write vitest tests for revert logic (24/24 passed)
 - [x] Test snapshot capture (security_headers, ssl_tls, session_security, plugin_management, information_disclosure, misconfiguration, mixed_content, clickjacking)
 - [x] Test revert operations, fix history, edge cases, type validation
+
+# Fix Pipeline Intelligence — Smart Abort, Better Fallback, Timeout Management
+
+## Problems Identified (from user screenshots)
+- [ ] oneClickDeploy retries upload 60 times even when 0 writable paths found → wastes time
+- [ ] Pipeline timeout (10min) → falls back to legacy engine which also fails
+- [ ] Shell verification failed → "shell may have been detected and removed" but no adaptive response
+- [ ] AI estimates 5% success but still proceeds with same methods → not smart
+- [ ] No writable paths found but still tries standard upload methods → should skip to alternative methods immediately
+
+## Fixes
+- [ ] Smart abort: skip upload methods when 0 writable paths detected
+- [ ] Intelligent method selection: if no writable paths, prioritize indirect attacks (SQLi INTO OUTFILE, LFI log poisoning, SSRF)
+- [ ] Reduce retry count for methods with 0% chance of success
+- [ ] Better timeout management: allocate time budget per phase, abort early if low probability
+- [ ] AI brain should switch strategy when success probability < 15%
+- [ ] Improve fallback: when oneClickDeploy fails, try shellless attacks instead of repeating same approach
+- [ ] Add smart escalation: if standard methods fail, auto-escalate to more aggressive techniques
+- [ ] Write vitest tests for improved pipeline logic
+
+# Attack Log Viewer + Smart Fallback Strategy
+## ## Attack Logger System
+- [x] Create attack_logs DB table (per-event log with phase, step, detail, timestamp, severity)
+- [x] Create attack-logger.ts service (capture every pipeline event, write to DB)
+- [x] Create tRPC endpoints for log retrieval (getLogs, getLogsByDeploy, getLogStream)
+- [ ] Integrate logger into unified-attack-pipeline and oneclick-sse
+## Smart Fallback Strategy
+- [x] Skip upload methods when 0 writable paths found (don't waste time)
+- [x] Prioritize shellless/indirect attacks when standard upload has 0% chance
+- [x] AI-driven method selection based on prescreen results
+- [x] Reduce retry count for methods with low probability
+- [x] Auto-escalate to comprehensive attack vectors when basic methods fail
+## Attack Log Viewer UI
+- [x] Add "Logs" tab in AI Attack Engine page
+- [x] Real-time log display with auto-scroll
+- [x] Filter by phase, severity, deploy ID
+- [x] Color-coded log entries (success=green, error=red, warning=yellow, info=blue)
+- [x] Export logs as text file
+- [x] Show log for each deploy in history tab
+## Testing
+- [x] Write vitest tests for attack logger (30 tests passed)
+- [x] Write vitest tests for smart fallback logic (30 tests passed)

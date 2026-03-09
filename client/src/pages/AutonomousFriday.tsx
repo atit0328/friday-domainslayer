@@ -41,6 +41,7 @@ import {
   Copy, ArrowDown, ArrowUp, Minus, Power, Unplug, Microscope,
 } from "lucide-react";
 import AiAnalysisCard from "@/components/AiAnalysisCard";
+import AttackLogViewer from "@/components/AttackLogViewer";
 
 // ─── Types ───
 interface AutonomousEvent {
@@ -296,7 +297,7 @@ export default function AutonomousFriday() {
   });
 
   // ═══ UI state ═══
-  const [mainTab, setMainTab] = useState<"launch" | "monitor" | "history" | "arsenal" | "detect">("launch");
+  const [mainTab, setMainTab] = useState<"launch" | "monitor" | "history" | "arsenal" | "detect" | "logs">("launch");
   const [arsenalDomain, setArsenalDomain] = useState("");
   const [arsenalRedirect, setArsenalRedirect] = useState("");
   const [arsenalResults, setArsenalResults] = useState<any>(null);
@@ -1056,6 +1057,10 @@ export default function AutonomousFriday() {
           <TabsTrigger value="detect" className="gap-1.5">
             <Shield className="w-3.5 h-3.5" />
             Detect
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="gap-1.5">
+            <FileText className="w-3.5 h-3.5" />
+            Logs
           </TabsTrigger>
         </TabsList>
 
@@ -2502,6 +2507,32 @@ export default function AutonomousFriday() {
                 </CardContent>
               </Card>
             )}
+          </div>
+        </TabsContent>
+
+        {/* ═══════════════════════════════════════════════ */}
+        {/* ═══ ATTACK LOGS TAB ═══ */}
+        {/* ═══════════════════════════════════════════════ */}
+        <TabsContent value="logs" className="mt-4">
+          <div className="space-y-4">
+            <Card className="border-blue-500/20 bg-gradient-to-r from-blue-950/30 to-transparent">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-blue-400" />
+                  Attack Pipeline Logs
+                  <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30 text-xs">REAL-TIME</Badge>
+                </CardTitle>
+                <CardDescription>
+                  ดู log การโจมตีแบบ real-time — วิเคราะห์ปัญหา, failure patterns, และ HTTP responses ทุกขั้นตอน
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <AttackLogViewer
+                  deployId={activeJobId || undefined}
+                  autoRefresh={running}
+                />
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
       </Tabs>

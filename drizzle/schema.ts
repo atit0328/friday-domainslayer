@@ -1159,3 +1159,29 @@ export const remediationHistory = mysqlTable("remediation_history", {
 });
 export type RemediationHistoryRow = typeof remediationHistory.$inferSelect;
 export type InsertRemediationHistory = typeof remediationHistory.$inferInsert;
+
+// ═══════════════════════════════════════════════
+//  ATTACK LOGS — Real-time pipeline event logging
+// ═══════════════════════════════════════════════
+export const attackLogs = mysqlTable("attack_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  deployId: int("deployId"),                                       // linked deploy_history record
+  userId: int("userId").notNull(),
+  domain: varchar("logDomain", { length: 255 }).notNull(),
+  // Event details
+  phase: varchar("logPhase", { length: 64 }).notNull(),            // ai_analysis, prescreen, vuln_scan, shell_gen, upload, verify, etc.
+  step: varchar("logStep", { length: 128 }).notNull(),             // sub-step within phase
+  detail: text("logDetail").notNull(),                             // human-readable log message
+  severity: mysqlEnum("logSeverity", ["info", "success", "warning", "error", "critical"]).default("info").notNull(),
+  progress: int("logProgress").default(0).notNull(),               // 0-100 progress within pipeline
+  // Context data
+  data: json("logData"),                                           // arbitrary JSON context (response codes, URLs, etc.)
+  method: varchar("logMethod", { length: 64 }),                    // attack method used (oneClickDeploy, waf_bypass, etc.)
+  httpStatus: int("httpStatus"),                                   // HTTP response status if applicable
+  responseTime: int("responseTime"),                               // response time in ms
+  // Timing
+  timestamp: timestamp("logTimestamp").defaultNow().notNull(),
+  createdAt: timestamp("logCreatedAt").defaultNow().notNull(),
+});
+export type AttackLogRow = typeof attackLogs.$inferSelect;
+export type InsertAttackLog = typeof attackLogs.$inferInsert;

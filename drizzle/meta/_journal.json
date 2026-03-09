@@ -183,6 +183,13 @@
       "when": 1773021604371,
       "tag": "0025_gifted_emma_frost",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1773029613442,
+      "tag": "0026_strong_jackal",
+      "breakpoints": true
     }
   ]
 }
