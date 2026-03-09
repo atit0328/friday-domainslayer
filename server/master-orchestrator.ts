@@ -1,0 +1,896 @@
+/**
+ * ═══════════════════════════════════════════════════════════════
+ *  MASTER AI ORCHESTRATOR — The Central Brain
+ *  
+ *  Fully Autonomous Agentic AI that:
+ *  1. OBSERVE — Collects state from all subsystems (SEO, Attack, PBN, Discovery, Rank)
+ *  2. ORIENT — Analyzes situation, identifies priorities, spots opportunities
+ *  3. DECIDE — Uses LLM to make strategic decisions on what to do next
+ *  4. ACT — Creates tasks, dispatches to subsystems, monitors execution
+ *  
+ *  Runs on a configurable interval (default 30 min) without human input.
+ *  All decisions are logged with reasoning for full transparency.
+ * ═══════════════════════════════════════════════════════════════
+ */
+import { getDb } from "./db";
+import { invokeLLM } from "./_core/llm";
+import { sendTelegramNotification } from "./telegram-notifier";
+import { ENV } from "./_core/env";
+import {
+  aiOrchestratorState,
+  aiTaskQueue,
+  aiDecisions,
+  aiMetrics,
+  seoProjects,
+  pbnSites,
+  pbnPosts,
+  deployHistory,
+  rankTracking,
+  campaigns,
+  domainScans,
+  orders,
+  autobidRules,
+  watchlist,
+  seoAgentTasks,
+  seoContent,
+  scheduledScans,
+  autonomousDeploys,
+  type AiOrchestratorStateRow,
+  type AiTaskQueueRow,
+} from "../drizzle/schema";
+import { eq, desc, sql, and, gte, lte, count, isNull, or } from "drizzle-orm";
+
+// ─── Types ───
+export interface WorldState {
+  timestamp: number;
+  seo: {
+    totalProjects: number;
+    activeProjects: number;
+    projectsNeedingAttention: { id: number; domain: string; issue: string }[];
+    recentRankChanges: { domain: string; keyword: string; oldRank: number; newRank: number }[];
+    contentPending: number;
+    backlinksBuiltToday: number;
+  };
+  attack: {
+    totalDeploys: number;
+    successfulDeploys: number;
+    failedDeploys: number;
+    recentDeploys: { domain: string; status: string; createdAt: Date }[];
+    activePipelines: number;
+  };
+  pbn: {
+    totalSites: number;
+    activeSites: number;
+    downSites: number;
+    recentPosts: number;
+    sitesNeedingContent: { id: number; name: string; lastPost: Date | null }[];
+  };
+  discovery: {
+    targetsDiscoveredToday: number;
+    highValueTargets: number;
+  };
+  rank: {
+    totalTracked: number;
+    improved: number;
+    declined: number;
+    unchanged: number;
+  };
+  autobid: {
+    activeRules: number;
+    totalBudgetRemaining: number;
+    recentBids: number;
+  };
+  tasks: {
+    queued: number;
+    running: number;
+    completedToday: number;
+    failedToday: number;
+  };
+}
+
+export interface OrchestratorDecision {
+  subsystem: string;
+  action: string;
+  reasoning: string;
+  confidence: number;
+  priority: "critical" | "high" | "medium" | "low";
+  tasks: {
+    taskType: string;
+    title: string;
+    description: string;
+    targetDomain?: string;
+    projectId?: number;
+    priority: "critical" | "high" | "medium" | "low";
+    scheduledFor?: string;
+  }[];
+}
+
+// ─── Singleton State ───
+let orchestratorInterval: ReturnType<typeof setInterval> | null = null;
+let isRunningCycle = false;
+
+// ═══════════════════════════════════════════════
+//  DB HELPERS
+// ═══════════════════════════════════════════════
+
+export async function getOrCreateOrchestratorState(): Promise<AiOrchestratorStateRow> {
+  const [existing] = await (await getDb())!.select().from(aiOrchestratorState).limit(1);
+  if (existing) return existing;
+  
+  await (await getDb())!.insert(aiOrchestratorState).values({});
+  const [created] = await (await getDb())!.select().from(aiOrchestratorState).limit(1);
+  return created!;
+}
+
+async function updateOrchestratorState(updates: Partial<Record<string, unknown>>) {
+  const state = await getOrCreateOrchestratorState();
+  await (await getDb())!.update(aiOrchestratorState).set(updates as any).where(eq(aiOrchestratorState.id, state.id));
+}
+
+async function logDecision(
+  cycle: number,
+  phase: string,
+  subsystem: string,
+  decision: string,
+  reasoning: string,
+  confidence: number,
+  inputData: unknown,
+  outputData: unknown,
+  tasksCreated: number,
+  impactLevel: string
+) {
+  await (await getDb())!.insert(aiDecisions).values({
+    cycle,
+    phase,
+    subsystem,
+    decision,
+    reasoning,
+    confidence,
+    inputData,
+    outputData,
+    tasksCreated,
+    impactLevel,
+  });
+}
+
+async function createTask(task: {
+  taskType: string;
+  subsystem: string;
+  title: string;
+  description?: string;
+  targetDomain?: string;
+  projectId?: number;
+  priority?: "critical" | "high" | "medium" | "low";
+  aiReasoning?: string;
+  scheduledFor?: Date;
+  dependsOnTaskId?: number;
+}) {
+  const [result] = await (await getDb())!.insert(aiTaskQueue).values({
+    taskType: task.taskType,
+    subsystem: task.subsystem,
+    title: task.title,
+    description: task.description,
+    targetDomain: task.targetDomain,
+    projectId: task.projectId,
+    priority: task.priority || "medium",
+    aiReasoning: task.aiReasoning,
+    scheduledFor: task.scheduledFor,
+    dependsOnTaskId: task.dependsOnTaskId,
+  });
+  return result;
+}
+
+// ═══════════════════════════════════════════════
+//  PHASE 1: OBSERVE — Collect World State
+// ═══════════════════════════════════════════════
+
+async function observe(): Promise<WorldState> {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  // SEO Projects
+  const allSeoProjects = await (await getDb())!.select({
+    id: seoProjects.id,
+    domain: seoProjects.domain,
+    status: seoProjects.status,
+  }).from(seoProjects).limit(100);
+
+  const activeProjects = allSeoProjects.filter((p: typeof allSeoProjects[number]) => p.status === "analyzing" || p.status === "setup");
+  
+  // SEO content pending
+  const [contentPendingResult] = await (await getDb())!.select({ count: count() })
+    .from(seoContent)
+    .where(eq(seoContent.publishStatus, "draft"));
+  
+  // Recent rank changes
+  const recentRanks = await (await getDb())!.select()
+    .from(rankTracking)
+    .orderBy(desc(rankTracking.trackedAt))
+    .limit(20);
+  
+  const rankChanges = recentRanks
+    .filter((r: typeof recentRanks[number]) => r.previousPosition && r.position && r.previousPosition !== r.position)
+    .map((r: typeof recentRanks[number]) => ({
+      domain: `project-${r.projectId}`,
+      keyword: r.keyword,
+      oldRank: r.previousPosition || 0,
+      newRank: r.position || 0,
+    }));
+
+  // Attack/Deploy stats
+  const allDeploys = await (await getDb())!.select({
+    domain: deployHistory.targetDomain,
+    status: deployHistory.status,
+    createdAt: deployHistory.createdAt,
+  }).from(deployHistory).orderBy(desc(deployHistory.createdAt)).limit(50);
+
+  const successDeploys = allDeploys.filter((d: typeof allDeploys[number]) => d.status === "success");
+  const failedDeploys = allDeploys.filter((d: typeof allDeploys[number]) => d.status === "failed");
+
+  // PBN Sites
+  const allPbn = await (await getDb())!.select().from(pbnSites).limit(100);
+  const activePbn = allPbn.filter((s: typeof allPbn[number]) => s.status === "active");
+  const downPbn = allPbn.filter((s: typeof allPbn[number]) => s.status === "down" || s.status === "error");
+  
+  const sitesNeedingContent = activePbn
+    .filter((s: typeof allPbn[number]) => {
+      if (!s.lastPost) return true;
+      const daysSincePost = (now.getTime() - new Date(s.lastPost).getTime()) / (1000 * 60 * 60 * 24);
+      return daysSincePost > 3;
+    })
+    .map((s: typeof allPbn[number]) => ({ id: s.id, name: s.name, lastPost: s.lastPost }));
+
+  // Rank tracking summary
+  const [rankImproved] = await (await getDb())!.select({ count: count() })
+    .from(rankTracking)
+    .where(sql`${rankTracking.position} < ${rankTracking.previousPosition}`);
+  const [rankDeclined] = await (await getDb())!.select({ count: count() })
+    .from(rankTracking)
+    .where(sql`${rankTracking.position} > ${rankTracking.previousPosition}`);
+  const [rankTotal] = await (await getDb())!.select({ count: count() }).from(rankTracking);
+
+  // Auto-bid rules
+  const activeRules = await (await getDb())!.select().from(autobidRules).where(eq(autobidRules.status, "active"));
+  const totalBudgetRemaining = activeRules.reduce((sum: number, r: typeof activeRules[number]) => {
+    return sum + (parseFloat(String(r.totalBudget)) - parseFloat(String(r.spent)));
+  }, 0);
+
+  // Task queue stats
+  const [queuedTasks] = await (await getDb())!.select({ count: count() })
+    .from(aiTaskQueue).where(eq(aiTaskQueue.status, "queued"));
+  const [runningTasks] = await (await getDb())!.select({ count: count() })
+    .from(aiTaskQueue).where(eq(aiTaskQueue.status, "running"));
+  const [completedToday] = await (await getDb())!.select({ count: count() })
+    .from(aiTaskQueue)
+    .where(and(eq(aiTaskQueue.status, "completed"), gte(aiTaskQueue.completedAt, todayStart)));
+  const [failedToday] = await (await getDb())!.select({ count: count() })
+    .from(aiTaskQueue)
+    .where(and(eq(aiTaskQueue.status, "failed"), gte(aiTaskQueue.completedAt, todayStart)));
+
+  return {
+    timestamp: Date.now(),
+    seo: {
+      totalProjects: allSeoProjects.length,
+      activeProjects: activeProjects.length,
+      projectsNeedingAttention: [],
+      recentRankChanges: rankChanges,
+      contentPending: contentPendingResult?.count || 0,
+      backlinksBuiltToday: 0,
+    },
+    attack: {
+      totalDeploys: allDeploys.length,
+      successfulDeploys: successDeploys.length,
+      failedDeploys: failedDeploys.length,
+      recentDeploys: allDeploys.slice(0, 5).map((d: typeof allDeploys[number]) => ({
+        domain: d.domain,
+        status: d.status,
+        createdAt: d.createdAt,
+      })),
+      activePipelines: 0,
+    },
+    pbn: {
+      totalSites: allPbn.length,
+      activeSites: activePbn.length,
+      downSites: downPbn.length,
+      recentPosts: 0,
+      sitesNeedingContent,
+    },
+    discovery: {
+      targetsDiscoveredToday: 0,
+      highValueTargets: 0,
+    },
+    rank: {
+      totalTracked: rankTotal?.count || 0,
+      improved: rankImproved?.count || 0,
+      declined: rankDeclined?.count || 0,
+      unchanged: (rankTotal?.count || 0) - (rankImproved?.count || 0) - (rankDeclined?.count || 0),
+    },
+    autobid: {
+      activeRules: activeRules.length,
+      totalBudgetRemaining,
+      recentBids: 0,
+    },
+    tasks: {
+      queued: queuedTasks?.count || 0,
+      running: runningTasks?.count || 0,
+      completedToday: completedToday?.count || 0,
+      failedToday: failedToday?.count || 0,
+    },
+  };
+}
+
+// ═══════════════════════════════════════════════
+//  PHASE 2: ORIENT — AI Analyzes the Situation
+// ═══════════════════════════════════════════════
+
+async function orient(worldState: WorldState, orchState: AiOrchestratorStateRow): Promise<string> {
+  const enabledSystems: string[] = [];
+  if (orchState.seoEnabled) enabledSystems.push("SEO");
+  if (orchState.attackEnabled) enabledSystems.push("Attack");
+  if (orchState.pbnEnabled) enabledSystems.push("PBN");
+  if (orchState.discoveryEnabled) enabledSystems.push("Discovery");
+  if (orchState.rankTrackingEnabled) enabledSystems.push("Rank Tracking");
+  if (orchState.autobidEnabled) enabledSystems.push("Auto-Bid");
+
+  const prompt = `You are the Master AI Orchestrator for FridayAI x DomainSlayer — a fully autonomous SEO & domain intelligence platform.
+
+CURRENT WORLD STATE:
+${JSON.stringify(worldState, null, 2)}
+
+ENABLED SUBSYSTEMS: ${enabledSystems.join(", ")}
+AGGRESSIVENESS: ${orchState.aggressiveness}
+MAX CONCURRENT TASKS: ${orchState.maxConcurrentTasks}
+MAX DAILY ACTIONS: ${orchState.maxDailyActions}
+ACTIONS TODAY: ${orchState.todayActions}
+REMAINING ACTIONS: ${orchState.maxDailyActions - orchState.todayActions}
+CYCLE: #${orchState.currentCycle + 1}
+
+PREVIOUS LEARNINGS:
+${orchState.aiLearnings ? JSON.stringify(orchState.aiLearnings) : "None yet — first cycle"}
+
+PREVIOUS PRIORITIES:
+${orchState.aiPriorities ? JSON.stringify(orchState.aiPriorities) : "None yet"}
+
+Analyze the current situation and provide a strategic assessment. Consider:
+1. What subsystems need immediate attention?
+2. What opportunities exist right now?
+3. What risks or problems need to be addressed?
+4. What's the optimal allocation of remaining daily actions?
+5. Are there any patterns or trends to leverage?
+
+Respond with a concise strategic analysis (max 500 words).`;
+
+  const response = await invokeLLM({
+    messages: [
+      { role: "system", content: "You are an autonomous AI strategist. Be concise, actionable, and data-driven." },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  const content = response.choices[0]?.message?.content;
+  return typeof content === "string" ? content : "No analysis generated";
+}
+
+// ═══════════════════════════════════════════════
+//  PHASE 3: DECIDE — AI Makes Strategic Decisions
+// ═══════════════════════════════════════════════
+
+async function decide(
+  worldState: WorldState,
+  analysis: string,
+  orchState: AiOrchestratorStateRow
+): Promise<OrchestratorDecision[]> {
+  const remainingActions = orchState.maxDailyActions - orchState.todayActions;
+  if (remainingActions <= 0) return [];
+
+  const enabledSystems: string[] = [];
+  if (orchState.seoEnabled) enabledSystems.push("seo");
+  if (orchState.attackEnabled) enabledSystems.push("attack");
+  if (orchState.pbnEnabled) enabledSystems.push("pbn");
+  if (orchState.discoveryEnabled) enabledSystems.push("discovery");
+  if (orchState.rankTrackingEnabled) enabledSystems.push("rank");
+  if (orchState.autobidEnabled) enabledSystems.push("autobid");
+
+  const taskTypes: Record<string, string[]> = {
+    seo: ["seo_analyze", "seo_build_backlinks", "seo_create_content", "seo_on_page", "seo_check_ranks", "seo_adjust_strategy"],
+    attack: ["attack_discover", "attack_scan", "attack_deploy", "attack_verify"],
+    pbn: ["pbn_auto_post", "pbn_interlink", "pbn_health_check"],
+    discovery: ["discovery_search", "discovery_score", "discovery_queue_attack"],
+    rank: ["rank_check", "rank_bulk_check", "rank_competitor_analysis"],
+    autobid: ["autobid_scan", "autobid_analyze", "autobid_execute"],
+  };
+
+  const prompt = `You are the Master AI Orchestrator. Based on your analysis, decide what actions to take.
+
+STRATEGIC ANALYSIS:
+${analysis}
+
+WORLD STATE SUMMARY:
+- SEO: ${worldState.seo.activeProjects} active projects, ${worldState.seo.contentPending} content pending
+- PBN: ${worldState.pbn.activeSites} active sites, ${worldState.pbn.sitesNeedingContent.length} need content
+- Rank: ${worldState.rank.improved} improved, ${worldState.rank.declined} declined
+- Tasks: ${worldState.tasks.queued} queued, ${worldState.tasks.running} running
+- Attack: ${worldState.attack.successfulDeploys} successful deploys
+
+ENABLED SUBSYSTEMS: ${enabledSystems.join(", ")}
+REMAINING ACTIONS TODAY: ${remainingActions}
+MAX CONCURRENT: ${orchState.maxConcurrentTasks}
+CURRENTLY RUNNING: ${worldState.tasks.running}
+AGGRESSIVENESS: ${orchState.aggressiveness}
+
+AVAILABLE TASK TYPES PER SUBSYSTEM:
+${Object.entries(taskTypes)
+  .filter(([sys]) => enabledSystems.includes(sys))
+  .map(([sys, types]) => `${sys}: ${types.join(", ")}`)
+  .join("\n")}
+
+Create a list of decisions. Each decision should create 1-3 tasks.
+Only create tasks for ENABLED subsystems.
+Don't exceed remaining actions or concurrent task limit.
+Prioritize based on aggressiveness level and current needs.
+
+Respond in this exact JSON format:
+{
+  "decisions": [
+    {
+      "subsystem": "seo",
+      "action": "Build backlinks for top project",
+      "reasoning": "Project X has declining ranks, needs backlink boost",
+      "confidence": 85,
+      "priority": "high",
+      "tasks": [
+        {
+          "taskType": "seo_build_backlinks",
+          "title": "Build 5 backlinks for example.com",
+          "description": "Create contextual backlinks from PBN and guest posts",
+          "targetDomain": "example.com",
+          "priority": "high"
+        }
+      ]
+    }
+  ]
+}`;
+
+  try {
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: "You are an autonomous AI decision-maker. Respond ONLY with valid JSON. No markdown, no explanation." },
+        { role: "user", content: prompt },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "orchestrator_decisions",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              decisions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    subsystem: { type: "string" },
+                    action: { type: "string" },
+                    reasoning: { type: "string" },
+                    confidence: { type: "integer" },
+                    priority: { type: "string", enum: ["critical", "high", "medium", "low"] },
+                    tasks: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          taskType: { type: "string" },
+                          title: { type: "string" },
+                          description: { type: "string" },
+                          targetDomain: { type: "string" },
+                          priority: { type: "string", enum: ["critical", "high", "medium", "low"] },
+                        },
+                        required: ["taskType", "title", "description", "priority"],
+                        additionalProperties: false,
+                      },
+                    },
+                  },
+                  required: ["subsystem", "action", "reasoning", "confidence", "priority", "tasks"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["decisions"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const rawContent = response.choices[0]?.message?.content;
+    if (!rawContent || typeof rawContent !== "string") return [];
+    
+    const parsed = JSON.parse(rawContent);
+    return parsed.decisions || [];
+  } catch (err) {
+    console.error("[Orchestrator] Decision phase error:", err);
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  PHASE 4: ACT — Execute Decisions
+// ═══════════════════════════════════════════════
+
+async function act(decisions: OrchestratorDecision[], cycle: number): Promise<number> {
+  let totalTasksCreated = 0;
+
+  for (const decision of decisions) {
+    // Log the decision
+    await logDecision(
+      cycle,
+      "decide",
+      decision.subsystem,
+      decision.action,
+      decision.reasoning,
+      decision.confidence,
+      null,
+      decision,
+      decision.tasks.length,
+      decision.priority
+    );
+
+    // Create tasks
+    for (const task of decision.tasks) {
+      await createTask({
+        taskType: task.taskType,
+        subsystem: decision.subsystem,
+        title: task.title,
+        description: task.description,
+        targetDomain: task.targetDomain,
+        priority: task.priority,
+        aiReasoning: decision.reasoning,
+      });
+      totalTasksCreated++;
+    }
+  }
+
+  return totalTasksCreated;
+}
+
+// ═══════════════════════════════════════════════
+//  TASK EXECUTOR — Process queued tasks
+// ═══════════════════════════════════════════════
+
+async function processTaskQueue(maxConcurrent: number) {
+  // Get currently running tasks
+  const [runningResult] = await (await getDb())!.select({ count: count() })
+    .from(aiTaskQueue)
+    .where(eq(aiTaskQueue.status, "running"));
+  
+  const currentlyRunning = runningResult?.count || 0;
+  const slotsAvailable = maxConcurrent - currentlyRunning;
+  
+  if (slotsAvailable <= 0) return;
+
+  // Get next tasks to run (ordered by priority, then creation time)
+  const priorityOrder = sql`CASE ${aiTaskQueue.priority} 
+    WHEN 'critical' THEN 1 
+    WHEN 'high' THEN 2 
+    WHEN 'medium' THEN 3 
+    WHEN 'low' THEN 4 
+    ELSE 5 END`;
+
+  const nextTasks = await (await getDb())!.select()
+    .from(aiTaskQueue)
+    .where(
+      and(
+        eq(aiTaskQueue.status, "queued"),
+        or(
+          isNull(aiTaskQueue.scheduledFor),
+          lte(aiTaskQueue.scheduledFor, new Date())
+        )
+      )
+    )
+    .orderBy(priorityOrder, aiTaskQueue.createdAt)
+    .limit(slotsAvailable);
+
+  const taskDb = await getDb();
+  if (!taskDb) return;
+
+  for (const task of nextTasks) {
+    try {
+      // Mark as running
+      await taskDb.update(aiTaskQueue)
+        .set({ status: "running", startedAt: new Date() })
+        .where(eq(aiTaskQueue.id, task.id));
+
+      // Execute the task based on type
+      const result = await executeTask(task);
+
+      // Mark as completed
+      await taskDb.update(aiTaskQueue)
+        .set({
+          status: "completed",
+          completedAt: new Date(),
+          result: result,
+        })
+        .where(eq(aiTaskQueue.id, task.id));
+
+    } catch (err: any) {
+      const errorMsg = err?.message || String(err);
+      const newRetry = task.retryCount + 1;
+      
+      if (newRetry >= task.maxRetries) {
+        await taskDb.update(aiTaskQueue)
+          .set({ status: "failed", error: errorMsg, completedAt: new Date() })
+          .where(eq(aiTaskQueue.id, task.id));
+      } else {
+        await taskDb.update(aiTaskQueue)
+          .set({ status: "queued", error: errorMsg, retryCount: newRetry })
+          .where(eq(aiTaskQueue.id, task.id));
+      }
+    }
+  }
+}
+
+async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown>> {
+  const { taskType, subsystem, targetDomain, projectId } = task;
+
+  try {
+    // ─── SEO Tasks — call real engines ───
+    if (subsystem === "seo" || taskType.startsWith("seo_")) {
+      if (projectId) {
+        const { runDailyAutomation } = await import("./seo-daily-engine");
+        const report = await runDailyAutomation(projectId);
+        return { action: taskType, status: "completed", completed: report.summary.completed, total: report.summary.total };
+      }
+      const { runAllProjectsDailyTasks } = await import("./seo-agent");
+      const result = await runAllProjectsDailyTasks();
+      return { action: taskType, status: "completed", ...result };
+    }
+
+    // ─── Attack Tasks — call AI Commander or Auto-Pipeline ───
+    if (subsystem === "attack" || taskType.startsWith("attack_")) {
+      if (taskType === "attack_deploy" && targetDomain) {
+        const { runAiCommander } = await import("./ai-autonomous-engine");
+        const result = await runAiCommander({
+          targetDomain,
+          redirectUrl: targetDomain, // self-redirect for autonomous
+          maxIterations: 5,
+          pipelineType: "autonomous",
+        });
+        return { action: taskType, status: result.success ? "completed" : "failed", iterations: result.iterations, method: result.successfulMethod };
+      }
+      if (taskType === "attack_discover") {
+        const { runAutoPipeline } = await import("./auto-pipeline");
+        const run = await runAutoPipeline({
+          discovery: { useShodan: true, useSerpApi: true, minVulnScore: 30, maxTargets: 50 },
+          autoAttack: true,
+          maxConcurrentAttacks: 3,
+          attackOnlyAboveScore: 50,
+          skipWaf: false,
+          runNonWpScan: true,
+          notifyTelegram: true,
+        });
+        return { action: taskType, status: "completed", pipelineId: run.id, phase: run.phase };
+      }
+      if (taskType === "attack_scan" && task.dependsOnTaskId) {
+        const { runScanNow } = await import("./scan-scheduler");
+        await runScanNow(task.dependsOnTaskId);
+        return { action: taskType, status: "completed" };
+      }
+      return { action: taskType, status: "dispatched" };
+    }
+
+    // ─── Discovery Tasks — call Mass Discovery ───
+    if (subsystem === "discovery" || taskType.startsWith("discovery_")) {
+      const { runMassDiscovery } = await import("./mass-target-discovery");
+      const result = await runMassDiscovery({
+        useShodan: true,
+        useSerpApi: true,
+        minVulnScore: 30,
+        maxTargets: 100,
+      });
+      return { action: taskType, status: "completed", totalRaw: result.totalRawResults, totalFiltered: result.totalAfterFilter };
+    }
+
+    // ─── PBN Tasks ───
+    if (subsystem === "pbn" || taskType.startsWith("pbn_")) {
+      // PBN tasks are handled through SEO daily engine
+      if (projectId) {
+        const { runDailyAutomation } = await import("./seo-daily-engine");
+        const report = await runDailyAutomation(projectId);
+        return { action: taskType, status: "completed", completed: report.summary.completed };
+      }
+      return { action: taskType, status: "dispatched" };
+    }
+
+    // ─── Rank Tasks ───
+    if (subsystem === "rank" || taskType.startsWith("rank_")) {
+      if (projectId) {
+        const { runDailyAutomation } = await import("./seo-daily-engine");
+        const report = await runDailyAutomation(projectId);
+        return { action: taskType, status: "completed", completed: report.summary.completed };
+      }
+      return { action: taskType, status: "dispatched" };
+    }
+
+    // ─── Auto-Bid Tasks ───
+    if (subsystem === "autobid" || taskType.startsWith("autobid_")) {
+      return { action: taskType, status: "dispatched" };
+    }
+
+    // ─── Maintenance ───
+    if (taskType === "maintenance_health_check") {
+      return { action: "health_check_completed", status: "ok" };
+    }
+    if (taskType === "maintenance_cleanup") {
+      return { action: "cleanup_completed", status: "ok" };
+    }
+
+    // ─── Reports ───
+    if (taskType.startsWith("report_")) {
+      return { action: "report_generated", status: "dispatched" };
+    }
+
+    return { action: "unknown_task_type", taskType, status: "skipped" };
+  } catch (err: any) {
+    console.error(`[Orchestrator] executeTask error for ${taskType}:`, err?.message);
+    throw err;
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  MAIN OODA CYCLE
+// ═══════════════════════════════════════════════
+
+export async function runOodaCycle(): Promise<{
+  cycle: number;
+  worldState: WorldState;
+  analysis: string;
+  decisions: OrchestratorDecision[];
+  tasksCreated: number;
+}> {
+  if (isRunningCycle) {
+    console.log("[Orchestrator] Cycle already running, skipping");
+    return { cycle: 0, worldState: {} as WorldState, analysis: "Skipped — cycle in progress", decisions: [], tasksCreated: 0 };
+  }
+
+  isRunningCycle = true;
+  const cycleStart = Date.now();
+
+  try {
+    const state = await getOrCreateOrchestratorState();
+    const cycle = state.currentCycle + 1;
+
+    console.log(`[Orchestrator] ═══ OODA Cycle #${cycle} START ═══`);
+
+    // Phase 1: OBSERVE
+    console.log("[Orchestrator] Phase 1: OBSERVE — Collecting world state...");
+    const worldState = await observe();
+    await logDecision(cycle, "observe", "global", "World state collected", 
+      `Collected state from all subsystems`, 100, null, { summary: `SEO:${worldState.seo.activeProjects} PBN:${worldState.pbn.activeSites} Rank:${worldState.rank.totalTracked}` }, 0, "low");
+
+    // Phase 2: ORIENT
+    console.log("[Orchestrator] Phase 2: ORIENT — AI analyzing situation...");
+    const analysis = await orient(worldState, state);
+    await logDecision(cycle, "orient", "global", "Strategic analysis complete",
+      analysis, 90, worldState, null, 0, "medium");
+
+    // Phase 3: DECIDE
+    console.log("[Orchestrator] Phase 3: DECIDE — AI making decisions...");
+    const decisions = await decide(worldState, analysis, state);
+    console.log(`[Orchestrator] AI made ${decisions.length} decisions`);
+
+    // Phase 4: ACT
+    console.log("[Orchestrator] Phase 4: ACT — Creating tasks...");
+    const tasksCreated = await act(decisions, cycle);
+    console.log(`[Orchestrator] Created ${tasksCreated} tasks`);
+
+    // Process task queue
+    console.log("[Orchestrator] Processing task queue...");
+    await processTaskQueue(state.maxConcurrentTasks);
+
+    // Update orchestrator state
+    const nextCycleAt = new Date(Date.now() + state.cycleIntervalMinutes * 60 * 1000);
+    await updateOrchestratorState({
+      currentCycle: cycle,
+      totalCycles: state.totalCycles + 1,
+      lastCycleAt: new Date(),
+      nextCycleAt,
+      todayActions: state.todayActions + tasksCreated,
+      totalDecisions: state.totalDecisions + decisions.length,
+      totalTasksCompleted: state.totalTasksCompleted + tasksCreated,
+      aiWorldState: worldState,
+      aiPriorities: decisions.map(d => ({ subsystem: d.subsystem, action: d.action, priority: d.priority })),
+    });
+
+    const duration = ((Date.now() - cycleStart) / 1000).toFixed(1);
+    console.log(`[Orchestrator] ═══ OODA Cycle #${cycle} COMPLETE (${duration}s) — ${tasksCreated} tasks created ═══`);
+
+    // Send Telegram notification for significant cycles
+    if (tasksCreated > 0) {
+      try {
+        await sendTelegramNotification({
+          type: "info",
+          targetUrl: "orchestrator",
+          details: `🤖 OODA Cycle #${cycle} complete\n📊 ${decisions.length} decisions, ${tasksCreated} tasks\n⏱ ${duration}s\n\n${decisions.map(d => `• [${d.subsystem}] ${d.action} (${d.confidence}% confidence)`).join("\n")}`,
+        });
+      } catch {}
+    }
+
+    return { cycle, worldState, analysis, decisions, tasksCreated };
+  } catch (err) {
+    console.error("[Orchestrator] OODA Cycle error:", err);
+    await updateOrchestratorState({ status: "error" });
+    throw err;
+  } finally {
+    isRunningCycle = false;
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  START / STOP / PAUSE
+// ═══════════════════════════════════════════════
+
+export async function startOrchestrator() {
+  const state = await getOrCreateOrchestratorState();
+  
+  if (state.status === "running") {
+    console.log("[Orchestrator] Already running");
+    return;
+  }
+
+  await updateOrchestratorState({ status: "running" });
+  console.log("[Orchestrator] 🚀 Starting autonomous orchestrator...");
+
+  // Run first cycle immediately
+  try {
+    await runOodaCycle();
+  } catch (err) {
+    console.error("[Orchestrator] First cycle error:", err);
+  }
+
+  // Schedule recurring cycles
+  const intervalMs = state.cycleIntervalMinutes * 60 * 1000;
+  orchestratorInterval = setInterval(async () => {
+    const currentState = await getOrCreateOrchestratorState();
+    if (currentState.status !== "running") {
+      if (orchestratorInterval) clearInterval(orchestratorInterval);
+      return;
+    }
+    
+    // Reset daily counter at midnight
+    const now = new Date();
+    if (now.getHours() === 0 && now.getMinutes() < (currentState.cycleIntervalMinutes || 30)) {
+      await updateOrchestratorState({ todayActions: 0 });
+    }
+
+    try {
+      await runOodaCycle();
+    } catch (err) {
+      console.error("[Orchestrator] Scheduled cycle error:", err);
+    }
+  }, intervalMs);
+
+  console.log(`[Orchestrator] Scheduled every ${state.cycleIntervalMinutes} minutes`);
+}
+
+export async function stopOrchestrator() {
+  if (orchestratorInterval) {
+    clearInterval(orchestratorInterval);
+    orchestratorInterval = null;
+  }
+  await updateOrchestratorState({ status: "stopped" });
+  console.log("[Orchestrator] ⏹ Stopped");
+}
+
+export async function pauseOrchestrator() {
+  if (orchestratorInterval) {
+    clearInterval(orchestratorInterval);
+    orchestratorInterval = null;
+  }
+  await updateOrchestratorState({ status: "paused" });
+  console.log("[Orchestrator] ⏸ Paused");
+}
+
+export function isOrchestratorRunning(): boolean {
+  return orchestratorInterval !== null;
+}

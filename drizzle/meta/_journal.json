@@ -190,6 +190,13 @@
       "when": 1773029613442,
       "tag": "0026_strong_jackal",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "5",
+      "when": 1773048801738,
+      "tag": "0027_mighty_vermin",
+      "breakpoints": true
     }
   ]
 }

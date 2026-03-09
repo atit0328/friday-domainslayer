@@ -1185,3 +1185,103 @@ export const attackLogs = mysqlTable("attack_logs", {
 });
 export type AttackLogRow = typeof attackLogs.$inferSelect;
 export type InsertAttackLog = typeof attackLogs.$inferInsert;
+
+// ═══════════════════════════════════════════════
+//  AI ORCHESTRATOR — Master Brain State & Decision Log
+// ═══════════════════════════════════════════════
+export const aiOrchestratorState = mysqlTable("ai_orchestrator_state", {
+  id: int("id").autoincrement().primaryKey(),
+  status: mysqlEnum("orchStatus", ["running", "paused", "stopped", "error"]).default("stopped").notNull(),
+  currentCycle: int("currentCycle").default(0).notNull(),
+  totalCycles: int("totalCycles").default(0).notNull(),
+  lastCycleAt: timestamp("lastCycleAt"),
+  nextCycleAt: timestamp("nextCycleAt"),
+  cycleIntervalMinutes: int("cycleIntervalMinutes").default(30).notNull(),
+  seoEnabled: boolean("seoEnabled").default(true).notNull(),
+  attackEnabled: boolean("attackEnabled").default(false).notNull(),
+  pbnEnabled: boolean("pbnEnabled").default(true).notNull(),
+  discoveryEnabled: boolean("discoveryEnabled").default(false).notNull(),
+  rankTrackingEnabled: boolean("rankTrackingEnabled").default(true).notNull(),
+  autobidEnabled: boolean("autobidEnabled").default(false).notNull(),
+  aggressiveness: mysqlEnum("orchAggressiveness", ["conservative", "balanced", "aggressive", "maximum"]).default("balanced").notNull(),
+  maxConcurrentTasks: int("maxConcurrentTasks").default(3).notNull(),
+  maxDailyActions: int("maxDailyActions").default(100).notNull(),
+  todayActions: int("todayActions").default(0).notNull(),
+  totalTasksCompleted: int("totalTasksCompleted").default(0).notNull(),
+  totalTasksFailed: int("totalTasksFailed").default(0).notNull(),
+  totalDecisions: int("totalDecisions").default(0).notNull(),
+  successRate: decimal("orchSuccessRate", { precision: 5, scale: 2 }).default("0"),
+  aiWorldState: json("aiWorldState"),
+  aiPriorities: json("aiPriorities"),
+  aiLearnings: json("aiLearnings"),
+  createdAt: timestamp("orchCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("orchUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AiOrchestratorStateRow = typeof aiOrchestratorState.$inferSelect;
+
+export const aiTaskQueue = mysqlTable("ai_task_queue", {
+  id: int("id").autoincrement().primaryKey(),
+  taskType: varchar("taskType", { length: 64 }).notNull(),
+  subsystem: varchar("taskSubsystem", { length: 32 }).notNull(),
+  title: varchar("taskTitle", { length: 255 }).notNull(),
+  description: text("taskDescription"),
+  targetDomain: varchar("taskTargetDomain", { length: 255 }),
+  projectId: int("taskProjectId"),
+  priority: mysqlEnum("taskPriority", ["critical", "high", "medium", "low"]).default("medium").notNull(),
+  status: mysqlEnum("taskStatus", ["queued", "running", "completed", "failed", "cancelled", "skipped"]).default("queued").notNull(),
+  aiReasoning: text("taskAiReasoning"),
+  startedAt: timestamp("taskStartedAt"),
+  completedAt: timestamp("taskCompletedAt"),
+  result: json("taskResult"),
+  error: text("taskError"),
+  retryCount: int("taskRetryCount").default(0).notNull(),
+  maxRetries: int("taskMaxRetries").default(3).notNull(),
+  dependsOnTaskId: int("dependsOnTaskId"),
+  scheduledFor: timestamp("scheduledFor"),
+  createdAt: timestamp("taskCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("taskUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AiTaskQueueRow = typeof aiTaskQueue.$inferSelect;
+export type InsertAiTaskQueue = typeof aiTaskQueue.$inferInsert;
+
+export const aiDecisions = mysqlTable("ai_decisions", {
+  id: int("id").autoincrement().primaryKey(),
+  cycle: int("decisionCycle").notNull(),
+  phase: varchar("decisionPhase", { length: 32 }).notNull(),
+  subsystem: varchar("decisionSubsystem", { length: 32 }).notNull(),
+  decision: varchar("decision", { length: 255 }).notNull(),
+  reasoning: text("decisionReasoning").notNull(),
+  confidence: int("decisionConfidence").default(0).notNull(),
+  inputData: json("decisionInputData"),
+  outputData: json("decisionOutputData"),
+  tasksCreated: int("tasksCreated").default(0).notNull(),
+  impactLevel: varchar("impactLevel", { length: 16 }).default("medium").notNull(),
+  createdAt: timestamp("decisionCreatedAt").defaultNow().notNull(),
+});
+export type AiDecisionRow = typeof aiDecisions.$inferSelect;
+export type InsertAiDecision = typeof aiDecisions.$inferInsert;
+
+export const aiMetrics = mysqlTable("ai_metrics", {
+  id: int("id").autoincrement().primaryKey(),
+  metricDate: timestamp("metricDate").notNull(),
+  metricType: varchar("metricType", { length: 16 }).default("daily").notNull(),
+  cyclesRun: int("cyclesRun").default(0).notNull(),
+  tasksQueued: int("tasksQueued").default(0).notNull(),
+  tasksCompleted: int("metricsTasksCompleted").default(0).notNull(),
+  tasksFailed: int("metricsTasksFailed").default(0).notNull(),
+  decisionsCount: int("decisionsCount").default(0).notNull(),
+  seoActions: int("seoActions").default(0).notNull(),
+  attackActions: int("attackActions").default(0).notNull(),
+  pbnActions: int("pbnActions").default(0).notNull(),
+  discoveryActions: int("discoveryActions").default(0).notNull(),
+  rankActions: int("rankActions").default(0).notNull(),
+  domainsProcessed: int("domainsProcessed").default(0).notNull(),
+  backlinksBuilt: int("backlinksBuilt").default(0).notNull(),
+  contentCreated: int("contentCreated").default(0).notNull(),
+  ranksImproved: int("ranksImproved").default(0).notNull(),
+  attacksSucceeded: int("attacksSucceeded").default(0).notNull(),
+  targetsDiscovered: int("targetsDiscovered").default(0).notNull(),
+  createdAt: timestamp("metricsCreatedAt").defaultNow().notNull(),
+});
+export type AiMetricRow = typeof aiMetrics.$inferSelect;
+export type InsertAiMetric = typeof aiMetrics.$inferInsert;

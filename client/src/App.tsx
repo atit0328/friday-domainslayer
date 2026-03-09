@@ -37,6 +37,7 @@ const AutonomousHistory = lazy(() => import("./pages/AutonomousHistory"));
 const ProxyDashboard = lazy(() => import("./pages/ProxyDashboard"));
 const MassDiscovery = lazy(() => import("./pages/MassDiscovery"));
 const ScheduledScans = lazy(() => import("./pages/ScheduledScans"));
+const AutonomousCommandCenter = lazy(() => import("./pages/AutonomousCommandCenter"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -131,6 +132,7 @@ function ProtectedRouter() {
         <Route path="/proxy-dashboard">{() => <SuperadminGuard><ProxyDashboard /></SuperadminGuard>}</Route>
         <Route path="/mass-discovery">{() => <SuperadminGuard><MassDiscovery /></SuperadminGuard>}</Route>
         <Route path="/scheduled-scans">{() => <SuperadminGuard><ScheduledScans /></SuperadminGuard>}</Route>
+        <Route path="/ai-command-center">{() => <SuperadminGuard><AutonomousCommandCenter /></SuperadminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock,
-  X,
+  X, Activity,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -39,6 +39,10 @@ const BLACKHAT_NAV = [
   { href: "/mass-discovery", icon: Crosshair, label: "Mass Discovery" },
   { href: "/proxy-dashboard", icon: Shield, label: "Proxy Dashboard" },
   { href: "/scheduled-scans", icon: CalendarClock, label: "Scheduled Scans" },
+];
+
+const AUTONOMOUS_NAV = [
+  { href: "/ai-command-center", icon: Activity, label: "AI Command Center" },
 ];
 
 const SYSTEM_NAV = [
@@ -181,6 +185,40 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
                     active
                       ? "bg-red-500/10 text-red-500 border-l-red-500"
                       : "text-muted-foreground hover:text-red-500 hover:bg-red-500/5 active:bg-red-500/15 border-l-transparent"
+                  } ${collapsed ? "justify-center px-2" : ""}`}
+                >
+                  <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
+                  {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
+                </div>
+              </Link>
+            );
+          })}
+        </nav>
+      </div>
+      </>
+      )}
+
+      {/* AI Command Center — admin/superadmin */}
+      {(isSuperadmin || user?.role === "admin") && (
+      <>
+      <div className="mx-4 border-t border-sidebar-border" />
+      <div className="py-3">
+        {!collapsed && (
+          <div className="px-4 mb-2">
+            <span className="font-mono text-[10px] font-semibold tracking-widest text-cyan-400/60 uppercase">Autonomous AI</span>
+          </div>
+        )}
+        <nav className="space-y-0.5 px-1">
+          {AUTONOMOUS_NAV.map((item) => {
+            const active = location.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <Link key={item.href} href={item.href} onClick={handleNavClick}>
+                <div
+                  className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
+                    active
+                      ? "bg-cyan-500/10 text-cyan-400 border-l-cyan-400"
+                      : "text-muted-foreground hover:text-cyan-400 hover:bg-cyan-500/5 active:bg-cyan-500/15 border-l-transparent"
                   } ${collapsed ? "justify-center px-2" : ""}`}
                 >
                   <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />

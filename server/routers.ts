@@ -40,6 +40,7 @@ import { attackHistoryRouter } from "./routers/attack-history";
 import { seoAgentRouter } from "./routers/seo-agent-router";
 import { scheduledScansRouter } from "./routers/scheduled-scans";
 import { attackLogsRouter } from "./routers/attack-logs";
+import { orchestratorRouter } from "./routers/orchestrator";
 
 export const appRouter = router({
   system: systemRouter,
@@ -121,6 +122,9 @@ export const appRouter = router({
 
   // Attack Pipeline Logs
   attackLogs: attackLogsRouter,
+
+  // Master AI Orchestrator
+  orchestrator: orchestratorRouter,
 });
 
 export type AppRouter = typeof appRouter;
