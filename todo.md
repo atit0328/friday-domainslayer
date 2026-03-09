@@ -2372,3 +2372,6 @@
 - [x] Re-apply: In-memory cache layer for orchestrator queries (backend only, safe)
 - [x] Re-apply: Optimized task stats query (single query instead of 6)
 - [x] SKIP: Vite manualChunks — caused black screen on production deploy
+
+# Mobile Dialog Fix
+- [x] Fix SEO add domain popup to be scrollable on mobile (not fullscreen without scroll)
