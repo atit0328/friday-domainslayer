@@ -11,7 +11,7 @@ describe("API Keys Validation", () => {
   });
 
   it("SerpAPI key is valid", async () => {
-    const key = process.env.SERPAPI_KEY_FREE;
+    const key = process.env.SERPAPI_KEY_DEV;
     expect(key).toBeTruthy();
     const res = await fetch(`https://serpapi.com/account.json?api_key=${key}`);
     expect(res.status).toBe(200);

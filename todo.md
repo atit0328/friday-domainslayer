@@ -2382,3 +2382,9 @@
 - [x] Convert SEO add domain dialog to Sheet
 - [x] Convert other long-form dialogs to Sheet (AutoBid, ScheduledScans, KeywordRanking, RankDashboard, Campaigns, PbnManager, TemplateLibrary, UserManagement, Modules, SeoProjectDetail)
 - [x] Test and verify mobile UX — all TS errors resolved, site running
+
+# Remove SERPAPI_KEY_FREE
+- [x] Find all references to SERPAPI_KEY_FREE
+- [x] Replace with SERPAPI_KEY_DEV everywhere (env.ts, serp-api.ts, mass-target-discovery.ts, api-keys.test.ts)
+- [x] Remove SERPAPI_KEY_FREE secret
+- [x] Test and verify — SerpAPI key test passed

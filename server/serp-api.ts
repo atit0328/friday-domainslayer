@@ -6,9 +6,7 @@
  * API Docs: https://serpapi.com/search-api
  * Auth: api_key query parameter
  * 
- * Two keys available:
- * - SERPAPI_KEY_FREE: Free plan (100 searches/month)
- * - SERPAPI_KEY_DEV: Dev plan (higher limits)
+ * Uses SERPAPI_KEY_DEV for all searches
  */
 
 import { ENV } from "./_core/env";
@@ -34,10 +32,10 @@ export interface SerpData {
 }
 
 /**
- * Get the best available SerpAPI key (prefer Dev plan)
+ * Get the SerpAPI key
  */
 function getApiKey(): string | null {
-  return ENV.serpApiKeyDev || ENV.serpApiKeyFree || null;
+  return ENV.serpApiKey || null;
 }
 
 /**
@@ -55,7 +53,7 @@ export async function searchGoogle(
 ): Promise<SerpData | null> {
   const apiKey = getApiKey();
   if (!apiKey) {
-    console.warn("[SerpAPI] No API key available (SERPAPI_KEY_DEV or SERPAPI_KEY_FREE)");
+    console.warn("[SerpAPI] No API key available (SERPAPI_KEY_DEV)");
     return null;
   }
 

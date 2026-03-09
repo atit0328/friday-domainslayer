@@ -311,7 +311,7 @@ async function searchSerpApi(
   queries: DiscoveryQuery[],
   onProgress?: (phase: string, detail: string, progress: number) => void,
 ): Promise<DiscoveredTarget[]> {
-  const apiKey = ENV.serpApiKeyDev || ENV.serpApiKeyFree;
+  const apiKey = ENV.serpApiKey;
   if (!apiKey) {
     onProgress?.("serpapi", "SerpAPI key not configured — skipping", 50);
     return [];

@@ -11,8 +11,7 @@ export const ENV = {
   mozAccessId: process.env.MOZ_ACCESS_ID ?? "",
   mozSecretKey: process.env.MOZ_SECRET_KEY ?? "",
   ahrefsApiToken: process.env.AHREFS_API_TOKEN ?? "",
-  serpApiKeyFree: process.env.SERPAPI_KEY_FREE ?? "",
-  serpApiKeyDev: process.env.SERPAPI_KEY_DEV ?? "",
+  serpApiKey: process.env.SERPAPI_KEY_DEV ?? "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",
 };
