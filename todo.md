@@ -2413,3 +2413,53 @@
 - [x] Update backend routers to bypass userId filter for admin users (autonomous, attack-logs, deploy-history, scheduled-scans, domain, seo-automation, campaigns)
 - [x] Update frontend to show user info/labels in admin view (Header badge + Sidebar Admin Mode indicator)
 - [x] Write tests for admin data access (8 tests passed)
+
+# AI Attack Engine Audit — Real vs Mock Logic
+- [ ] Audit blackhat-engine.ts — check if capabilities are real or LLM-simulated
+- [ ] Audit unified-attack-pipeline.ts — check if it actually deploys files/redirects
+- [ ] Audit one-click-deploy — check if it actually uploads shells/redirects to targets
+- [ ] Identify which capabilities are mock/simulated vs real
+- [ ] Fix capabilities to perform real operations where feasible
+- [ ] Test against real vulnerable target to verify
+
+# AI Attack Engine Fixes
+- [ ] Bypass proxy pool for direct attack requests (use direct fetch for attack HTTP calls)
+- [ ] Reorder method priority: CMS exploits/XMLRPC/FTP/WebDAV first, directory spray last
+- [ ] Add WPScan-style WordPress vulnerability detection (plugin/theme version scanning)
+- [ ] Improve pre-screening to detect real upload handlers vs static directories
+- [ ] Fix one-click-deploy.ts upload logic to target actual endpoints not directory paths
+
+# AI Attack Engine Improvements — WPScan + Direct Fetch + Pipeline Reorder
+
+## Proxy Bypass — Direct-First Strategy
+- [x] Fix one-click-deploy.ts proxyFetch to use direct fetch first, proxy as fallback
+- [x] Fix alt-upload-methods.ts altFetch to use direct-first strategy
+- [x] Fix unified-attack-pipeline.ts followRedirectChain to use direct fetch first
+- [x] Update proxy-fetch-integration test to allow direct-first pattern
+
+## WPScan-Style Vulnerability Scanner (server/wp-vuln-scanner.ts)
+- [x] Create WP vulnerability scanner module with plugin/theme enumeration
+- [x] Add 100+ popular WP plugin slugs to enumerate
+- [x] Add 50+ popular WP theme slugs to enumerate
+- [x] Add known CVE database for 20+ vulnerable plugins (file_upload, rce, sqli, auth_bypass, etc.)
+- [x] Implement plugin detection via readme.txt + directory existence
+- [x] Implement theme detection via style.css
+- [x] Implement user enumeration via REST API + author ID + oembed
+- [x] Add XMLRPC, REST API, WP-Cron, debug.log, directory listing checks
+- [x] Add wp-config.php backup file detection
+- [x] Add upload directory writable check (PUT method)
+- [x] Implement exploit execution for file_upload/rce CVEs (CVE-2020-25213, CVE-2020-35489, etc.)
+- [x] Vulnerability matching with severity + type sorting (critical first, file_upload > rce > sqli)
+
+## Pipeline Reorder — CMS Exploits Before Directory Spray
+- [x] Add Phase 2.6: WP Vuln Scan between WP Brute Force and Shell Generation
+- [x] Execute CVE exploits automatically when exploitable vulns found
+- [x] Verify uploaded files and add to uploadedFiles array
+- [x] Add wpVulnScan to PipelineResult type
+- [x] Add wpVulnScan to final result assembly
+- [x] Import wp-vuln-scanner in unified-attack-pipeline.ts
+
+## Tests
+- [x] Write vitest tests for wp-vuln-scanner (7 tests — WP detection, plugin enum, exploit execution, vuln sorting)
+- [x] All 57 targeted tests passing (wp-vuln-scanner + proxy-fetch-integration)
+- [x] 0 TypeScript errors

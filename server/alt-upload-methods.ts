@@ -7,15 +7,27 @@
 import type { PreScreenResult } from "./ai-prescreening";
 import { fetchWithPoolProxy } from "./proxy-pool";
 
-// Helper: wrap fetch with proxy pool
-async function altFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
-  const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+// Helper: direct-first fetch (fast), proxy pool as fallback
+async function altFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}, timeout = 15000): Promise<Response> {
+  // Direct fetch first — avoids proxy pool latency/timeout issues
   try {
-    const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout: 15000 });
-    return response;
-  } catch (e) {
-    // Fallback to direct fetch if proxy fails
-    return fetch(url, init);
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+    try {
+      const resp = await fetch(url, { ...init, signal: controller.signal });
+      return resp;
+    } finally {
+      clearTimeout(t);
+    }
+  } catch {
+    // Fallback to proxy pool
+    const domain = url.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "");
+    try {
+      const { response } = await fetchWithPoolProxy(url, init, { targetDomain: domain, timeout });
+      return response;
+    } catch {
+      throw new Error(`Failed to fetch ${url} (both direct and proxy)`);
+    }
   }
 }
 

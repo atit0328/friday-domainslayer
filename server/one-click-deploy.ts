@@ -403,23 +403,39 @@ async function proxyFetch(
   url: string,
   init: RequestInit = {},
   timeout = 15000,
+  preferProxy = false,
 ): Promise<Response> {
-  const domain = (() => { try { return new URL(url).hostname; } catch { return undefined; } })();
-  try {
+  // Direct-first strategy: try direct fetch first (fast), proxy only as fallback
+  // This avoids the massive latency of proxy pool timeouts
+  const directFetch = async () => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal, redirect: (init as any).redirect || "follow" });
+    } finally {
+      clearTimeout(t);
+    }
+  };
+
+  const poolFetch = async () => {
+    const domain = (() => { try { return new URL(url).hostname; } catch { return undefined; } })();
     const { response } = await fetchWithPoolProxy(url, init, {
       targetDomain: domain,
       timeout,
     });
     return response;
+  };
+
+  if (preferProxy) {
+    // Original behavior: proxy first, direct fallback
+    try { return await poolFetch(); } catch { return await directFetch(); }
+  }
+
+  // Default: direct first, proxy fallback (much faster)
+  try {
+    return await directFetch();
   } catch {
-    // Fallback to direct fetch
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), timeout);
-    try {
-      return await fetch(url, { ...init, signal: controller.signal });
-    } finally {
-      clearTimeout(t);
-    }
+    try { return await poolFetch(); } catch { throw new Error(`Failed to fetch ${url} (both direct and proxy)`); }
   }
 }
 
