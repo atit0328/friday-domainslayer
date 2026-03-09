@@ -1,8 +1,0 @@
-{
-  "query": "\n-- PBN Sites indexes (actual column name is pbnStatus)\nCREATE INDEX IF NOT EXISTS idx_pbn_sites_status ON pbn_sites(pbnStatus);\n\n-- Scheduled Scans indexes (enabled is correct)\nCREATE INDEX IF NOT EXISTS idx_scans_enabled ON scheduled_scans(enabled);\nCREATE INDEX IF NOT EXISTS idx_scans_next_run ON scheduled_scans(nextRunAt);\n",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute \n-- PBN Sites indexes (actual column name is pbnStatus)\nCREATE INDEX IF NOT EXISTS idx_pbn_sites_status ON pbn_sites(pbnStatus);\n\n-- Scheduled Scans indexes (enabled is correct)\nCREATE INDEX IF NOT EXISTS idx_scans_enabled ON scheduled_scans(enabled);\nCREATE INDEX IF NOT EXISTS idx_scans_next_run ON scheduled_scans(nextRunAt);\n",
-  "returncode": 1,
-  "logs": [
-    "ERROR 1072 (42000) at line 6: column does not exist: enabled"
-  ]
-}

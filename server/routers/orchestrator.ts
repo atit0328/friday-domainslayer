@@ -22,14 +22,6 @@ import {
   aiMetrics,
 } from "../../drizzle/schema";
 import { eq, desc, and, gte, count, sql } from "drizzle-orm";
-import {
-  worldStateCache,
-  subsystemCache,
-  CacheKeys,
-  CacheTTL,
-  invalidateOrchestratorCache,
-  invalidateTaskCache,
-} from "../cache";
 
 // Admin-only guard
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -40,36 +32,30 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 export const orchestratorRouter = router({
-  // ─── Get Orchestrator State ─── (cached 10s)
+  // ─── Get Orchestrator State ───
   getState: adminProcedure.query(async () => {
-    return worldStateCache.getOrCompute(
-      CacheKeys.orchestratorState(),
-      CacheTTL.ORCHESTRATOR_STATE,
-      async () => {
-        const state = await getOrCreateOrchestratorState();
-        return { ...state, isRunning: isOrchestratorRunning() };
-      }
-    );
+    const state = await getOrCreateOrchestratorState();
+    return {
+      ...state,
+      isRunning: isOrchestratorRunning(),
+    };
   }),
 
   // ─── Start Orchestrator ───
   start: adminProcedure.mutation(async () => {
     await startOrchestrator();
-    invalidateOrchestratorCache();
     return { success: true, message: "Orchestrator started" };
   }),
 
   // ─── Stop Orchestrator ───
   stop: adminProcedure.mutation(async () => {
     await stopOrchestrator();
-    invalidateOrchestratorCache();
     return { success: true, message: "Orchestrator stopped" };
   }),
 
   // ─── Pause Orchestrator ───
   pause: adminProcedure.mutation(async () => {
     await pauseOrchestrator();
-    invalidateOrchestratorCache();
     return { success: true, message: "Orchestrator paused" };
   }),
 
@@ -141,36 +127,29 @@ export const orchestratorRouter = router({
       return query;
     }),
 
-  // ─── Get Task Stats ─── (cached 5s — changes frequently)
+  // ─── Get Task Stats ───
   getTaskStats: adminProcedure.query(async () => {
-    return worldStateCache.getOrCompute(
-      CacheKeys.taskQueue(),
-      CacheTTL.TASK_QUEUE,
-      async () => {
-        const db = (await getDb())!;
-        const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const db = (await getDb())!;
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-        // Single query with conditional counts instead of 6 separate queries
-        const [result] = await db.select({
-          queued: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'queued' THEN 1 ELSE 0 END)`,
-          running: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'running' THEN 1 ELSE 0 END)`,
-          completedToday: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'completed' AND ${aiTaskQueue.completedAt} >= ${todayStart} THEN 1 ELSE 0 END)`,
-          failedToday: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'failed' AND ${aiTaskQueue.completedAt} >= ${todayStart} THEN 1 ELSE 0 END)`,
-          totalCompleted: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'completed' THEN 1 ELSE 0 END)`,
-          totalFailed: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'failed' THEN 1 ELSE 0 END)`,
-        }).from(aiTaskQueue);
+    const [queued] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "queued"));
+    const [running] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "running"));
+    const [completedToday] = await db.select({ count: count() }).from(aiTaskQueue)
+      .where(and(eq(aiTaskQueue.status, "completed"), gte(aiTaskQueue.completedAt, todayStart)));
+    const [failedToday] = await db.select({ count: count() }).from(aiTaskQueue)
+      .where(and(eq(aiTaskQueue.status, "failed"), gte(aiTaskQueue.completedAt, todayStart)));
+    const [totalCompleted] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "completed"));
+    const [totalFailed] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "failed"));
 
-        return {
-          queued: Number(result?.queued) || 0,
-          running: Number(result?.running) || 0,
-          completedToday: Number(result?.completedToday) || 0,
-          failedToday: Number(result?.failedToday) || 0,
-          totalCompleted: Number(result?.totalCompleted) || 0,
-          totalFailed: Number(result?.totalFailed) || 0,
-        };
-      }
-    );
+    return {
+      queued: queued?.count || 0,
+      running: running?.count || 0,
+      completedToday: completedToday?.count || 0,
+      failedToday: failedToday?.count || 0,
+      totalCompleted: totalCompleted?.count || 0,
+      totalFailed: totalFailed?.count || 0,
+    };
   }),
 
   // ─── Cancel Task ───

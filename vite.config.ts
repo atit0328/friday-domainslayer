@@ -169,22 +169,6 @@ export default defineConfig({
     emptyOutDir: true,
     target: ["es2020", "safari14", "chrome87", "firefox78"],
     chunkSizeWarningLimit: 4000,
-    cssCodeSplit: true,
-    sourcemap: false,
-    rollupOptions: {
-      output: {
-        manualChunks(id: string) {
-          // Split heavy vendor libs into separate cacheable chunks
-          if (id.includes("node_modules")) {
-            if (id.includes("@radix-ui") || id.includes("@tanstack")) return "vendor-ui";
-            if (id.includes("recharts") || id.includes("d3-")) return "vendor-charts";
-            if (id.includes("mermaid") || id.includes("cytoscape")) return "vendor-diagrams";
-            if (id.includes("lucide-react")) return "vendor-icons";
-            if (id.includes("react-dom")) return "vendor-react";
-          }
-        },
-      },
-    },
   },
   server: {
     host: true,
