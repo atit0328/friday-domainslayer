@@ -24,13 +24,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+} from "@/components/ui/sheet";
 
 const CATEGORY_CONFIG: Record<string, { icon: typeof FileText; color: string; label: string }> = {
   news: { icon: Newspaper, color: "text-blue-400", label: "News Article" },
@@ -145,16 +144,15 @@ export default function TemplateLibrary() {
             คลัง Template สำหรับสร้าง Parasite SEO Pages — พร้อม Schema Markup, FAQ, และ Redirect
           </p>
         </div>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild>
-            <Button size="sm" className="bg-purple-600 hover:bg-purple-700">
+        <Button size="sm" className="bg-purple-600 hover:bg-purple-700" onClick={() => setShowCreateDialog(true)}>
               <Plus className="w-4 h-4 mr-1" /> Create Template
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Create Custom Template</DialogTitle>
-            </DialogHeader>
+        </Button>
+        <Sheet open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+          <SheetContent side="bottom" className="max-w-2xl mx-auto px-6 pb-6">
+            <SheetHeader>
+              <SheetTitle>Create Custom Template</SheetTitle>
+            </SheetHeader>
+            <div className="overflow-y-auto flex-1 -mx-6 px-6">
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -214,10 +212,11 @@ export default function TemplateLibrary() {
                 </div>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
+            </div>
+            <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+              <Button variant="outline" className="flex-1" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
               <Button
-                className="bg-purple-600 hover:bg-purple-700"
+                className="bg-purple-600 hover:bg-purple-700 flex-1"
                 disabled={!newName || !newSlug || !newHtml || createMut.isPending}
                 onClick={() => createMut.mutate({
                   name: newName, slug: newSlug, category: newCategory as any,
@@ -229,9 +228,9 @@ export default function TemplateLibrary() {
                 {createMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
                 Create
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>

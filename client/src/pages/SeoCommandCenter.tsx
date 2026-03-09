@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
@@ -228,19 +228,18 @@ export default function SeoCommandCenter() {
             Enterprise SEO Automation — ใส่โดเมน AI จัดการให้ครบวงจร
           </p>
         </div>
-        <Dialog open={showNewProject} onOpenChange={setShowNewProject}>
-          <DialogTrigger asChild>
-            <Button className="bg-emerald-600 hover:bg-emerald-700">
+        <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setShowNewProject(true)}>
               <Plus className="w-4 h-4 mr-2" /> เพิ่มโดเมน
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
+        </Button>
+        <Sheet open={showNewProject} onOpenChange={setShowNewProject}>
+          <SheetContent side="bottom" className="max-w-lg mx-auto px-6 pb-6">
+            <SheetHeader>
+              <SheetTitle className="flex items-center gap-2">
                 <Globe className="w-5 h-5 text-emerald-400" />
                 เพิ่มโดเมนใหม่
-              </DialogTitle>
-            </DialogHeader>
+              </SheetTitle>
+            </SheetHeader>
+            <div className="overflow-y-auto flex-1 -mx-6 px-6">
             <div className="space-y-4 py-2">
               <div>
                 <Label>โดเมน</Label>
@@ -385,19 +384,20 @@ export default function SeoCommandCenter() {
                 </div>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowNewProject(false)}>ยกเลิก</Button>
+            </div>
+            <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+              <Button variant="outline" className="flex-1" onClick={() => setShowNewProject(false)}>ยกเลิก</Button>
               <Button
                 onClick={handleCreate}
                 disabled={!newDomain.trim() || createProject.isPending}
-                className="bg-emerald-600 hover:bg-emerald-700"
+                className="bg-emerald-600 hover:bg-emerald-700 flex-1"
               >
                 {createProject.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Zap className="w-4 h-4 mr-2" />}
                 สร้างและวิเคราะห์
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
       </div>
 
       {/* Summary Cards */}

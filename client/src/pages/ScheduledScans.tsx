@@ -17,14 +17,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-  DialogClose,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+  SheetClose,
+} from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -172,13 +171,11 @@ export default function ScheduledScans() {
             <History className="w-4 h-4 mr-2" />
             Fix History
           </Button>
-          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-            <DialogTrigger asChild>
-              <Button className="bg-emerald-600 hover:bg-emerald-700">
+          <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setShowCreateDialog(true)}>
                 <Plus className="w-4 h-4 mr-2" />
               New Scheduled Scan
-            </Button>
-          </DialogTrigger>
+          </Button>
+          <Sheet open={showCreateDialog} onOpenChange={setShowCreateDialog}>
           <CreateScanDialog
             onClose={() => setShowCreateDialog(false)}
             onCreated={() => {
@@ -187,7 +184,7 @@ export default function ScheduledScans() {
               utils.scheduledScans.stats.invalidate();
             }}
           />
-        </Dialog>
+        </Sheet>
         </div>
       </div>
 
@@ -426,14 +423,15 @@ function CreateScanDialog({ onClose, onCreated }: { onClose: () => void; onCreat
   };
 
   return (
-    <DialogContent className="max-w-lg">
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
+    <SheetContent side="bottom" className="max-w-lg mx-auto px-6 pb-6">
+      <SheetHeader>
+        <SheetTitle className="flex items-center gap-2">
           <CalendarClock className="w-5 h-5 text-emerald-400" />
           New Scheduled Scan
-        </DialogTitle>
-      </DialogHeader>
+        </SheetTitle>
+      </SheetHeader>
 
+      <div className="overflow-y-auto flex-1 -mx-6 px-6">
       <div className="space-y-4 py-2">
         {/* Domain */}
         <div className="space-y-1.5">
@@ -598,12 +596,11 @@ function CreateScanDialog({ onClose, onCreated }: { onClose: () => void; onCreat
         </div>
       </div>
 
-      <DialogFooter>
-        <DialogClose asChild>
-          <Button variant="outline">ยกเลิก</Button>
-        </DialogClose>
+      </div>
+      <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+        <Button variant="outline" className="flex-1" onClick={onClose}>ยกเลิก</Button>
         <Button
-          className="bg-emerald-600 hover:bg-emerald-700"
+          className="bg-emerald-600 hover:bg-emerald-700 flex-1"
           onClick={handleCreate}
           disabled={createMutation.isPending}
         >
@@ -614,8 +611,8 @@ function CreateScanDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           )}
           สร้าง Scheduled Scan
         </Button>
-      </DialogFooter>
-    </DialogContent>
+      </SheetFooter>
+    </SheetContent>
   );
 }
 
@@ -689,24 +686,24 @@ function ScanResultsView({
           </p>
         </div>
         {/* Run Remediation Button */}
-        <Dialog open={showRemediationDialog} onOpenChange={setShowRemediationDialog}>
-          <DialogTrigger asChild>
-            <Button
+        <Button
               variant="outline"
               className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
               disabled={!scanData?.latestResult}
+              onClick={() => setShowRemediationDialog(true)}
             >
               <Wrench className="w-4 h-4 mr-2" />
               Run Auto-Fix
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
+        </Button>
+        <Sheet open={showRemediationDialog} onOpenChange={setShowRemediationDialog}>
+          <SheetContent side="bottom" className="max-w-md mx-auto px-6 pb-6">
+            <SheetHeader>
+              <SheetTitle className="flex items-center gap-2">
                 <Wrench className="w-5 h-5 text-amber-400" />
                 Auto-Remediation
-              </DialogTitle>
-            </DialogHeader>
+              </SheetTitle>
+            </SheetHeader>
+            <div className="overflow-y-auto flex-1 -mx-6 px-6">
             <div className="space-y-4 py-2">
               <div className="flex items-center justify-between">
                 <div>
@@ -744,12 +741,11 @@ function ScanResultsView({
                 </div>
               )}
             </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button variant="outline">\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01</Button>
-              </DialogClose>
+            </div>
+            <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+              <Button variant="outline" className="flex-1" onClick={() => setShowRemediationDialog(false)}>ยกเลิก</Button>
               <Button
-                className="bg-amber-600 hover:bg-amber-700"
+                className="bg-amber-600 hover:bg-amber-700 flex-1"
                 onClick={() => remediationMutation.mutate({
                   scanId,
                   dryRun: remDryRun,
@@ -764,9 +760,9 @@ function ScanResultsView({
                 )}
                 {remDryRun ? "Run Dry Test" : "Apply Fixes"}
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
       </div>
 
       {/* Latest result summary */}

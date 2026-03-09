@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { Zap, Search, FileText, Link2, BarChart3, Globe, Code, Shield, Loader2, Sparkles, Target, PenTool, Hash, MapPin, ShoppingBag } from "lucide-react";
@@ -95,16 +95,17 @@ export default function Modules() {
       </div>
 
       {/* Module Dialog */}
-      <Dialog open={!!selectedModule} onOpenChange={(open) => !open && setSelectedModule(null)}>
-        <DialogContent className="glass-card border-border/50 max-w-2xl max-h-[80vh] overflow-y-auto">
+      <Sheet open={!!selectedModule} onOpenChange={(open) => !open && setSelectedModule(null)}>
+        <SheetContent side="bottom" className="max-w-2xl mx-auto px-6 pb-6">
           {selectedModule && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
+              <SheetHeader>
+                <SheetTitle className="flex items-center gap-2">
                   <selectedModule.icon className="w-5 h-5 text-violet" />
                   {selectedModule.label}
-                </DialogTitle>
-              </DialogHeader>
+                </SheetTitle>
+              </SheetHeader>
+              <div className="overflow-y-auto flex-1 -mx-6 px-6">
               <div className="space-y-3 mt-2">
                 <Input placeholder="Domain (e.g. example.com)" value={domain} onChange={e => setDomain(e.target.value)} className="bg-muted/30 border-border/50 font-mono" />
                 <div className="grid grid-cols-2 gap-3">
@@ -122,10 +123,11 @@ export default function Modules() {
                   </div>
                 )}
               </div>
+              </div>
             </>
           )}
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

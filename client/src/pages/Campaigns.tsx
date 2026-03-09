@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
@@ -110,19 +110,18 @@ export default function Campaigns() {
           </div>
           <p className="text-xs text-muted-foreground mt-1 ml-10">Automated SEO campaigns powered by AI — each phase runs sequentially</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" className="bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:to-fuchsia-700 shadow-lg shadow-violet-500/20">
+        <Button size="sm" className="bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:to-fuchsia-700 shadow-lg shadow-violet-500/20" onClick={() => setDialogOpen(true)}>
               <Plus className="w-4 h-4 mr-1" /> New Campaign
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="bg-gray-900 border-gray-800">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
+        </Button>
+        <Sheet open={dialogOpen} onOpenChange={setDialogOpen}>
+          <SheetContent side="bottom" className="max-w-lg mx-auto px-6 pb-6 bg-gray-900 border-gray-800">
+            <SheetHeader>
+              <SheetTitle className="flex items-center gap-2">
                 <Rocket className="w-5 h-5 text-violet-400" />
                 สร้าง Campaign ใหม่
-              </DialogTitle>
-            </DialogHeader>
+              </SheetTitle>
+            </SheetHeader>
+            <div className="overflow-y-auto flex-1 -mx-6 px-6">
             <div className="space-y-4 mt-2">
               <div>
                 <label className="text-xs text-gray-400 mb-1.5 block">Target Domain</label>
@@ -174,8 +173,9 @@ export default function Campaigns() {
                 Launch Campaign
               </Button>
             </div>
-          </DialogContent>
-        </Dialog>
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
 
       {/* Stats Row */}

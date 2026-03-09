@@ -2375,3 +2375,10 @@
 
 # Mobile Dialog Fix
 - [x] Fix SEO add domain popup to be scrollable on mobile (not fullscreen without scroll)
+
+# Sheet Component Conversion (Mobile UX)
+- [x] Identify all long-form dialogs in the project (13 long forms found across 10 files)
+- [x] Ensure Sheet component exists (shadcn/ui) — enhanced bottom side with max-h and rounded-t
+- [x] Convert SEO add domain dialog to Sheet
+- [x] Convert other long-form dialogs to Sheet (AutoBid, ScheduledScans, KeywordRanking, RankDashboard, Campaigns, PbnManager, TemplateLibrary, UserManagement, Modules, SeoProjectDetail)
+- [x] Test and verify mobile UX — all TS errors resolved, site running

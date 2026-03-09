@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { toast } from "sonner";
 import {
   Globe, ArrowLeft, TrendingUp, TrendingDown, Minus, Shield, AlertTriangle,
@@ -1856,26 +1856,26 @@ export default function SeoProjectDetail() {
       </Tabs>
 
       {/* Content Generation Dialog */}
-      <Dialog open={showContentDialog} onOpenChange={setShowContentDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>สร้างเนื้อหา SEO</DialogTitle>
-          </DialogHeader>
+      <Sheet open={showContentDialog} onOpenChange={setShowContentDialog}>
+        <SheetContent side="bottom" className="max-w-md mx-auto px-6 pb-6">
+          <SheetHeader>
+            <SheetTitle>สร้างเนื้อหา SEO</SheetTitle>
+          </SheetHeader>
           <div className="space-y-4">
             <div>
               <Label>Target Keyword</Label>
               <Input placeholder="e.g. best crypto wallet 2024" value={contentKeyword} onChange={e => setContentKeyword(e.target.value)} />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowContentDialog(false)}>ยกเลิก</Button>
-            <Button onClick={() => contentMut.mutate({ id: projectId, keyword: contentKeyword })} disabled={!contentKeyword.trim() || contentMut.isPending} className="bg-emerald-600 hover:bg-emerald-700">
+          <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+            <Button variant="outline" className="flex-1" onClick={() => setShowContentDialog(false)}>ยกเลิก</Button>
+            <Button onClick={() => contentMut.mutate({ id: projectId, keyword: contentKeyword })} disabled={!contentKeyword.trim() || contentMut.isPending} className="bg-emerald-600 hover:bg-emerald-700 flex-1">
               {contentMut.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileText className="w-4 h-4 mr-1" />}
               สร้างเนื้อหา
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

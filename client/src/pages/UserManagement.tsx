@@ -26,13 +26,13 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 import {
   Users, Shield, Search, Crown, AlertTriangle,
@@ -383,15 +383,15 @@ export default function UserManagement() {
       </Card>
 
       {/* ═══ Create Admin Dialog ═══ */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      <Sheet open={createOpen} onOpenChange={setCreateOpen}>
+        <SheetContent side="bottom" className="max-w-md mx-auto px-6 pb-6">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
               <Plus className="w-5 h-5 text-emerald" />
               เพิ่ม Admin ใหม่
-            </DialogTitle>
-            <DialogDescription>สร้างบัญชี Admin ใหม่เพื่อเข้าใช้งานระบบ</DialogDescription>
-          </DialogHeader>
+            </SheetTitle>
+            <SheetDescription>สร้างบัญชี Admin ใหม่เพื่อเข้าใช้งานระบบ</SheetDescription>
+          </SheetHeader>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -429,56 +429,56 @@ export default function UserManagement() {
                 minLength={6}
               />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>ยกเลิก</Button>
-              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" disabled={createAdmin.isPending}>
+            <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setCreateOpen(false)}>ยกเลิก</Button>
+              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 flex-1" disabled={createAdmin.isPending}>
                 {createAdmin.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
                 สร้าง Admin
               </Button>
-            </DialogFooter>
+            </SheetFooter>
           </form>
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
 
       {/* ═══ Delete User Dialog ═══ */}
-      <Dialog open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog((p) => ({ ...p, open }))}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      <Sheet open={deleteDialog.open} onOpenChange={(open) => setDeleteDialog((p) => ({ ...p, open }))}>
+        <SheetContent side="bottom" className="max-w-md mx-auto px-6 pb-6">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-red-400" />
               ยืนยันการลบผู้ใช้
-            </DialogTitle>
-            <DialogDescription asChild>
+            </SheetTitle>
+            <SheetDescription asChild>
               <div className="space-y-2 pt-2 text-muted-foreground text-sm">
                 <p>คุณกำลังจะลบ <strong>{deleteDialog.userName}</strong> ({deleteDialog.email})</p>
                 <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
                   การลบจะไม่สามารถกู้คืนได้ ข้อมูลทั้งหมดของผู้ใช้จะถูกลบ
                 </div>
               </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setDeleteDialog((p) => ({ ...p, open: false }))}>ยกเลิก</Button>
+            </SheetDescription>
+          </SheetHeader>
+          <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+            <Button variant="outline" className="flex-1" onClick={() => setDeleteDialog((p) => ({ ...p, open: false }))}>ยกเลิก</Button>
             <Button
               onClick={() => deleteUser.mutate({ userId: deleteDialog.userId })}
               disabled={deleteUser.isPending}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-red-600 hover:bg-red-700 flex-1"
             >
               {deleteUser.isPending ? "กำลังลบ..." : "ยืนยันลบ"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* ═══ Role Change Dialog ═══ */}
-      <Dialog open={roleDialog.open} onOpenChange={(open) => setRoleDialog((p) => ({ ...p, open }))}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      <Sheet open={roleDialog.open} onOpenChange={(open) => setRoleDialog((p) => ({ ...p, open }))}>
+        <SheetContent side="bottom" className="max-w-md mx-auto px-6 pb-6">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-400" />
               ยืนยันการเปลี่ยน Role
-            </DialogTitle>
-            <DialogDescription asChild>
+            </SheetTitle>
+            <SheetDescription asChild>
               <div className="space-y-2 pt-2 text-muted-foreground text-sm">
                 <p>คุณกำลังจะเปลี่ยน role ของ <strong>{roleDialog.userName}</strong></p>
                 <div className="flex items-center gap-3 py-2">
@@ -496,33 +496,33 @@ export default function UserManagement() {
                   </div>
                 )}
               </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setRoleDialog((p) => ({ ...p, open: false }))}>ยกเลิก</Button>
+            </SheetDescription>
+          </SheetHeader>
+          <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+            <Button variant="outline" className="flex-1" onClick={() => setRoleDialog((p) => ({ ...p, open: false }))}>ยกเลิก</Button>
             <Button
               onClick={() => updateRole.mutate({ userId: roleDialog.userId, newRole: roleDialog.newRole })}
               disabled={updateRole.isPending}
-              className={roleDialog.newRole === "superadmin" ? "bg-red-600 hover:bg-red-700" : "bg-emerald hover:bg-emerald/90"}
+              className={`flex-1 ${roleDialog.newRole === "superadmin" ? "bg-red-600 hover:bg-red-700" : "bg-emerald hover:bg-emerald/90"}`}
             >
               {updateRole.isPending ? "กำลังบันทึก..." : "ยืนยัน"}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
       {/* ═══ Reset Password Dialog ═══ */}
-      <Dialog open={resetDialog.open} onOpenChange={(open) => { setResetDialog((p) => ({ ...p, open })); if (!open) setNewPassword(""); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      <Sheet open={resetDialog.open} onOpenChange={(open) => { setResetDialog((p) => ({ ...p, open })); if (!open) setNewPassword(""); }}>
+        <SheetContent side="bottom" className="max-w-md mx-auto px-6 pb-6">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
               <KeyRound className="w-5 h-5 text-blue-400" />
               รีเซ็ตรหัสผ่าน
-            </DialogTitle>
-            <DialogDescription>
+            </SheetTitle>
+            <SheetDescription>
               ตั้งรหัสผ่านใหม่สำหรับ <strong>{resetDialog.userName}</strong> ({resetDialog.email})
-            </DialogDescription>
-          </DialogHeader>
+            </SheetDescription>
+          </SheetHeader>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -541,15 +541,15 @@ export default function UserManagement() {
                 minLength={6}
               />
             </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => { setResetDialog((p) => ({ ...p, open: false })); setNewPassword(""); }}>ยกเลิก</Button>
-              <Button type="submit" className="bg-blue-600 hover:bg-blue-700" disabled={resetPassword.isPending}>
+            <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => { setResetDialog((p) => ({ ...p, open: false })); setNewPassword(""); }}>ยกเลิก</Button>
+              <Button type="submit" className="bg-blue-600 hover:bg-blue-700 flex-1" disabled={resetPassword.isPending}>
                 {resetPassword.isPending ? "กำลังรีเซ็ต..." : "รีเซ็ตรหัสผ่าน"}
               </Button>
-            </DialogFooter>
+            </SheetFooter>
           </form>
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

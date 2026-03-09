@@ -24,13 +24,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+} from "@/components/ui/sheet";
 
 const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
   tracking: { color: "text-gray-400", bg: "bg-gray-500/10", label: "Tracking" },
@@ -212,16 +211,15 @@ export default function KeywordRanking() {
             {batchCheckMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RefreshCw className="w-4 h-4 mr-1" />}
             {selectedIds.size > 0 ? `Check ${selectedIds.size} Selected` : "Check All"}
           </Button>
-          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700">
+          <Button size="sm" className="bg-cyan-600 hover:bg-cyan-700" onClick={() => setShowAddDialog(true)}>
                 <Plus className="w-4 h-4 mr-1" /> Add Keywords
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Add Keywords to Track</DialogTitle>
-              </DialogHeader>
+          </Button>
+          <Sheet open={showAddDialog} onOpenChange={setShowAddDialog}>
+            <SheetContent side="bottom" className="max-w-lg mx-auto px-6 pb-6">
+              <SheetHeader>
+                <SheetTitle>Add Keywords to Track</SheetTitle>
+              </SheetHeader>
+              <div className="overflow-y-auto flex-1 -mx-6 px-6">
               <div className="space-y-3">
                 <div>
                   <Label className="text-xs">Parasite Page URL</Label>
@@ -279,19 +277,20 @@ export default function KeywordRanking() {
                   <Textarea value={bulkKeywords} onChange={e => setBulkKeywords(e.target.value)} placeholder={"สล็อต\nเว็บสล็อต\nสล็อตออนไลน์"} className="mt-1 text-xs min-h-[100px]" />
                 </div>
               </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
+              </div>
+              <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+                <Button variant="outline" className="flex-1" onClick={() => setShowAddDialog(false)}>Cancel</Button>
                 <Button
-                  className="bg-cyan-600 hover:bg-cyan-700"
+                  className="bg-cyan-600 hover:bg-cyan-700 flex-1"
                   disabled={(!addKeyword.trim() && !bulkKeywords.trim()) || !addUrl || !addDomain || addKeywordsMut.isPending}
                   onClick={handleAddKeywords}
                 >
                   {addKeywordsMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
                   Add
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
 

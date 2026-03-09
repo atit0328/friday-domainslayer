@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
@@ -262,14 +262,12 @@ export default function PbnManager() {
           )}
         </div>
         <div className="flex gap-2">
-          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-violet text-white hover:bg-violet/90">
+          <Button size="sm" className="bg-violet text-white hover:bg-violet/90" onClick={() => setAddDialogOpen(true)}>
                 <Plus className="w-4 h-4 mr-1" /> Add Site
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="glass-card border-border/50">
-              <DialogHeader><DialogTitle>Add PBN Site</DialogTitle></DialogHeader>
+          </Button>
+          <Sheet open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+            <SheetContent side="bottom" className="max-w-lg mx-auto px-6 pb-6">
+              <SheetHeader><SheetTitle>Add PBN Site</SheetTitle></SheetHeader>
               <div className="space-y-3 mt-2">
                 <Input placeholder="Site Name" value={newSite.name} onChange={e => setNewSite(p => ({ ...p, name: e.target.value }))} className="bg-muted/30 border-border/50" />
                 <Input placeholder="WordPress URL (https://...)" value={newSite.url} onChange={e => setNewSite(p => ({ ...p, url: e.target.value }))} className="bg-muted/30 border-border/50 font-mono" />
@@ -280,8 +278,8 @@ export default function PbnManager() {
                   Add PBN Site
                 </Button>
               </div>
-            </DialogContent>
-          </Dialog>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
 
@@ -1157,16 +1155,17 @@ export default function PbnManager() {
       </Tabs>
 
       {/* Post Dialog */}
-      <Dialog open={postDialogOpen} onOpenChange={setPostDialogOpen}>
-        <DialogContent className="bg-gray-900 border-gray-800 max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      <Sheet open={postDialogOpen} onOpenChange={setPostDialogOpen}>
+        <SheetContent side="bottom" className="max-w-2xl mx-auto px-6 pb-6 bg-gray-900 border-gray-800">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center">
                 <FileText className="w-4 h-4 text-white" />
               </div>
               AI Content Post
-            </DialogTitle>
-          </DialogHeader>
+            </SheetTitle>
+          </SheetHeader>
+          <div className="overflow-y-auto flex-1 -mx-6 px-6">
           <div className="space-y-4 mt-2">
             <div>
               <label className="text-xs text-gray-400 mb-1.5 block">Target URL (link to your money site)</label>
@@ -1227,8 +1226,9 @@ export default function PbnManager() {
               </div>
             )}
           </div>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

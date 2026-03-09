@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter, SheetDescription } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
@@ -206,22 +206,21 @@ export default function AutoBid() {
             AI วิเคราะห์ SEO metrics แล้วประมูล/ซื้อโดเมนอัตโนมัติตามเงื่อนไขที่คุณกำหนด
           </p>
         </div>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild>
-            <Button className="bg-violet-600 hover:bg-violet-700">
+        <Button className="bg-violet-600 hover:bg-violet-700" onClick={() => setShowCreateDialog(true)}>
               <Plus className="h-4 w-4 mr-2" /> New Rule
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
+        </Button>
+        <Sheet open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+          <SheetContent side="bottom" className="max-w-2xl mx-auto px-6 pb-6">
+            <SheetHeader>
+              <SheetTitle className="flex items-center gap-2">
                 <Bot className="h-5 w-5 text-violet-400" />
                 Create Auto-Bid Rule
-              </DialogTitle>
-              <DialogDescription>
+              </SheetTitle>
+              <SheetDescription>
                 กำหนดเงื่อนไข SEO metrics ที่ต้องการ AI จะวิเคราะห์และประมูลโดเมนให้อัตโนมัติ
-              </DialogDescription>
-            </DialogHeader>
+              </SheetDescription>
+            </SheetHeader>
+            <div className="overflow-y-auto flex-1 -mx-6 px-6">
             <div className="space-y-6 py-4">
               {/* Basic Info */}
               <div className="space-y-3">
@@ -409,19 +408,20 @@ export default function AutoBid() {
                 )}
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
+            </div>
+            <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+              <Button variant="outline" className="flex-1" onClick={() => setShowCreateDialog(false)}>Cancel</Button>
               <Button
-                className="bg-violet-600 hover:bg-violet-700"
+                className="bg-violet-600 hover:bg-violet-700 flex-1"
                 onClick={handleCreate}
                 disabled={createMutation.isPending || !form.keyword}
               >
                 {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                 Create Rule
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
       </div>
 
       {/* Stats Cards */}

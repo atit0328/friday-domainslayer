@@ -29,13 +29,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetFooter,
+} from "@/components/ui/sheet";
 import {
   LineChart as RechartsLine,
   Line,
@@ -269,16 +268,15 @@ export default function RankDashboard() {
               {serpApi ? `${serpApi.remaining}/${serpApi.searchesPerMonth}` : "N/A"}
             </span>
           </div>
-          <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-emerald hover:bg-emerald/90 text-black font-semibold">
+          <Button size="sm" className="bg-emerald hover:bg-emerald/90 text-black font-semibold" onClick={() => setShowAddDialog(true)}>
                 <Plus className="w-4 h-4 mr-1" /> Add Keywords
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Add Keywords to Track</DialogTitle>
-              </DialogHeader>
+          </Button>
+          <Sheet open={showAddDialog} onOpenChange={setShowAddDialog}>
+            <SheetContent side="bottom" className="max-w-lg mx-auto px-6 pb-6">
+              <SheetHeader>
+                <SheetTitle>Add Keywords to Track</SheetTitle>
+              </SheetHeader>
+              <div className="overflow-y-auto flex-1 -mx-6 px-6">
               <div className="space-y-3">
                 <div>
                   <Label className="text-xs">Project</Label>
@@ -328,19 +326,20 @@ export default function RankDashboard() {
                   />
                 </div>
               </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setShowAddDialog(false)}>Cancel</Button>
+              </div>
+              <SheetFooter className="flex-row gap-2 pt-4 border-t border-border">
+                <Button variant="outline" className="flex-1" onClick={() => setShowAddDialog(false)}>Cancel</Button>
                 <Button
-                  className="bg-emerald hover:bg-emerald/90 text-black font-semibold"
+                  className="bg-emerald hover:bg-emerald/90 text-black font-semibold flex-1"
                   disabled={!addProjectId || !addKeywordsText.trim() || addKeywordsMut.isPending}
                   onClick={handleAddKeywords}
                 >
                   {addKeywordsMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
                   Add Keywords
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
 
