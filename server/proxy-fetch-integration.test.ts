@@ -18,6 +18,10 @@ const ALLOWED_DIRECT_FETCH = new Set([
   "ahrefs-api.ts",        // Ahrefs API client
   "one-click-deploy.ts",  // Has proxyFetch with direct-first fallback pattern
   "wp-vuln-scanner.ts",   // WPScan-style scanner — uses direct fetch for speed
+  "ai-exploit-generator.ts", // AI exploit generator — uses direct fetch for exploit execution
+  "cms-vuln-scanner.ts",   // Multi-CMS scanner — uses direct fetch for speed
+  "cve-auto-updater.ts",   // CVE auto-updater — fetches from NVD/Wordfence APIs
+  "cve-scheduler.ts",      // CVE scheduler — delegates to cve-auto-updater
 ]);
 
 // Attack-related files that MUST use proxy-wrapped fetch

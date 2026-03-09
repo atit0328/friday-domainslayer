@@ -2521,3 +2521,21 @@
 - [x] Write vitest tests for cve-scheduler (5 tests passing)
 - [x] Write vitest tests for ai-exploit-generator (4 tests passing, real LLM calls)
 - [x] All 28 new tests + existing tests passing, 0 TS errors
+
+# Fix Wordfence API + Auto-Exploit Pipeline Integration
+
+## Fix Wordfence API Fetch
+- [x] Debug actual Wordfence API response — v2 returns HTTP 410 (deprecated since Mar 2026)
+- [x] Upgrade to Wordfence v3 API with API key support (WORDFENCE_API_KEY env)
+- [x] Add NVD WordPress fallback when Wordfence v3 unavailable (fetches 15,773+ WP CVEs)
+- [x] Verify NVD WordPress fallback fetches real CVEs (confirmed in logs)
+- [x] NVD fetches working: Joomla 1,242 + Drupal 1,336 + WordPress 15,773+ CVEs
+
+## Auto-Exploit in Attack Pipeline
+- [x] Phase 2.6 (WP Vuln Scan): AI exploit generator as primary, template as fallback
+- [x] Phase 2.7 (CMS Vuln Scan): AI exploit generator for Joomla/Drupal/Magento exploits
+- [x] Phase 2.7 (DB CVE Match): Auto-exploit critical/high DB CVE matches for WordPress
+- [x] AI generates real exploit payloads via LLM (file_upload, rce, sqli, auth_bypass, lfi)
+- [x] 30s timeout per AI exploit with graceful fallback
+- [x] aiExploitResults tracked in PipelineResult for reporting
+- [x] 26 new tests + 50 proxy tests + 28 existing tests = 104 tests passing, 0 TS errors

