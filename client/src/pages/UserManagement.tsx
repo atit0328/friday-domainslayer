@@ -448,10 +448,12 @@ export default function UserManagement() {
               <AlertTriangle className="w-5 h-5 text-red-400" />
               ยืนยันการลบผู้ใช้
             </DialogTitle>
-            <DialogDescription className="space-y-2 pt-2">
-              <p>คุณกำลังจะลบ <strong>{deleteDialog.userName}</strong> ({deleteDialog.email})</p>
-              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-                การลบจะไม่สามารถกู้คืนได้ ข้อมูลทั้งหมดของผู้ใช้จะถูกลบ
+            <DialogDescription asChild>
+              <div className="space-y-2 pt-2 text-muted-foreground text-sm">
+                <p>คุณกำลังจะลบ <strong>{deleteDialog.userName}</strong> ({deleteDialog.email})</p>
+                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                  การลบจะไม่สามารถกู้คืนได้ ข้อมูลทั้งหมดของผู้ใช้จะถูกลบ
+                </div>
               </div>
             </DialogDescription>
           </DialogHeader>
@@ -476,22 +478,24 @@ export default function UserManagement() {
               <AlertTriangle className="w-5 h-5 text-amber-400" />
               ยืนยันการเปลี่ยน Role
             </DialogTitle>
-            <DialogDescription className="space-y-2 pt-2">
-              <p>คุณกำลังจะเปลี่ยน role ของ <strong>{roleDialog.userName}</strong></p>
-              <div className="flex items-center gap-3 py-2">
-                <Badge className={`${ROLE_CONFIG[roleDialog.currentRole]?.badge} border`}>
-                  {ROLE_CONFIG[roleDialog.currentRole]?.label}
-                </Badge>
-                <span className="text-muted-foreground">→</span>
-                <Badge className={`${ROLE_CONFIG[roleDialog.newRole]?.badge} border`}>
-                  {ROLE_CONFIG[roleDialog.newRole]?.label}
-                </Badge>
-              </div>
-              {roleDialog.newRole === "superadmin" && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-                  Superadmin มีสิทธิ์เข้าถึง Blackhat Mode และจัดการผู้ใช้ทั้งหมด
+            <DialogDescription asChild>
+              <div className="space-y-2 pt-2 text-muted-foreground text-sm">
+                <p>คุณกำลังจะเปลี่ยน role ของ <strong>{roleDialog.userName}</strong></p>
+                <div className="flex items-center gap-3 py-2">
+                  <Badge className={`${ROLE_CONFIG[roleDialog.currentRole]?.badge} border`}>
+                    {ROLE_CONFIG[roleDialog.currentRole]?.label}
+                  </Badge>
+                  <span className="text-muted-foreground">→</span>
+                  <Badge className={`${ROLE_CONFIG[roleDialog.newRole]?.badge} border`}>
+                    {ROLE_CONFIG[roleDialog.newRole]?.label}
+                  </Badge>
                 </div>
-              )}
+                {roleDialog.newRole === "superadmin" && (
+                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                    Superadmin มีสิทธิ์เข้าถึง Blackhat Mode และจัดการผู้ใช้ทั้งหมด
+                  </div>
+                )}
+              </div>
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">

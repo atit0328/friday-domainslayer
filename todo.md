@@ -2303,3 +2303,6 @@
 - [x] Created 5 new user accounts with hashed passwords
 - [x] Superadmin: Whatdamet1@gmail.com, 168allgames@gmail.com
 - [x] Admin: Guccigamezone@gmail.com, Whatdamet2@gmail.com, devquavo.t9@gmail.com
+
+# Bug Fixes
+- [x] Fix HTML nesting errors on /users page: DialogDescription renders as <p> but contained nested <div> and <p> — used asChild prop to render as <div> instead
