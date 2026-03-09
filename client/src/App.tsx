@@ -5,6 +5,7 @@ import { Route, Switch, Redirect } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/layout/DashboardLayout";
+import PwaInstallPrompt from "./components/PwaInstallPrompt";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
@@ -150,6 +151,7 @@ function App() {
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <Toaster />
+          <PwaInstallPrompt />
           <Switch>
             {/* Public routes — no DashboardLayout, no auth required */}
             <Route path="/login">

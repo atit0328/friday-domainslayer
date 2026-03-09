@@ -1,17 +1,21 @@
 /**
  * Design: Obsidian Intelligence — Dark Luxury Dashboard Layout
  * Sidebar + Header + Content area with frosted glass aesthetic
- * Mobile: sidebar as overlay with backdrop, touch-friendly scrolling
+ * Mobile: sidebar overlay, bottom nav, pull-to-refresh, touch-friendly
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import Sidebar from "./Sidebar";
 import Header from "./Header";
+import BottomNav from "./BottomNav";
+import PullToRefresh from "../PullToRefresh";
+import { trpc } from "@/lib/trpc";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [location] = useLocation();
+  const utils = trpc.useUtils();
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -21,7 +25,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Prevent body scroll when mobile sidebar is open
   useEffect(() => {
     if (sidebarOpen) {
-      // Save current scroll position
       const scrollY = window.scrollY;
       document.body.style.position = "fixed";
       document.body.style.top = `-${scrollY}px`;
@@ -29,7 +32,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       document.body.style.right = "0";
       document.body.style.overflow = "hidden";
     } else {
-      // Restore scroll position
       const scrollY = document.body.style.top;
       document.body.style.position = "";
       document.body.style.top = "";
@@ -48,6 +50,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       document.body.style.overflow = "";
     };
   }, [sidebarOpen]);
+
+  // Pull-to-refresh handler — invalidate all tRPC queries
+  const handleRefresh = useCallback(async () => {
+    await utils.invalidate();
+    // Small delay to show the refresh animation
+    await new Promise((r) => setTimeout(r, 500));
+  }, [utils]);
 
   return (
     <div className="min-h-screen min-h-[100dvh] bg-background flex">
@@ -76,17 +85,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
       </div>
 
-      {/* Main content — NO overflow-hidden to allow mobile scrolling */}
+      {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
         <Header
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         />
-        <main className="flex-1 p-3 sm:p-4 md:p-6" style={{ WebkitOverflowScrolling: "touch" }}>
-          <div className="animate-fade-in-up">
-            {children}
-          </div>
+        <main
+          className="flex-1 p-3 sm:p-4 md:p-6 pb-20 lg:pb-6"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
+          <PullToRefresh onRefresh={handleRefresh}>
+            <div className="animate-fade-in-up">
+              {children}
+            </div>
+          </PullToRefresh>
         </main>
       </div>
+
+      {/* Bottom Navigation — mobile only */}
+      <BottomNav />
     </div>
   );
 }

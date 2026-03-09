@@ -2259,3 +2259,24 @@
 - [x] Fix sidebar overlay body scroll lock — use position:fixed with scroll position save/restore instead of overflow:hidden
 - [x] Add global iOS touch scrolling CSS (-webkit-overflow-scrolling: touch)
 - [ ] Verify fix on mobile viewport (user testing)
+
+# Pull-to-Refresh + Bottom Nav + PWA
+## Bottom Navigation Bar
+- [x] Create BottomNav component with 5 key nav items (Home, Scanner, Marketplace, AI Chat, More)
+- [x] Show only on mobile (hidden on lg+), fixed bottom with backdrop blur
+- [x] Highlight active route with emerald color
+- [x] Add safe-area padding for notched devices (safe-bottom CSS)
+- [x] Integrate into DashboardLayout with pb-16 on mobile
+## Pull-to-Refresh
+- [x] Create PullToRefresh component with touch gesture detection
+- [x] Show spinner animation during refresh (Loader2 icon)
+- [x] Integrate with tRPC query invalidation (useUtils().invalidate)
+- [x] Only activate when scrolled to top (scrollTop < 5)
+## PWA Support
+- [x] Create manifest.json with app name, icons, theme color (#10b981)
+- [x] Generate PWA icons (192x192, 512x512) uploaded to CDN
+- [x] Create service worker for offline caching (cache-first + network-first strategies)
+- [x] Add install prompt banner (PwaInstallPrompt with iOS guide)
+- [x] Register service worker in PwaInstallPrompt component
+- [x] Add PWA meta tags to index.html (theme-color, apple-mobile-web-app-capable)
+- [x] Add viewport-fit=cover for notched devices
