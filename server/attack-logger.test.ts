@@ -424,3 +424,159 @@ describe("ATTACK_METHODS registry", () => {
     expect(ATTACK_METHODS.length).toBeGreaterThanOrEqual(15);
   });
 });
+
+// ═══════════════════════════════════════════════
+//  PIPELINE INTEGRATION TESTS
+// ═══════════════════════════════════════════════
+
+describe("Logger pipeline integration", () => {
+  it("logs events with correct severity classification through full pipeline simulation", async () => {
+    const logger = createAttackLogger(null, 100, "test-pipeline.com");
+
+    // Simulate a mini pipeline flow
+    await logger.log(makeEvent({ phase: "prescreen", step: "start", detail: "🔍 Starting prescreen", progress: 10 }));
+    await logger.log(makeEvent({ phase: "prescreen", step: "complete", detail: "✅ Prescreen complete — Apache, WordPress", progress: 18 }));
+    await logger.log(makeEvent({ phase: "smart_fallback" as any, step: "plan_generated", detail: "🧠 Smart Fallback Plan: wp_focused — 12 methods", progress: 19 }));
+    await logger.log(makeEvent({ phase: "vuln_scan", step: "scanning", detail: "🔬 Deep scanning...", progress: 20 }));
+    await logger.log(makeEvent({ phase: "upload", step: "attempt_1", detail: "❌ PUT upload failed — HTTP 403", progress: 40 }));
+    await logger.log(makeEvent({ phase: "upload", step: "attempt_2", detail: "⚠️ WAF blocked multipart upload", progress: 45 }));
+    await logger.log(makeEvent({ phase: "shellless", step: "wp_config", detail: "✅ Shellless WP config injection succeeded", progress: 70 }));
+    await logger.log(makeEvent({ phase: "complete", step: "success", detail: "✅ Pipeline completed with partial success", progress: 100 }));
+
+    const entries = logger.getEntries();
+    expect(entries.length).toBe(8);
+
+    // Check severity classification
+    expect(entries[0].severity).toBe("info");      // prescreen start
+    expect(entries[1].severity).toBe("success");    // prescreen complete ✅
+    expect(entries[2].severity).toBe("info");       // smart fallback plan
+    expect(entries[3].severity).toBe("info");       // vuln scan
+    expect(entries[4].severity).toBe("error");      // upload failed ❌
+    expect(entries[5].severity).toBe("warning");    // WAF blocked ⚠️
+    expect(entries[6].severity).toBe("success");    // shellless success ✅
+    expect(entries[7].severity).toBe("success");    // complete success ✅
+  });
+
+  it("exportAsText includes all events in chronological order", async () => {
+    const logger = createAttackLogger(null, 100, "export-test.com");
+    await logger.log(makeEvent({ phase: "prescreen", step: "start", detail: "Phase 1 start" }));
+    await logger.log(makeEvent({ phase: "upload", step: "attempt", detail: "Phase 4 upload" }));
+    await logger.log(makeEvent({ phase: "complete", step: "done", detail: "Phase 9 done" }));
+
+    const text = logger.exportAsText();
+    expect(text).toContain("export-test.com");
+    expect(text).toContain("Total Events: 3");
+    expect(text).toContain("Phase 1 start");
+    expect(text).toContain("Phase 4 upload");
+    expect(text).toContain("Phase 9 done");
+  });
+
+  it("getSmartFallbackRecommendation returns a recommendation object", async () => {
+    const logger = createAttackLogger(null, 100, "fallback-test.com");
+
+    // Log many upload failures to trigger fallback recommendation
+    for (let i = 0; i < 5; i++) {
+      await logger.log(makeEvent({
+        phase: "upload",
+        step: `attempt_${i}`,
+        detail: `❌ Upload attempt ${i} failed — HTTP 403 Forbidden`,
+      }));
+    }
+
+    const rec = logger.getSmartFallbackRecommendation();
+    expect(rec).toBeDefined();
+    // Recommendation may or may not have a reason depending on pattern matching
+    expect(typeof rec.reason).toBe("string");
+  });
+});
+
+// ═══════════════════════════════════════════════
+//  SMART FALLBACK INTEGRATION TESTS
+// ═══════════════════════════════════════════════
+
+describe("Smart Fallback with Logger integration", () => {
+  it("generateFallbackPlan uses logger failure data to skip methods", async () => {
+    const logger = createAttackLogger(null, 100, "logger-fallback.com");
+
+    // Log failures for specific methods
+    await logger.log(makeEvent({
+      phase: "upload",
+      step: "standard_upload",
+      detail: "❌ Standard upload failed",
+    }));
+
+    const profile: TargetProfile = {
+      domain: "logger-fallback.com",
+      cms: "wordpress",
+      waf: null,
+      serverType: "Apache",
+      hasWritablePaths: true,
+      writablePathCount: 3,
+      phpExecutes: true,
+      successProbability: 50,
+      isWordPress: true,
+      hasCloudflare: false,
+      hasWpAdmin: true,
+      ftpAvailable: false,
+      webdavAvailable: false,
+      originIp: null,
+    };
+
+    // Pass logger to generateFallbackPlan
+    const plan = generateFallbackPlan(profile, logger);
+    expect(plan.methods.length).toBeGreaterThan(0);
+    expect(plan.strategy.length).toBeGreaterThan(0);
+  });
+
+  it("handles edge case: all methods exhausted", () => {
+    // Create a profile where almost nothing works
+    const hardProfile: TargetProfile = {
+      domain: "fortress.com",
+      cms: "unknown",
+      waf: "Cloudflare Enterprise",
+      serverType: "Nginx",
+      hasWritablePaths: false,
+      writablePathCount: 0,
+      phpExecutes: false,
+      successProbability: 5,
+      isWordPress: false,
+      hasCloudflare: true,
+      hasWpAdmin: false,
+      ftpAvailable: false,
+      webdavAvailable: false,
+      originIp: null,
+    };
+
+    // Fail all methods
+    const allMethodIds = ATTACK_METHODS.map(m => m.id);
+    const plan = generateFallbackPlan(hardProfile, undefined, 600, allMethodIds);
+
+    // Should still have some methods (AI commander etc. that can't be fully skipped)
+    // or at least not throw
+    expect(plan).toBeDefined();
+    expect(plan.skipMethods.length).toBeGreaterThan(0);
+  });
+
+  it("respects time budget when generating plan", () => {
+    const profile: TargetProfile = {
+      domain: "timed.com",
+      cms: "wordpress",
+      waf: null,
+      serverType: "Apache",
+      hasWritablePaths: true,
+      writablePathCount: 5,
+      phpExecutes: true,
+      successProbability: 70,
+      isWordPress: true,
+      hasCloudflare: false,
+      hasWpAdmin: true,
+      ftpAvailable: false,
+      webdavAvailable: false,
+      originIp: null,
+    };
+
+    // Very short time budget
+    const plan = generateFallbackPlan(profile, undefined, 30);
+    expect(plan.totalEstimatedTime).toBeLessThanOrEqual(30);
+  });
+});

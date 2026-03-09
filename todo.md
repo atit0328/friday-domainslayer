@@ -2156,3 +2156,32 @@
 ## Testing
 - [x] Write vitest tests for attack logger (30 tests passed)
 - [x] Write vitest tests for smart fallback logic (30 tests passed)
+
+# Pipeline Integration + Attack Stats Dashboard
+
+## ## 1. Integrate Logger into Pipeline (oneclick-sse.ts)
+- [x] Import createAttackLogger into oneclick-sse.ts
+- [x] Create logger instance at pipeline start (with deployId, userId, domain)
+- [x] Log every SSE event through the logger (sendEventWithLog wrapper)
+- [x] Log pipeline start/end/error events
+- [x] Log AI Commander events
+- [x] Persist logs to DB on pipeline completion (flushToDb)
+## 2. Smart Fallback in Pipeline (unified-attack-pipeline.ts)
+- [x] Import smart-fallback functions into unified-attack-pipeline.ts
+- [x] Call buildTargetProfile() after prescreen phase
+- [x] Call shouldSkipUploads() before upload phase — skip if recommended
+- [x] Call generateFallbackPlan() to determine method order
+- [x] Use getOptimalRetryCount() to reduce retries for low-probability methods
+- [x] Auto-escalate to shellless/indirect when upload methods fail
+- [x] Pass failed methods list to generateFallbackPlan for dynamic re-planning
+## 3. Attack Stats Dashboard
+- [x] Create tRPC endpoints for aggregate attack stats (dashboardStats endpoint)
+- [x] Create AttackStatsDashboard component with KPI cards and metrics
+- [x] Show: total attacks, success rate, best methods, worst methods
+- [x] Show: failure pattern analysis (top failures by method/phase)
+- [x] Show: per-domain attack history with success/fail counts
+- [x] Add "Stats" tab in AI Attack Engine page
+## Testing
+- [x] Write vitest tests for pipeline integration (36 tests)
+- [x] Write vitest tests for smart fallback integration
+- [x] All 36 tests passing

@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import AiAnalysisCard from "@/components/AiAnalysisCard";
 import AttackLogViewer from "@/components/AttackLogViewer";
+import AttackStatsDashboard from "@/components/AttackStatsDashboard";
 
 // ─── Types ───
 interface AutonomousEvent {
@@ -297,7 +298,7 @@ export default function AutonomousFriday() {
   });
 
   // ═══ UI state ═══
-  const [mainTab, setMainTab] = useState<"launch" | "monitor" | "history" | "arsenal" | "detect" | "logs">("launch");
+  const [mainTab, setMainTab] = useState<"launch" | "monitor" | "history" | "arsenal" | "detect" | "logs" | "dashboard">("launch");
   const [arsenalDomain, setArsenalDomain] = useState("");
   const [arsenalRedirect, setArsenalRedirect] = useState("");
   const [arsenalResults, setArsenalResults] = useState<any>(null);
@@ -1057,6 +1058,10 @@ export default function AutonomousFriday() {
           <TabsTrigger value="detect" className="gap-1.5">
             <Shield className="w-3.5 h-3.5" />
             Detect
+          </TabsTrigger>
+          <TabsTrigger value="dashboard" className="gap-1.5">
+            <BarChart3 className="w-4 h-4" />
+            Stats
           </TabsTrigger>
           <TabsTrigger value="logs" className="gap-1.5">
             <FileText className="w-3.5 h-3.5" />
@@ -2507,6 +2512,29 @@ export default function AutonomousFriday() {
                 </CardContent>
               </Card>
             )}
+          </div>
+        </TabsContent>
+
+        {/* ═══════════════════════════════════════════════ */}
+        {/* ═══ ATTACK STATS DASHBOARD TAB ═══ */}
+        {/* ═══════════════════════════════════════════════ */}
+        <TabsContent value="dashboard" className="mt-4">
+          <div className="space-y-4">
+            <Card className="border-purple-500/20 bg-gradient-to-r from-purple-950/30 to-transparent">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-purple-400" />
+                  Attack Statistics Dashboard
+                  <Badge variant="outline" className="bg-purple-500/10 text-purple-400 border-purple-500/30 text-xs">ANALYTICS</Badge>
+                </CardTitle>
+                <CardDescription>
+                  สรุปสถิติการโจมตี — success rate, failure patterns, วิธีไหนได้ผลบ่อยสุด, และ domain ที่โจมตีทั้งหมด
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <AttackStatsDashboard />
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 

