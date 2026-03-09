@@ -2280,3 +2280,26 @@
 - [x] Register service worker in PwaInstallPrompt component
 - [x] Add PWA meta tags to index.html (theme-color, apple-mobile-web-app-capable)
 - [x] Add viewport-fit=cover for notched devices
+
+# Superadmin Role + User Management
+
+## Schema
+- [x] 'superadmin' already exists in user role enum (schema.ts line 15)
+- [x] No migration needed
+
+## Backend
+- [x] superadminProcedure middleware already exists in _core/trpc.ts
+- [x] user-management tRPC router already exists (list, createAdmin, deleteUser, updateRole, resetPassword, getUser, stats)
+- [x] User stats endpoint already exists
+
+## Frontend
+- [x] UserManagement page already exists (551 lines) with full CRUD
+- [x] User Management nav item in sidebar (visible only to superadmin)
+- [x] Shows user avatar, email, role, last sign-in date
+- [x] Role toggle (admin ↔ superadmin) with confirm dialog
+- [x] Delete user + reset password dialogs
+
+## Set Existing User Roles
+- [x] Created 5 new user accounts with hashed passwords
+- [x] Superadmin: Whatdamet1@gmail.com, 168allgames@gmail.com
+- [x] Admin: Guccigamezone@gmail.com, Whatdamet2@gmail.com, devquavo.t9@gmail.com
