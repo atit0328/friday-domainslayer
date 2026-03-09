@@ -2364,3 +2364,11 @@
 - [x] Add live status indicators (pulse animations, LIVE badge, connection status)
 - [x] Add real-time Live Activity Feed tab with color-coded event timeline
 - [x] Write vitest tests for SSE event system (19 tests, all passing)
+
+# Performance Optimization (Safe Re-apply after black screen fix)
+- [x] Re-apply: QueryClient staleTime/gcTime defaults (frontend only, safe)
+- [x] Re-apply: DB indexes on frequently queried columns (schema only, safe)
+- [x] Re-apply: SSE throttling/batching/connection limits (backend only, safe)
+- [x] Re-apply: In-memory cache layer for orchestrator queries (backend only, safe)
+- [x] Re-apply: Optimized task stats query (single query instead of 6)
+- [x] SKIP: Vite manualChunks — caused black screen on production deploy

@@ -1,6 +1,11 @@
 /**
  * ═══════════════════════════════════════════════════════════════
  *  ORCHESTRATOR ROUTER — tRPC API for the Master AI Orchestrator
+ *  
+ *  Performance optimizations:
+ *  - In-memory cache layer with TTL for frequently queried data
+ *  - Optimized task stats: single query instead of 6 separate queries
+ *  - Cache invalidation on mutations
  * ═══════════════════════════════════════════════════════════════
  */
 import { z } from "zod";
@@ -22,6 +27,14 @@ import {
   aiMetrics,
 } from "../../drizzle/schema";
 import { eq, desc, and, gte, count, sql } from "drizzle-orm";
+import {
+  worldStateCache,
+  subsystemCache,
+  CacheKeys,
+  CacheTTL,
+  invalidateOrchestratorCache,
+  invalidateTaskCache,
+} from "../cache";
 
 // Admin-only guard
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -32,36 +45,44 @@ const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 export const orchestratorRouter = router({
-  // ─── Get Orchestrator State ───
+  // ─── Get Orchestrator State ─── (cached 10s)
   getState: adminProcedure.query(async () => {
-    const state = await getOrCreateOrchestratorState();
-    return {
-      ...state,
-      isRunning: isOrchestratorRunning(),
-    };
+    return worldStateCache.getOrCompute(
+      CacheKeys.orchestratorState(),
+      CacheTTL.ORCHESTRATOR_STATE,
+      async () => {
+        const state = await getOrCreateOrchestratorState();
+        return { ...state, isRunning: isOrchestratorRunning() };
+      }
+    );
   }),
 
   // ─── Start Orchestrator ───
   start: adminProcedure.mutation(async () => {
     await startOrchestrator();
+    invalidateOrchestratorCache();
     return { success: true, message: "Orchestrator started" };
   }),
 
   // ─── Stop Orchestrator ───
   stop: adminProcedure.mutation(async () => {
     await stopOrchestrator();
+    invalidateOrchestratorCache();
     return { success: true, message: "Orchestrator stopped" };
   }),
 
   // ─── Pause Orchestrator ───
   pause: adminProcedure.mutation(async () => {
     await pauseOrchestrator();
+    invalidateOrchestratorCache();
     return { success: true, message: "Orchestrator paused" };
   }),
 
   // ─── Run Single OODA Cycle ───
   runCycle: adminProcedure.mutation(async () => {
     const result = await runOodaCycle();
+    invalidateOrchestratorCache();
+    invalidateTaskCache();
     return result;
   }),
 
@@ -85,6 +106,7 @@ export const orchestratorRouter = router({
       await db.update(aiOrchestratorState)
         .set(input as any)
         .where(eq(aiOrchestratorState.id, state.id));
+      invalidateOrchestratorCache();
       return { success: true };
     }),
 
@@ -127,29 +149,36 @@ export const orchestratorRouter = router({
       return query;
     }),
 
-  // ─── Get Task Stats ───
+  // ─── Get Task Stats ─── (cached 5s, optimized single query)
   getTaskStats: adminProcedure.query(async () => {
-    const db = (await getDb())!;
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return worldStateCache.getOrCompute(
+      CacheKeys.taskStats(),
+      CacheTTL.TASK_STATS,
+      async () => {
+        const db = (await getDb())!;
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const [queued] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "queued"));
-    const [running] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "running"));
-    const [completedToday] = await db.select({ count: count() }).from(aiTaskQueue)
-      .where(and(eq(aiTaskQueue.status, "completed"), gte(aiTaskQueue.completedAt, todayStart)));
-    const [failedToday] = await db.select({ count: count() }).from(aiTaskQueue)
-      .where(and(eq(aiTaskQueue.status, "failed"), gte(aiTaskQueue.completedAt, todayStart)));
-    const [totalCompleted] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "completed"));
-    const [totalFailed] = await db.select({ count: count() }).from(aiTaskQueue).where(eq(aiTaskQueue.status, "failed"));
+        // Single query with conditional counts instead of 6 separate queries
+        const [result] = await db.select({
+          queued: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'queued' THEN 1 ELSE 0 END)`,
+          running: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'running' THEN 1 ELSE 0 END)`,
+          completedToday: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'completed' AND ${aiTaskQueue.completedAt} >= ${todayStart} THEN 1 ELSE 0 END)`,
+          failedToday: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'failed' AND ${aiTaskQueue.completedAt} >= ${todayStart} THEN 1 ELSE 0 END)`,
+          totalCompleted: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'completed' THEN 1 ELSE 0 END)`,
+          totalFailed: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'failed' THEN 1 ELSE 0 END)`,
+        }).from(aiTaskQueue);
 
-    return {
-      queued: queued?.count || 0,
-      running: running?.count || 0,
-      completedToday: completedToday?.count || 0,
-      failedToday: failedToday?.count || 0,
-      totalCompleted: totalCompleted?.count || 0,
-      totalFailed: totalFailed?.count || 0,
-    };
+        return {
+          queued: Number(result?.queued) || 0,
+          running: Number(result?.running) || 0,
+          completedToday: Number(result?.completedToday) || 0,
+          failedToday: Number(result?.failedToday) || 0,
+          totalCompleted: Number(result?.totalCompleted) || 0,
+          totalFailed: Number(result?.totalFailed) || 0,
+        };
+      }
+    );
   }),
 
   // ─── Cancel Task ───
@@ -160,23 +189,30 @@ export const orchestratorRouter = router({
       await db.update(aiTaskQueue)
         .set({ status: "cancelled", completedAt: new Date() })
         .where(eq(aiTaskQueue.id, input.taskId));
+      invalidateTaskCache();
       return { success: true };
     }),
 
-  // ─── Get Metrics ───
+  // ─── Get Metrics ─── (cached 30s)
   getMetrics: adminProcedure
     .input(z.object({
       days: z.number().min(1).max(90).default(7),
     }))
     .query(async ({ input }) => {
-      const db = (await getDb())!;
-      const since = new Date(Date.now() - input.days * 24 * 60 * 60 * 1000);
-      
-      return db.select()
-        .from(aiMetrics)
-        .where(gte(aiMetrics.metricDate, since))
-        .orderBy(desc(aiMetrics.metricDate))
-        .limit(500);
+      return worldStateCache.getOrCompute(
+        CacheKeys.metrics(input.days),
+        CacheTTL.METRICS,
+        async () => {
+          const db = (await getDb())!;
+          const since = new Date(Date.now() - input.days * 24 * 60 * 60 * 1000);
+          
+          return db.select()
+            .from(aiMetrics)
+            .where(gte(aiMetrics.metricDate, since))
+            .orderBy(desc(aiMetrics.metricDate))
+            .limit(500);
+        }
+      );
     }),
 
   // ─── Get World State (latest) ───
@@ -194,161 +230,169 @@ export const orchestratorRouter = router({
     };
   }),
 
-  // ─── Get Subsystem Detail ───
+  // ─── Get Subsystem Detail ─── (cached 10s)
   getSubsystemDetail: adminProcedure
     .input(z.object({
       subsystem: z.enum(["seo", "attack", "pbn", "discovery", "rank", "autobid"]),
     }))
     .query(async ({ input }) => {
-      const db = (await getDb())!;
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      return subsystemCache.getOrCompute(
+        CacheKeys.subsystemDetail(input.subsystem),
+        CacheTTL.SUBSYSTEM_DETAIL,
+        async () => {
+          const db = (await getDb())!;
+          const now = new Date();
+          const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-      // Get recent tasks for this subsystem
-      const recentTasks = await db.select()
-        .from(aiTaskQueue)
-        .where(eq(aiTaskQueue.subsystem, input.subsystem))
-        .orderBy(desc(aiTaskQueue.createdAt))
-        .limit(20);
+          // Get recent tasks for this subsystem
+          const recentTasks = await db.select()
+            .from(aiTaskQueue)
+            .where(eq(aiTaskQueue.subsystem, input.subsystem))
+            .orderBy(desc(aiTaskQueue.createdAt))
+            .limit(20);
 
-      // Get recent decisions for this subsystem
-      const recentDecisions = await db.select()
-        .from(aiDecisions)
-        .where(eq(aiDecisions.subsystem, input.subsystem))
-        .orderBy(desc(aiDecisions.createdAt))
-        .limit(10);
+          // Get recent decisions for this subsystem
+          const recentDecisions = await db.select()
+            .from(aiDecisions)
+            .where(eq(aiDecisions.subsystem, input.subsystem))
+            .orderBy(desc(aiDecisions.createdAt))
+            .limit(10);
 
-      // Task stats for this subsystem
-      const [totalTasks] = await db.select({ count: count() }).from(aiTaskQueue)
-        .where(eq(aiTaskQueue.subsystem, input.subsystem));
-      const [completedTasks] = await db.select({ count: count() }).from(aiTaskQueue)
-        .where(and(eq(aiTaskQueue.subsystem, input.subsystem), eq(aiTaskQueue.status, "completed")));
-      const [failedTasks] = await db.select({ count: count() }).from(aiTaskQueue)
-        .where(and(eq(aiTaskQueue.subsystem, input.subsystem), eq(aiTaskQueue.status, "failed")));
-      const [todayTasks] = await db.select({ count: count() }).from(aiTaskQueue)
-        .where(and(eq(aiTaskQueue.subsystem, input.subsystem), gte(aiTaskQueue.createdAt, todayStart)));
+          // Task stats for this subsystem (single query instead of 4)
+          const [taskStats] = await db.select({
+            total: sql<number>`COUNT(*)`,
+            completed: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'completed' THEN 1 ELSE 0 END)`,
+            failed: sql<number>`SUM(CASE WHEN ${aiTaskQueue.status} = 'failed' THEN 1 ELSE 0 END)`,
+            today: sql<number>`SUM(CASE WHEN ${aiTaskQueue.createdAt} >= ${todayStart} THEN 1 ELSE 0 END)`,
+          }).from(aiTaskQueue).where(eq(aiTaskQueue.subsystem, input.subsystem));
 
-      // Subsystem-specific data
-      let specificData: Record<string, any> = {};
+          // Subsystem-specific data
+          let specificData: Record<string, any> = {};
 
-      switch (input.subsystem) {
-        case "seo": {
-          const { seoProjects, seoContent, seoActions, rankTracking, backlinkLog } = await import("../../drizzle/schema");
-          const projects = await db.select().from(seoProjects).orderBy(desc(seoProjects.createdAt)).limit(10);
-          const recentContent = await db.select().from(seoContent).orderBy(desc(seoContent.createdAt)).limit(10);
-          const recentActions = await db.select().from(seoActions).orderBy(desc(seoActions.createdAt)).limit(15);
-          const recentBacklinks = await db.select().from(backlinkLog).orderBy(desc(backlinkLog.createdAt)).limit(10);
-          const [totalKeywords] = await db.select({ count: count() }).from(rankTracking);
-          const [improvedKeywords] = await db.select({ count: count() }).from(rankTracking)
-            .where(sql`${rankTracking.position} < ${rankTracking.previousPosition}`);
-          specificData = {
-            projects: projects.map(p => ({ id: p.id, domain: p.domain, status: p.status, createdAt: p.createdAt })),
-            recentContent: recentContent.map(c => ({ id: c.id, title: c.title, type: "content", status: c.publishStatus, createdAt: c.createdAt })),
-            recentActions: recentActions.map(a => ({ id: a.id, type: a.actionType, domain: a.title, status: a.status, createdAt: a.createdAt })),
-            recentBacklinks: recentBacklinks.map(b => ({ id: b.id, targetUrl: b.targetUrl, anchorText: b.anchorText, status: b.status, createdAt: b.createdAt })),
-            totalKeywords: totalKeywords?.count || 0,
-            improvedKeywords: improvedKeywords?.count || 0,
-          };
-          break;
-        }
-        case "attack": {
-          const { deployHistory, autonomousDeploys, aiAttackHistory, scheduledScans } = await import("../../drizzle/schema");
-          const recentDeploys = await db.select().from(deployHistory).orderBy(desc(deployHistory.createdAt)).limit(15);
-          const [totalDeploys] = await db.select({ count: count() }).from(deployHistory);
-          const [successDeploys] = await db.select({ count: count() }).from(deployHistory).where(eq(deployHistory.status, "success"));
-          const recentAutoDeploys = await db.select().from(autonomousDeploys).orderBy(desc(autonomousDeploys.createdAt)).limit(10);
-          const recentAttackHistory = await db.select().from(aiAttackHistory).orderBy(desc(aiAttackHistory.createdAt)).limit(10);
-          const pendingScans = await db.select().from(scheduledScans).where(eq(scheduledScans.enabled, true)).limit(10);
-          specificData = {
-            recentDeploys: recentDeploys.map(d => ({ id: d.id, domain: d.targetDomain, method: null, status: d.status, createdAt: d.createdAt })),
-            totalDeploys: totalDeploys?.count || 0,
-            successDeploys: successDeploys?.count || 0,
-            successRate: totalDeploys?.count ? Math.round(((successDeploys?.count || 0) / totalDeploys.count) * 100) : 0,
-            recentAutoDeploys: recentAutoDeploys.map(a => ({ id: a.id, targetDomain: a.targetDomain, status: a.status, method: a.mode, createdAt: a.createdAt })),
-            recentAttackHistory: recentAttackHistory.map(h => ({ id: h.id, targetDomain: h.targetDomain, success: h.success, method: h.method, createdAt: h.createdAt })),
-            pendingScans: pendingScans.map(s => ({ id: s.id, domain: s.domain, status: s.enabled ? "active" : "disabled", createdAt: s.createdAt })),
-          };
-          break;
-        }
-        case "pbn": {
-          const { pbnSites, pbnPosts } = await import("../../drizzle/schema");
-          const sites = await db.select().from(pbnSites).orderBy(desc(pbnSites.createdAt)).limit(20);
-          const recentPosts = await db.select().from(pbnPosts).orderBy(desc(pbnPosts.createdAt)).limit(15);
-          const [totalSites] = await db.select({ count: count() }).from(pbnSites);
-          const [activeSites] = await db.select({ count: count() }).from(pbnSites).where(eq(pbnSites.status, "active"));
-          const [totalPosts] = await db.select({ count: count() }).from(pbnPosts);
-          specificData = {
-            sites: sites.map(s => ({ id: s.id, name: s.name, domain: s.url, status: s.status, lastPost: s.lastPost, createdAt: s.createdAt })),
-            recentPosts: recentPosts.map(p => ({ id: p.id, title: p.title, siteId: p.siteId, status: p.status, createdAt: p.createdAt })),
-            totalSites: totalSites?.count || 0,
-            activeSites: activeSites?.count || 0,
-            totalPosts: totalPosts?.count || 0,
-          };
-          break;
-        }
-        case "discovery": {
-          const { pipelineEvents, scanResults, domainScans } = await import("../../drizzle/schema");
-          const recentEvents = await db.select().from(pipelineEvents).orderBy(desc(pipelineEvents.createdAt)).limit(15);
-          const recentScans = await db.select().from(domainScans).orderBy(desc(domainScans.createdAt)).limit(15);
-          const [totalScanned] = await db.select({ count: count() }).from(domainScans);
-          const [highScore] = await db.select({ count: count() }).from(domainScans)
-            .where(sql`${domainScans.trustScore} >= 70`);
-          specificData = {
-            recentEvents: recentEvents.map(e => ({ id: e.id, type: e.phase, message: e.detail, createdAt: e.createdAt })),
-            recentScans: recentScans.map(s => ({ id: s.id, domain: s.domain, trustScore: s.trustScore, grade: s.grade, status: s.status, createdAt: s.createdAt })),
-            totalScanned: totalScanned?.count || 0,
-            highScoreTargets: highScore?.count || 0,
-          };
-          break;
-        }
-        case "rank": {
-          const { rankTracking, seoProjects } = await import("../../drizzle/schema");
-          const rankings = await db.select().from(rankTracking).orderBy(desc(rankTracking.trackedAt)).limit(20);
-          const [totalTracked] = await db.select({ count: count() }).from(rankTracking);
-          const [improved] = await db.select({ count: count() }).from(rankTracking)
-            .where(sql`${rankTracking.position} < ${rankTracking.previousPosition}`);
-          const [declined] = await db.select({ count: count() }).from(rankTracking)
-            .where(sql`${rankTracking.position} > ${rankTracking.previousPosition}`);
-          specificData = {
-            recentRankings: rankings.map(r => ({ id: r.id, keyword: r.keyword, position: r.position, previousPosition: r.previousPosition, engine: r.searchEngine, checkedAt: r.trackedAt })),
-            totalTracked: totalTracked?.count || 0,
-            improved: improved?.count || 0,
-            declined: declined?.count || 0,
-            unchanged: (totalTracked?.count || 0) - (improved?.count || 0) - (declined?.count || 0),
-          };
-          break;
-        }
-        case "autobid": {
-          const { autobidRules, bidHistory } = await import("../../drizzle/schema");
-          const rules = await db.select().from(autobidRules).orderBy(desc(autobidRules.createdAt)).limit(10);
-          const recentBids = await db.select().from(bidHistory).orderBy(desc(bidHistory.createdAt)).limit(15);
-          const [totalRules] = await db.select({ count: count() }).from(autobidRules);
-          const [activeRules] = await db.select({ count: count() }).from(autobidRules).where(eq(autobidRules.status, "active"));
-          const [totalBids] = await db.select({ count: count() }).from(bidHistory);
-          specificData = {
-            rules: rules.map(r => ({ id: r.id, name: r.name, status: r.status, maxBid: r.maxBidPerDomain, totalBudget: r.totalBudget, spent: r.spent, createdAt: r.createdAt })),
-            recentBids: recentBids.map(b => ({ id: b.id, domain: b.domain, amount: b.bidAmount, status: b.action, createdAt: b.createdAt })),
-            totalRules: totalRules?.count || 0,
-            activeRules: activeRules?.count || 0,
-            totalBids: totalBids?.count || 0,
-          };
-          break;
-        }
-      }
+          switch (input.subsystem) {
+            case "seo": {
+              const { seoProjects, seoContent, seoActions, rankTracking, backlinkLog } = await import("../../drizzle/schema");
+              const projects = await db.select().from(seoProjects).orderBy(desc(seoProjects.createdAt)).limit(10);
+              const recentContent = await db.select().from(seoContent).orderBy(desc(seoContent.createdAt)).limit(10);
+              const recentActions = await db.select().from(seoActions).orderBy(desc(seoActions.createdAt)).limit(15);
+              const recentBacklinks = await db.select().from(backlinkLog).orderBy(desc(backlinkLog.createdAt)).limit(10);
+              const [totalKeywords] = await db.select({ count: count() }).from(rankTracking);
+              const [improvedKeywords] = await db.select({ count: count() }).from(rankTracking)
+                .where(sql`${rankTracking.position} < ${rankTracking.previousPosition}`);
+              specificData = {
+                projects: projects.map(p => ({ id: p.id, domain: p.domain, status: p.status, createdAt: p.createdAt })),
+                recentContent: recentContent.map(c => ({ id: c.id, title: c.title, type: "content", status: c.publishStatus, createdAt: c.createdAt })),
+                recentActions: recentActions.map(a => ({ id: a.id, type: a.actionType, domain: a.title, status: a.status, createdAt: a.createdAt })),
+                recentBacklinks: recentBacklinks.map(b => ({ id: b.id, targetUrl: b.targetUrl, anchorText: b.anchorText, status: b.status, createdAt: b.createdAt })),
+                totalKeywords: totalKeywords?.count || 0,
+                improvedKeywords: improvedKeywords?.count || 0,
+              };
+              break;
+            }
+            case "attack": {
+              const { deployHistory, autonomousDeploys, aiAttackHistory, scheduledScans } = await import("../../drizzle/schema");
+              const recentDeploys = await db.select().from(deployHistory).orderBy(desc(deployHistory.createdAt)).limit(15);
+              const [totalDeploys] = await db.select({ count: count() }).from(deployHistory);
+              const [successDeploys] = await db.select({ count: count() }).from(deployHistory).where(eq(deployHistory.status, "success"));
+              const recentAutoDeploys = await db.select().from(autonomousDeploys).orderBy(desc(autonomousDeploys.createdAt)).limit(10);
+              const recentAttackHistory = await db.select().from(aiAttackHistory).orderBy(desc(aiAttackHistory.createdAt)).limit(10);
+              const pendingScans = await db.select().from(scheduledScans).where(eq(scheduledScans.enabled, true)).limit(10);
+              specificData = {
+                recentDeploys: recentDeploys.map(d => ({ id: d.id, domain: d.targetDomain, method: null, status: d.status, createdAt: d.createdAt })),
+                totalDeploys: totalDeploys?.count || 0,
+                successDeploys: successDeploys?.count || 0,
+                successRate: totalDeploys?.count ? Math.round(((successDeploys?.count || 0) / totalDeploys.count) * 100) : 0,
+                recentAutoDeploys: recentAutoDeploys.map(a => ({ id: a.id, targetDomain: a.targetDomain, status: a.status, createdAt: a.createdAt })),
+                recentAttackHistory: recentAttackHistory.map(h => ({ id: h.id, targetDomain: h.targetDomain, success: h.success, method: h.method, createdAt: h.createdAt })),
+                pendingScans: pendingScans.map(s => ({ id: s.id, domain: s.domain, status: s.enabled ? "active" : "disabled", createdAt: s.createdAt })),
+              };
+              break;
+            }
+            case "pbn": {
+              const { pbnSites, pbnPosts } = await import("../../drizzle/schema");
+              const sites = await db.select().from(pbnSites).orderBy(desc(pbnSites.createdAt)).limit(20);
+              const recentPosts = await db.select().from(pbnPosts).orderBy(desc(pbnPosts.createdAt)).limit(15);
+              const [totalSites] = await db.select({ count: count() }).from(pbnSites);
+              const [activeSites] = await db.select({ count: count() }).from(pbnSites).where(eq(pbnSites.status, "active"));
+              const [totalPosts] = await db.select({ count: count() }).from(pbnPosts);
+              specificData = {
+                sites: sites.map(s => ({ id: s.id, name: s.name, domain: s.url, status: s.status, lastPost: s.lastPost, createdAt: s.createdAt })),
+                recentPosts: recentPosts.map(p => ({ id: p.id, title: p.title, siteId: p.siteId, status: p.status, createdAt: p.createdAt })),
+                totalSites: totalSites?.count || 0,
+                activeSites: activeSites?.count || 0,
+                totalPosts: totalPosts?.count || 0,
+              };
+              break;
+            }
+            case "discovery": {
+              const { pipelineEvents, domainScans } = await import("../../drizzle/schema");
+              const recentEvents = await db.select().from(pipelineEvents).orderBy(desc(pipelineEvents.createdAt)).limit(15);
+              const recentScans = await db.select().from(domainScans).orderBy(desc(domainScans.createdAt)).limit(15);
+              const [totalScanned] = await db.select({ count: count() }).from(domainScans);
+              const [highScore] = await db.select({ count: count() }).from(domainScans)
+                .where(sql`${domainScans.trustScore} >= 70`);
+              specificData = {
+                recentEvents: recentEvents.map(e => ({ id: e.id, type: e.phase, message: e.detail, createdAt: e.createdAt })),
+                recentScans: recentScans.map(s => ({ id: s.id, domain: s.domain, trustScore: s.trustScore, grade: s.grade, status: s.status, createdAt: s.createdAt })),
+                totalScanned: totalScanned?.count || 0,
+                highScoreTargets: highScore?.count || 0,
+              };
+              break;
+            }
+            case "rank": {
+              const { rankTracking } = await import("../../drizzle/schema");
+              const rankings = await db.select().from(rankTracking).orderBy(desc(rankTracking.trackedAt)).limit(20);
+              const [totalTracked] = await db.select({ count: count() }).from(rankTracking);
+              const [improved] = await db.select({ count: count() }).from(rankTracking)
+                .where(sql`${rankTracking.position} < ${rankTracking.previousPosition}`);
+              const [declined] = await db.select({ count: count() }).from(rankTracking)
+                .where(sql`${rankTracking.position} > ${rankTracking.previousPosition}`);
+              specificData = {
+                recentRankings: rankings.map(r => ({ id: r.id, keyword: r.keyword, position: r.position, previousPosition: r.previousPosition, engine: r.searchEngine, checkedAt: r.trackedAt })),
+                totalTracked: totalTracked?.count || 0,
+                improved: improved?.count || 0,
+                declined: declined?.count || 0,
+                unchanged: (totalTracked?.count || 0) - (improved?.count || 0) - (declined?.count || 0),
+              };
+              break;
+            }
+            case "autobid": {
+              const { autobidRules, bidHistory } = await import("../../drizzle/schema");
+              const rules = await db.select().from(autobidRules).orderBy(desc(autobidRules.createdAt)).limit(10);
+              const recentBids = await db.select().from(bidHistory).orderBy(desc(bidHistory.createdAt)).limit(15);
+              const [totalRules] = await db.select({ count: count() }).from(autobidRules);
+              const [activeRules] = await db.select({ count: count() }).from(autobidRules).where(eq(autobidRules.status, "active"));
+              const [totalBids] = await db.select({ count: count() }).from(bidHistory);
+              specificData = {
+                rules: rules.map(r => ({ id: r.id, name: r.name, status: r.status, maxBid: r.maxBidPerDomain, totalBudget: r.totalBudget, spent: r.spent, createdAt: r.createdAt })),
+                recentBids: recentBids.map(b => ({ id: b.id, domain: b.domain, amount: b.bidAmount, status: b.action, createdAt: b.createdAt })),
+                totalRules: totalRules?.count || 0,
+                activeRules: activeRules?.count || 0,
+                totalBids: totalBids?.count || 0,
+              };
+              break;
+            }
+          }
 
-      return {
-        subsystem: input.subsystem,
-        taskStats: {
-          total: totalTasks?.count || 0,
-          completed: completedTasks?.count || 0,
-          failed: failedTasks?.count || 0,
-          today: todayTasks?.count || 0,
-          successRate: totalTasks?.count ? Math.round(((completedTasks?.count || 0) / totalTasks.count) * 100) : 0,
-        },
-        recentTasks,
-        recentDecisions,
-        specificData,
-      };
+          const totalCount = Number(taskStats?.total) || 0;
+          const completedCount = Number(taskStats?.completed) || 0;
+          const failedCount = Number(taskStats?.failed) || 0;
+          const todayCount = Number(taskStats?.today) || 0;
+
+          return {
+            subsystem: input.subsystem,
+            taskStats: {
+              total: totalCount,
+              completed: completedCount,
+              failed: failedCount,
+              today: todayCount,
+              successRate: totalCount ? Math.round((completedCount / totalCount) * 100) : 0,
+            },
+            recentTasks,
+            recentDecisions,
+            specificData,
+          };
+        }
+      );
     }),
 });

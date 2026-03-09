@@ -1,0 +1,8 @@
+{
+  "query": "CREATE INDEX idx_decision_subsystem ON ai_decisions(decisionSubsystem); CREATE INDEX idx_decision_created ON ai_decisions(decisionCreatedAt); CREATE INDEX idx_decision_cycle ON ai_decisions(decisionCycle); CREATE INDEX idx_metrics_date ON ai_metrics(metricDate); CREATE INDEX idx_metrics_type ON ai_metrics(metricType)",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute CREATE INDEX idx_decision_subsystem ON ai_decisions(decisionSubsystem); CREATE INDEX idx_decision_created ON ai_decisions(decisionCreatedAt); CREATE INDEX idx_decision_cycle ON ai_decisions(decisionCycle); CREATE INDEX idx_metrics_date ON ai_metrics(metricDate); CREATE INDEX idx_metrics_type ON ai_metrics(metricType)",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1061 (42000) at line 1: Duplicate key name 'idx_decision_subsystem'"
+  ]
+}
