@@ -7,7 +7,20 @@ import superjson from "superjson";
 import App from "./App";
 import "./index.css";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,          // Data stays fresh for 30s — prevents redundant refetches
+      gcTime: 5 * 60_000,         // Cache kept for 5 min after last use
+      refetchOnWindowFocus: false, // Don't refetch every time user switches tabs
+      refetchOnReconnect: true,    // Do refetch when network reconnects
+      retry: 1,                    // Only 1 retry on failure (faster error display)
+    },
+    mutations: {
+      retry: 0,                    // No retry on mutations — let user decide
+    },
+  },
+});
 
 const PUBLIC_PATHS = ["/login", "/register"];
 
