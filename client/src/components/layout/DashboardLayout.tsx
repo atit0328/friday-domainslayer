@@ -1,7 +1,7 @@
 /**
  * Design: Obsidian Intelligence — Dark Luxury Dashboard Layout
  * Sidebar + Header + Content area with frosted glass aesthetic
- * Mobile: sidebar as overlay with backdrop, touch-friendly
+ * Mobile: sidebar as overlay with backdrop, touch-friendly scrolling
  */
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
@@ -21,11 +21,30 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Prevent body scroll when mobile sidebar is open
   useEffect(() => {
     if (sidebarOpen) {
+      // Save current scroll position
+      const scrollY = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.left = "0";
+      document.body.style.right = "0";
       document.body.style.overflow = "hidden";
     } else {
+      // Restore scroll position
+      const scrollY = document.body.style.top;
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.left = "";
+      document.body.style.right = "";
       document.body.style.overflow = "";
+      if (scrollY) {
+        window.scrollTo(0, parseInt(scrollY || "0") * -1);
+      }
     }
     return () => {
+      document.body.style.position = "";
+      document.body.style.top = "";
+      document.body.style.left = "";
+      document.body.style.right = "";
       document.body.style.overflow = "";
     };
   }, [sidebarOpen]);
@@ -57,12 +76,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      {/* Main content — NO overflow-hidden to allow mobile scrolling */}
+      <div className="flex-1 flex flex-col min-w-0">
         <Header
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
         />
-        <main className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
+        <main className="flex-1 p-3 sm:p-4 md:p-6" style={{ WebkitOverflowScrolling: "touch" }}>
           <div className="animate-fade-in-up">
             {children}
           </div>

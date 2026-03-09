@@ -210,3 +210,20 @@
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+
+/* Ensure smooth touch scrolling on iOS */
+html, body {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: auto;
+}
+
+/* Fix iOS momentum scrolling for scroll containers */
+[class*="overflow-y-auto"],
+[class*="overflow-auto"] {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent layout shift when body scroll is locked for modals/sidebar */
+body[style*="position: fixed"] {
+  width: 100%;
+}

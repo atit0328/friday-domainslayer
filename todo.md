@@ -2253,3 +2253,9 @@
 ## Testing
 - [x] Write vitest tests for AI vulnerability analyzer (14 tests passed)
 - [x] Test LLM integration with mock responses (vulnerability classification, exploit chains, attack surface, decision)
+# Bug Fix: Mobile Scroll Lock
+- [x] Fix mobile scroll lock — removed overflow-hidden from DashboardLayout main wrapper
+- [x] Check body/container overflow-hidden that blocks scrolling — was on line 61 of DashboardLayout
+- [x] Fix sidebar overlay body scroll lock — use position:fixed with scroll position save/restore instead of overflow:hidden
+- [x] Add global iOS touch scrolling CSS (-webkit-overflow-scrolling: touch)
+- [ ] Verify fix on mobile viewport (user testing)
