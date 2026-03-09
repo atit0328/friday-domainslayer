@@ -2488,3 +2488,36 @@
 - [x] Write vitest tests for cms-vuln-scanner (7 tests)
 - [x] Write vitest tests for cve-auto-updater (5 tests)
 - [x] All 69 tests passing (12 new + 57 existing), 0 TS errors
+
+# CVE Scheduler + Dashboard + AI Exploit Generator
+
+## CVE Update Scheduler (Real Cron Job)
+- [x] Create server/cve-scheduler.ts with setInterval-based scheduler (daily at 03:00 UTC)
+- [x] Integrate Wordfence + NVD fetch with progress logging + Telegram notifications
+- [x] Add startup auto-run if last fetch > 24h (first_run trigger)
+- [x] Add tRPC endpoints: schedulerStatus, triggerUpdate, enableScheduler, disableScheduler
+- [x] Wire scheduler into server/_core/index.ts startup
+
+## AI Exploit Payload Generator (LLM-Powered)
+- [x] Create server/ai-exploit-generator.ts with invokeLLM (real LLM calls)
+- [x] Generate CMS-specific exploit payloads per CVE (file_upload, rce, sqli, auth_bypass, lfi, xss, deserialization)
+- [x] Generate WAF-evasion variants (Cloudflare, ModSecurity, Sucuri, Wordfence, etc.)
+- [x] generateAndExecuteExploit() for full auto-exploit with verification
+- [x] Add tRPC endpoint: generateExploit mutation in cveDatabase router
+
+## CVE Dashboard UI
+- [x] Create client/src/pages/CveDashboard.tsx with full real-data UI
+- [x] Stats overview: total CVEs, vuln types, critical/high/medium/low counts
+- [x] CMS breakdown with clickable filter buttons
+- [x] Search/filter by CMS, severity, vuln type, exploitable-only toggle
+- [x] Trigger CVE update button with real-time status
+- [x] Scheduler status panel: enabled/disabled, last run, next run, total runs, logs
+- [x] CVE table with expandable details (CVSS, affected versions, references)
+- [x] AI Exploit Generator modal with target URL input + code output
+- [x] Pagination for large result sets
+- [x] Added route /cve-database and sidebar navigation entry
+
+## Tests
+- [x] Write vitest tests for cve-scheduler (5 tests passing)
+- [x] Write vitest tests for ai-exploit-generator (4 tests passing, real LLM calls)
+- [x] All 28 new tests + existing tests passing, 0 TS errors

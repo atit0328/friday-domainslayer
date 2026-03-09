@@ -13,6 +13,7 @@ import { serveStatic, setupVite } from "./vite";
 import { startScheduler } from "../seo-scheduler";
 import { startProxyScheduler } from "../routers/proxy";
 import { startScanScheduler } from "../scan-scheduler";
+import { startCveScheduler } from "../cve-scheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -77,6 +78,8 @@ async function startServer() {
     startProxyScheduler(30 * 60 * 1000);
     // Start vulnerability scan scheduler (every 15 minutes)
     startScanScheduler();
+    // Start CVE auto-update scheduler (daily at 03:00 UTC)
+    startCveScheduler();
   });
 }
 
