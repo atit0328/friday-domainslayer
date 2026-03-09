@@ -2344,3 +2344,13 @@
 
 # Admin Accounts
 - [x] Add admin: dexstepbankzy@gmail.com
+
+# Subsystem Detail Views in AI Command Center
+- [x] Add clickable subsystem cards that expand to show detailed info
+- [x] SEO Engine detail: active projects, recent tasks, content stats, rank changes
+- [x] Attack Engine detail: recent deploys, success rate, pipeline runs, targets
+- [x] PBN Network detail: active sites, recent posts, interlink status, health
+- [x] Discovery detail: recent discoveries, scoring, high-value targets
+- [x] Rank Tracking detail: tracked keywords, position changes, trends
+- [x] Auto-Bid detail: active rules, recent bids, budget usage
+- [x] Backend procedures to fetch subsystem-specific data (getSubsystemDetail)

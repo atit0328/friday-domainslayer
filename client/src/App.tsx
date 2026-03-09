@@ -101,6 +101,24 @@ function SuperadminGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * Admin guard — redirects non-admin/non-superadmin to home
+ */
+function AdminGuard({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+      </div>
+    );
+  }
+  if (!user || (user.role !== "superadmin" && user.role !== "admin")) {
+    return <Redirect to="/" />;
+  }
+  return <>{children}</>;
+}
+
+/**
  * Protected routes — wrapped in DashboardLayout + AuthGuard
  */
 function ProtectedRouter() {
@@ -132,7 +150,7 @@ function ProtectedRouter() {
         <Route path="/proxy-dashboard">{() => <SuperadminGuard><ProxyDashboard /></SuperadminGuard>}</Route>
         <Route path="/mass-discovery">{() => <SuperadminGuard><MassDiscovery /></SuperadminGuard>}</Route>
         <Route path="/scheduled-scans">{() => <SuperadminGuard><ScheduledScans /></SuperadminGuard>}</Route>
-        <Route path="/ai-command-center">{() => <SuperadminGuard><AutonomousCommandCenter /></SuperadminGuard>}</Route>
+        <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

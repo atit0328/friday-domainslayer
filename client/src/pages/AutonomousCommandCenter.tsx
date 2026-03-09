@@ -40,10 +40,12 @@ import {
   ListTodo,
   Loader2,
 } from "lucide-react";
+import SubsystemDetailSheet from "@/components/SubsystemDetailSheet";
 
 export default function AutonomousCommandCenter() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
+  const [detailSubsystem, setDetailSubsystem] = useState<"seo" | "attack" | "pbn" | "discovery" | "rank" | "autobid" | null>(null);
 
   // ─── Data Queries ───
   const stateQuery = trpc.orchestrator.getState.useQuery(undefined, {
@@ -231,6 +233,7 @@ export default function AutonomousCommandCenter() {
               title="SEO Engine"
               icon={<TrendingUp className="h-5 w-5 text-emerald-400" />}
               enabled={state?.seoEnabled}
+              onClick={() => setDetailSubsystem("seo")}
               stats={[
                 { label: "Active Projects", value: worldState?.seo?.activeProjects || 0 },
                 { label: "Content Pending", value: worldState?.seo?.contentPending || 0 },
@@ -241,6 +244,7 @@ export default function AutonomousCommandCenter() {
               title="Attack Engine"
               icon={<Target className="h-5 w-5 text-red-400" />}
               enabled={state?.attackEnabled}
+              onClick={() => setDetailSubsystem("attack")}
               stats={[
                 { label: "Total Deploys", value: worldState?.attack?.totalDeploys || 0 },
                 { label: "Successful", value: worldState?.attack?.successfulDeploys || 0 },
@@ -251,6 +255,7 @@ export default function AutonomousCommandCenter() {
               title="PBN Network"
               icon={<Network className="h-5 w-5 text-blue-400" />}
               enabled={state?.pbnEnabled}
+              onClick={() => setDetailSubsystem("pbn")}
               stats={[
                 { label: "Active Sites", value: worldState?.pbn?.activeSites || 0 },
                 { label: "Down Sites", value: worldState?.pbn?.downSites || 0 },
@@ -261,6 +266,7 @@ export default function AutonomousCommandCenter() {
               title="Discovery"
               icon={<Globe className="h-5 w-5 text-cyan-400" />}
               enabled={state?.discoveryEnabled}
+              onClick={() => setDetailSubsystem("discovery")}
               stats={[
                 { label: "Found Today", value: worldState?.discovery?.targetsDiscoveredToday || 0 },
                 { label: "High Value", value: worldState?.discovery?.highValueTargets || 0 },
@@ -270,6 +276,7 @@ export default function AutonomousCommandCenter() {
               title="Rank Tracking"
               icon={<BarChart3 className="h-5 w-5 text-yellow-400" />}
               enabled={state?.rankTrackingEnabled}
+              onClick={() => setDetailSubsystem("rank")}
               stats={[
                 { label: "Total Tracked", value: worldState?.rank?.totalTracked || 0 },
                 { label: "Improved", value: worldState?.rank?.improved || 0 },
@@ -280,6 +287,7 @@ export default function AutonomousCommandCenter() {
               title="Auto-Bid"
               icon={<Shield className="h-5 w-5 text-orange-400" />}
               enabled={state?.autobidEnabled}
+              onClick={() => setDetailSubsystem("autobid")}
               stats={[
                 { label: "Active Rules", value: worldState?.autobid?.activeRules || 0 },
                 { label: "Budget Left", value: `$${(worldState?.autobid?.totalBudgetRemaining || 0).toFixed(0)}` },
@@ -573,11 +581,17 @@ export default function AutonomousCommandCenter() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* ─── Subsystem Detail Sheet ─── */}
+      <SubsystemDetailSheet
+        open={detailSubsystem !== null}
+        onOpenChange={(open) => { if (!open) setDetailSubsystem(null); }}
+        subsystem={detailSubsystem}
+      />
     </div>
   );
 }
-
-// ─── Sub-components ───
+// ─── Sub-components ────
 
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number | string; color: string }) {
   return (
@@ -600,14 +614,19 @@ function WorldStateCard({
   icon,
   enabled,
   stats,
+  onClick,
 }: {
   title: string;
   icon: React.ReactNode;
   enabled?: boolean;
   stats: { label: string; value: number | string }[];
+  onClick?: () => void;
 }) {
   return (
-    <Card className={`bg-zinc-900/50 border-zinc-800 ${!enabled ? "opacity-50" : ""}`}>
+    <Card
+      className={`bg-zinc-900/50 border-zinc-800 transition-all cursor-pointer hover:border-zinc-600 hover:bg-zinc-800/50 ${!enabled ? "opacity-50" : ""}`}
+      onClick={onClick}
+    >
       <CardContent className="py-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
