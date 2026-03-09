@@ -1,0 +1,40 @@
+CREATE TABLE `cve_database` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`cveId` varchar(32),
+	`source` varchar(32) NOT NULL,
+	`cms` varchar(32) NOT NULL,
+	`softwareType` varchar(32) NOT NULL,
+	`softwareSlug` varchar(128) NOT NULL,
+	`softwareName` varchar(255),
+	`title` text NOT NULL,
+	`description` text,
+	`vulnType` varchar(64),
+	`severity` varchar(16),
+	`cvssScore` decimal(3,1),
+	`affectedFrom` varchar(32),
+	`affectedTo` varchar(32),
+	`patched` boolean DEFAULT false,
+	`patchedVersion` varchar(32),
+	`exploitAvailable` boolean DEFAULT false,
+	`exploitEndpoint` text,
+	`exploitMethod` varchar(8),
+	`reference` text,
+	`publishedAt` timestamp,
+	`cveUpdatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	`fetchedAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `cve_database_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `cve_fetch_log` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`source` varchar(32) NOT NULL,
+	`fetchType` varchar(32) NOT NULL,
+	`totalFetched` int NOT NULL DEFAULT 0,
+	`newAdded` int NOT NULL DEFAULT 0,
+	`updated` int NOT NULL DEFAULT 0,
+	`errors` int NOT NULL DEFAULT 0,
+	`durationMs` int NOT NULL DEFAULT 0,
+	`details` json,
+	`fetchLogCreatedAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `cve_fetch_log_id` PRIMARY KEY(`id`)
+);

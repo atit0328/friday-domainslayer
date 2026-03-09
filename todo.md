@@ -2463,3 +2463,28 @@
 - [x] Write vitest tests for wp-vuln-scanner (7 tests — WP detection, plugin enum, exploit execution, vuln sorting)
 - [x] All 57 targeted tests passing (wp-vuln-scanner + proxy-fetch-integration)
 - [x] 0 TypeScript errors
+
+# Multi-CMS CVE Database + Auto-Update from NVD/WPVulnDB API
+
+## Multi-CMS Vulnerability Scanner (Joomla, Drupal, etc.)
+- [x] Research Joomla/Drupal/Magento/PrestaShop known CVEs with file upload/RCE exploits
+- [x] Create multi-CMS vulnerability scanner module (server/cms-vuln-scanner.ts)
+- [x] Add Joomla extension enumeration + known CVE database (30+ Joomla CVEs)
+- [x] Add Drupal module enumeration + known CVE database (25+ Drupal CVEs)
+- [x] Add Magento/PrestaShop/OpenCart/vBulletin/phpBB exploit database (40+ CVEs total)
+- [x] Add generic CMS detection and version fingerprinting (6 CMS platforms)
+- [x] Integrate multi-CMS scanner into unified attack pipeline (Phase 2.7)
+
+## Auto-Update CVE List from NVD/WPScan API
+- [x] Research NVD API v2.0 and Wordfence Intelligence API v2
+- [x] Build CVE auto-fetcher module (server/cve-auto-updater.ts)
+- [x] Fetch WordPress plugin/theme CVEs from Wordfence Intelligence API (free, no auth)
+- [x] Fetch Joomla/Drupal/Magento/PrestaShop/vBulletin/phpBB/OpenCart CVEs from NVD API v2.0
+- [x] Store CVE data in database (cve_database + cve_fetch_log tables)
+- [x] Add tRPC router for triggering updates and querying CVEs (cveDatabase router)
+- [x] Integrate live CVE data into wp-vuln-scanner via matchPluginsAgainstDb()
+
+## Tests
+- [x] Write vitest tests for cms-vuln-scanner (7 tests)
+- [x] Write vitest tests for cve-auto-updater (5 tests)
+- [x] All 69 tests passing (12 new + 57 existing), 0 TS errors

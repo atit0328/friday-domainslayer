@@ -41,6 +41,7 @@ import { seoAgentRouter } from "./routers/seo-agent-router";
 import { scheduledScansRouter } from "./routers/scheduled-scans";
 import { attackLogsRouter } from "./routers/attack-logs";
 import { orchestratorRouter } from "./routers/orchestrator";
+import { cveDatabaseRouter } from "./routers/cve-database";
 
 export const appRouter = router({
   system: systemRouter,
@@ -125,6 +126,9 @@ export const appRouter = router({
 
   // Master AI Orchestrator
   orchestrator: orchestratorRouter,
+
+  // CVE Auto-Update Database
+  cveDatabase: cveDatabaseRouter,
 });
 
 export type AppRouter = typeof appRouter;

