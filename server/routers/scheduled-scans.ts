@@ -3,7 +3,7 @@
  * Manages automated periodic vulnerability scanning
  */
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router, isAdminUser } from "../_core/trpc";
 import { getDb } from "../db";
 import { scheduledScans, scanResults } from "../../drizzle/schema";
 import { desc, eq, and, count, sql } from "drizzle-orm";
@@ -18,10 +18,11 @@ export const scheduledScansRouter = router({
     const database = await getDb();
     if (!database) return [];
 
+    const listWhere = isAdminUser(ctx.user) ? undefined : eq(scheduledScans.userId, ctx.user.id);
     return database
       .select()
       .from(scheduledScans)
-      .where(eq(scheduledScans.userId, ctx.user.id))
+      .where(listWhere)
       .orderBy(desc(scheduledScans.createdAt));
   }),
 
@@ -32,13 +33,12 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) return null;
 
+      const getCond: any[] = [eq(scheduledScans.id, input.id)];
+      if (!isAdminUser(ctx.user)) getCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, input.id),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...getCond));
 
       if (!scan) return null;
 
@@ -145,14 +145,13 @@ export const scheduledScansRouter = router({
 
       const { id, ...updates } = input;
 
-      // Verify ownership
+      // Verify ownership (admin can edit any)
+      const updCond: any[] = [eq(scheduledScans.id, id)];
+      if (!isAdminUser(ctx.user)) updCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, id),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...updCond));
 
       if (!scan) throw new Error("Scan not found");
 
@@ -194,14 +193,13 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) throw new Error("Database not available");
 
-      // Verify ownership
+      // Verify ownership (admin can delete any)
+      const delCond: any[] = [eq(scheduledScans.id, input.id)];
+      if (!isAdminUser(ctx.user)) delCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, input.id),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...delCond));
 
       if (!scan) throw new Error("Scan not found");
 
@@ -220,13 +218,12 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) throw new Error("Database not available");
 
+      const togCond: any[] = [eq(scheduledScans.id, input.id)];
+      if (!isAdminUser(ctx.user)) togCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, input.id),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...togCond));
 
       if (!scan) throw new Error("Scan not found");
 
@@ -258,14 +255,13 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) return { results: [], total: 0 };
 
-      // Verify ownership
+      // Verify ownership (admin can view any)
+      const resCond: any[] = [eq(scheduledScans.id, input.scanId)];
+      if (!isAdminUser(ctx.user)) resCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, input.scanId),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...resCond));
 
       if (!scan) return { results: [], total: 0 };
 
@@ -297,13 +293,12 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) return null;
 
+      const rdCond: any[] = [eq(scanResults.id, input.resultId)];
+      if (!isAdminUser(ctx.user)) rdCond.push(eq(scanResults.userId, ctx.user.id));
       const [result] = await database
         .select()
         .from(scanResults)
-        .where(and(
-          eq(scanResults.id, input.resultId),
-          eq(scanResults.userId, ctx.user.id),
-        ));
+        .where(and(...rdCond));
 
       return result || null;
     }),
@@ -315,14 +310,13 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) throw new Error("Database not available");
 
-      // Verify ownership
+      // Verify ownership (admin can run any)
+      const runCond: any[] = [eq(scheduledScans.id, input.id)];
+      if (!isAdminUser(ctx.user)) runCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, input.id),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...runCond));
 
       if (!scan) throw new Error("Scan not found");
       if (scan.lastRunStatus === "running") throw new Error("Scan is already running");
@@ -346,14 +340,13 @@ export const scheduledScansRouter = router({
       const database = await getDb();
       if (!database) throw new Error("Database not available");
 
-      // Verify ownership
+      // Verify ownership (admin can remediate any)
+      const remCond: any[] = [eq(scheduledScans.id, input.scanId)];
+      if (!isAdminUser(ctx.user)) remCond.push(eq(scheduledScans.userId, ctx.user.id));
       const [scan] = await database
         .select()
         .from(scheduledScans)
-        .where(and(
-          eq(scheduledScans.id, input.scanId),
-          eq(scheduledScans.userId, ctx.user.id),
-        ));
+        .where(and(...remCond));
 
       if (!scan) throw new Error("Scan not found");
 
@@ -450,28 +443,28 @@ export const scheduledScansRouter = router({
     const database = await getDb();
     if (!database) return { totalScans: 0, activeScans: 0, totalResults: 0, totalFindings: 0 };
 
+    const scanUserCond = isAdminUser(ctx.user) ? undefined : eq(scheduledScans.userId, ctx.user.id);
+    const resultUserCond = isAdminUser(ctx.user) ? undefined : eq(scanResults.userId, ctx.user.id);
+
     const [totalScans] = await database
       .select({ count: count() })
       .from(scheduledScans)
-      .where(eq(scheduledScans.userId, ctx.user.id));
+      .where(scanUserCond);
 
     const [activeScans] = await database
       .select({ count: count() })
       .from(scheduledScans)
-      .where(and(
-        eq(scheduledScans.userId, ctx.user.id),
-        eq(scheduledScans.enabled, true),
-      ));
+      .where(scanUserCond ? and(scanUserCond, eq(scheduledScans.enabled, true)) : eq(scheduledScans.enabled, true));
 
     const [totalResults] = await database
       .select({ count: count() })
       .from(scanResults)
-      .where(eq(scanResults.userId, ctx.user.id));
+      .where(resultUserCond);
 
     const [findingsSum] = await database
       .select({ total: sql<number>`COALESCE(SUM(${scanResults.totalFindings}), 0)` })
       .from(scanResults)
-      .where(eq(scanResults.userId, ctx.user.id));
+      .where(resultUserCond);
 
     return {
       totalScans: totalScans?.count || 0,

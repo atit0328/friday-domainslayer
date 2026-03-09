@@ -1,8 +1,9 @@
 /**
  * Attack Logs Router — tRPC endpoints for viewing attack pipeline logs
+ * Admin/superadmin sees ALL users' data
  */
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
+import { router, protectedProcedure, isAdminUser } from "../_core/trpc";
 import {
   getAttackLogs,
   getAttackLogStats,
@@ -14,6 +15,16 @@ import { getDb } from "../db";
 import { attackLogs } from "../../drizzle/schema";
 import { deployHistory } from "../../drizzle/schema";
 import { eq, sql, desc, and, gte, count, or } from "drizzle-orm";
+
+/** Build userId condition: admin sees all, regular user sees own + legacy(0) */
+function userLogCondition(userId: number, admin: boolean) {
+  if (admin) return undefined; // no filter
+  return or(eq(attackLogs.userId, userId), eq(attackLogs.userId, 0));
+}
+function userDeployCondition(userId: number, admin: boolean) {
+  if (admin) return undefined;
+  return eq(deployHistory.userId, userId);
+}
 
 export const attackLogsRouter = router({
   /**
@@ -66,10 +77,19 @@ export const attackLogsRouter = router({
 
   /**
    * Get recent logs across all deploys (for dashboard)
+   * Admin sees all logs, regular user sees own + legacy
    */
   recent: protectedProcedure
     .input(z.object({ limit: z.number().min(1).max(200).default(50) }))
     .query(async ({ ctx, input }) => {
+      if (isAdminUser(ctx.user)) {
+        // Admin: get all recent logs without userId filter
+        const db = await getDb();
+        if (!db) return [];
+        return db.select().from(attackLogs)
+          .orderBy(desc(attackLogs.timestamp))
+          .limit(input.limit);
+      }
       return getRecentAttackLogs(ctx.user!.id, input.limit);
     }),
 
@@ -129,6 +149,7 @@ export const attackLogsRouter = router({
 
   /**
    * Dashboard aggregate stats — success rates, failure patterns, best methods
+   * Admin sees all data, regular user sees own + legacy
    */
   dashboardStats: protectedProcedure
     .input(z.object({
@@ -138,19 +159,21 @@ export const attackLogsRouter = router({
       const db = await getDb();
       if (!db) return null;
 
+      const admin = isAdminUser(ctx.user);
       const since = new Date(Date.now() - input.days * 24 * 60 * 60 * 1000);
 
       // 1. Total deploys and success rate from deploy_history
+      const deployConditions: any[] = [gte(deployHistory.createdAt, since)];
+      const udc = userDeployCondition(ctx.user!.id, admin);
+      if (udc) deployConditions.push(udc);
+
       const deploys = await db
         .select({
           status: deployHistory.status,
           cnt: count(),
         })
         .from(deployHistory)
-        .where(and(
-          eq(deployHistory.userId, ctx.user!.id),
-          gte(deployHistory.createdAt, since),
-        ))
+        .where(and(...deployConditions))
         .groupBy(deployHistory.status);
 
       const deployStats = {
@@ -170,16 +193,17 @@ export const attackLogsRouter = router({
       }
 
       // 2. Log severity breakdown
+      const logConditions: any[] = [gte(attackLogs.timestamp, since)];
+      const ulc = userLogCondition(ctx.user!.id, admin);
+      if (ulc) logConditions.push(ulc);
+
       const severityRows = await db
         .select({
           severity: attackLogs.severity,
           cnt: count(),
         })
         .from(attackLogs)
-        .where(and(
-          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
-          gte(attackLogs.timestamp, since),
-        ))
+        .where(and(...logConditions))
         .groupBy(attackLogs.severity);
 
       const severityStats: Record<string, number> = {};
@@ -194,10 +218,7 @@ export const attackLogsRouter = router({
           cnt: count(),
         })
         .from(attackLogs)
-        .where(and(
-          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
-          gte(attackLogs.timestamp, since),
-        ))
+        .where(and(...logConditions))
         .groupBy(attackLogs.phase);
 
       const phaseStats: Record<string, number> = {};
@@ -206,6 +227,12 @@ export const attackLogsRouter = router({
       }
 
       // 4. Top failure methods
+      const failureConditions = [
+        ...logConditions,
+        sql`${attackLogs.severity} IN ('error', 'critical')`,
+        sql`${attackLogs.method} IS NOT NULL`,
+      ];
+
       const failureRows = await db
         .select({
           method: attackLogs.method,
@@ -213,12 +240,7 @@ export const attackLogsRouter = router({
           cnt: count(),
         })
         .from(attackLogs)
-        .where(and(
-          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
-          gte(attackLogs.timestamp, since),
-          sql`${attackLogs.severity} IN ('error', 'critical')`,
-          sql`${attackLogs.method} IS NOT NULL`,
-        ))
+        .where(and(...failureConditions))
         .groupBy(attackLogs.method, attackLogs.phase)
         .orderBy(desc(count()))
         .limit(10);
@@ -230,18 +252,20 @@ export const attackLogsRouter = router({
       }));
 
       // 5. Top success methods (from deploy_history altMethodUsed)
+      const successConditions: any[] = [
+        gte(deployHistory.createdAt, since),
+        sql`${deployHistory.status} IN ('success', 'partial')`,
+        sql`${deployHistory.altMethodUsed} IS NOT NULL`,
+      ];
+      if (udc) successConditions.push(udc);
+
       const successRows = await db
         .select({
           altMethodUsed: deployHistory.altMethodUsed,
           cnt: count(),
         })
         .from(deployHistory)
-        .where(and(
-          eq(deployHistory.userId, ctx.user!.id),
-          gte(deployHistory.createdAt, since),
-          sql`${deployHistory.status} IN ('success', 'partial')`,
-          sql`${deployHistory.altMethodUsed} IS NOT NULL`,
-        ))
+        .where(and(...successConditions))
         .groupBy(deployHistory.altMethodUsed)
         .orderBy(desc(count()))
         .limit(10);
@@ -252,6 +276,9 @@ export const attackLogsRouter = router({
       }));
 
       // 6. Recent deploys timeline
+      const recentDeployConditions: any[] = [gte(deployHistory.createdAt, since)];
+      if (udc) recentDeployConditions.push(udc);
+
       const recentDeploys = await db
         .select({
           id: deployHistory.id,
@@ -262,25 +289,23 @@ export const attackLogsRouter = router({
           duration: deployHistory.duration,
         })
         .from(deployHistory)
-        .where(and(
-          eq(deployHistory.userId, ctx.user!.id),
-          gte(deployHistory.createdAt, since),
-        ))
+        .where(and(...recentDeployConditions))
         .orderBy(desc(deployHistory.createdAt))
         .limit(20);
 
       // 7. Domains attacked
+      const domainSubquery = admin
+        ? sql`(SELECT status FROM deploy_history dh2 WHERE dh2.domain = ${deployHistory.targetDomain} ORDER BY dh2.created_at DESC LIMIT 1)`
+        : sql`(SELECT status FROM deploy_history dh2 WHERE dh2.domain = ${deployHistory.targetDomain} AND dh2.user_id = ${ctx.user!.id} ORDER BY dh2.created_at DESC LIMIT 1)`;
+
       const domainRows = await db
         .select({
           domain: deployHistory.targetDomain,
           cnt: count(),
-          lastStatus: sql<string>`(SELECT status FROM deploy_history dh2 WHERE dh2.domain = ${deployHistory.targetDomain} AND dh2.user_id = ${ctx.user!.id} ORDER BY dh2.created_at DESC LIMIT 1)`,
+          lastStatus: domainSubquery,
         })
         .from(deployHistory)
-        .where(and(
-          eq(deployHistory.userId, ctx.user!.id),
-          gte(deployHistory.createdAt, since),
-        ))
+        .where(and(...recentDeployConditions))
         .groupBy(deployHistory.targetDomain)
         .orderBy(desc(count()))
         .limit(20);
@@ -295,10 +320,7 @@ export const attackLogsRouter = router({
       const totalLogsResult = await db
         .select({ cnt: count() })
         .from(attackLogs)
-        .where(and(
-          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
-          gte(attackLogs.timestamp, since),
-        ));
+        .where(and(...logConditions));
 
       return {
         period: { days: input.days, since: since.toISOString() },

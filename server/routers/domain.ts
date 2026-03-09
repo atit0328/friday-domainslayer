@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure, adminProcedure } from "../_core/trpc";
+import { router, protectedProcedure, adminProcedure, isAdminUser } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 import { isGoDaddyConfigured, searchMarketplace, checkAvailability, validateCredentials, purchaseDomain, getAgreements, validatePurchase } from "../godaddy";
@@ -12,7 +12,8 @@ export const ordersRouter = router({
   list: protectedProcedure
     .input(z.object({ status: z.string().optional(), limit: z.number().default(50) }).optional())
     .query(async ({ ctx, input }) => {
-      return db.getUserOrders(ctx.user.id, input?.status, input?.limit ?? 50);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      return db.getUserOrders(userId as any, input?.status, input?.limit ?? 50);
     }),
 
   create: protectedProcedure
@@ -38,7 +39,8 @@ export const ordersRouter = router({
 export const autobidRouter = router({
   list: protectedProcedure
     .query(async ({ ctx }) => {
-      return db.getUserAutobidRules(ctx.user.id);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      return db.getUserAutobidRules(userId as any);
     }),
 
   getById: protectedProcedure
@@ -476,7 +478,8 @@ export const watchlistRouter = router({
   list: protectedProcedure
     .input(z.object({ status: z.string().optional() }).optional())
     .query(async ({ ctx, input }) => {
-      return db.getUserWatchlist(ctx.user.id, input?.status);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      return db.getUserWatchlist(userId as any, input?.status);
     }),
 
   add: protectedProcedure
@@ -525,7 +528,8 @@ export const watchlistRouter = router({
 export const pbnRouter = router({
   listSites: protectedProcedure
     .query(async ({ ctx }) => {
-      return db.getUserPbnSites(ctx.user.id);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      return db.getUserPbnSites(userId as any);
     }),
 
   addSite: adminProcedure
@@ -957,6 +961,7 @@ Limit: ${input.limit}
 export const dashboardRouter = router({
   stats: protectedProcedure
     .query(async ({ ctx }) => {
-      return db.getDashboardStats(ctx.user.id);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      return db.getDashboardStats(userId as any);
     }),
 });

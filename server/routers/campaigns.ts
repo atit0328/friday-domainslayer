@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../_core/trpc";
+import { router, protectedProcedure, isAdminUser } from "../_core/trpc";
 import { invokeLLM } from "../_core/llm";
 import * as db from "../db";
 
@@ -16,7 +16,8 @@ export const campaignsRouter = router({
   // List campaigns
   list: protectedProcedure
     .query(async ({ ctx }) => {
-      return db.getUserCampaigns(ctx.user.id);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      return db.getUserCampaigns(userId);
     }),
 
   // Get campaign by ID

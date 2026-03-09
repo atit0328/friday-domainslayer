@@ -203,9 +203,16 @@ export default function Header({ onToggleSidebar }: HeaderProps) {
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-emerald/30 to-violet/30 border border-border flex items-center justify-center">
             <span className="text-xs font-bold">{user?.name?.[0]?.toUpperCase() || "?"}</span>
           </div>
-          {isAuthenticated && user?.name && (
-            <span className="text-xs font-mono text-muted-foreground hidden md:inline">{user.name}</span>
-          )}
+          <div className="hidden md:flex items-center gap-1.5">
+            {isAuthenticated && user?.name && (
+              <span className="text-xs font-mono text-muted-foreground">{user.name}</span>
+            )}
+            {(user?.role === "admin" || user?.role === "superadmin") && (
+              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase tracking-wider">
+                {user.role === "superadmin" ? "Super" : "Admin"}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </header>

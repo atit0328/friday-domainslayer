@@ -3,8 +3,7 @@
  * Full-cycle grey/black hat SEO management
  */
 import { z } from "zod";
-import { router } from "../_core/trpc";
-import { protectedProcedure } from "../_core/trpc";
+import { router, protectedProcedure, isAdminUser } from "../_core/trpc";
 import * as db from "../db";
 import * as seoEngine from "../seo-engine";
 import * as serpTracker from "../serp-tracker";
@@ -81,7 +80,7 @@ export function calculateNextRunMultiDay(days: number[], hourUTC: number): Date 
 export const seoProjectsRouter = router({
   // List all user's SEO projects (user isolation: user sees only their own, admin sees all)
   list: protectedProcedure.query(async ({ ctx }) => {
-    return db.getUserScopesSeoProjects(ctx.user.id, ctx.user.role === "admin");
+    return db.getUserScopesSeoProjects(ctx.user.id, isAdminUser(ctx.user));
   }),
 
   // Get single project with full details
@@ -1023,7 +1022,8 @@ export const seoProjectsRouter = router({
   // Algorithm intelligence
   algorithmCheck: protectedProcedure
     .mutation(async ({ ctx }) => {
-      const projects = await db.getUserSeoProjects(ctx.user.id);
+      const userId = isAdminUser(ctx.user) ? undefined : ctx.user.id;
+      const projects = await db.getUserSeoProjects(userId);
       if (projects.length === 0) throw new Error("No projects to analyze");
 
       const domainData = projects.map(p => ({

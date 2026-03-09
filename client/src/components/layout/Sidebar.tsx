@@ -246,6 +246,21 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
       {/* Spacer */}
       <div className="flex-1" />
 
+      {/* Admin Mode Indicator */}
+      {(user?.role === "admin" || user?.role === "superadmin") && !collapsed && (
+        <div className="mx-3 mb-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-[10px] font-mono font-semibold text-amber-400 uppercase tracking-wider">
+              Admin Mode
+            </span>
+          </div>
+          <p className="text-[10px] text-amber-400/60 mt-1 leading-relaxed">
+            เห็นข้อมูลของ user ทุกคน
+          </p>
+        </div>
+      )}
+
       {/* Collapse Toggle — desktop only */}
       <div className="hidden lg:block p-2 border-t border-sidebar-border">
         <button

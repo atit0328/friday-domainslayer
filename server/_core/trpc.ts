@@ -44,6 +44,14 @@ export const adminProcedure = t.procedure.use(
   }),
 );
 
+/**
+ * Helper: check if the current user is admin or superadmin.
+ * Use in routers to conditionally bypass userId filters.
+ */
+export function isAdminUser(user: { role: string } | null | undefined): boolean {
+  return user?.role === 'admin' || user?.role === 'superadmin';
+}
+
 export const superadminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;

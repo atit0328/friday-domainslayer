@@ -2407,3 +2407,9 @@
 
 ## Attack Pipeline Logs
 - [x] Fix Attack Pipeline Logs not showing any data (userId=0 mismatch — added legacy fallback in getRecentAttackLogs + dashboardStats + fixed userId pass-through in job-runner)
+
+# Superadmin - See All Users' Data
+- [x] Investigate current admin role system and user-filtered queries
+- [x] Update backend routers to bypass userId filter for admin users (autonomous, attack-logs, deploy-history, scheduled-scans, domain, seo-automation, campaigns)
+- [x] Update frontend to show user info/labels in admin view (Header badge + Sidebar Admin Mode indicator)
+- [x] Write tests for admin data access (8 tests passed)

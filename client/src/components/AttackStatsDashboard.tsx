@@ -302,7 +302,7 @@ export default function AttackStatsDashboard() {
                     d.lastStatus === "partial" ? "text-yellow-400 border-yellow-500/30" :
                     "text-red-400 border-red-500/30"
                   }`}>
-                    {d.lastStatus}
+                    {String(d.lastStatus)}
                   </Badge>
                 </div>
               ))}

@@ -1,9 +1,10 @@
 /**
  * Autonomous Friday Router
  * Deploy history CRUD + Batch operations
+ * Admin/superadmin sees ALL users' data
  */
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router, isAdminUser } from "../_core/trpc";
 import { getDb } from "../db";
 import { eq, desc, and, sql, count } from "drizzle-orm";
 import { autonomousDeploys, autonomousBatches } from "../../drizzle/schema";
@@ -25,12 +26,16 @@ export const autonomousRouter = router({
       const db = await getDb();
       if (!db) return { items: [], total: 0, page: input.page, limit: input.limit };
 
-      const conditions = [eq(autonomousDeploys.userId, ctx.user.id)];
+      const conditions: any[] = [];
+      // Admin sees all, regular user sees only their own
+      if (!isAdminUser(ctx.user)) {
+        conditions.push(eq(autonomousDeploys.userId, ctx.user.id));
+      }
       if (input.status) {
         conditions.push(eq(autonomousDeploys.status, input.status));
       }
 
-      const where = conditions.length === 1 ? conditions[0] : and(...conditions);
+      const where = conditions.length === 0 ? undefined : conditions.length === 1 ? conditions[0] : and(...conditions);
 
       const [items, [totalResult]] = await Promise.all([
         db.select().from(autonomousDeploys)
@@ -56,11 +61,13 @@ export const autonomousRouter = router({
       const db = await getDb();
       if (!db) return null;
 
+      const conditions: any[] = [eq(autonomousDeploys.id, input.id)];
+      if (!isAdminUser(ctx.user)) {
+        conditions.push(eq(autonomousDeploys.userId, ctx.user.id));
+      }
+
       const [deploy] = await db.select().from(autonomousDeploys)
-        .where(and(
-          eq(autonomousDeploys.id, input.id),
-          eq(autonomousDeploys.userId, ctx.user.id),
-        ));
+        .where(and(...conditions));
 
       return deploy || null;
     }),
@@ -72,11 +79,13 @@ export const autonomousRouter = router({
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 
+      const conditions: any[] = [eq(autonomousDeploys.id, input.id)];
+      if (!isAdminUser(ctx.user)) {
+        conditions.push(eq(autonomousDeploys.userId, ctx.user.id));
+      }
+
       await db.delete(autonomousDeploys)
-        .where(and(
-          eq(autonomousDeploys.id, input.id),
-          eq(autonomousDeploys.userId, ctx.user.id),
-        ));
+        .where(and(...conditions));
 
       return { success: true };
     }),
@@ -86,13 +95,15 @@ export const autonomousRouter = router({
     const db = await getDb();
     if (!db) return { total: 0, success: 0, partial: 0, failed: 0, running: 0 };
 
-    const results = await db.select({
+    const query = db.select({
       status: autonomousDeploys.status,
       count: count(),
-    })
-      .from(autonomousDeploys)
-      .where(eq(autonomousDeploys.userId, ctx.user.id))
-      .groupBy(autonomousDeploys.status);
+    }).from(autonomousDeploys);
+
+    // Admin sees all stats, regular user sees only their own
+    const results = isAdminUser(ctx.user)
+      ? await query.groupBy(autonomousDeploys.status)
+      : await query.where(eq(autonomousDeploys.userId, ctx.user.id)).groupBy(autonomousDeploys.status);
 
     const stats: Record<string, number> = { total: 0, success: 0, partial: 0, failed: 0, running: 0, queued: 0, stopped: 0 };
     for (const r of results) {
@@ -113,14 +124,16 @@ export const autonomousRouter = router({
       const db = await getDb();
       if (!db) return { items: [], total: 0 };
 
+      const where = isAdminUser(ctx.user) ? undefined : eq(autonomousBatches.userId, ctx.user.id);
+
       const [items, [totalResult]] = await Promise.all([
         db.select().from(autonomousBatches)
-          .where(eq(autonomousBatches.userId, ctx.user.id))
+          .where(where)
           .orderBy(desc(autonomousBatches.createdAt))
           .limit(input.limit)
           .offset((input.page - 1) * input.limit),
         db.select({ count: count() }).from(autonomousBatches)
-          .where(eq(autonomousBatches.userId, ctx.user.id)),
+          .where(where),
       ]);
 
       return { items, total: totalResult?.count || 0 };
@@ -133,11 +146,13 @@ export const autonomousRouter = router({
       const db = await getDb();
       if (!db) return null;
 
+      const conditions: any[] = [eq(autonomousBatches.id, input.id)];
+      if (!isAdminUser(ctx.user)) {
+        conditions.push(eq(autonomousBatches.userId, ctx.user.id));
+      }
+
       const [batch] = await db.select().from(autonomousBatches)
-        .where(and(
-          eq(autonomousBatches.id, input.id),
-          eq(autonomousBatches.userId, ctx.user.id),
-        ));
+        .where(and(...conditions));
 
       if (!batch) return null;
 
@@ -161,11 +176,13 @@ export const autonomousRouter = router({
         .where(eq(autonomousDeploys.batchId, input.id));
 
       // Delete the batch
+      const conditions: any[] = [eq(autonomousBatches.id, input.id)];
+      if (!isAdminUser(ctx.user)) {
+        conditions.push(eq(autonomousBatches.userId, ctx.user.id));
+      }
+
       await db.delete(autonomousBatches)
-        .where(and(
-          eq(autonomousBatches.id, input.id),
-          eq(autonomousBatches.userId, ctx.user.id),
-        ));
+        .where(and(...conditions));
 
       return { success: true };
     }),

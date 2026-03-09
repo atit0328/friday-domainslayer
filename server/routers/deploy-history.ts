@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import { fetchWithPoolProxy } from "../proxy-pool";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, router, isAdminUser } from "../_core/trpc";
 import { getDb } from "../db";
 import { eq, desc, and, sql, like, gte, lte, count } from "drizzle-orm";
 import {
@@ -132,13 +132,14 @@ const deployHistoryRouter = router({
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) return { items: [], total: 0 };
-      const conditions = [eq(deployHistory.userId, ctx.user.id)];
+      const conditions: any[] = [];
+      if (!isAdminUser(ctx.user)) conditions.push(eq(deployHistory.userId, ctx.user.id));
       if (input.status) conditions.push(eq(deployHistory.status, input.status));
       if (input.domain) conditions.push(like(deployHistory.targetDomain, `%${input.domain}%`));
       if (input.dateFrom) conditions.push(gte(deployHistory.startedAt, new Date(input.dateFrom)));
       if (input.dateTo) conditions.push(lte(deployHistory.startedAt, new Date(input.dateTo)));
 
-      const where = and(...conditions);
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
       const [totalResult] = await db.select({ count: sql<number>`count(*)` }).from(deployHistory).where(where);
       const items = await db.select().from(deployHistory)
         .where(where)
@@ -155,8 +156,10 @@ const deployHistoryRouter = router({
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) return null;
+      const conditions: any[] = [eq(deployHistory.id, input.id)];
+      if (!isAdminUser(ctx.user)) conditions.push(eq(deployHistory.userId, ctx.user.id));
       const rows = await db.select().from(deployHistory)
-        .where(and(eq(deployHistory.id, input.id), eq(deployHistory.userId, ctx.user.id)))
+        .where(and(...conditions))
         .limit(1);
       return rows[0] ?? null;
     }),
@@ -167,8 +170,10 @@ const deployHistoryRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("DB not available");
+      const delConditions: any[] = [eq(deployHistory.id, input.id)];
+      if (!isAdminUser(ctx.user)) delConditions.push(eq(deployHistory.userId, ctx.user.id));
       await db.delete(deployHistory)
-        .where(and(eq(deployHistory.id, input.id), eq(deployHistory.userId, ctx.user.id)));
+        .where(and(...delConditions));
       return { success: true };
     }),
 
@@ -186,10 +191,9 @@ const deployHistoryRouter = router({
       };
       const since = new Date();
       since.setDate(since.getDate() - input.days);
-      const userCond = and(
-        eq(deployHistory.userId, ctx.user.id),
-        gte(deployHistory.startedAt, since)
-      );
+      const userCondParts: any[] = [gte(deployHistory.startedAt, since)];
+      if (!isAdminUser(ctx.user)) userCondParts.push(eq(deployHistory.userId, ctx.user.id));
+      const userCond = and(...userCondParts);
 
       // Aggregate counts
       const [totals] = await db.select({
@@ -284,8 +288,9 @@ const templatesRouter = router({
       if (!db) return builtIn;
 
       // Also get user custom templates from DB
+      const templateWhere = isAdminUser(ctx.user) ? undefined : eq(parasiteTemplates.userId, ctx.user.id);
       const userTemplates = await db.select().from(parasiteTemplates)
-        .where(eq(parasiteTemplates.userId, ctx.user.id))
+        .where(templateWhere)
         .orderBy(desc(parasiteTemplates.createdAt));
 
       return [
@@ -396,8 +401,10 @@ const templatesRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("DB not available");
+      const tplDelCond: any[] = [eq(parasiteTemplates.id, input.id)];
+      if (!isAdminUser(ctx.user)) tplDelCond.push(eq(parasiteTemplates.userId, ctx.user.id));
       await db.delete(parasiteTemplates)
-        .where(and(eq(parasiteTemplates.id, input.id), eq(parasiteTemplates.userId, ctx.user.id)));
+        .where(and(...tplDelCond));
       return { success: true };
     }),
 });
@@ -457,7 +464,8 @@ const keywordRankingRouter = router({
     .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) return { items: [], total: 0 };
-      const conditions = [eq(parasiteKeywordRankings.userId, ctx.user.id)];
+      const conditions: any[] = [];
+      if (!isAdminUser(ctx.user)) conditions.push(eq(parasiteKeywordRankings.userId, ctx.user.id));
       if (input.domain) conditions.push(like(parasiteKeywordRankings.targetDomain, `%${input.domain}%`));
       if (input.status) conditions.push(eq(parasiteKeywordRankings.status, input.status));
       if (input.keyword) conditions.push(like(parasiteKeywordRankings.keyword, `%${input.keyword}%`));
@@ -490,8 +498,10 @@ const keywordRankingRouter = router({
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("DB not available");
+      const kwConditions: any[] = [eq(parasiteKeywordRankings.id, input.id)];
+      if (!isAdminUser(ctx.user)) kwConditions.push(eq(parasiteKeywordRankings.userId, ctx.user.id));
       const rows = await db.select().from(parasiteKeywordRankings)
-        .where(and(eq(parasiteKeywordRankings.id, input.id), eq(parasiteKeywordRankings.userId, ctx.user.id)))
+        .where(and(...kwConditions))
         .limit(1);
       if (!rows[0]) throw new Error("Keyword not found");
       const kw = rows[0];
@@ -640,15 +650,15 @@ const keywordRankingRouter = router({
 
       let keywords;
       if (input.ids && input.ids.length > 0) {
+        const batchCond: any[] = [sql`id IN (${sql.join(input.ids.map(id => sql`${id}`), sql`, `)})`];
+        if (!isAdminUser(ctx.user)) batchCond.push(eq(parasiteKeywordRankings.userId, ctx.user.id));
         keywords = await db.select().from(parasiteKeywordRankings)
-          .where(and(
-            eq(parasiteKeywordRankings.userId, ctx.user.id),
-            sql`id IN (${sql.join(input.ids.map(id => sql`${id}`), sql`, `)})`
-          ))
+          .where(and(...batchCond))
           .limit(input.limit);
       } else {
+        const batchAllCond = isAdminUser(ctx.user) ? undefined : eq(parasiteKeywordRankings.userId, ctx.user.id);
         keywords = await db.select().from(parasiteKeywordRankings)
-          .where(eq(parasiteKeywordRankings.userId, ctx.user.id))
+          .where(batchAllCond)
           .orderBy(sql`COALESCE(lastCheckedAt, '1970-01-01') ASC`)
           .limit(input.limit);
       }
@@ -713,8 +723,10 @@ const keywordRankingRouter = router({
       // Delete history first
       await db.delete(parasiteRankingHistory)
         .where(eq(parasiteRankingHistory.keywordRankingId, input.id));
+      const kwDelCond: any[] = [eq(parasiteKeywordRankings.id, input.id)];
+      if (!isAdminUser(ctx.user)) kwDelCond.push(eq(parasiteKeywordRankings.userId, ctx.user.id));
       await db.delete(parasiteKeywordRankings)
-        .where(and(eq(parasiteKeywordRankings.id, input.id), eq(parasiteKeywordRankings.userId, ctx.user.id)));
+        .where(and(...kwDelCond));
       return { success: true };
     }),
 
@@ -727,7 +739,7 @@ const keywordRankingRouter = router({
         lost: 0, avgPosition: 0, bestKeyword: null,
       };
 
-      const userCond = eq(parasiteKeywordRankings.userId, ctx.user.id);
+      const userCond = isAdminUser(ctx.user) ? undefined : eq(parasiteKeywordRankings.userId, ctx.user.id);
       const [stats] = await db.select({
         total: sql<number>`count(*)`,
         indexed: sql<number>`SUM(CASE WHEN isIndexed = 1 THEN 1 ELSE 0 END)`,
