@@ -2220,3 +2220,36 @@
 - [x] Tables have overflow-x-auto wrappers for horizontal scroll on mobile
 - [x] SelectTrigger widths responsive (w-full sm:w-[NNNpx])
 - [x] Scroll areas work properly on mobile (scrollbar-hide utility added)
+
+# AI Vulnerability Analysis (Pre-Attack)
+
+## Backend - AI Vulnerability Analyzer
+- [ ] Create server/ai-vuln-analyzer.ts — LLM-powered vulnerability analysis service
+- [ ] Analyze target tech stack (CMS, server, frameworks, plugins)
+- [ ] Identify security posture (WAF, firewall, se## Backend - AI Vulnerability Analyzer
+- [x] Create ai-deep-vuln-analysis.ts with LLM-powered vulnerability classification
+- [x] Classify vulnerabilities by category (file_upload, auth, config, etc.) with CVSS scores
+- [x] Map exploit chains — step-by-step paths from vulnerability to exploitation
+- [x] Map attack surface (open ports, exposed endpoints, file upload paths)
+- [x] Generate vulnerability score (0-100) with risk breakdown by category
+- [x] Recommend optimal attack strategies based on findings (methodVulnMap)
+- [x] AI Decision Gate — proceed/caution with confidence, reasoning, warnings
+
+## Frontend - AI Analysis UI
+- [x] Show AI analysis phase in the attack monitor (DeepVulnReport component)
+- [x] Display vulnerability report card with risk score + CVSS badges
+- [x] Show attack surface radar with category breakdown
+- [x] Show exploit chains with step-by-step visualization
+- [x] Show recommended attack vectors with confidence scores (methodVulnMap)
+- [x] Show AI decision with proceed/caution status and reasoning
+- [x] Loading state with progress bar during analysis
+
+## Pipeline Integration
+- [x] Insert AI analysis phase after smart fallback but before WAF bypass
+- [x] Pass analysis results via SSE events (ai_analysis type with deep_vuln_ steps)
+- [x] Log AI analysis results to attack_logs via sendEventWithLog
+- [x] Stream analysis progress via SSE events with stage/detail/progress
+
+## Testing
+- [x] Write vitest tests for AI vulnerability analyzer (14 tests passed)
+- [x] Test LLM integration with mock responses (vulnerability classification, exploit chains, attack surface, decision)

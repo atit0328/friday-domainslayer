@@ -27,6 +27,7 @@ import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from ".
 import { runNonWpExploits, type NonWpScanResult } from "./non-wp-exploits";
 import { createAttackLogger, type AttackLogger } from "./attack-logger";
 import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
+import { runDeepVulnAnalysis, type DeepVulnAnalysis } from "./ai-deep-vuln-analysis";
 
 function parseSeoKeywords(input: unknown): string[] {
   if (!input) return [];
@@ -351,6 +352,7 @@ export function registerOneClickSSE(app: Express) {
     // Smart Fallback state
     let targetProfile: TargetProfile | null = null;
     let fallbackPlan: FallbackPlan | null = null;
+    let deepVulnResult: DeepVulnAnalysis | null = null;
     const failedMethods: string[] = [];
 
     // ═══════════════════════════════════════════════
@@ -567,6 +569,86 @@ export function registerOneClickSSE(app: Express) {
       } catch (e: any) {
         console.error("[Smart Fallback] Error building plan:", e.message);
         // Non-critical — continue without smart fallback
+      }
+
+      // ═══ DEEP VULNERABILITY ANALYSIS (AI-Powered) ═══
+      // Runs LLM-powered deep analysis combining prescreen + AI analysis data
+      try {
+        sendEventWithLog({
+          type: "step_detail",
+          step: "deep_vuln_analysis",
+          status: "running",
+          detail: "🔬 AI Deep Vulnerability Analysis — กำลังวิเคราะห์ช่องโหว่เชิงลึกด้วย AI...",
+        });
+
+        deepVulnResult = await runDeepVulnAnalysis(
+          targetDomain,
+          aiTargetAnalysisResult,
+          null, // vulnScan — not available at this point
+          preScreenResult,
+          (stage: string, detail: string, progress: number, data?: any) => {
+            sendEventWithLog({
+              type: "ai_analysis",
+              step: `deep_vuln_${stage}`,
+              status: "running",
+              detail: `[Deep Vuln] ${detail}`,
+              data: {
+                stage,
+                detail,
+                progress,
+                ...(data || {}),
+              },
+            });
+          },
+        );
+
+        // Send full analysis result
+        sendEventWithLog({
+          type: "ai_analysis",
+          step: "deep_vuln_analysis",
+          status: deepVulnResult.decision.proceed ? "done" : "warning",
+          detail: `🔬 Deep Vuln Analysis Complete — ${deepVulnResult.vulnerabilities.length} vulns found | ${deepVulnResult.exploitChains.length} exploit chains | Attack Surface: ${deepVulnResult.attackSurface.overall}/100 | AI Decision: ${deepVulnResult.decision.proceed ? "PROCEED" : "CAUTION"} (${deepVulnResult.decision.confidence}% confidence)`,
+          data: {
+            analysis: deepVulnResult,
+          },
+        });
+
+        // Log AI decision reasoning
+        sendEventWithLog({
+          type: "step_detail",
+          step: "deep_vuln_decision",
+          status: deepVulnResult.decision.proceed ? "done" : "warning",
+          detail: `🧠 AI Decision: ${deepVulnResult.decision.reasoning}`,
+        });
+
+        // Log top exploit chains
+        if (deepVulnResult.exploitChains.length > 0) {
+          const topChain = deepVulnResult.exploitChains[0];
+          sendEventWithLog({
+            type: "step_detail",
+            step: "deep_vuln_best_chain",
+            status: "done",
+            detail: `⛓️ Best Exploit Chain: ${topChain.name} — ${topChain.totalSuccessProbability}% success | ${topChain.steps.length} steps | ${topChain.estimatedTime}`,
+          });
+        }
+
+        // Log critical warnings
+        if (deepVulnResult.decision.criticalWarnings.length > 0) {
+          sendEventWithLog({
+            type: "step_detail",
+            step: "deep_vuln_warnings",
+            status: "warning",
+            detail: `⚠️ Critical Warnings: ${deepVulnResult.decision.criticalWarnings.join(" | ")}`,
+          });
+        }
+      } catch (e: any) {
+        console.error("[Deep Vuln Analysis] Error:", e.message);
+        sendEventWithLog({
+          type: "step_detail",
+          step: "deep_vuln_analysis",
+          status: "warning",
+          detail: `⚠️ Deep Vuln Analysis failed: ${e.message} — ดำเนินการต่อโดยไม่มีผลวิเคราะห์เชิงลึก`,
+        });
       }
 
       // ─── WAF Bypass via Stealth Browser ───

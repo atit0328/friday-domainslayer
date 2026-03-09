@@ -41,6 +41,7 @@ import {
   Copy, ArrowDown, ArrowUp, Minus, Power, Unplug, Microscope,
 } from "lucide-react";
 import AiAnalysisCard from "@/components/AiAnalysisCard";
+import DeepVulnReport from "@/components/DeepVulnReport";
 import AttackLogViewer from "@/components/AttackLogViewer";
 import AttackStatsDashboard from "@/components/AttackStatsDashboard";
 
@@ -281,6 +282,11 @@ export default function AutonomousFriday() {
   }>>([]);
   const [aiAnalysisData, setAiAnalysisData] = useState<any>(null);
 
+  // ═══ Deep Vuln Analysis state ═══
+  const [deepVulnAnalysis, setDeepVulnAnalysis] = useState<any>(null);
+  const [deepVulnProgress, setDeepVulnProgress] = useState<{ stage: string; detail: string; progress: number } | null>(null);
+  const [deepVulnLoading, setDeepVulnLoading] = useState(false);
+
   // ═══ Batch mode state ═══
   const [activeTab, setActiveTab] = useState<"single" | "batch">("single");
   const [batchTargets, setBatchTargets] = useState<Array<{ domain: string; redirectUrl: string }>>([]);
@@ -452,6 +458,27 @@ export default function AutonomousFriday() {
           if (d.contentSize !== undefined) next.cloakingContentSize = d.contentSize as number;
           return next;
         });
+
+        // ═══ Deep Vuln Analysis event handling ═══
+        const d2 = evt.data as Record<string, unknown>;
+        // Handle progress events
+        if (d2.stage && d2.progress !== undefined) {
+          const step = (evt as any).step as string || "";
+          if (step.startsWith("deep_vuln_")) {
+            setDeepVulnLoading(true);
+            setDeepVulnProgress({
+              stage: d2.stage as string,
+              detail: d2.detail as string || "",
+              progress: d2.progress as number,
+            });
+          }
+        }
+        // Handle complete analysis result
+        if (d2.analysis && (evt as any).step === "deep_vuln_analysis") {
+          setDeepVulnAnalysis(d2.analysis);
+          setDeepVulnLoading(false);
+          setDeepVulnProgress(null);
+        }
       }
 
       // Detect upload method from detail
@@ -552,6 +579,9 @@ export default function AutonomousFriday() {
   const resetPipelineState = () => {
     setAiAnalysisSteps([]);
     setAiAnalysisData(null);
+    setDeepVulnAnalysis(null);
+    setDeepVulnProgress(null);
+    setDeepVulnLoading(false);
     setPipelinePhases({
       ai_analysis: { status: "idle", detail: "", progress: 0 },
       prescreen: { status: "idle", detail: "", progress: 0 },
@@ -1680,6 +1710,17 @@ export default function AutonomousFriday() {
                       phaseState={pipelinePhases.ai_analysis}
                       analysisSteps={aiAnalysisSteps}
                       analysisData={aiAnalysisData}
+                    />
+                  </div>
+                )}
+
+                {/* Deep Vulnerability Analysis Report */}
+                {(deepVulnLoading || deepVulnAnalysis) && (
+                  <div className="mt-3">
+                    <DeepVulnReport
+                      analysis={deepVulnAnalysis}
+                      isLoading={deepVulnLoading}
+                      progress={deepVulnProgress || undefined}
                     />
                   </div>
                 )}
