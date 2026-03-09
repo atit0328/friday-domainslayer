@@ -2078,3 +2078,39 @@
 ## Testing
 - [x] Write vitest tests for auto-remediation logic (31/31 passed)
 - [x] Test fix strategy selection, category filtering, dry run, edge cases, Telegram notification
+
+# Remediation Revert — Undo Auto-Fixes
+
+## Review & Design
+- [x] Review auto-remediation.ts fix strategies to identify revertible fixes (10 categories)
+- [x] Design snapshot storage (before/after state per fix — StateSnapshot interface)
+- [x] Design revert logic per fix category (8 specific revert strategies + fallback)
+
+## Database
+- [x] Create remediation_history table (18 columns: id, userId, scanId, scanResultId, domain, vector, category, severity, finding, fixStrategy, action, detail, revertible, revertAction, beforeState, afterState, status, appliedAt, revertedAt, revertDetail, revertError)
+- [x] Push DB migrations
+
+## Backend
+- [x] Save snapshots before applying each fix (captureBeforeSnapshot + captureAfterSnapshot)
+- [x] Mark each fix as revertible/non-revertible based on category
+- [x] Build revert functions per category: security_headers, ssl_tls, session_security, plugin_management, information_disclosure, misconfiguration, mixed_content, clickjacking
+- [x] saveFixToHistory stores fix + snapshots in remediation_history
+
+## tRPC Router
+- [x] scheduledScans.fixHistory — list all fix history with filters (status, domain, limit, offset)
+- [x] scheduledScans.revertFix — revert a specific fix by ID
+- [x] scheduledScans.revertAllFixes — revert all fixes from a scan result
+- [x] scheduledScans.fixDetail — get single fix detail with snapshots
+
+## Frontend UI
+- [x] Fix History view (FixHistoryView component) with Revert buttons per fix
+- [x] Revert confirmation with confirm() dialog
+- [x] Status badges (Applied, Reverted, Revert Failed, Expired)
+- [x] Batch Revert All button per scan result
+- [x] Filter by status and domain
+- [x] Non-revertible badge for fixes that can't be undone
+
+## Testing
+- [x] Write vitest tests for revert logic (24/24 passed)
+- [x] Test snapshot capture (security_headers, ssl_tls, session_security, plugin_management, information_disclosure, misconfiguration, mixed_content, clickjacking)
+- [x] Test revert operations, fix history, edge cases, type validation

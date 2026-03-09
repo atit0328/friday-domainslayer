@@ -1125,3 +1125,37 @@ export const scanResults = mysqlTable("scan_results", {
 
 export type ScanResult = typeof scanResults.$inferSelect;
 export type InsertScanResult = typeof scanResults.$inferInsert;
+
+
+// ═══════════════════════════════════════════════
+// Remediation History — Track applied fixes with revert capability
+// ═══════════════════════════════════════════════
+export const remediationHistory = mysqlTable("remediation_history", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  scanId: int("scanId"),                                         // linked scheduled_scan
+  scanResultId: int("scanResultId"),                             // linked scan_result
+  domain: varchar("remDomain", { length: 255 }).notNull(),
+  // Fix details
+  vector: varchar("remVector", { length: 128 }).notNull(),       // e.g. "Clickjacking"
+  category: varchar("remCategory", { length: 64 }).notNull(),    // e.g. "clickjacking"
+  severity: varchar("remSeverity", { length: 16 }).notNull(),    // critical/high/medium/low
+  finding: text("remFinding"),                                   // Original vulnerability detail
+  fixStrategy: varchar("fixStrategy", { length: 64 }).notNull(), // e.g. "wp_htaccess_header"
+  action: varchar("fixAction", { length: 128 }).notNull(),       // e.g. "set_xfo_via_settings"
+  detail: text("fixDetail"),                                     // What was done
+  // Snapshot for revert
+  revertible: boolean("revertible").default(false).notNull(),
+  revertAction: text("revertAction"),                            // Instructions for revert
+  beforeState: json("beforeState"),                              // State snapshot before fix
+  afterState: json("afterState"),                                // State snapshot after fix
+  // Status tracking
+  status: mysqlEnum("remStatus", ["applied", "reverted", "revert_failed", "expired"]).default("applied").notNull(),
+  revertedAt: timestamp("revertedAt"),
+  revertDetail: text("revertDetail"),                            // What happened during revert
+  // Metadata
+  appliedAt: timestamp("appliedAt").defaultNow().notNull(),
+  updatedAt: timestamp("remUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type RemediationHistoryRow = typeof remediationHistory.$inferSelect;
+export type InsertRemediationHistory = typeof remediationHistory.$inferInsert;

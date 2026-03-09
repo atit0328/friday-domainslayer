@@ -10,6 +10,7 @@ import { desc, eq, and, count, sql } from "drizzle-orm";
 import { calculateNextRun, runScanNow } from "../scan-scheduler";
 import { runAutoRemediation, getWPCredentialsForDomain, ALL_FIX_CATEGORIES, type FixCategory } from "../auto-remediation";
 import type { AttackVectorResult } from "../comprehensive-attack-vectors";
+import { revertFix, revertAllFixes, getFixHistory, getFixDetail } from "../remediation-revert";
 
 export const scheduledScansRouter = router({
   // ─── List all scheduled scans ─────────────────────
@@ -402,6 +403,47 @@ export const scheduledScansRouter = router({
   fixCategories: protectedProcedure.query(() => {
     return ALL_FIX_CATEGORIES;
   }),
+
+  // ─── Revert a single fix ──────────────────────────
+  revertFix: protectedProcedure
+    .input(z.object({ fixId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      return revertFix(input.fixId, ctx.user.id);
+    }),
+
+  // ─── Revert all fixes from a scan result ──────────
+  revertAllFixes: protectedProcedure
+    .input(z.object({ scanResultId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      return revertAllFixes(input.scanResultId, ctx.user.id);
+    }),
+
+  // ─── Get fix history ─────────────────────────────
+  fixHistory: protectedProcedure
+    .input(z.object({
+      domain: z.string().optional(),
+      scanResultId: z.number().optional(),
+      status: z.enum(["applied", "reverted", "revert_failed", "expired"]).optional(),
+      limit: z.number().min(1).max(100).default(50),
+      offset: z.number().min(0).default(0),
+    }))
+    .query(async ({ ctx, input }) => {
+      return getFixHistory({
+        userId: ctx.user.id,
+        domain: input.domain,
+        scanResultId: input.scanResultId,
+        status: input.status,
+        limit: input.limit,
+        offset: input.offset,
+      });
+    }),
+
+  // ─── Get single fix detail ───────────────────────
+  fixDetail: protectedProcedure
+    .input(z.object({ fixId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      return getFixDetail(input.fixId, ctx.user.id);
+    }),
 
   // ─── Dashboard stats ──────────────────────────────
   stats: protectedProcedure.query(async ({ ctx }) => {

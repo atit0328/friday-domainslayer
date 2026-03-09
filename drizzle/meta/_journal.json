@@ -176,6 +176,13 @@
       "when": 1772990871801,
       "tag": "0024_smiling_scourge",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1773021604371,
+      "tag": "0025_gifted_emma_frost",
+      "breakpoints": true
     }
   ]
 }

@@ -54,6 +54,9 @@ import {
   Wrench,
   Zap,
   ShieldCheck,
+  Undo2,
+  History,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -98,6 +101,7 @@ export default function ScheduledScans() {
   const [selectedScanId, setSelectedScanId] = useState<number | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showResultDetail, setShowResultDetail] = useState<number | null>(null);
+  const [showFixHistory, setShowFixHistory] = useState(false);
 
   const utils = trpc.useUtils();
   const { data: scans, isLoading } = trpc.scheduledScans.list.useQuery();
@@ -129,6 +133,11 @@ export default function ScheduledScans() {
     },
   });
 
+  // If viewing fix history
+  if (showFixHistory) {
+    return <FixHistoryView onBack={() => setShowFixHistory(false)} />;
+  }
+
   // If viewing a specific scan's results
   if (selectedScanId !== null) {
     return (
@@ -154,10 +163,19 @@ export default function ScheduledScans() {
             ตั้งเวลาสแกนช่องโหว่อัตโนมัติ พร้อมแจ้งเตือน Telegram เมื่อพบ vulnerability ใหม่
           </p>
         </div>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild>
-            <Button className="bg-emerald-600 hover:bg-emerald-700">
-              <Plus className="w-4 h-4 mr-2" />
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+            onClick={() => setShowFixHistory(true)}
+          >
+            <History className="w-4 h-4 mr-2" />
+            Fix History
+          </Button>
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button className="bg-emerald-600 hover:bg-emerald-700">
+                <Plus className="w-4 h-4 mr-2" />
               New Scheduled Scan
             </Button>
           </DialogTrigger>
@@ -170,6 +188,7 @@ export default function ScheduledScans() {
             }}
           />
         </Dialog>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -1118,6 +1137,231 @@ function ResultDetailView({ resultId, onBack }: { resultId: number; onBack: () =
           </Card>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Fix History View ──────────────────────────
+function FixHistoryView({ onBack }: { onBack: () => void }) {
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterDomain, setFilterDomain] = useState<string>("");
+  const utils = trpc.useUtils();
+
+  const { data: historyData, isLoading } = trpc.scheduledScans.fixHistory.useQuery({
+    status: filterStatus !== "all" ? filterStatus as "applied" | "reverted" | "revert_failed" | "expired" : undefined,
+    domain: filterDomain || undefined,
+    limit: 50,
+    offset: 0,
+  });
+
+  const revertMutation = trpc.scheduledScans.revertFix.useMutation({
+    onSuccess: (data) => {
+      utils.scheduledScans.fixHistory.invalidate();
+      if (data.success) {
+        toast.success(`Reverted: ${data.detail}`);
+      } else {
+        toast.error(`Revert failed: ${data.detail}`);
+      }
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const revertAllMutation = trpc.scheduledScans.revertAllFixes.useMutation({
+    onSuccess: (data) => {
+      utils.scheduledScans.fixHistory.invalidate();
+      toast.success(`Reverted ${data.reverted}/${data.total} fixes`);
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const STATUS_BADGES: Record<string, { label: string; className: string }> = {
+    applied: { label: "Applied", className: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" },
+    reverted: { label: "Reverted", className: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+    revert_failed: { label: "Revert Failed", className: "bg-red-500/20 text-red-400 border-red-500/30" },
+    expired: { label: "Expired", className: "bg-zinc-500/20 text-zinc-400 border-zinc-500/30" },
+  };
+
+  // Group fixes by scanResultId for "Revert All" functionality
+  const groupedByScanResult = useMemo(() => {
+    if (!historyData?.items) return new Map<number, any[]>();
+    const map = new Map<number, any[]>();
+    for (const fix of historyData.items) {
+      const key = fix.scanResultId;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(fix);
+    }
+    return map;
+  }, [historyData]);
+
+  return (
+    <div className="space-y-6">
+      {/* Back + Header */}
+      <div className="flex items-center gap-3">
+        <Button variant="ghost" size="icon" onClick={onBack} className="h-8 w-8">
+          <ChevronLeft className="w-4 h-4" />
+        </Button>
+        <div className="flex-1">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <History className="w-5 h-5 text-amber-400" />
+            Fix History
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            ประวัติการแก้ไข vulnerability ทั้งหมด — สามารถ Revert (undo) ได้
+          </p>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-3">
+        <Select value={filterStatus} onValueChange={setFilterStatus}>
+          <SelectTrigger className="w-[160px] bg-background/50">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="applied">Applied</SelectItem>
+            <SelectItem value="reverted">Reverted</SelectItem>
+            <SelectItem value="revert_failed">Revert Failed</SelectItem>
+            <SelectItem value="expired">Expired</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          placeholder="Filter by domain..."
+          value={filterDomain}
+          onChange={(e) => setFilterDomain(e.target.value)}
+          className="w-[250px] bg-background/50"
+        />
+        {historyData && (
+          <span className="text-xs text-muted-foreground flex items-center ml-2">
+            {historyData.total} fixes total
+          </span>
+        )}
+      </div>
+
+      {/* Revert All by Scan Result */}
+      {groupedByScanResult.size > 0 && filterStatus === "applied" && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-mono uppercase text-muted-foreground">Batch Revert</h3>
+          {Array.from(groupedByScanResult.entries()).map(([scanResultId, fixes]) => {
+            const appliedFixes = fixes.filter((f: any) => f.status === "applied");
+            if (appliedFixes.length === 0) return null;
+            return (
+              <Card key={scanResultId} className="bg-card/50 border-border/50">
+                <CardContent className="p-3 flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-medium">{appliedFixes[0].domain}</span>
+                    <span className="text-xs text-muted-foreground ml-2">
+                      Scan #{scanResultId} — {appliedFixes.length} applied fixes
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                    onClick={() => {
+                      if (confirm(`Revert all ${appliedFixes.length} fixes from scan #${scanResultId}?`)) {
+                        revertAllMutation.mutate({ scanResultId });
+                      }
+                    }}
+                    disabled={revertAllMutation.isPending}
+                  >
+                    {revertAllMutation.isPending ? (
+                      <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    ) : (
+                      <RotateCcw className="w-3 h-3 mr-1" />
+                    )}
+                    Revert All
+                  </Button>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Fix History List */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
+        </div>
+      ) : !historyData || historyData.items.length === 0 ? (
+        <Card className="bg-card/50 border-border/50">
+          <CardContent className="py-10 text-center text-muted-foreground">
+            <Wrench className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            ยังไม่มีประวัติการแก้ไข
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {historyData.items.map((fix: any) => (
+            <Card key={fix.id} className="bg-card/50 border-border/50">
+              <CardContent className="p-3">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="outline" className={STATUS_BADGES[fix.status]?.className || ""}>
+                        {STATUS_BADGES[fix.status]?.label || fix.status}
+                      </Badge>
+                      <span className="text-sm font-medium">{fix.fixCategory}</span>
+                      <span className="text-[10px] text-muted-foreground px-1.5 py-0.5 bg-muted/50 rounded">
+                        {fix.domain}
+                      </span>
+                      {fix.isRevertible && fix.status === "applied" && (
+                        <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-500/30">
+                          Revertible
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{fix.fixDescription}</p>
+                    <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+                      <span>{new Date(fix.appliedAt).toLocaleString("th-TH")}</span>
+                      {fix.vulnerabilitySeverity && (
+                        <Badge variant="outline" className={`text-[9px] ${SEVERITY_COLORS[fix.vulnerabilitySeverity] || ""}`}>
+                          {fix.vulnerabilitySeverity}
+                        </Badge>
+                      )}
+                      {fix.revertedAt && (
+                        <span className="text-blue-400">
+                          Reverted: {new Date(fix.revertedAt).toLocaleString("th-TH")}
+                        </span>
+                      )}
+                      {fix.revertError && (
+                        <span className="text-red-400">Error: {fix.revertError}</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Revert button — only for applied + revertible fixes */}
+                  {fix.status === "applied" && fix.isRevertible && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 shrink-0"
+                      onClick={() => {
+                        if (confirm(`Revert "${fix.fixDescription}"?`)) {
+                          revertMutation.mutate({ fixId: fix.id });
+                        }
+                      }}
+                      disabled={revertMutation.isPending}
+                    >
+                      {revertMutation.isPending ? (
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      ) : (
+                        <Undo2 className="w-3 h-3 mr-1" />
+                      )}
+                      Revert
+                    </Button>
+                  )}
+                  {fix.status === "applied" && !fix.isRevertible && (
+                    <Badge variant="outline" className="text-[10px] text-zinc-500 border-zinc-500/30 shrink-0">
+                      Non-revertible
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
