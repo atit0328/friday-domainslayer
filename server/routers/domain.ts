@@ -66,6 +66,11 @@ export const autobidRouter = router({
       maxDomainAge: z.number().optional(),
       preferredTLDs: z.array(z.string()).optional(),
       excludePatterns: z.array(z.string()).optional(),
+      // Link type filters
+      requireWikiLink: z.boolean().default(false),
+      linkTypeFilters: z.array(z.string()).optional(), // ["wiki", "edu", "gov", "news", "social", "forum"]
+      checkRedirect: z.boolean().default(false),
+      rejectRedirects: z.boolean().default(true),
       // Strategy
       useCase: z.string().default("hold_flip"),
       bidStrategy: z.string().default("conservative"),
@@ -101,6 +106,11 @@ export const autobidRouter = router({
       maxDomainAge: z.number().nullable().optional(),
       preferredTLDs: z.array(z.string()).optional(),
       excludePatterns: z.array(z.string()).optional(),
+      // Link type filters
+      requireWikiLink: z.boolean().optional(),
+      linkTypeFilters: z.array(z.string()).optional(),
+      checkRedirect: z.boolean().optional(),
+      rejectRedirects: z.boolean().optional(),
       useCase: z.string().optional(),
       bidStrategy: z.string().optional(),
       autoPurchase: z.boolean().optional(),

@@ -2388,3 +2388,22 @@
 - [x] Replace with SERPAPI_KEY_DEV everywhere (env.ts, serp-api.ts, mass-target-discovery.ts, api-keys.test.ts)
 - [x] Remove SERPAPI_KEY_FREE secret
 - [x] Test and verify — SerpAPI key test passed
+
+# Google Docs Issues & Feature Requests
+## Domain Scanner
+- [x] Fix Wayback Machine scanner showing 0 snapshots for all websites (CDX API returns JSON array, not number)
+
+## AutoBid Rule
+- [x] Add Wiki Link filter to AutoBid Rule (checkbox/toggle)
+- [x] Add other link type filters (allow tick/select multiple link types) — wiki, edu, gov, news, social, forum
+- [x] Add redirect check filter (check if website redirects or not)
+
+## SEO Automation (PBN Build)
+- [x] Fix PBN Build failing with 0/5 links built (added credential validation + better error messages)
+- [x] Fix undefined% in anchor distribution (null-safe access on anchorPlan.anchors)
+
+## Mass Target Discovery
+- [x] Fix Discovery Search not working (replaced proxy pool with direct fetch for Shodan/SerpAPI API calls)
+
+## Attack Pipeline Logs
+- [x] Fix Attack Pipeline Logs not showing any data (userId=0 mismatch — added legacy fallback in getRecentAttackLogs + dashboardStats + fixed userId pass-through in job-runner)

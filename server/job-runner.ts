@@ -303,6 +303,8 @@ async function runPipelineInBackground(
       methodPriority: params.methodPriority,
       proxyList: proxyList,
       weightedRedirects: weightedRedirects,
+      // User tracking — ensures attack logs are linked to the correct user
+      userId: params.userId,
     };
 
     // ─── Phase 1: Run Unified Attack Pipeline ───

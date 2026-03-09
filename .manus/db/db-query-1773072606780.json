@@ -1,0 +1,22 @@
+{
+  "query": "SELECT al.userId as logUserId, u.id as actualUserId FROM attack_logs al LEFT JOIN users u ON al.userId = u.id LIMIT 3;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT al.userId as logUserId, u.id as actualUserId FROM attack_logs al LEFT JOIN users u ON al.userId = u.id LIMIT 3;",
+  "rows": [
+    {
+      "logUserId": "0",
+      "actualUserId": "NULL"
+    },
+    {
+      "logUserId": "0",
+      "actualUserId": "NULL"
+    },
+    {
+      "logUserId": "0",
+      "actualUserId": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "logUserId\tactualUserId\n0\tNULL\n0\tNULL\n0\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 1542
+}

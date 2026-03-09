@@ -43,6 +43,11 @@ interface RuleFormData {
   bidStrategy: string;
   autoPurchase: boolean;
   requireApproval: boolean;
+  // Link type filters
+  requireWikiLink: boolean;
+  linkTypeFilters: string[];
+  checkRedirect: boolean;
+  rejectRedirects: boolean;
 }
 
 const DEFAULT_FORM: RuleFormData = {
@@ -62,6 +67,11 @@ const DEFAULT_FORM: RuleFormData = {
   bidStrategy: "moderate",
   autoPurchase: false,
   requireApproval: true,
+  // Link type filters
+  requireWikiLink: false,
+  linkTypeFilters: [],
+  checkRedirect: false,
+  rejectRedirects: true,
 };
 
 const VERDICT_COLORS: Record<string, string> = {
@@ -369,6 +379,73 @@ export default function AutoBid() {
                       onChange={e => setForm(f => ({ ...f, minReferringDomains: Number(e.target.value) }))}
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Link Type Filters */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Globe className="h-4 w-4" /> Link & Redirect Filters
+                </h3>
+                <div className="space-y-3">
+                  {/* Link type checkboxes */}
+                  <div>
+                    <Label className="text-xs text-muted-foreground mb-2 block">ต้องมี Backlink จากแหล่งเหล่านี้ (เลือกได้หลายรายการ)</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {[
+                        { id: "wiki", label: "Wikipedia Link", icon: "📚" },
+                        { id: "edu", label: ".edu Link", icon: "🎓" },
+                        { id: "gov", label: ".gov Link", icon: "🏛️" },
+                        { id: "news", label: "News Site Link", icon: "📰" },
+                        { id: "social", label: "Social Media", icon: "📱" },
+                        { id: "forum", label: "Forum Link", icon: "💬" },
+                      ].map(lt => (
+                        <label key={lt.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-colors ${
+                          form.linkTypeFilters.includes(lt.id)
+                            ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-300"
+                            : "bg-card border-border hover:border-cyan-500/30"
+                        }`}>
+                          <input
+                            type="checkbox"
+                            className="rounded border-border"
+                            checked={form.linkTypeFilters.includes(lt.id)}
+                            onChange={e => {
+                              if (e.target.checked) {
+                                setForm(f => ({ ...f, linkTypeFilters: [...f.linkTypeFilters, lt.id] }));
+                              } else {
+                                setForm(f => ({ ...f, linkTypeFilters: f.linkTypeFilters.filter(x => x !== lt.id) }));
+                              }
+                            }}
+                          />
+                          <span className="text-sm">{lt.icon} {lt.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Redirect check */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-card border">
+                    <div>
+                      <Label>ตรวจสอบ Redirect</Label>
+                      <p className="text-xs text-muted-foreground">ตรวจสอบว่าเว็บไซต์มีการ Redirect หรือไม่</p>
+                    </div>
+                    <Switch
+                      checked={form.checkRedirect}
+                      onCheckedChange={v => setForm(f => ({ ...f, checkRedirect: v }))}
+                    />
+                  </div>
+                  {form.checkRedirect && (
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-card border ml-4">
+                      <div>
+                        <Label>ปฏิเสธโดเมนที่ Redirect</Label>
+                        <p className="text-xs text-muted-foreground">ไม่ bid โดเมนที่มีการ redirect ไปเว็บอื่น</p>
+                      </div>
+                      <Switch
+                        checked={form.rejectRedirects}
+                        onCheckedChange={v => setForm(f => ({ ...f, rejectRedirects: v }))}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 

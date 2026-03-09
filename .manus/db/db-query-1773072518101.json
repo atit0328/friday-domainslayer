@@ -1,0 +1,55 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'attack_logs' ORDER BY ORDINAL_POSITION;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'attack_logs' ORDER BY ORDINAL_POSITION;",
+  "rows": [
+    {
+      "COLUMN_NAME": "id"
+    },
+    {
+      "COLUMN_NAME": "deployId"
+    },
+    {
+      "COLUMN_NAME": "userId"
+    },
+    {
+      "COLUMN_NAME": "logDomain"
+    },
+    {
+      "COLUMN_NAME": "logPhase"
+    },
+    {
+      "COLUMN_NAME": "logStep"
+    },
+    {
+      "COLUMN_NAME": "logDetail"
+    },
+    {
+      "COLUMN_NAME": "logSeverity"
+    },
+    {
+      "COLUMN_NAME": "logProgress"
+    },
+    {
+      "COLUMN_NAME": "logData"
+    },
+    {
+      "COLUMN_NAME": "logMethod"
+    },
+    {
+      "COLUMN_NAME": "httpStatus"
+    },
+    {
+      "COLUMN_NAME": "responseTime"
+    },
+    {
+      "COLUMN_NAME": "logTimestamp"
+    },
+    {
+      "COLUMN_NAME": "logCreatedAt"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\nid\ndeployId\nuserId\nlogDomain\nlogPhase\nlogStep\nlogDetail\nlogSeverity\nlogProgress\nlogData\nlogMethod\nhttpStatus\nresponseTime\nlogTimestamp\nlogCreatedAt\n",
+  "stderr": "",
+  "execution_time_ms": 1510
+}

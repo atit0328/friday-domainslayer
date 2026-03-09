@@ -197,6 +197,13 @@
       "when": 1773048801738,
       "tag": "0027_mighty_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "5",
+      "when": 1773071532501,
+      "tag": "0028_living_pet_avengers",
+      "breakpoints": true
     }
   ]
 }

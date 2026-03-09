@@ -1,0 +1,55 @@
+{
+  "query": "SELECT id, deployId, userId, logDomain, logPhase, logSeverity, logDetail FROM attack_logs LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, deployId, userId, logDomain, logPhase, logSeverity, logDetail FROM attack_logs LIMIT 5;",
+  "rows": [
+    {
+      "id": "1",
+      "deployId": "NULL",
+      "userId": "0",
+      "logDomain": "test-target.com",
+      "logPhase": "ai_analysis",
+      "logSeverity": "info",
+      "logDetail": "🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย https://test-target.com อย่างละเอียด..."
+    },
+    {
+      "id": "2",
+      "deployId": "NULL",
+      "userId": "0",
+      "logDomain": "test-target.com",
+      "logPhase": "ai_analysis",
+      "logSeverity": "info",
+      "logDetail": "🧠 [HTTP Fingerprinting] กำลังวิเคราะห์ HTTP headers, server type, response time..."
+    },
+    {
+      "id": "3",
+      "deployId": "NULL",
+      "userId": "0",
+      "logDomain": "test-target.com",
+      "logPhase": "ai_analysis",
+      "logSeverity": "info",
+      "logDetail": "🧠 [DNS & Network Analysis] กำลังค้นหา DNS records, IP, nameservers, hosting..."
+    },
+    {
+      "id": "4",
+      "deployId": "NULL",
+      "userId": "0",
+      "logDomain": "test-target.com",
+      "logPhase": "ai_analysis",
+      "logSeverity": "info",
+      "logDetail": "🧠 [HTTP Fingerprinting] Server: Apache | PHP: N/A | Response: 6070ms | Status: 403"
+    },
+    {
+      "id": "5",
+      "deployId": "NULL",
+      "userId": "0",
+      "logDomain": "ai-test.com",
+      "logPhase": "ai_analysis",
+      "logSeverity": "info",
+      "logDetail": "🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย https://ai-test.com อย่างละเอียด..."
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tdeployId\tuserId\tlogDomain\tlogPhase\tlogSeverity\tlogDetail\n1\tNULL\t0\ttest-target.com\tai_analysis\tinfo\t🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย https://test-target.com อย่างละเอียด...\n2\tNULL\t0\ttest-target.com\tai_analysis\tinfo\t🧠 [HTTP Fingerprinting] กำลังวิเคราะห์ HTTP headers, server type, response time...\n3\tNULL\t0\ttest-target.com\tai_analysis\tinfo\t🧠 [DNS & Network Analysis] กำลังค้นหา DNS records, IP, nameservers, hosting...\n4\tNULL\t0\ttest-target.com\tai_analysis\tinfo\t🧠 [HTTP Fingerprinting] Server: Apache | PHP: N/A | Response: 6070ms | Status: 403\n5\tNULL\t0\tai-test.com\tai_analysis\tinfo\t🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย https://ai-test.com อย่างละเอียด...\n",
+  "stderr": "",
+  "execution_time_ms": 1521
+}

@@ -134,6 +134,11 @@ export const autobidRules = mysqlTable("autobid_rules", {
   minDomainAge: int("minDomainAge"),                  // Min age in years (null=no limit)
   preferredTLDs: json("preferredTLDs"),               // Array of preferred TLDs
   excludePatterns: json("excludePatterns"),           // Array of patterns to exclude
+  // Link type filters
+  requireWikiLink: boolean("requireWikiLink").default(false).notNull(), // Require Wikipedia backlinks
+  linkTypeFilters: json("linkTypeFilters"),            // Array of link types to check: ["wiki", "edu", "gov", "news", "social", "forum"]
+  checkRedirect: boolean("checkRedirect").default(false).notNull(),    // Check if domain redirects
+  rejectRedirects: boolean("rejectRedirects").default(true).notNull(), // Reject domains that redirect
   // Legacy fields
   minTrustScore: int("minTrustScore").default(50).notNull(),
   minGrade: varchar("minGrade", { length: 2 }).default("C").notNull(),

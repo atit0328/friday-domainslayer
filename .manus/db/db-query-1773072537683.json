@@ -1,0 +1,15 @@
+{
+  "query": "SELECT COUNT(*) as total, userId, deployId FROM attack_logs GROUP BY userId, deployId;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COUNT(*) as total, userId, deployId FROM attack_logs GROUP BY userId, deployId;",
+  "rows": [
+    {
+      "total": "3731",
+      "userId": "0",
+      "deployId": "NULL"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\tuserId\tdeployId\n3731\t0\tNULL\n",
+  "stderr": "",
+  "execution_time_ms": 1616
+}

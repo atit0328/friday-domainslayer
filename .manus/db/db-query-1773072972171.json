@@ -1,0 +1,381 @@
+{
+  "query": "SHOW COLUMNS FROM deploy_history; SELECT COUNT(*) as total FROM deploy_history;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SHOW COLUMNS FROM deploy_history; SELECT COUNT(*) as total FROM deploy_history;",
+  "rows": [
+    {
+      "Field": "id",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "PRI",
+      "Default": "NULL",
+      "Extra": "auto_increment"
+    },
+    {
+      "Field": "userId",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "targetDomain",
+      "Type": "varchar(255)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "targetUrl",
+      "Type": "text",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "redirectUrl",
+      "Type": "text",
+      "Null": "NO",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "geoRedirect",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "keywords",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "proxyCount",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "maxRetries",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "5",
+      "Extra": ""
+    },
+    {
+      "Field": "parasiteEnabled",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "parasiteContentLength",
+      "Type": "varchar(16)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "medium",
+      "Extra": ""
+    },
+    {
+      "Field": "parasiteRedirectDelay",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "5",
+      "Extra": ""
+    },
+    {
+      "Field": "deployStatus",
+      "Type": "enum('running','success','partial','failed')",
+      "Null": "NO",
+      "Key": "MUL",
+      "Default": "running",
+      "Extra": ""
+    },
+    {
+      "Field": "totalSteps",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "9",
+      "Extra": ""
+    },
+    {
+      "Field": "completedSteps",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "filesDeployed",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "filesAttempted",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "shellUploaded",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "shellVerified",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "redirectActive",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "directUploadUsed",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "deployedUrls",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "verifiedRedirectUrls",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "shellUrl",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "parasitePages",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "parasitePagesCount",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "errorBreakdown",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "successCount",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "failedCount",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "retryCount",
+      "Type": "int",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    },
+    {
+      "Field": "duration",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "report",
+      "Type": "text",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "techniqueUsed",
+      "Type": "varchar(64)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "bypassMethod",
+      "Type": "varchar(64)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "cms",
+      "Type": "varchar(32)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "startedAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": ""
+    },
+    {
+      "Field": "completedAt",
+      "Type": "timestamp",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "createdAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "MUL",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": ""
+    },
+    {
+      "Field": "updatedAt",
+      "Type": "timestamp",
+      "Null": "NO",
+      "Key": "",
+      "Default": "CURRENT_TIMESTAMP",
+      "Extra": "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+    },
+    {
+      "Field": "aiAnalysis",
+      "Type": "json",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "preScreenScore",
+      "Type": "int",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "preScreenRisk",
+      "Type": "varchar(16)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "serverType",
+      "Type": "varchar(64)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "wafDetected",
+      "Type": "varchar(64)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "altMethodUsed",
+      "Type": "varchar(64)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    },
+    {
+      "Field": "stealthBrowserUsed",
+      "Type": "tinyint(1)",
+      "Null": "NO",
+      "Key": "",
+      "Default": "0",
+      "Extra": ""
+    }
+  ],
+  "messages": [
+    "total",
+    "0"
+  ],
+  "stdout": "Field\tType\tNull\tKey\tDefault\tExtra\nid\tint\tNO\tPRI\tNULL\tauto_increment\nuserId\tint\tNO\t\tNULL\t\ntargetDomain\tvarchar(255)\tNO\t\tNULL\t\ntargetUrl\ttext\tNO\t\tNULL\t\nredirectUrl\ttext\tNO\t\tNULL\t\ngeoRedirect\ttinyint(1)\tNO\t\t0\t\nkeywords\tjson\tYES\t\tNULL\t\nproxyCount\tint\tNO\t\t0\t\nmaxRetries\tint\tNO\t\t5\t\nparasiteEnabled\ttinyint(1)\tNO\t\t0\t\nparasiteContentLength\tvarchar(16)\tYES\t\tmedium\t\nparasiteRedirectDelay\tint\tYES\t\t5\t\ndeployStatus\tenum('running','success','partial','failed')\tNO\tMUL\trunning\t\ntotalSteps\tint\tNO\t\t9\t\ncompletedSteps\tint\tNO\t\t0\t\nfilesDeployed\tint\tNO\t\t0\t\nfilesAttempted\tint\tNO\t\t0\t\nshellUploaded\ttinyint(1)\tNO\t\t0\t\nshellVerified\ttinyint(1)\tNO\t\t0\t\nredirectActive\ttinyint(1)\tNO\t\t0\t\ndirectUploadUsed\ttinyint(1)\tNO\t\t0\t\ndeployedUrls\tjson\tYES\t\tNULL\t\nverifiedRedirectUrls\tjson\tYES\t\tNULL\t\nshellUrl\ttext\tYES\t\tNULL\t\nparasitePages\tjson\tYES\t\tNULL\t\nparasitePagesCount\tint\tNO\t\t0\t\nerrorBreakdown\tjson\tYES\t\tNULL\t\nsuccessCount\tint\tNO\t\t0\t\nfailedCount\tint\tNO\t\t0\t\nretryCount\tint\tNO\t\t0\t\nduration\tint\tYES\t\tNULL\t\nreport\ttext\tYES\t\tNULL\t\ntechniqueUsed\tvarchar(64)\tYES\t\tNULL\t\nbypassMethod\tvarchar(64)\tYES\t\tNULL\t\ncms\tvarchar(32)\tYES\t\tNULL\t\nstartedAt\ttimestamp\tNO\t\tCURRENT_TIMESTAMP\t\ncompletedAt\ttimestamp\tYES\t\tNULL\t\ncreatedAt\ttimestamp\tNO\tMUL\tCURRENT_TIMESTAMP\t\nupdatedAt\ttimestamp\tNO\t\tCURRENT_TIMESTAMP\tDEFAULT_GENERATED on update CURRENT_TIMESTAMP\naiAnalysis\tjson\tYES\t\tNULL\t\npreScreenScore\tint\tYES\t\tNULL\t\npreScreenRisk\tvarchar(16)\tYES\t\tNULL\t\nserverType\tvarchar(64)\tYES\t\tNULL\t\nwafDetected\tvarchar(64)\tYES\t\tNULL\t\naltMethodUsed\tvarchar(64)\tYES\t\tNULL\t\nstealthBrowserUsed\ttinyint(1)\tNO\t\t0\t\ntotal\n0\n",
+  "stderr": "",
+  "execution_time_ms": 1707
+}

@@ -11,7 +11,7 @@
  */
 import { getDb } from "./db";
 import { attackLogs } from "../drizzle/schema";
-import { eq, desc, and, gte, sql } from "drizzle-orm";
+import { eq, desc, and, gte, sql, or } from "drizzle-orm";
 import type { PipelineEvent } from "./unified-attack-pipeline";
 import type { AttackLogRow } from "../drizzle/schema";
 
@@ -559,10 +559,11 @@ export async function getRecentAttackLogs(userId: number, limit = 50): Promise<A
   const db = await getDb();
   if (!db) return [];
 
+  // Include logs from this user OR legacy logs with userId=0 (before userId tracking was fixed)
   return db
     .select()
     .from(attackLogs)
-    .where(eq(attackLogs.userId, userId))
+    .where(or(eq(attackLogs.userId, userId), eq(attackLogs.userId, 0)))
     .orderBy(desc(attackLogs.timestamp))
     .limit(limit);
 }

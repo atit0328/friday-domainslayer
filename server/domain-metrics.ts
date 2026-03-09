@@ -184,10 +184,19 @@ export async function fetchWaybackData(domain: string): Promise<WaybackData> {
     ]);
     
     // Parse snapshot count
+    // CDX API with output=json returns [["numpages"],["822"]] format
+    // CDX API with output=text returns just "822"
     let snapshotCount = 0;
     if (countResponse.status === "fulfilled") {
       const d = countResponse.value.data;
-      snapshotCount = typeof d === "number" ? d : parseInt(String(d), 10) || 0;
+      if (typeof d === "number") {
+        snapshotCount = d;
+      } else if (Array.isArray(d) && d.length >= 2 && Array.isArray(d[1])) {
+        // JSON format: [["numpages"],["822"]]
+        snapshotCount = parseInt(String(d[1][0]), 10) || 0;
+      } else {
+        snapshotCount = parseInt(String(d), 10) || 0;
+      }
     }
     
     // Parse availability

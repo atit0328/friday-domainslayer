@@ -453,6 +453,20 @@ export async function executePBNBuild(
       const site = sites.find(s => s.id === plan.siteId);
 
       if (site) {
+        // Check if site has valid credentials
+        if (!site.username || !site.appPassword) {
+          results.push({
+            siteId: plan.siteId,
+            siteName: plan.siteName,
+            postId: post.id,
+            title,
+            status: "failed",
+            error: `Missing WordPress credentials for ${plan.siteName}. Please set username and application password in PBN Manager.`,
+          });
+          totalFailed++;
+          continue;
+        }
+
         // Try to post to WordPress
         const wpResult = await postToWordPress(
           site.url, site.username, site.appPassword, title, content, excerpt,
@@ -535,7 +549,7 @@ export async function executePBNBuild(
   await db.addSeoAction(projectId, {
     actionType: "pbn_post",
     title: `PBN Build: ${totalBuilt}/${plans.length} links built`,
-    description: `Executed PBN backlink campaign. ${totalBuilt} published, ${totalFailed} failed. Anchor distribution: ${anchorPlan.anchors.map(a => `${a.type}:${a.percentage}%`).join(", ")}`,
+    description: `Executed PBN backlink campaign. ${totalBuilt} published, ${totalFailed} failed. Anchor distribution: ${(anchorPlan?.anchors || []).map(a => `${a.type || "unknown"}:${a.percentage ?? 0}%`).join(", ") || "N/A"}`,
     status: totalBuilt > 0 ? "completed" : "failed",
     executedAt: new Date(),
     completedAt: new Date(),

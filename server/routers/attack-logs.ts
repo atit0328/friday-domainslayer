@@ -13,7 +13,7 @@ import {
 import { getDb } from "../db";
 import { attackLogs } from "../../drizzle/schema";
 import { deployHistory } from "../../drizzle/schema";
-import { eq, sql, desc, and, gte, count } from "drizzle-orm";
+import { eq, sql, desc, and, gte, count, or } from "drizzle-orm";
 
 export const attackLogsRouter = router({
   /**
@@ -177,7 +177,7 @@ export const attackLogsRouter = router({
         })
         .from(attackLogs)
         .where(and(
-          eq(attackLogs.userId, ctx.user!.id),
+          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
           gte(attackLogs.timestamp, since),
         ))
         .groupBy(attackLogs.severity);
@@ -195,7 +195,7 @@ export const attackLogsRouter = router({
         })
         .from(attackLogs)
         .where(and(
-          eq(attackLogs.userId, ctx.user!.id),
+          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
           gte(attackLogs.timestamp, since),
         ))
         .groupBy(attackLogs.phase);
@@ -214,7 +214,7 @@ export const attackLogsRouter = router({
         })
         .from(attackLogs)
         .where(and(
-          eq(attackLogs.userId, ctx.user!.id),
+          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
           gte(attackLogs.timestamp, since),
           sql`${attackLogs.severity} IN ('error', 'critical')`,
           sql`${attackLogs.method} IS NOT NULL`,
@@ -296,7 +296,7 @@ export const attackLogsRouter = router({
         .select({ cnt: count() })
         .from(attackLogs)
         .where(and(
-          eq(attackLogs.userId, ctx.user!.id),
+          or(eq(attackLogs.userId, ctx.user!.id), eq(attackLogs.userId, 0)),
           gte(attackLogs.timestamp, since),
         ));
 
