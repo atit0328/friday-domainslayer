@@ -1,0 +1,23 @@
+{
+  "query": "SELECT * FROM redirect_url_pool LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT * FROM redirect_url_pool LIMIT 10;",
+  "rows": [
+    {
+      "id": "1",
+      "url": "https://hkt956.org/",
+      "label": "hkt956.org",
+      "weight": "1",
+      "isActive": "1",
+      "isDefault": "0",
+      "successCount": "0",
+      "failCount": "2",
+      "lastUsedAt": "NULL",
+      "createdAt": "2026-03-10 08:10:58",
+      "updatedAt": "2026-03-10 08:10:58"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\turl\tlabel\tweight\tisActive\tisDefault\tsuccessCount\tfailCount\tlastUsedAt\tcreatedAt\tupdatedAt\n1\thttps://hkt956.org/\thkt956.org\t1\t1\t0\t0\t2\tNULL\t2026-03-10 08:10:58\t2026-03-10 08:10:58\n",
+  "stderr": "",
+  "execution_time_ms": 1599
+}

@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO redirect_url_pool (url, label, weight, isActive, isDefault, successCount, failCount, createdAt, updatedAt) VALUES ('https://game.168ggalaxy.org/', 'สล็อต 168G Galaxy', 1, 1, 0, 0, 0, NOW(), NOW());",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute INSERT INTO redirect_url_pool (url, label, weight, isActive, isDefault, successCount, failCount, createdAt, updatedAt) VALUES ('https://game.168ggalaxy.org/', 'สล็อต 168G Galaxy', 1, 1, 0, 0, 0, NOW(), NOW());",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1510
+}

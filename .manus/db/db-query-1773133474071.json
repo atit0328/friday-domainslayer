@@ -1,0 +1,13 @@
+{
+  "query": "SELECT COUNT(*) as total FROM serp_keywords;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COUNT(*) as total FROM serp_keywords;",
+  "rows": [
+    {
+      "total": "96"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\n96\n",
+  "stderr": "",
+  "execution_time_ms": 1526
+}

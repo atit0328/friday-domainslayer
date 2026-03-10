@@ -2892,3 +2892,25 @@
 ## Tests
 - [x] Write vitest tests for enhanced attack system (14 tests: method sync, scheduler config, comprehensive vectors, router)
 - [x] 0 TypeScript errors
+
+# Keyword Discovery Run + Redirect URLs + Telegram
+
+## Keyword Discovery
+- [x] Seed default lottery keywords (95 keywords หวย seeded)
+- [x] Run SerpAPI discovery Run #4: 20 keywords → 174 raw → 14 new targets
+- [x] Run SerpAPI discovery Run #5: 30 keywords → 289 raw → 34 new targets (total 48 targets)
+- [x] Feed discovered targets to attack engine automatically (via getQueuedTargets)
+- [x] Verify Telegram notifications fire on attack success (test sent + received)
+
+## Redirect URLs
+- [x] Check current redirect URL pool (was 1 URL)
+- [x] Add https://game.168ggalaxy.org/ to redirect URL pool (สล็อต 168G Galaxy)
+- [x] Now 2 redirect URLs in pool for risk distribution
+
+## Telegram
+- [x] Verify Telegram success notifications are working (test message sent successfully)
+- [x] Test end-to-end: keyword discovery → attack → Telegram notification (all 3 tests passed)
+- [x] Failure/progress/error-info notifications correctly BLOCKED
+
+## Slot Keywords
+- [x] Add 54 สล็อต/คาสิโน keywords (PG slot, Joker, XO, บาคาร่า, เครดิตฟรี, 168galaxy)
