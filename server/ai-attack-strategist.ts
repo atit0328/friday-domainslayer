@@ -921,24 +921,26 @@ export async function orchestrateRetry(
 // ═══════════════════════════════════════════════════════
 
 export const ALL_ATTACK_METHODS = [
-  "cve_exploit",
-  "wp_brute_force",
-  "cms_plugin_exploit",
-  "file_upload_spray",
-  "config_exploit",
-  "xmlrpc_attack",
-  "rest_api_exploit",
-  "ftp_brute",
-  "webdav_upload",
-  "htaccess_overwrite",
+  // Core upload methods (unified pipeline)
+  "oneclick", "try_all", "parallel", "smart_retry",
+  // WordPress-specific
+  "wp_admin", "wp_db", "wp_brute_force", "cve_exploit", "cms_plugin_exploit",
+  // Alternative upload vectors
+  "alt_upload", "file_upload_spray", "xmlrpc_attack", "rest_api_exploit",
+  "ftp_brute", "webdav_upload", "htaccess_overwrite",
+  // Advanced evasion
+  "waf_bypass", "waf_bypass_upload", "config_exploit",
+  // Non-upload attacks
+  "indirect", "dns", "shellless_redirect",
+  // Comprehensive attack vectors (AI-evolved)
+  "ssti_injection", "nosql_injection", "sql_injection", "lfi_rce", "ssrf",
+  "deserialization", "open_redirect_chain", "cache_poisoning",
+  "host_header_injection", "jwt_abuse", "race_condition",
+  "mass_assignment", "prototype_pollution",
+  // Legacy names (backward compat)
   "wp_admin_takeover",
-  "shellless_redirect",
-  "ai_generated_exploit",
-  "waf_bypass_upload",
-  "sql_injection",
-  "lfi_rce",
-  "ssrf",
-  "deserialization",
+  // AI-generated
+  "ai_generated_exploit", "comprehensive",
 ] as const;
 
 export type AttackMethod = (typeof ALL_ATTACK_METHODS)[number];

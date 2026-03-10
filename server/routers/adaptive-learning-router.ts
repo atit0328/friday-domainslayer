@@ -11,10 +11,16 @@ import {
   getCmsAttackProfile,
   suggestBestStrategy,
   runLearningCycle,
+  runEnhancedLearningCycle,
   updateCmsProfiles,
   updateLearnedPatterns,
+  getMethodEffectiveness,
+  evolveStrategies,
 } from "../adaptive-learning";
-import { getLearningSchedulerStatus, executeLearningCycle } from "../learning-scheduler";
+import { getLearningSchedulerStatus, executeLearningCycle, updateLearningInterval } from "../learning-scheduler";
+import { getDb } from "../db";
+import { learnedPatterns } from "../../drizzle/schema";
+import { eq, desc, sql, and } from "drizzle-orm";
 
 export const adaptiveLearningRouter = router({
   // ═══ Dashboard Stats ═══
@@ -96,10 +102,79 @@ export const adaptiveLearningRouter = router({
     return await executeLearningCycle();
   }),
 
+  // ═══ Enhanced Learning Cycle (with strategy evolution) ═══
+  runEnhancedLearning: protectedProcedure.mutation(async () => {
+    return await runEnhancedLearningCycle();
+  }),
+
   // ═══ Scheduler Status ═══
   getSchedulerStatus: protectedProcedure.query(async () => {
     return getLearningSchedulerStatus();
   }),
+
+  // ═══ Update Learning Interval ═══
+  updateInterval: protectedProcedure
+    .input(z.object({ intervalHours: z.number().min(0.5).max(24) }))
+    .mutation(async ({ input }) => {
+      updateLearningInterval(input.intervalHours);
+      return { success: true, newIntervalHours: input.intervalHours };
+    }),
+
+  // ═══ Method Effectiveness per CMS/WAF ═══
+  getMethodEffectiveness: protectedProcedure
+    .input(z.object({
+      cms: z.string().nullable().optional(),
+      waf: z.string().nullable().optional(),
+    }).optional())
+    .query(async ({ input }) => {
+      return await getMethodEffectiveness(
+        input?.cms ?? null,
+        input?.waf ?? null,
+      );
+    }),
+
+  // ═══ Evolve New Strategies ═══
+  evolveStrategies: protectedProcedure.mutation(async () => {
+    const strategies = await evolveStrategies();
+    return { strategiesEvolved: strategies.length, strategies };
+  }),
+
+  // ═══ Get Evolved Strategies from DB ═══
+  getEvolvedStrategies: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    const rows = await db
+      .select()
+      .from(learnedPatterns)
+      .where(eq(learnedPatterns.patternType, "evolved_strategy"))
+      .orderBy(desc(learnedPatterns.updatedAt))
+      .limit(50);
+    return rows.map(r => ({
+      id: r.id,
+      name: r.patternKey.replace("evolved:", "").replace(/_/g, " "),
+      description: r.aiInsight,
+      approach: r.aiRecommendation,
+      confidence: r.confidenceScore,
+      attempts: r.totalAttempts,
+      successes: r.totalSuccesses,
+      successRate: Number(r.successRate),
+      updatedAt: r.updatedAt,
+    }));
+  }),
+
+  // ═══ Get Blacklisted Methods ═══
+  getBlacklistedMethods: protectedProcedure
+    .input(z.object({
+      cms: z.string().nullable().optional(),
+      waf: z.string().nullable().optional(),
+    }).optional())
+    .query(async ({ input }) => {
+      const effectiveness = await getMethodEffectiveness(
+        input?.cms ?? null,
+        input?.waf ?? null,
+      );
+      return effectiveness.filter(m => m.shouldSkip);
+    }),
 
   // ═══ Update Patterns Only ═══
   updatePatterns: protectedProcedure.mutation(async () => {

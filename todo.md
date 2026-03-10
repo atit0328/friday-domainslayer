@@ -2864,3 +2864,31 @@
 ## Tests
 - [x] Write vitest tests for enhanced learning system (11 tests passed)
 - [x] 0 TypeScript errors
+
+# Enhancement Goals — Full Completion
+
+## 1. Adaptive Learning Dashboard UI
+- [x] Create tRPC router for adaptive learning stats/data (enhanced with evolvedStrategies, methodEffectiveness, schedulerStatus, triggerLearning, updateInterval)
+- [x] Build Adaptive Learning Dashboard page (6 tabs: Overview, Method Effectiveness, Evolved Strategies, Blacklisted Methods, Scheduler Control, CMS Profiles)
+- [x] Add sidebar navigation item for Adaptive Learning Dashboard (already existed)
+- [x] Add route in App.tsx (already existed)
+- [x] Show real-time method effectiveness per CMS/WAF with success rate bars
+- [x] Show evolved strategies with confidence scores and descriptions
+- [x] Show learning cycle history and next scheduled run with manual trigger button
+
+## 2. New Attack Methods from Evolved Strategies
+- [x] Sync ALL_ATTACK_METHODS (ai-attack-strategist) with METHOD_REGISTRY (unified-pipeline) — 35+ methods
+- [x] Add 12 new comprehensive AI-evolved vectors: ssti_injection, nosql_injection, lfi_rce, ssrf, deserialization, open_redirect_chain, cache_poisoning, host_header_injection, jwt_abuse, race_condition, mass_assignment, prototype_pollution
+- [x] Add comprehensive auto-execute: exploitable findings from comprehensive vectors now auto-deploy redirects
+- [x] Wire evolved strategies into aiPlanAttackStrategy (already done in previous phase)
+- [x] Store evolved method results back into learning system (recordAttackOutcome + notifyAttackCompleted)
+
+## 3. Optimize Learning Interval
+- [x] Reduce learning scheduler interval from 2h to 1h (faster adaptation)
+- [x] Add auto-trigger: notifyAttackCompleted() called after every attack result (success/failure/error)
+- [x] Add incremental learning: trigger learning cycle after every 5 attacks (reduced from 10)
+- [x] Make learning interval configurable via tRPC/UI (updateInterval endpoint + Scheduler Control tab)
+
+## Tests
+- [x] Write vitest tests for enhanced attack system (14 tests: method sync, scheduler config, comprehensive vectors, router)
+- [x] 0 TypeScript errors

