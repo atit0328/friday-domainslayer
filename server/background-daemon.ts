@@ -32,6 +32,7 @@ export type TaskType =
   | "proxy_health"
   | "orchestrator_cycle"
   | "keyword_discovery"
+  | "gambling_brain_cycle"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
@@ -95,6 +96,8 @@ const DEFAULT_CONFIG: DaemonConfig = {
     cve_update: 1,
     proxy_health: 1,
     orchestrator_cycle: 1,
+    keyword_discovery: 1,
+    gambling_brain_cycle: 1,
     custom: 2,
   },
   defaultMaxRetries: 3,

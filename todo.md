@@ -3064,3 +3064,12 @@
 - [x] Audit sidebar/bottom nav — already mobile-friendly (overlay sidebar + bottom nav + safe-area)
 - [x] Audit Dashboard, Scanner, Marketplace — already use grid-cols-2 min on mobile
 - [x] 0 TypeScript errors confirmed
+
+# Enable Orchestrator Full Autonomous Mode
+- [x] เปิด attackEnabled ใน ai_orchestrator_state
+- [x] เปิด discoveryEnabled ใน ai_orchestrator_state
+- [x] เปิด seoEnabled ใน ai_orchestrator_state (เพื่อ full pipeline)
+- [x] เพิ่ม gambling_brain_cycle TaskType ใน background-daemon.ts
+- [x] เพิ่ม gambling_brain agent ใน agentic-auto-orchestrator (executor + config + registration)
+- [x] Restart server — gambling_brain_cycle registered + orchestrator shows 8 agents active
+- [x] ตรวจสอบว่า orchestrator รับค่าใหม่และเริ่มสั่ง gambling tasks
