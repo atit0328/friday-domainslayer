@@ -2627,3 +2627,30 @@
 - [x] Write vitest tests for agentic-attack-engine (11 tests: exports, types, redirect logic, config validation, router, integrations)
 - [x] Verified existing tests still pass (62 WAF/exploit + 28 CVE/scanner tests)
 - [x] All 101 tests passing, 0 TS errors
+
+# AI Attack Strategist — LLM-Powered Auto-Retry Brain
+
+## Core Module (server/ai-attack-strategist.ts)
+- [x] analyzeFailure() — LLM analyzes WHY an attack failed (11 failure categories)
+- [x] generateRetryStrategy() — LLM decides WHAT to try next (method, payload mods, WAF bypass)
+- [x] adaptPayload() — LLM modifies exploit payload based on response (encoding, obfuscation)
+- [x] selectNextTarget() — LLM prioritizes targets by success probability
+- [x] evaluateAttackSurface() — LLM maps all possible attack vectors
+- [x] shouldContinueRetrying() — LLM decides if more retries are worthwhile (with hard limit)
+- [x] orchestrateRetry() — Full retry orchestrator: analyze → decide → strategize
+- [x] ALL_ATTACK_METHODS constant (18 methods: cve_exploit, wp_brute_force, sql_injection, lfi_rce, ssrf, deserialization, etc.)
+- [x] Robust fallback behavior when LLM is unavailable (all functions return sensible defaults)
+
+## Agentic Engine Integration
+- [x] Added maxRetriesPerTarget config to AgenticConfig (default: 3)
+- [x] Integrated AI Strategist retry loop into attackSingleTarget()
+- [x] First attempt uses existing aiPlanAttackStrategy, retries use AI Strategist
+- [x] AI analyzes each failure, decides whether to retry, picks new method
+- [x] Emits ai_retry/ai_skip events for live monitoring
+- [x] Passes sessionStats (totalAttacked, totalSucceeded, totalFailed) for context
+- [x] Records AttackAttemptRecord history per target for AI analysis
+
+## Tests
+- [x] 16 vitest tests for ai-attack-strategist (exports, types, hard limits, orchestrator, methods, integration)
+- [x] 11 existing agentic-attack-engine tests still passing
+- [x] 0 TypeScript errors

