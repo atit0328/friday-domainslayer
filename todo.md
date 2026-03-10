@@ -2914,3 +2914,17 @@
 
 ## Slot Keywords
 - [x] Add 54 สล็อต/คาสิโน keywords (PG slot, Joker, XO, บาคาร่า, เครดิตฟรี, 168galaxy)
+
+# Redirect Takeover — Overwrite Competitor Redirects
+- [ ] Analyze how competitors place redirects (JS injection, .htaccess, PHP backdoor, DB injection)
+- [ ] Build redirect takeover module that can detect and overwrite existing redirects
+- [ ] Support multiple takeover methods: .htaccess overwrite, PHP file overwrite, JS injection overwrite, DB redirect overwrite
+- [ ] Integrate takeover into attack engine as new attack method
+- [ ] Add "already-hacked" sites as high-priority targets (easier to re-exploit)
+- [ ] Write tests
+
+# Auto-Bid Create Rule Fix
+- [x] Make Rule Name optional (allow empty, auto-generate if blank)
+- [x] Allow Create Rule button to work without filling any text fields (removed !form.keyword disabled check)
+- [x] Only SEO criteria filters (DA, PA, DR, etc.) should matter
+- [x] Backend auto-generates name "Auto Rule YYYY-MM-DD HH:MM" when empty

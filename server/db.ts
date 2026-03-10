@@ -136,6 +136,11 @@ export async function updateOrder(id: number, data: Partial<typeof orders.$infer
 // ═══ Auto-Bid Rules ═══
 export async function createAutobidRule(userId: number, data: Partial<typeof autobidRules.$inferInsert>) {
   const db = await getDb(); if (!db) throw new Error("DB not available");
+  // Auto-generate name if empty
+  if (!data.name || data.name.trim() === "") {
+    const ts = new Date().toISOString().slice(0, 16).replace("T", " ");
+    data.name = `Auto Rule ${ts}`;
+  }
   const result = await db.insert(autobidRules).values({ userId, ...data } as any);
   return { id: Number(result[0].insertId) };
 }

@@ -239,7 +239,7 @@ export default function AutoBid() {
                 </h3>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <Label>Rule Name</Label>
+                    <Label>Rule Name <span className="text-xs text-muted-foreground">(optional)</span></Label>
                     <Input
                       value={form.name}
                       onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -491,7 +491,7 @@ export default function AutoBid() {
               <Button
                 className="bg-violet-600 hover:bg-violet-700 flex-1"
                 onClick={handleCreate}
-                disabled={createMutation.isPending || !form.keyword}
+                disabled={createMutation.isPending}
               >
                 {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
                 Create Rule
