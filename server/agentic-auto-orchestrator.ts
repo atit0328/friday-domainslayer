@@ -69,7 +69,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -114,6 +114,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   blackhat_brain: {
     enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  sprint_engine: {
+    enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -715,6 +719,25 @@ async function executeCmsScanTask(task: DaemonTask, signal: AbortSignal): Promis
 }
 
 /**
+ * Sprint Day Executor — runs the next day of all active 7-day sprints
+ */
+async function executeSprintDayTask(task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { orchestratorTick } = await import("./seven-day-sprint");
+    const result = await orchestratorTick();
+    return {
+      success: true,
+      result: {
+        sprintsProcessed: result.sprintsProcessed,
+        reportsGenerated: result.reportsGenerated.length,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Blackhat Brain Executor — LLM-driven autonomous blackhat operations
  * Finds targets with known vulnerabilities/shells and runs full blackhat AI pipeline
  */
@@ -863,6 +886,7 @@ async function orchestratorTick() {
         gambling_brain: "gambling_brain_cycle",
         cms_scan: "cms_scan",
         blackhat_brain: "blackhat_brain",
+        sprint_engine: "sprint_day",
       };
 
       const taskId = await enqueueTask({
@@ -918,6 +942,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("gambling_brain_cycle", executeGamblingBrainTask);
   registerExecutor("cms_scan", executeCmsScanTask);
   registerExecutor("blackhat_brain", executeBlackhatBrainTask);
+  registerExecutor("sprint_day", executeSprintDayTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1233,6 +1258,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
     },
   ],
+  sprint_engine: [
+    {
+      name: "reduce_content",
+      description: "Reduce content velocity",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 24 * 60 * 60_000); },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase sprint interval to 36h",
+      apply: (_name, config) => { config.intervalMs = 36 * 60 * 60_000; },
+    },
+    {
+      name: "pause_sprint",
+      description: "Pause sprint engine",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
 };
 
 /**
@@ -1319,6 +1361,7 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
   gambling_brain_cycle: "gambling_brain",
    cms_scan: "cms_scan",
   blackhat_brain: "blackhat_brain",
+  sprint_day: "sprint_engine",
 };
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts

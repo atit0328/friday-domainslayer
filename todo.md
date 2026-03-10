@@ -3211,3 +3211,20 @@
 - [x] Fallback: if plan generation fails, still auto-start SEO via autoStartAfterScan
 - [x] 17 vitest tests passing for agentic SEO automation + Telegram success-only
 - [x] 0 TypeScript errors
+
+# Feature: 7-Day Rapid Ranking Engine — ติด Google หน้าแรกภายใน 7 วัน
+- [x] Deep audit: วิเคราะห์ว่าระบบปัจจุบันทำอะไรได้จริงและยังขาดอะไร
+- [x] Build Rapid Ranking Engine: 7-day blitz strategy coordinator (server/seven-day-sprint.ts)
+- [x] Mass Indexing System: IndexNow, Google Ping, Bing Ping, sitemap submission, WebSub (server/rapid-indexing-engine.ts)
+- [x] Google Entity Stacking: สร้าง interconnected entities บน Telegraph (DA 90+) ที่ link กลับ target domain
+- [x] Content Velocity: AI generates 10-50 unique articles/day ด้วย 15 content angles
+- [x] Parasite SEO Blitz: mass deploy ไปยัง Telegraph (no-auth, instant, DA 90+) + entity stack (server/parasite-seo-blitz.ts)
+- [x] Low-Competition Keyword Sniper: AI finds easy-win keywords (difficulty ≤40, priority ≥50) (server/keyword-sniper-engine.ts)
+- [x] Aggressive Link Velocity Controller: 7-day velocity plan with tier1/tier2/tier3 + anchor distribution
+- [x] Tiered Link Building: Tier 1 (PBN/Web2.0) → Tier 2 (bookmarks/comments) → Tier 3 (auto-generated)
+- [x] Keyword Clustering: AI จัดกลุ่ม keywords ตาม search intent เพื่อ target ทีละ cluster
+- [x] Wire into orchestrator: sprint_engine agent + sprint_day task type + executeSprintDayTask executor
+- [x] Telegram notifications: sprint started, daily reports, first page achieved, sprint complete
+- [x] Adaptive velocity adjustment: auto-adjust link velocity based on rank movement (Day 4+)
+- [x] Sprint Router (server/routers/sprint-router.ts): initSprint, quickStart, executeDay, runNextDay, getActive, getDetail, getSummary, rapidIndex, findKeywords, previewVelocity, tick
+- [x] Write vitest tests: 12 tests passing (keyword sniper, rapid indexing, parasite blitz, sprint orchestrator, sprint router)

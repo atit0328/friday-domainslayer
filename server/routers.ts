@@ -51,6 +51,7 @@ import { llmProviderRouter } from "./routers/llm-provider";
 import { redirectTakeoverRouter } from "./routers/redirect-takeover";
 import { gamblingBrainRouter } from "./routers/gambling-brain";
 import { keywordPerformanceRouter } from "./routers/keyword-performance";
+import { sprintRouter } from "./routers/sprint-router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -162,6 +163,9 @@ export const appRouter = router({
 
   // Keyword Performance Tracking (ROI & rank correlation)
   keywordPerformance: keywordPerformanceRouter,
+
+  // 7-Day Rapid Ranking Sprint Engine
+  sprint: sprintRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({
