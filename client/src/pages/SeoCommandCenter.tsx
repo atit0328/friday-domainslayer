@@ -283,7 +283,7 @@ export default function SeoCommandCenter() {
                   <Target className="w-4 h-4 text-emerald-400" />
                   เป้าหมาย Timeline
                 </Label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   {[{ days: 3, label: "3 วัน", desc: "เร่งด่วน" }, { days: 7, label: "7 วัน", desc: "เร็ว" }, { days: 30, label: "30 วัน", desc: "มาตรฐาน" }].map(opt => (
                     <button
                       key={opt.days}
@@ -596,38 +596,38 @@ export default function SeoCommandCenter() {
                     </div>
                   </div>
 
-                  {/* Metrics Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-6 gap-3 lg:gap-4">
-                    <div className="text-center">
+                  {/* Metrics Grid — always 3 cols min (compact 3x2 on mobile, 6 cols on md+) */}
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2 md:gap-4">
+                    <div className="text-center px-1">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">DA</p>
-                      <p className="text-lg font-bold text-emerald-400">{project.currentDA ?? "—"}</p>
+                      <p className="text-base md:text-lg font-bold text-emerald-400">{project.currentDA ?? "—"}</p>
                     </div>
-                    <div className="text-center">
+                    <div className="text-center px-1">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">DR</p>
-                      <p className="text-lg font-bold text-blue-400">{project.currentDR ?? "—"}</p>
+                      <p className="text-base md:text-lg font-bold text-blue-400">{project.currentDR ?? "—"}</p>
                     </div>
-                    <div className="text-center">
+                    <div className="text-center px-1">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Spam</p>
-                      <p className={`text-lg font-bold ${(project.currentSpamScore || 0) > 30 ? "text-red-400" : "text-emerald-400"}`}>
+                      <p className={`text-base md:text-lg font-bold ${(project.currentSpamScore || 0) > 30 ? "text-red-400" : "text-emerald-400"}`}>
                         {project.currentSpamScore ?? "—"}
                       </p>
                     </div>
-                    <div className="text-center" title={project.currentBacklinks === 0 ? "Moz API quota หมด — กด Refresh เพื่อดึงค่าใหม่" : `Backlinks: ${project.currentBacklinks?.toLocaleString() || 'ไม่มีข้อมูล'}`}>
+                    <div className="text-center px-1" title={project.currentBacklinks === 0 ? "Moz API quota หมด — กด Refresh เพื่อดึงค่าใหม่" : `Backlinks: ${project.currentBacklinks?.toLocaleString() || 'ไม่มีข้อมูล'}`}>
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">BL</p>
-                      <p className={`text-lg font-bold ${project.currentBacklinks ? 'text-amber-400' : 'text-zinc-500'}`}>
+                      <p className={`text-base md:text-lg font-bold ${project.currentBacklinks ? 'text-amber-400' : 'text-zinc-500'}`}>
                         {project.currentBacklinks != null ? project.currentBacklinks.toLocaleString() : "—"}
                       </p>
                     </div>
-                    <div className="text-center">
+                    <div className="text-center px-1">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Health</p>
-                      <p className={`text-lg font-bold ${
+                      <p className={`text-base md:text-lg font-bold ${
                         (project.aiHealthScore || 0) >= 70 ? "text-emerald-400" :
                         (project.aiHealthScore || 0) >= 40 ? "text-yellow-400" : "text-red-400"
                       }`}>
                         {project.aiHealthScore ?? "—"}
                       </p>
                     </div>
-                    <div className="text-center">
+                    <div className="text-center px-1">
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Trend</p>
                       <div className="flex flex-col items-center gap-0.5">
                         {getTrendIcon(project.overallTrend)}
@@ -644,8 +644,8 @@ export default function SeoCommandCenter() {
                     </div>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 shrink-0">
+                  {/* Actions — wrap on mobile */}
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     {/* Schedule Toggle — Weekly Auto-Run */}
                     <Popover open={scheduleProject === project.id} onOpenChange={(open) => {
                       if (open) {
@@ -686,7 +686,7 @@ export default function SeoCommandCenter() {
                           {/* Multi-Day Selector */}
                           <div className="space-y-2">
                             <Label className="text-xs text-zinc-300">วันที่รัน</Label>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-1">
+                            <div className="grid grid-cols-7 gap-1">
                               {[
                                 { day: 0, label: "อา" },
                                 { day: 1, label: "จ" },

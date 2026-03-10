@@ -990,7 +990,7 @@ function ResultDetailView({ resultId, onBack }: { resultId: number; onBack: () =
       </div>
 
       {/* Severity summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-4 md:grid-cols-7 gap-3">
+      <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
         {[
           { label: "Total", count: result.totalFindings, color: "text-foreground" },
           { label: "Critical", count: result.criticalCount, color: "text-red-400" },

@@ -3052,3 +3052,15 @@
 - [x] UI: KeywordPerformancePage.tsx — Overview (best/worst performers), ROI Rankings, Recent Entries tabs
 - [x] Add route /keyword-performance in App.tsx and sidebar navigation
 - [x] 0 TypeScript errors, 49+ tests passing
+
+# Mobile Responsive Fix — ทุกหน้า 100%
+- [x] Fix SEO Command Center project cards: metrics (DA/DR/SPAM/BL/HEALTH/TREND) grid-cols-3 md:grid-cols-6 compact
+- [x] Fix action buttons overflow — flex-wrap on mobile
+- [x] Fix SeoCommandCenter day selector — grid-cols-7 always
+- [x] Fix SeoCommandCenter timeline selector — grid-cols-3 always
+- [x] Fix SeoProjectDetail metrics grid — grid-cols-3 sm:grid-cols-5 lg:grid-cols-9
+- [x] Fix SeoProjectDetail backlink summary — grid-cols-3 sm:grid-cols-6
+- [x] Fix ScheduledScans severity grid — grid-cols-4 md:grid-cols-7
+- [x] Audit sidebar/bottom nav — already mobile-friendly (overlay sidebar + bottom nav + safe-area)
+- [x] Audit Dashboard, Scanner, Marketplace — already use grid-cols-2 min on mobile
+- [x] 0 TypeScript errors confirmed

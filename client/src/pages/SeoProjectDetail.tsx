@@ -353,7 +353,7 @@ export default function SeoProjectDetail() {
       </div>
 
       {/* Metrics Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-3">
+      <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-9 gap-2 sm:gap-3">
         {[
           { label: "DA", value: project.currentDA, color: getMetricColor(project.currentDA, [20, 40]) },
           { label: "DR", value: project.currentDR, color: getMetricColor(project.currentDR, [20, 40]) },
@@ -444,7 +444,7 @@ export default function SeoProjectDetail() {
               </CardHeader>
               <CardContent>
                 {blStats || data?.blStats ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                     {[
                       { label: "Total", value: (blStats || data?.blStats)?.total || 0, color: "text-foreground" },
                       { label: "Active", value: (blStats || data?.blStats)?.active || 0, color: "text-emerald-400" },
@@ -455,7 +455,7 @@ export default function SeoProjectDetail() {
                     ].map(s => (
                       <div key={s.label} className="text-center">
                         <p className="text-[10px] text-muted-foreground">{s.label}</p>
-                        <p className={`text-lg font-bold ${s.color}`}>{s.value}</p>
+                        <p className={`text-base sm:text-lg font-bold ${s.color}`}>{s.value}</p>
                       </div>
                     ))}
                   </div>
