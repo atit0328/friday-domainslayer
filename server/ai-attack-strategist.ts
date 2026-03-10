@@ -13,6 +13,14 @@
  * feeding the full history to the LLM for contextual decisions.
  */
 import { invokeLLM } from "./_core/llm";
+import {
+  queryHistoricalPatterns,
+  calculateMethodSuccessRates,
+  getLearnedInsights,
+  getCmsAttackProfile,
+  recordAttackOutcome,
+  type AttackOutcome,
+} from "./adaptive-learning";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -291,6 +299,8 @@ export async function generateRetryStrategy(
             `Available methods: ${availableMethods.join(", ")}. ` +
             `Already tried: ${usedMethods.join(", ")}. ` +
             `Not yet tried: ${unusedMethods.join(", ")}. ` +
+            "You also have access to HISTORICAL DATA from past attacks against similar targets. " +
+            "Use this data to prioritize methods with proven success rates. " +
             "If no more viable methods exist, set shouldRetry to false. Return JSON.",
         },
         {
@@ -325,6 +335,7 @@ export async function generateRetryStrategy(
               errorMessage: a.errorMessage,
             })),
             retryNumber: target.previousAttempts.length + 1,
+            historicalData: await getHistoricalContext(target, availableMethods),
           }),
         },
       ],
@@ -836,6 +847,17 @@ export async function orchestrateRetry(
     };
   }
 
+  // Step 0: Fetch historical intelligence
+  emit("learning", "📚 AI กำลังดึงข้อมูลจาก Adaptive Learning DB...");
+  const historicalContext = await getHistoricalContext(target, availableMethods);
+  if (historicalContext.totalHistoricalSamples > 0) {
+    emit(
+      "learned",
+      `📊 พบข้อมูลจากการโจมตีในอดีต ${historicalContext.totalHistoricalSamples} ครั้ง — Best method: ${historicalContext.cmsProfile?.bestMethod || "N/A"}`,
+      { historicalContext }
+    );
+  }
+
   // Step 1: Analyze the failure
   emit(
     "analyzing",
@@ -920,3 +942,91 @@ export const ALL_ATTACK_METHODS = [
 ] as const;
 
 export type AttackMethod = (typeof ALL_ATTACK_METHODS)[number];
+
+// ═══════════════════════════════════════════════════════
+//  HISTORICAL CONTEXT HELPER
+//  Fetches relevant data from Adaptive Learning DB
+// ═══════════════════════════════════════════════════════
+
+async function getHistoricalContext(
+  target: TargetContext,
+  availableMethods: string[]
+): Promise<{
+  cmsPatterns: Array<{ method: string; successRate: number; attempts: number }>;
+  wafPatterns: Array<{ method: string; successRate: number; attempts: number }>;
+  globalMethodRates: Array<{ method: string; successRate: number; attempts: number }>;
+  cmsProfile: { bestMethod: string | null; overallSuccessRate: number; methodRankings: any[] } | null;
+  learnedInsights: Array<{ key: string; insight: string; recommendation: string; successRate: number }>;
+  totalHistoricalSamples: number;
+}> {
+  try {
+    const [cmsPatterns, wafPatterns, globalRates] = await Promise.all([
+      target.cms ? queryHistoricalPatterns({ cms: target.cms }) : Promise.resolve([]),
+      target.wafDetected ? queryHistoricalPatterns({ waf: target.wafDetected }) : Promise.resolve([]),
+      calculateMethodSuccessRates({ minAttempts: 2 }),
+    ]);
+
+    let cmsProfile = null;
+    if (target.cms) {
+      const profile = await getCmsAttackProfile(target.cms);
+      if (profile) {
+        cmsProfile = {
+          bestMethod: profile.bestMethod,
+          overallSuccessRate: Number(profile.overallSuccessRate),
+          methodRankings: (profile.methodRankings as any[])?.slice(0, 8) || [],
+        };
+      }
+    }
+
+    const insights = await getLearnedInsights({
+      cms: target.cms || undefined,
+      waf: target.wafDetected || undefined,
+      limit: 5,
+    });
+
+    const totalHistoricalSamples =
+      cmsPatterns.reduce((s, p) => s + p.totalAttempts, 0) +
+      wafPatterns.reduce((s, p) => s + p.totalAttempts, 0);
+
+    return {
+      cmsPatterns: cmsPatterns.slice(0, 8).map((p) => ({
+        method: p.method,
+        successRate: p.successRate,
+        attempts: p.totalAttempts,
+      })),
+      wafPatterns: wafPatterns.slice(0, 8).map((p) => ({
+        method: p.method,
+        successRate: p.successRate,
+        attempts: p.totalAttempts,
+      })),
+      globalMethodRates: globalRates.slice(0, 10).map((r) => ({
+        method: r.method,
+        successRate: r.successRate,
+        attempts: r.attempts,
+      })),
+      cmsProfile,
+      learnedInsights: insights.slice(0, 5).map((i) => ({
+        key: i.patternKey,
+        insight: i.insight,
+        recommendation: i.recommendation,
+        successRate: i.successRate,
+      })),
+      totalHistoricalSamples,
+    };
+  } catch (e: any) {
+    console.error(`[AI Strategist] getHistoricalContext error: ${e.message}`);
+    return {
+      cmsPatterns: [],
+      wafPatterns: [],
+      globalMethodRates: [],
+      cmsProfile: null,
+      learnedInsights: [],
+      totalHistoricalSamples: 0,
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  RE-EXPORT for convenience
+// ═══════════════════════════════════════════════════════
+export { recordAttackOutcome, type AttackOutcome };

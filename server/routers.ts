@@ -44,6 +44,7 @@ import { orchestratorRouter } from "./routers/orchestrator";
 import { cveDatabaseRouter } from "./routers/cve-database";
 import { recordExploit, recordWafDetection, getExploitAnalytics, getExploitHistory, getWafHistory, getAiVsTemplateComparison } from "./routers/exploit-analytics";
 import { agenticAttackRouter } from "./routers/agentic-attack";
+import { adaptiveLearningRouter } from "./routers/adaptive-learning-router";
 
 export const appRouter = router({
   system: systemRouter,
@@ -134,6 +135,9 @@ export const appRouter = router({
 
   // Agentic AI Attack Engine
   agenticAttack: agenticAttackRouter,
+
+  // Adaptive Learning
+  adaptiveLearning: adaptiveLearningRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

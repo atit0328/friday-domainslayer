@@ -1461,3 +1461,130 @@ export const agenticSessions = mysqlTable("agentic_sessions", {
 });
 export type AgenticSession = typeof agenticSessions.$inferSelect;
 export type InsertAgenticSession = typeof agenticSessions.$inferInsert;
+
+
+// ═══════════════════════════════════════════════════════
+// Adaptive Learning: Strategy Outcome Logs
+// Records EVERY attack attempt with full context for AI learning
+// ═══════════════════════════════════════════════════════
+export const strategyOutcomeLogs = mysqlTable("strategy_outcome_logs", {
+  id: int("id").primaryKey().autoincrement(),
+  // Target fingerprint
+  targetDomain: varchar("targetDomain", { length: 255 }).notNull(),
+  cms: varchar("solCms", { length: 64 }),
+  cmsVersion: varchar("solCmsVersion", { length: 32 }),
+  serverType: varchar("solServerType", { length: 128 }),
+  phpVersion: varchar("solPhpVersion", { length: 32 }),
+  wafDetected: varchar("solWafDetected", { length: 64 }),
+  wafStrength: varchar("solWafStrength", { length: 16 }),
+  vulnScore: int("solVulnScore"),
+  // Attack details
+  method: varchar("solMethod", { length: 128 }).notNull(),
+  exploitType: varchar("solExploitType", { length: 128 }),
+  payloadType: varchar("solPayloadType", { length: 64 }),
+  wafBypassUsed: json("solWafBypassUsed").$type<string[]>(),
+  payloadModifications: json("solPayloadMods").$type<string[]>(),
+  attackPath: varchar("solAttackPath", { length: 512 }),
+  // Attempt context
+  attemptNumber: int("solAttemptNumber").default(1).notNull(),
+  isRetry: boolean("solIsRetry").default(false).notNull(),
+  previousMethodsTried: json("solPreviousMethods").$type<string[]>(),
+  // Result
+  success: boolean("solSuccess").default(false).notNull(),
+  httpStatus: int("solHttpStatus"),
+  errorCategory: varchar("solErrorCategory", { length: 64 }),
+  errorMessage: text("solErrorMessage"),
+  filesPlaced: int("solFilesPlaced").default(0).notNull(),
+  redirectVerified: boolean("solRedirectVerified").default(false).notNull(),
+  durationMs: int("solDurationMs"),
+  // AI analysis
+  aiFailureCategory: varchar("solAiFailureCategory", { length: 64 }),
+  aiReasoning: text("solAiReasoning"),
+  aiConfidence: int("solAiConfidence"),
+  aiEstimatedSuccess: int("solAiEstimatedSuccess"),
+  // Session context
+  sessionId: int("solSessionId"),
+  agenticSessionId: int("solAgenticSessionId"),
+  // Metadata
+  createdAt: timestamp("solCreatedAt").defaultNow().notNull(),
+});
+export type StrategyOutcomeLog = typeof strategyOutcomeLogs.$inferSelect;
+export type InsertStrategyOutcomeLog = typeof strategyOutcomeLogs.$inferInsert;
+
+// ═══════════════════════════════════════════════════════
+// Adaptive Learning: Learned Patterns
+// Aggregated insights — AI-synthesized knowledge from historical outcomes
+// Updated periodically by the learning engine
+// ═══════════════════════════════════════════════════════
+export const learnedPatterns = mysqlTable("learned_patterns", {
+  id: int("id").primaryKey().autoincrement(),
+  // Pattern key (what this pattern applies to)
+  patternType: varchar("lpPatternType", { length: 64 }).notNull(),
+  // "cms_method" | "waf_bypass" | "server_exploit" | "general"
+  patternKey: varchar("lpPatternKey", { length: 255 }).notNull(),
+  // e.g. "wordpress:cve_exploit", "cloudflare:chunked_encoding", "apache:file_upload_spray"
+  // Aggregated stats
+  totalAttempts: int("lpTotalAttempts").default(0).notNull(),
+  totalSuccesses: int("lpTotalSuccesses").default(0).notNull(),
+  successRate: decimal("lpSuccessRate", { precision: 5, scale: 2 }).default("0").notNull(),
+  avgDurationMs: int("lpAvgDurationMs").default(0).notNull(),
+  lastSuccessAt: timestamp("lpLastSuccessAt"),
+  lastFailureAt: timestamp("lpLastFailureAt"),
+  // AI-synthesized insight
+  aiInsight: text("lpAiInsight"),
+  // What the AI learned about this pattern
+  aiRecommendation: text("lpAiRecommendation"),
+  // What the AI recommends for this pattern
+  confidenceScore: int("lpConfidenceScore").default(0).notNull(),
+  // 0-100 how confident AI is in this pattern
+  // Context data
+  sampleSuccessContexts: json("lpSampleSuccessContexts").$type<Record<string, unknown>[]>(),
+  sampleFailureContexts: json("lpSampleFailureContexts").$type<Record<string, unknown>[]>(),
+  // Best performing configurations
+  bestPayloadMods: json("lpBestPayloadMods").$type<string[]>(),
+  bestWafBypasses: json("lpBestWafBypasses").$type<string[]>(),
+  bestAttackPaths: json("lpBestAttackPaths").$type<string[]>(),
+  // Metadata
+  updatedAt: timestamp("lpUpdatedAt").defaultNow().onUpdateNow().notNull(),
+  createdAt: timestamp("lpCreatedAt").defaultNow().notNull(),
+});
+export type LearnedPattern = typeof learnedPatterns.$inferSelect;
+export type InsertLearnedPattern = typeof learnedPatterns.$inferInsert;
+
+// ═══════════════════════════════════════════════════════
+// Adaptive Learning: CMS Attack Profiles
+// Learned attack profiles per CMS type — best methods, common WAFs, success rates
+// ═══════════════════════════════════════════════════════
+export const cmsAttackProfiles = mysqlTable("cms_attack_profiles", {
+  id: int("id").primaryKey().autoincrement(),
+  cms: varchar("capCms", { length: 64 }).notNull(),
+  cmsVersion: varchar("capCmsVersion", { length: 32 }),
+  // Method rankings (ordered by success rate)
+  methodRankings: json("capMethodRankings").$type<Array<{
+    method: string;
+    successRate: number;
+    attempts: number;
+    avgDuration: number;
+  }>>(),
+  // Common defenses encountered
+  commonWafs: json("capCommonWafs").$type<Array<{
+    waf: string;
+    frequency: number;
+    bestBypass: string | null;
+    bypassSuccessRate: number;
+  }>>(),
+  // Overall stats
+  totalAttacks: int("capTotalAttacks").default(0).notNull(),
+  overallSuccessRate: decimal("capOverallSuccessRate", { precision: 5, scale: 2 }).default("0").notNull(),
+  bestMethod: varchar("capBestMethod", { length: 128 }),
+  bestMethodSuccessRate: decimal("capBestMethodRate", { precision: 5, scale: 2 }),
+  worstMethod: varchar("capWorstMethod", { length: 128 }),
+  // AI-generated attack playbook for this CMS
+  aiPlaybook: text("capAiPlaybook"),
+  aiPlaybookConfidence: int("capAiPlaybookConfidence"),
+  // Metadata
+  updatedAt: timestamp("capUpdatedAt").defaultNow().onUpdateNow().notNull(),
+  createdAt: timestamp("capCreatedAt").defaultNow().notNull(),
+});
+export type CmsAttackProfile = typeof cmsAttackProfiles.$inferSelect;
+export type InsertCmsAttackProfile = typeof cmsAttackProfiles.$inferInsert;

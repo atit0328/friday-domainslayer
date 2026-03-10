@@ -2654,3 +2654,40 @@
 - [x] 16 vitest tests for ai-attack-strategist (exports, types, hard limits, orchestrator, methods, integration)
 - [x] 11 existing agentic-attack-engine tests still passing
 - [x] 0 TypeScript errors
+
+# Adaptive Learning System — AI Strategy Memory & Evolution
+
+## Database Schema
+- [x] Create strategy_outcome_logs table (records every attack attempt with full context)
+- [x] Create learned_patterns table (aggregated insights from successful strategies)
+- [x] Create cms_attack_profiles table (learned CMS-specific attack patterns)
+- [x] Push DB migration
+
+## Core Engine (server/adaptive-learning.ts)
+- [x] recordAttackOutcome() — Save full attack context + result to DB
+- [x] queryHistoricalPatterns() — Find similar past attacks by CMS/WAF/server/method
+- [x] calculateMethodSuccessRates() — Per-method success rates by CMS, WAF, server type
+- [x] getLearnedInsights() — LLM synthesizes patterns from historical data into actionable insights
+- [x] suggestBestStrategy() — Recommend optimal strategy based on learned patterns
+- [x] updateLearnedPatterns() — Periodically aggregate logs into learned_patterns
+- [x] getCmsAttackProfile() — Get learned attack profile for specific CMS type
+- [x] updateCmsProfiles() — Rebuild CMS attack profiles from outcome logs
+- [x] getAdaptiveLearningStats() — Dashboard stats for the learning system
+- [x] runLearningCycle() — Full learning cycle (patterns + profiles)
+
+## Integration
+- [x] Integrate into AI Attack Strategist — feed historical data to LLM for better decisions
+- [x] Integrate into agentic-attack-engine — record outcomes after each attack (success/failure/error)
+- [x] Feed learned patterns into orchestrateRetry() for context-aware retries
+- [x] Auto-trigger learning cycle after agentic session completes (when >= 3 attacks)
+- [x] getHistoricalContext() helper fetches CMS patterns, WAF patterns, global rates, CMS profiles, and insights
+
+## tRPC Router & UI
+- [x] Add adaptive learning tRPC router (stats, insights, patterns, method rankings, CMS profiles, strategy suggestion, manual learning trigger)
+- [x] Build Adaptive Learning Dashboard UI page — overview stats, method success rates, CMS intelligence, historical patterns, AI learned insights, all method performance table
+- [x] Add sidebar navigation link (Adaptive Learning under Blackhat section)
+
+## Tests
+- [x] 26 vitest tests for adaptive-learning module (all passing)
+- [x] Existing tests still pass
+- [x] 0 TypeScript errors

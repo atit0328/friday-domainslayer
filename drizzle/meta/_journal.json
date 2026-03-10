@@ -225,6 +225,13 @@
       "when": 1773110948330,
       "tag": "0031_lyrical_odin",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "5",
+      "when": 1773115677489,
+      "tag": "0032_illegal_master_chief",
+      "breakpoints": true
     }
   ]
 }
