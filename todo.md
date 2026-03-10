@@ -3073,3 +3073,15 @@
 - [x] เพิ่ม gambling_brain agent ใน agentic-auto-orchestrator (executor + config + registration)
 - [x] Restart server — gambling_brain_cycle registered + orchestrator shows 8 agents active
 - [x] ตรวจสอบว่า orchestrator รับค่าใหม่และเริ่มสั่ง gambling tasks
+
+# Orchestrator Dashboard — Real-time Agent Monitor
+- [x] tRPC endpoints ใช้ existing: getOrchestratorStatus, getDaemonStats, getRecentTasks, updateAgent, triggerAgent, resetAgentFailures
+- [x] สร้าง OrchestratorDashboard.tsx — แสดง 8 agents: status, interval, last run, next run, success/fail count
+- [x] Agent cards: enabled/disabled toggle (Switch), Run Now button, consecutive failures, Reset button, health badge
+- [x] Overall stats: Uptime, Healthy/Degraded count, Success Rate, Queue depth, Today Done
+- [x] Recent task history table: last 30 tasks with type, title, status, priority, time
+- [x] Auto-refresh ทุก 5 วินาที (agents + daemon), 10 วินาที (tasks)
+- [x] เพิ่ม route /orchestrator-dashboard ใน App.tsx (SuperadminGuard)
+- [x] เพิ่ม sidebar navigation entry — AUTONOMOUS_NAV ตำแหน่งแรก
+- [x] Mobile responsive — grid-cols-2 sm:3 lg:6 stats, grid-cols-1 md:2 agents
+- [x] 0 TypeScript errors confirmed

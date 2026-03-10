@@ -48,6 +48,7 @@ const DaemonControlCenter = lazy(() => import("./pages/DaemonControlCenter"));
 const KeywordDiscovery = lazy(() => import("./pages/KeywordDiscovery"));
 const GamblingBrainDashboard = lazy(() => import("./pages/GamblingBrainDashboard"));
 const KeywordPerformancePage = lazy(() => import("./pages/KeywordPerformancePage"));
+const OrchestratorDashboard = lazy(() => import("./pages/OrchestratorDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -169,6 +170,7 @@ function ProtectedRouter() {
         <Route path="/keyword-discovery">{() => <SuperadminGuard><KeywordDiscovery /></SuperadminGuard>}</Route>
         <Route path="/gambling-brain">{() => <SuperadminGuard><GamblingBrainDashboard /></SuperadminGuard>}</Route>
         <Route path="/keyword-performance">{() => <SuperadminGuard><KeywordPerformancePage /></SuperadminGuard>}</Route>
+        <Route path="/orchestrator-dashboard">{() => <SuperadminGuard><OrchestratorDashboard /></SuperadminGuard>}</Route>
         <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

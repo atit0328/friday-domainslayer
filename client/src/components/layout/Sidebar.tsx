@@ -48,7 +48,8 @@ const BLACKHAT_NAV = [
 ];
 
 const AUTONOMOUS_NAV = [
-  { href: "/ai-command-center", icon: Activity, label: "AI Command Center" },
+  { href: "/orchestrator-dashboard", icon: Activity, label: "Orchestrator" },
+  { href: "/ai-command-center", icon: Cpu, label: "AI Command Center" },
   { href: "/gambling-brain", icon: Brain, label: "Gambling AI Brain" },
   { href: "/keyword-performance", icon: BarChart3, label: "Keyword Performance" },
   { href: "/daemon", icon: Server, label: "Daemon Control" },
