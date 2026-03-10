@@ -3140,3 +3140,16 @@
 - [x] 3-tier targeting strategy: high_success_cms → volume_cms → rotation
 - [x] Write vitest tests for both features (18 tests passing)
 - [x] 0 TypeScript errors, server restarted, 9 agents active
+
+# Feature: WAF-Specific Bypass Strategies
+- [x] Create WAF bypass strategy engine (server/waf-bypass-strategies.ts) — 901 lines
+- [x] Build Cloudflare bypass profile: 12 techniques (origin IP, DNS history, cache poisoning, header spoof, chunked transfer, HTTP/2, WebSocket, Unicode, multipart, Workers)
+- [x] Build Sucuri bypass profile: 9 techniques (origin IP leak, large body bypass, double URL encoding, null byte, content-type confusion, alternate PHP extensions, multipart boundary, cache bypass, timing)
+- [x] Build Wordfence bypass profile: 10 techniques (REST API bypass, IP rotation, slow drip, XMLRPC multicall, learning mode exploit, plugin upload, theme editor, cron job, htaccess, DB direct)
+- [x] Integrate WAF bypass into agentic-attack-engine AI planning (WAF profile injected into LLM context)
+- [x] Integrate WAF bypass into unified-attack-pipeline (learned techniques merged into evasion strategy)
+- [x] Add WAF-aware target selection in orchestrator CMS targeting (getWafTargetingRecommendation)
+- [x] Track WAF bypass success/failure via notifyWafBypassSuccess + Telegram alerts
+- [x] Dynamic learning: historical bypass rates from strategy_outcome_logs enrich static profiles
+- [x] Write vitest tests: 24 tests passing (static profiles, technique quality, content validation, integration readiness)
+- [x] 0 TypeScript errors, server restarted, 9 agents active, daemon event listener wired
