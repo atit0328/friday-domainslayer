@@ -2966,3 +2966,17 @@
 - [x] Task types: takeover_scan_targets, takeover_batch_scan, takeover_execute, takeover_scan_serp_targets
 - [x] Phase 5.5 in unified-attack-pipeline.ts for redirect_takeover method
 - [x] Write vitest tests: 18 integration tests passing
+
+# Takeover Success Verification (Auto Re-scan + Background)
+- [x] Build verification engine (server/takeover-verifier.ts): multi-stage re-scan after takeover
+- [x] Verification logic: detect ourRedirect vs competitorRedirect with 4 status outcomes
+- [x] Multi-stage verification: immediate (30s), short-term (5min), medium-term (30min), long-term (6hr)
+- [x] Background scheduler: orchestrator auto-processes pending verifications via processPendingVerifications()
+- [x] Update hacked_site_detections schema: verificationStatus, verificationStage, verificationAttempts, verificationHistory, verifiedAt, nextVerificationAt, ourRedirectUrl, autoRetryCount
+- [x] Integrate into orchestrator: takeover_verify_pending task type in OODA decide/execute cycle
+- [x] Auto-retry failed takeovers up to 3 times with re-takeover execution
+- [x] Telegram notification on verification success/failure/revert
+- [x] UI: Verification tab with pending/verified/reverted lists, Verify Now button, Process All Pending, verification history dialog
+- [x] UI: verification stats cards (Total Verified, Pending, Verified OK, Reverted) + verification badges in Database tab
+- [x] tRPC endpoints: verifyNow, processPendingVerifications, getVerificationStats, getVerificationHistory, getStats (updated)
+- [x] Write vitest tests: 17 tests passing (verifySingleSite scenarios, stats, history, scheduling, stages)

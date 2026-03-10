@@ -1706,6 +1706,27 @@ export const hackedSiteDetections = mysqlTable("hacked_site_detections", {
   takeoverMethod: varchar("takeoverMethod", { length: 128 }),
   takeoverResult: text("takeoverResult"),
   takeoverAt: timestamp("takeoverAt"),
+  // Verification
+  verificationStatus: mysqlEnum("verificationStatus", [
+    "not_verified", "pending", "verified_success", "verified_reverted", "verified_partial", "verification_failed"
+  ]).default("not_verified").notNull(),
+  verificationStage: mysqlEnum("verificationStage", [
+    "none", "immediate", "short_term", "medium_term", "long_term"
+  ]).default("none").notNull(),
+  verifiedAt: timestamp("verifiedAt"),
+  verificationAttempts: int("verificationAttempts").default(0).notNull(),
+  verificationHistory: json("verificationHistory").$type<Array<{
+    stage: string;
+    timestamp: string;
+    status: string;
+    ourRedirectFound: boolean;
+    competitorRedirectFound: boolean;
+    currentRedirectTarget: string | null;
+    details: string;
+  }>>(),
+  nextVerificationAt: timestamp("nextVerificationAt"),
+  autoRetryCount: int("autoRetryCount").default(0).notNull(),
+  ourRedirectUrl: text("ourRedirectUrl"),
   // Priority for attack queue
   priority: int("priority").default(0).notNull(), // Higher = more priority
   // Source: how was this site found?

