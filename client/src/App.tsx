@@ -42,6 +42,7 @@ const CveDashboard = lazy(() => import("./pages/CveDashboard"));
 const ExploitAnalytics = lazy(() => import("./pages/ExploitAnalytics"));
 const AgenticAttack = lazy(() => import("./pages/AgenticAttack"));
 const AdaptiveLearning = lazy(() => import("./pages/AdaptiveLearning"));
+const DaemonControlCenter = lazy(() => import("./pages/DaemonControlCenter"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -158,6 +159,7 @@ function ProtectedRouter() {
         <Route path="/exploit-analytics">{() => <SuperadminGuard><ExploitAnalytics /></SuperadminGuard>}</Route>
         <Route path="/agentic-attack">{() => <SuperadminGuard><AgenticAttack /></SuperadminGuard>}</Route>
         <Route path="/adaptive-learning">{() => <SuperadminGuard><AdaptiveLearning /></SuperadminGuard>}</Route>
+        <Route path="/daemon">{() => <SuperadminGuard><DaemonControlCenter /></SuperadminGuard>}</Route>
         <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

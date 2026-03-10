@@ -15,6 +15,8 @@ import { startProxyScheduler } from "../routers/proxy";
 import { startScanScheduler } from "../scan-scheduler";
 import { startCveScheduler } from "../cve-scheduler";
 import { startLearningScheduler } from "../learning-scheduler";
+import { startDaemon } from "../background-daemon";
+import { startOrchestrator } from "../agentic-auto-orchestrator";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -83,6 +85,13 @@ async function startServer() {
     startCveScheduler();
     // Start adaptive learning scheduler (every 6 hours)
     startLearningScheduler();
+    // Start background daemon (persistent task queue)
+    startDaemon();
+    // Start agentic auto orchestrator (all agents run continuously)
+    setTimeout(() => {
+      startOrchestrator();
+      console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
+    }, 10_000); // 10s delay to let other services stabilize
   });
 }
 

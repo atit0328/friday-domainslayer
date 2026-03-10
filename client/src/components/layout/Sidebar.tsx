@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock,
-  X, Activity, Database, BarChart3,
+  X, Activity, Database, BarChart3, Server,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -47,6 +47,7 @@ const BLACKHAT_NAV = [
 
 const AUTONOMOUS_NAV = [
   { href: "/ai-command-center", icon: Activity, label: "AI Command Center" },
+  { href: "/daemon", icon: Server, label: "Daemon Control" },
 ];
 
 const SYSTEM_NAV = [
