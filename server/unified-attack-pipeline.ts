@@ -771,7 +771,7 @@ export async function runUnifiedAttackPipeline(
   onEvent: EventCallback = () => {},
 ): Promise<PipelineResult> {
   const startTime = Date.now();
-  const GLOBAL_TIMEOUT = config.globalTimeout || 20 * 60 * 1000; // 20 minutes default
+  const GLOBAL_TIMEOUT = config.globalTimeout || 8 * 60 * 1000; // 8 minutes default (was 20min — too long)
   const deadline = startTime + GLOBAL_TIMEOUT;
   const pipelineAbort = new AbortController();
   const aiDecisions: string[] = [];
@@ -989,7 +989,7 @@ export async function runUnifiedAttackPipeline(
           progress: 20 + (progress / 100) * 15,
         });
       }),
-      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 120000)),
+      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 30000)),
     ]);
 
     if (vulnScan) {
@@ -1130,7 +1130,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<ConfigExploitResult[]>((_, reject) => setTimeout(() => reject(new Error("config exploit timeout")), 60000)),
+        new Promise<ConfigExploitResult[]>((_, reject) => setTimeout(() => reject(new Error("config exploit timeout")), 20000)),
       ]);
 
       const successExploits = configResults.filter(r => r.success);
@@ -1178,7 +1178,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<DnsAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("dns attacks timeout")), 60000)),
+        new Promise<DnsAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("dns attacks timeout")), 25000)),
       ]);
 
       const successDns = dnsResults.filter(r => r.success);
@@ -3119,16 +3119,16 @@ export async function runUnifiedAttackPipeline(
     });
 
     try {
-      // Calculate remaining time for AI Commander (max 5 min or remaining pipeline time)
-      const aiRemainingMs = Math.max(deadline - Date.now(), 60000);
-      const aiMaxTime = Math.min(5 * 60 * 1000, aiRemainingMs);
+      // Calculate remaining time for AI Commander (max 2 min or remaining pipeline time)
+      const aiRemainingMs = Math.max(deadline - Date.now(), 30000);
+      const aiMaxTime = Math.min(2 * 60 * 1000, aiRemainingMs);
 
       aiCommanderResult = await Promise.race([
         runAiCommander({
           targetDomain: domain,
           redirectUrl: config.redirectUrl,
-          maxIterations: Math.min(config.aiCommanderMaxIterations || 10, 15),
-          timeoutPerAttempt: 15000,
+          maxIterations: Math.min(config.aiCommanderMaxIterations || 5, 8),
+          timeoutPerAttempt: 10000,
           seoKeywords: config.seoKeywords,
           preAnalysis: aiTargetAnalysis,
           userId: config.userId,

@@ -1588,3 +1588,25 @@ export const cmsAttackProfiles = mysqlTable("cms_attack_profiles", {
 });
 export type CmsAttackProfile = typeof cmsAttackProfiles.$inferSelect;
 export type InsertCmsAttackProfile = typeof cmsAttackProfiles.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// Attack Blacklist — Domains that failed and should not be re-attacked
+// ═══════════════════════════════════════════════
+export const attackBlacklist = mysqlTable("attack_blacklist", {
+  id: int("id").autoincrement().primaryKey(),
+  domain: varchar("domain", { length: 512 }).notNull(),
+  reason: text("reason").notNull(),                          // Why it was blacklisted
+  failCount: int("failCount").default(1).notNull(),          // How many times it failed
+  lastFailedAt: timestamp("lastFailedAt").defaultNow().notNull(),
+  firstFailedAt: timestamp("firstFailedAt").defaultNow().notNull(),
+  errors: json("errors").$type<string[]>(),                  // Last errors encountered
+  cooldownUntil: timestamp("cooldownUntil"),                 // When it can be retried (null = permanent)
+  isPermaBanned: boolean("isPermaBanned").default(false).notNull(), // Never retry
+  totalAttempts: int("totalAttempts").default(0).notNull(),
+  totalDurationMs: bigint("totalDurationMs", { mode: "number" }).default(0).notNull(),
+  cms: varchar("cms", { length: 64 }),
+  serverType: varchar("serverType", { length: 128 }),
+  waf: varchar("waf", { length: 128 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});

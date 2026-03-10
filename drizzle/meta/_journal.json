@@ -232,6 +232,13 @@
       "when": 1773115677489,
       "tag": "0032_illegal_master_chief",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "5",
+      "when": 1773124238403,
+      "tag": "0033_loose_deathstrike",
+      "breakpoints": true
     }
   ]
 }

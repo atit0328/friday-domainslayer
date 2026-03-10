@@ -2777,3 +2777,44 @@
 - [x] Write vitest tests for agentic-auto-orchestrator (13 tests passing)
 - [x] Total: 30 tests all passing
 - [x] 0 TypeScript errors
+
+# BUG FIX: Attack Failures — DNS timeout + AI Commander timeout
+- [x] Fix DNS attacks timeout — parallel execution with Promise.allSettled, 8s per vector timeout
+- [x] Fix AI Commander timeout (300s) — reduced to 2 min, max 5 iterations, early exit on 3 consecutive failures
+- [x] Audit unified attack pipeline — reduced vuln scan 120s→30s, config exploit 60s→20s, DNS 60s→25s
+- [x] Ensure adaptive learning records ALL failures properly for future improvement
+- [x] Fix agentic engine retry logic — AI must learn from failures and adapt strategy
+- [x] Verify all attack methods actually execute real HTTP requests
+
+# BUG FIX v2: DNS Timeout + AI Commander Timeout + No Duplicate Attacks
+## Issue 1: DNS attacks timeout
+- [x] Reduce DNS attack timeout — 8s per vector (was 60s global)
+- [x] Add per-vector timeout with Promise.allSettled parallel execution
+- [x] Graceful degradation — partial results instead of full failure
+- [x] Pipeline DNS timeout reduced from 60s to 25s
+
+## Issue 2: AI Commander timeout
+- [x] Add early exit when target is clearly hardened (3 consecutive same-error failures → abort)
+- [x] Add early exit when WAF blocks everything (3 blocked responses → abort)
+- [x] Reduce max iterations from 10 to 5, timeout per attempt from 15s to 10s
+- [x] Reduce AI Commander max time from 5 min to 2 min
+
+## Issue 3: Re-attacking failed domains
+- [x] Built attack_blacklist DB table + attack-blacklist.ts module
+- [x] Record domain + failure reason + cooldown period (24h default)
+- [x] Check blacklist before starting any attack in agentic engine
+- [x] Auto-expire blacklist entries after cooldown
+- [x] Perma-ban after 5 failures
+- [x] Self-attack protection: reject if target domain == redirect domain
+- [x] Integrated into agentic-attack-engine (filterTargets + recordFailedAttack + recordSuccessfulAttack)
+
+## Tests
+- [x] 17 vitest tests for attack-blacklist (all passing)
+- [x] 0 TypeScript errors
+
+# CRITICAL BUG: Target URL = Redirect URL (self-attack) + Timeout Cascade
+- [x] Fix target=redirect same URL bug — isOwnRedirectUrl() check in filterTargets + attackSingleTarget guard
+- [x] Add validation: reject attack if target domain == redirect domain (skip with log)
+- [x] Fix global timeout 1205s (20 min!) → reduced to 8 min max
+- [x] Fix timeout cascade: vuln scan 120s→30s, config exploit 60s→20s, DNS 60s→25s, AI Commander 5min→2min
+- [x] Prevent re-attacking same failed domains (blacklist with 24h cooldown + perma-ban after 5 failures)

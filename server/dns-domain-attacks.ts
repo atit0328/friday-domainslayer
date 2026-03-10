@@ -531,26 +531,61 @@ async function analyzeDnsRecords(config: DnsAttackConfig): Promise<DnsAttackResu
 export async function runAllDnsAttacks(config: DnsAttackConfig): Promise<DnsAttackResult[]> {
   const results: DnsAttackResult[] = [];
   const log = config.onProgress || (() => {});
+  const perVectorTimeout = Math.min(config.timeout || 15000, 15000); // max 15s per vector
 
-  // 1. Origin IP Discovery
-  log("origin_ip", "🌐 Vector 1: Origin IP Discovery (bypass CDN/WAF)...");
-  const originResult = await discoverOriginIp(config);
-  results.push(originResult);
+  // Run all 4 vectors in PARALLEL with per-vector timeout for speed
+  log("dns_all", "🌐 Running all DNS vectors in parallel (max 15s each)...");
 
-  // 2. Subdomain Enumeration
-  log("subdomain_enum", "🔍 Vector 2: Subdomain Enumeration...");
-  const enumResult = await enumerateSubdomains(config);
-  results.push(enumResult);
+  const wrapWithTimeout = async <T>(fn: () => Promise<T>, vectorName: string, timeoutMs: number): Promise<T> => {
+    return Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${vectorName} timeout (${Math.round(timeoutMs/1000)}s)`)), timeoutMs)),
+    ]);
+  };
 
-  // 3. Subdomain Takeover
-  log("subdomain_takeover", "🎯 Vector 3: Subdomain Takeover Check...");
-  const takeoverResult = await checkSubdomainTakeover(config);
-  results.push(takeoverResult);
+  const configWithReducedTimeout = { ...config, timeout: perVectorTimeout };
 
-  // 4. DNS Records Analysis
-  log("dns_analysis", "📋 Vector 4: DNS Records Analysis...");
-  const dnsResult = await analyzeDnsRecords(config);
-  results.push(dnsResult);
+  const [originSettled, enumSettled, takeoverSettled, dnsSettled] = await Promise.allSettled([
+    wrapWithTimeout(() => {
+      log("origin_ip", "🌐 Vector 1: Origin IP Discovery (bypass CDN/WAF)...");
+      return discoverOriginIp(configWithReducedTimeout);
+    }, "origin_ip", perVectorTimeout),
+    wrapWithTimeout(() => {
+      log("subdomain_enum", "🔍 Vector 2: Subdomain Enumeration...");
+      return enumerateSubdomains(configWithReducedTimeout);
+    }, "subdomain_enum", perVectorTimeout),
+    wrapWithTimeout(() => {
+      log("subdomain_takeover", "🎯 Vector 3: Subdomain Takeover Check...");
+      return checkSubdomainTakeover(configWithReducedTimeout);
+    }, "subdomain_takeover", perVectorTimeout),
+    wrapWithTimeout(() => {
+      log("dns_analysis", "📋 Vector 4: DNS Records Analysis...");
+      return analyzeDnsRecords(configWithReducedTimeout);
+    }, "dns_analysis", perVectorTimeout),
+  ]);
+
+  // Collect results — graceful degradation: partial results instead of full failure
+  const settledResults = [
+    { settled: originSettled, fallbackVector: "origin_ip" },
+    { settled: enumSettled, fallbackVector: "subdomain_enum" },
+    { settled: takeoverSettled, fallbackVector: "subdomain_takeover" },
+    { settled: dnsSettled, fallbackVector: "dns_analysis" },
+  ];
+
+  for (const { settled, fallbackVector } of settledResults) {
+    if (settled.status === "fulfilled") {
+      results.push(settled.value);
+    } else {
+      // Graceful degradation: record timeout/error as a non-blocking result
+      results.push({
+        vector: fallbackVector,
+        success: false,
+        detail: `Skipped: ${settled.reason?.message || "timeout"}`,
+        evidence: "Vector timed out or errored — not blocking pipeline",
+      });
+      log(fallbackVector, `⏭️ ${fallbackVector} skipped: ${settled.reason?.message || "timeout"}`);
+    }
+  }
 
   return results;
 }

