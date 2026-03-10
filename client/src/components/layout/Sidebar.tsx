@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock,
-  X, Activity, Database, BarChart3, Server,
+  X, Activity, Database, BarChart3, Server, KeyRound,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -38,6 +38,7 @@ const BLACKHAT_NAV = [
   { href: "/templates", icon: LayoutTemplate, label: "Template Library" },
   { href: "/keyword-ranking", icon: Target, label: "Keyword Ranking" },
   { href: "/mass-discovery", icon: Crosshair, label: "Mass Discovery" },
+  { href: "/keyword-discovery", icon: KeyRound, label: "Keyword Discovery" },
   { href: "/proxy-dashboard", icon: Shield, label: "Proxy Dashboard" },
   { href: "/scheduled-scans", icon: CalendarClock, label: "Scheduled Scans" },
   { href: "/cve-database", icon: Database, label: "CVE Database" },

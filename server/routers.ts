@@ -46,6 +46,7 @@ import { recordExploit, recordWafDetection, getExploitAnalytics, getExploitHisto
 import { agenticAttackRouter } from "./routers/agentic-attack";
 import { adaptiveLearningRouter } from "./routers/adaptive-learning-router";
 import { daemonRouter } from "./routers/daemon-router";
+import { keywordDiscoveryRouter } from "./routers/keyword-discovery";
 
 export const appRouter = router({
   system: systemRouter,
@@ -142,6 +143,9 @@ export const appRouter = router({
 
   // Background Daemon & Orchestrator
   daemon: daemonRouter,
+
+  // SerpAPI Keyword Target Discovery
+  keywordDiscovery: keywordDiscoveryRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

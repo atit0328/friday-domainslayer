@@ -239,6 +239,13 @@
       "when": 1773124238403,
       "tag": "0033_loose_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "5",
+      "when": 1773127812543,
+      "tag": "0034_parallel_shockwave",
+      "breakpoints": true
     }
   ]
 }

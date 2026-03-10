@@ -242,23 +242,41 @@ export async function sendTelegramNotification(
     return { success: false, error: "Telegram not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)" };
   }
 
+  // ═══ SUCCESS-ONLY FILTER ═══
+  // Only send: "success" type notifications
+  // Also allow: "info" type for critical system updates (learning, CVE, SEO reports, orchestrator)
+  // Block: "failure", "partial", "progress" types entirely
+  if (notification.type === "failure") {
+    console.log(`[Telegram] Skipping failure notification for ${notification.targetUrl} (success-only mode)`);
+    return { success: true };
+  }
+  if (notification.type === "partial") {
+    console.log(`[Telegram] Skipping partial notification for ${notification.targetUrl} (success-only mode)`);
+    return { success: true };
+  }
+  if (notification.type === "progress") {
+    console.log(`[Telegram] Skipping progress notification for ${notification.targetUrl} (success-only mode)`);
+    return { success: true };
+  }
+  // For "info" type: only allow critical system notifications, block error/failure info
+  if (notification.type === "info") {
+    const details = (notification.details || "").toLowerCase();
+    const isErrorInfo = details.includes("failed") || details.includes("error") || details.includes("unhealthy") || details.includes("down:");
+    if (isErrorInfo) {
+      console.log(`[Telegram] Skipping error-info notification for ${notification.targetUrl} (success-only mode)`);
+      return { success: true };
+    }
+  }
+
   let message: string;
   
   switch (notification.type) {
     case "success":
       message = formatSuccessMessage(notification);
       break;
-    case "failure":
-      message = formatFailureMessage(notification);
-      break;
-    case "partial":
-      message = formatPartialMessage(notification);
-      break;
-    case "progress":
-      message = formatProgressMessage(notification);
-      break;
     case "info":
     default:
+      // Info messages that pass the filter above are system updates (learning, CVE, SEO, etc.)
       message = formatProgressMessage(notification);
       break;
   }
@@ -287,28 +305,30 @@ export async function sendBatchSummary(
   if (!config) {
     return { success: false, error: "Telegram not configured" };
   }
-
-  const successCount = results.filter(r => r.success).length;
-  const failCount = results.filter(r => !r.success).length;
+  // SUCCESS-ONLY: Only include successful results in batch summary
+  const successResults = results.filter(r => r.success);
+  
+  // Skip batch summary entirely if no successes
+  if (successResults.length === 0) {
+    console.log(`[Telegram] Skipping batch summary — 0 successes out of ${results.length} targets`);
+    return { success: true };
+  }
   
   const lines: string[] = [];
   lines.push("📊 <b>BATCH ATTACK SUMMARY</b> 📊");
   lines.push("");
-  lines.push(`✅ Success: ${successCount}`);
-  lines.push(`❌ Failed: ${failCount}`);
-  lines.push(`📊 Total: ${results.length}`);
+  lines.push(`✅ Success: ${successResults.length} / ${results.length} targets`);
   lines.push("");
   
-  for (const result of results) {
-    const icon = result.success ? "✅" : "❌";
-    lines.push(`${icon} ${escapeHtml(result.targetUrl)}`);
+  
+  for (const result of successResults) {
+    lines.push(`✅ ${escapeHtml(result.targetUrl)}`);
     if (result.deployedUrls.length > 0) {
       for (const url of result.deployedUrls.slice(0, 2)) {
         lines.push(`  └ <a href="${escapeHtml(url)}">${escapeHtml(url.substring(0, 50))}...</a>`);
       }
     }
-  }
-  
+  } 
   lines.push("");
   lines.push(`🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`);
   

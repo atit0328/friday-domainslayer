@@ -31,6 +31,7 @@ export type TaskType =
   | "cve_update"
   | "proxy_health"
   | "orchestrator_cycle"
+  | "keyword_discovery"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";

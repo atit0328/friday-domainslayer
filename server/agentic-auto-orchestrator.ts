@@ -25,6 +25,7 @@ import { runScheduledJobs as runSeoJobs } from "./seo-scheduler";
 import { executeLearningCycle } from "./learning-scheduler";
 import { runResearchCycle, type ResearchTarget } from "./autonomous-research-engine";
 import { triggerManualCveUpdate } from "./cve-scheduler";
+import { runKeywordDiscovery } from "./keyword-target-discovery";
 import { getDb } from "./db";
 import { agenticSessions, seoProjects } from "../drizzle/schema";
 import { eq, and, sql, desc, inArray } from "drizzle-orm";
@@ -53,7 +54,7 @@ export interface OrchestratorState {
   cycleCount: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -108,6 +109,15 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   cve: {
     enabled: true,
     intervalMs: 24 * 60 * 60 * 1000, // Every 24 hours
+    maxConcurrent: 1,
+    autoStart: true,
+    consecutiveFailures: 0,
+    totalRuns: 0,
+    totalSuccesses: 0,
+  },
+  keyword_discovery: {
+    enabled: true,
+    intervalMs: 3 * 60 * 60 * 1000, // Every 3 hours
     maxConcurrent: 1,
     autoStart: true,
     consecutiveFailures: 0,
@@ -325,6 +335,38 @@ async function pickResearchTarget(): Promise<ResearchTarget | null> {
 }
 
 // ═══════════════════════════════════════════════
+//  KEYWORD DISCOVERY AGENT
+// ═══════════════════════════════════════════════
+
+/**
+ * Keyword Discovery Agent Executor — searches SerpAPI for lottery keywords
+ * and discovers new targets to feed into the attack pipeline
+ */
+async function executeKeywordDiscoveryTask(task: DaemonTask, signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const maxKeywords = (task.config?.maxKeywords as number) || 20;
+    const result = await runKeywordDiscovery({
+      maxKeywords,
+      triggeredBy: "orchestrator",
+    });
+
+    return {
+      success: true,
+      result: {
+        runId: result.runId,
+        keywordsSearched: result.keywordsSearched,
+        uniqueDomainsFound: result.uniqueDomainsFound,
+        newTargetsAdded: result.newTargetsAdded,
+        duplicatesSkipped: result.duplicatesSkipped,
+        message: `Keyword discovery: searched ${result.keywordsSearched} keywords, found ${result.newTargetsAdded} new targets`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+// ═══════════════════════════════════════════════
 //  ORCHESTRATOR TICK — Main loop
 // ═══════════════════════════════════════════════
 
@@ -359,6 +401,7 @@ async function orchestratorTick() {
         research: "research_cycle",
         learning: "learning_cycle",
         cve: "cve_update",
+        keyword_discovery: "keyword_discovery",
       };
 
       const taskId = await enqueueTask({
@@ -410,6 +453,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("research_cycle", executeResearchTask);
   registerExecutor("learning_cycle", executeLearningTask);
   registerExecutor("cve_update", executeCveTask);
+  registerExecutor("keyword_discovery", executeKeywordDiscoveryTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
