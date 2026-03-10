@@ -3120,3 +3120,23 @@
 - [x] Include _taskType in daemon task_completed/task_failed events
 - [x] 18 vitest tests passing for success rate monitor + daemon event wiring
 - [x] Server restarted: 9 agents active, daemon event listener wired, success rate monitor collecting snapshots
+
+# Feature: Auto-Recovery for Failing Agents
+- [x] Add auto-recovery logic in orchestrator tick: when agent hits 5+ consecutive failures, attempt restart with adjusted config
+- [x] Recovery strategies: reduce maxTargets, increase interval, rotate keywords, disable problematic sub-features
+- [x] Send Telegram notification when auto-recovery is triggered
+- [x] Track recovery attempts and success/failure (totalRecoveries, successfulRecoveries in OrchestratorState)
+- [x] Add recovery status to orchestrator dashboard data (recoveryAttempts, recoveryStrategy, isRecovering per agent)
+- [x] 3 progressive strategies per agent (9 agents x 3 = 27 strategies total)
+- [x] Recovery success tracking: Telegram alert when recovered agent succeeds again
+- [x] Cooldown: 10 min between recovery attempts to prevent thrashing
+
+# Feature: CMS-Specific Attack Targeting
+- [x] Build CMS exploit mapping: WordPress → wp-specific exploits, Joomla → joomla exploits, Drupal → drupal exploits, etc.
+- [x] Query discovered targets by CMS type and feed CMS-specific config to attack agent
+- [x] Add CMS-aware target selection in attack executor (prioritize targets with known CMS)
+- [x] Add CMS-specific payload/technique selection (CMS_EXPLOIT_PRIORITY for 6 CMS types)
+- [x] CMS dork queries for targeted discovery (CMS_DORK_MAP for 6 CMS types)
+- [x] 3-tier targeting strategy: high_success_cms → volume_cms → rotation
+- [x] Write vitest tests for both features (18 tests passing)
+- [x] 0 TypeScript errors, server restarted, 9 agents active
