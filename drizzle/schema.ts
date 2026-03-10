@@ -1337,3 +1337,76 @@ export const cveFetchLog = mysqlTable("cve_fetch_log", {
 });
 export type CveFetchLogRow = typeof cveFetchLog.$inferSelect;
 export type InsertCveFetchLog = typeof cveFetchLog.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// Exploit History (Success Rate Tracking)
+// ═══════════════════════════════════════════════
+export const exploitHistory = mysqlTable("exploit_history", {
+  id: int("id").autoincrement().primaryKey(),
+  // Target info
+  targetDomain: varchar("targetDomain", { length: 512 }).notNull(),
+  targetUrl: varchar("targetUrl", { length: 1024 }).notNull(),
+  // Exploit info
+  cveId: varchar("cveId", { length: 32 }),
+  exploitType: varchar("exploitType", { length: 64 }).notNull(), // file_upload, rce, sqli, auth_bypass, lfi, xss, deserialization
+  exploitSource: varchar("exploitSource", { length: 32 }).notNull(), // ai_generated, template, waf_evasion, manual
+  cms: varchar("cms", { length: 32 }), // wordpress, joomla, drupal, magento, etc.
+  component: varchar("component", { length: 128 }), // plugin/theme/module name
+  // Result
+  success: boolean("success").default(false).notNull(),
+  uploadedUrl: varchar("uploadedUrl", { length: 1024 }),
+  redirectVerified: boolean("redirectVerified").default(false).notNull(),
+  httpStatus: int("httpStatus"),
+  errorMessage: text("errorMessage"),
+  // WAF info
+  wafDetected: varchar("wafDetected", { length: 64 }),
+  wafBypassed: boolean("wafBypassed").default(false).notNull(),
+  evasionTechnique: varchar("evasionTechnique", { length: 128 }),
+  // Payload info
+  payloadHash: varchar("payloadHash", { length: 64 }), // SHA-256 of payload for dedup
+  payloadSize: int("payloadSize"),
+  // Timing
+  durationMs: int("durationMs"),
+  // Pipeline context
+  pipelineRunId: varchar("pipelineRunId", { length: 64 }),
+  attackPhase: varchar("attackPhase", { length: 32 }), // phase_2.6, phase_2.7, phase_4.5a, etc.
+  // Metadata
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ExploitHistoryRecord = typeof exploitHistory.$inferSelect;
+export type InsertExploitHistory = typeof exploitHistory.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// WAF Detection Log
+// ═══════════════════════════════════════════════
+export const wafDetections = mysqlTable("waf_detections", {
+  id: int("id").autoincrement().primaryKey(),
+  targetDomain: varchar("targetDomain", { length: 512 }).notNull(),
+  targetUrl: varchar("targetUrl", { length: 1024 }).notNull(),
+  // WAF info
+  wafName: varchar("wafName", { length: 64 }),
+  wafVendor: varchar("wafVendor", { length: 64 }),
+  confidence: varchar("confidence", { length: 16 }), // high, medium, low
+  strength: varchar("strength", { length: 16 }), // strong, moderate, weak
+  // Block behavior
+  blocksXss: boolean("blocksXss").default(false).notNull(),
+  blocksSqli: boolean("blocksSqli").default(false).notNull(),
+  blocksFileUpload: boolean("blocksFileUpload").default(false).notNull(),
+  blocksPathTraversal: boolean("blocksPathTraversal").default(false).notNull(),
+  blocksCommandInjection: boolean("blocksCommandInjection").default(false).notNull(),
+  blocksRateLimit: boolean("blocksRateLimit").default(false).notNull(),
+  // Detection methods used
+  detectionMethods: json("detectionMethods").$type<string[]>(),
+  evasionRecommendations: json("evasionRecommendations").$type<string[]>(),
+  // Raw data
+  rawHeaders: json("rawHeaders").$type<Record<string, string>>(),
+  rawFingerprints: json("rawFingerprints").$type<string[]>(),
+  // Pipeline context
+  pipelineRunId: varchar("pipelineRunId", { length: 64 }),
+  // Metadata
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type WafDetectionRecord = typeof wafDetections.$inferSelect;
+export type InsertWafDetection = typeof wafDetections.$inferInsert;

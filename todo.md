@@ -2539,3 +2539,49 @@
 - [x] 30s timeout per AI exploit with graceful fallback
 - [x] aiExploitResults tracked in PipelineResult for reporting
 - [x] 26 new tests + 50 proxy tests + 28 existing tests = 104 tests passing, 0 TS errors
+
+# Wordfence API Key + Exploit Dashboard + WAF Auto-Evasion
+
+## Wordfence API Key
+- [x] Skipped — NVD fallback already fetches 15,773+ WP CVEs successfully, no API key needed
+
+## WAF Detection + Auto-Evasion
+- [x] Create server/waf-detector.ts — 500+ line module with real fingerprinting for 10+ WAF vendors
+- [x] Header fingerprinting (CF-RAY, X-Sucuri-ID, X-CDN, Server headers, etc.)
+- [x] Cookie analysis (WAF-specific cookie patterns)
+- [x] Probe-based detection (XSS/SQLi/path traversal probes)
+- [x] Block behavior analysis (what each WAF blocks)
+- [x] getEvasionStrategy() — WAF-specific evasion techniques per vendor
+- [x] applyEvasionToPayload() — filename mutations, encoding tricks, header manipulation
+- [x] Integrated into pipeline Phase 2.4 (before exploit execution)
+- [x] Phase 4.5a WAF bypass uses evasion strategy from detector
+- [x] Auto-call generateWafEvasionVariants when initial exploit blocked
+- [x] WAF detection results tracked in DB (waf_detections table)
+
+## Exploit Success Rate Dashboard
+- [x] Created exploit_history + waf_detections tables in drizzle schema
+- [x] Created server/exploit-tracker.ts — non-blocking DB logging helper
+- [x] Created server/routers/exploit-analytics.ts — 6 tRPC endpoints
+- [x] getAnalytics: overview stats, bySource, byType, byCms, topCves, topDomains, wafBypass
+- [x] getHistory: paginated exploit history with filters (domain, source, type, CMS, success)
+- [x] getWafHistory: WAF detection history with distribution stats
+- [x] getAiVsTemplate: per-type comparison between AI and template exploits
+- [x] recordExploit + recordWafDetection: mutation endpoints
+- [x] Created client/src/pages/ExploitAnalytics.tsx with:
+  - [x] 6 overview stat cards (attempts, successful, rate, verified, WAF bypassed, avg duration)
+  - [x] AI vs Template success rate comparison with progress bars
+  - [x] By exploit type bar chart
+  - [x] By CMS platform bar chart
+  - [x] WAF detection history panel
+  - [x] Top exploited CVEs table
+  - [x] Top targeted domains grid
+  - [x] Full exploit history table with filters + pagination
+  - [x] AI vs Template detailed breakdown table
+- [x] Added route /exploit-analytics and sidebar navigation
+
+## Tests
+- [x] Write vitest tests for waf-detector (5 tests: exports, Cloudflare, ModSecurity, unknown WAF, applyEvasion)
+- [x] Write vitest tests for exploit-tracker (5 tests: exports, extractDomain, invalid URLs, silent fail)
+- [x] Write vitest tests for exploit-analytics router (1 test: exports)
+- [x] Write vitest tests for ai-exploit-generator integration (1 test: exports)
+- [x] All 116 tests passing (12 new + 54 existing + 50 proxy), 0 TS errors

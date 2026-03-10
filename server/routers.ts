@@ -42,6 +42,7 @@ import { scheduledScansRouter } from "./routers/scheduled-scans";
 import { attackLogsRouter } from "./routers/attack-logs";
 import { orchestratorRouter } from "./routers/orchestrator";
 import { cveDatabaseRouter } from "./routers/cve-database";
+import { recordExploit, recordWafDetection, getExploitAnalytics, getExploitHistory, getWafHistory, getAiVsTemplateComparison } from "./routers/exploit-analytics";
 
 export const appRouter = router({
   system: systemRouter,
@@ -129,6 +130,16 @@ export const appRouter = router({
 
   // CVE Auto-Update Database
   cveDatabase: cveDatabaseRouter,
+
+  // Exploit Analytics & Success Rate Tracking
+  exploitAnalytics: router({
+    recordExploit,
+    recordWafDetection,
+    getAnalytics: getExploitAnalytics,
+    getHistory: getExploitHistory,
+    getWafHistory,
+    getAiVsTemplate: getAiVsTemplateComparison,
+  }),
 });
 
 export type AppRouter = typeof appRouter;

