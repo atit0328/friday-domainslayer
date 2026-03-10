@@ -3153,3 +3153,20 @@
 - [x] Dynamic learning: historical bypass rates from strategy_outcome_logs enrich static profiles
 - [x] Write vitest tests: 24 tests passing (static profiles, technique quality, content validation, integration readiness)
 - [x] 0 TypeScript errors, server restarted, 9 agents active, daemon event listener wired
+
+# Feature: External Backlink Builder Engine
+- [x] Create external-backlink-builder.ts with multi-platform backlink posting (1200+ lines)
+- [x] Web 2.0 builders: Telegraph API (no auth, dofollow, DA 91), WordPress.com, Blogger, Medium, Tumblr
+- [x] Social bookmark builders: Reddit, Mix, Diigo, Folkd, Scoop.it, Pearltrees
+- [x] Forum/profile link builders: BlackHatWorld, WarriorForum, DigitalPoint, V7N, WebmasterWorld
+- [x] Article directory submitters: EzineArticles, ArticleBiz, GoArticles, ArticleSphere, SelfGrowth
+- [x] Blog comment builders: discover blogs via Google, post comments with links, proxy rotation
+- [x] Tiered link building: Tier 2 Telegraph links pointing to Tier 1 backlinks
+- [x] Integrate into seo-daily-engine off_page executor (Phase 2: external BL after PBN)
+- [x] Integrate into seo-agent: backlink_build_web2, backlink_build_social, backlink_build_guest, backlink_tier2
+- [x] Track all external backlinks in backlinkLog with proper sourceType (web2, social, comment, directory, forum, tier2)
+- [x] AI content generation for each platform (LLM-generated, niche-specific, unique per platform)
+- [x] Proxy rotation via fetchWithPoolProxy for all external posting
+- [x] Anchor text distribution engine: 3 strategies (conservative/balanced/aggressive) with proper ratios
+- [x] Write vitest tests: 27 tests passing (platforms, Telegraph nodes, anchor ratios, type safety, integration)
+- [x] 0 TypeScript errors, server restarted, 9 agents active

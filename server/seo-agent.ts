@@ -19,6 +19,7 @@ import { executePBNBuild } from "./pbn-bridge";
 import * as serpTracker from "./serp-tracker";
 import { createWPClient } from "./wp-api";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { runExternalBuildSession, buildTelegraphLink, buildTier2Links } from "./external-backlink-builder";
 
 // ═══ Types ═══
 
@@ -502,10 +503,102 @@ What should we do next? Be specific.` },
         break;
       }
 
-      case "backlink_build_web2":
-      case "backlink_build_social":
-      case "backlink_build_guest":
-      case "backlink_tier2":
+      case "backlink_build_web2": {
+        // Build real external backlinks: Telegraph, social bookmarks, blog comments
+        const targetKeywords = (project.targetKeywords as string[]) || [project.domain];
+        const blNiche = project.niche || "gambling";
+        const blSession = await runExternalBuildSession(
+          project.id,
+          `https://${project.domain}`,
+          project.domain,
+          targetKeywords.slice(0, 5),
+          blNiche,
+          project.aggressiveness || 5,
+          Math.min(Math.max((project.aggressiveness || 5) * 2, 3), 10),
+        );
+        const blBuilt = blSession.results.filter(r => r.success).length;
+        const blTotal = blSession.results.length;
+        result = {
+          totalAttempted: blTotal,
+          totalBuilt: blBuilt,
+          platforms: blSession.results.map(r => ({ platform: r.platform, success: r.success, url: r.sourceUrl })),
+        };
+        detail = `Web 2.0 backlinks: ${blBuilt}/${blTotal} built (Telegraph, social, comments)`;
+        break;
+      }
+      case "backlink_build_social": {
+        // Build social signal backlinks
+        const socialKws = (project.targetKeywords as string[]) || [project.domain];
+        const socialSession = await runExternalBuildSession(
+          project.id,
+          `https://${project.domain}`,
+          project.domain,
+          socialKws.slice(0, 3),
+          project.niche || "gambling",
+          Math.min(project.aggressiveness || 5, 6), // Cap aggressiveness for social
+          5,
+        );
+        const socialBuilt = socialSession.results.filter(r => r.success).length;
+        result = {
+          totalBuilt: socialBuilt,
+          results: socialSession.results.map(r => ({ platform: r.platform, success: r.success, url: r.sourceUrl })),
+        };
+        detail = `Social signals: ${socialBuilt} bookmarks/posts created`;
+        break;
+      }
+      case "backlink_build_guest": {
+        // Guest post = Telegraph article (high quality, long form)
+        const guestKws = (project.targetKeywords as string[]) || [project.domain];
+        const guestResult = await buildTelegraphLink({
+          projectId: project.id,
+          targetUrl: `https://${project.domain}`,
+          targetDomain: project.domain,
+          keyword: guestKws[0] || project.domain,
+          niche: project.niche || "gambling",
+          anchorText: guestKws[0] || project.domain,
+          anchorType: "partial_match",
+        });
+        result = {
+          success: guestResult.success,
+          platform: guestResult.platform,
+          url: guestResult.sourceUrl,
+          error: guestResult.error,
+        };
+        detail = guestResult.success
+          ? `Guest post published: ${guestResult.sourceUrl}`
+          : `Guest post failed: ${guestResult.error}`;
+        break;
+      }
+      case "backlink_tier2": {
+        // Build Tier 2 links pointing to existing Tier 1 backlinks
+        const existingBLs = await db.getProjectBacklinks(project.id, 20);
+        const tier1Links = existingBLs
+          .filter((bl: any) => bl.status === "active" && bl.sourceType !== "tier2" && bl.sourceUrl)
+          .slice(0, 5)
+          .map((bl: any) => ({ sourceUrl: bl.sourceUrl, sourceDomain: bl.sourceDomain || "unknown", id: bl.id }));
+        if (tier1Links.length === 0) {
+          result = { message: "No active Tier 1 backlinks found to build Tier 2 for" };
+          detail = "Tier 2: skipped — no active Tier 1 links";
+        } else {
+          const tier2Kws = (project.targetKeywords as string[]) || [project.domain];
+          const tier2Results = await buildTier2Links(
+            project.id,
+            tier1Links,
+            tier2Kws[0] || project.domain,
+            project.niche || "gambling",
+            2,
+          );
+          const tier2Built = tier2Results.filter(r => r.success).length;
+          result = {
+            tier1Count: tier1Links.length,
+            tier2Built,
+            tier2Total: tier2Results.length,
+            results: tier2Results.map(r => ({ platform: r.platform, success: r.success, url: r.sourceUrl })),
+          };
+          detail = `Tier 2: ${tier2Built} links built pointing to ${tier1Links.length} Tier 1 backlinks`;
+        }
+        break;
+      }
       case "index_request":
       case "onpage_audit":
       case "content_plan":
@@ -525,16 +618,14 @@ What should we do next? Be specific.` },
 Domain metrics: DA=${project.currentDA || 0}, DR=${project.currentDR || 0}, Backlinks=${project.currentBacklinks || 0}
 Strategy: ${project.strategy}, Aggressiveness: ${project.aggressiveness}/10
 ${task.description}
-
 Provide specific, actionable results.` },
           ],
         });
         const output = response.choices[0]?.message?.content || "Task completed";
         result = { output: typeof output === "string" ? output.slice(0, 2000) : "" };
-        detail = `${task.title} — completed`;
+         detail = `${task.title} — completed`;
         break;
       }
-
       case "wp_error_scan": {
         // Scan WordPress site for errors (plugin conflicts, PHP errors, broken pages)
         if (!project.wpUsername || !project.wpAppPassword) {

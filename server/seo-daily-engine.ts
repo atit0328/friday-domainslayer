@@ -16,6 +16,7 @@ import * as seoEngine from "./seo-engine";
 import * as serpTracker from "./serp-tracker";
 import * as db from "./db";
 import { scrapeWebsite, extractKeywordsFromContent } from "./web-scraper";
+import { runExternalBuildSession } from "./external-backlink-builder";
 
 // Helper: wrap fetch with proxy pool
 async function dailyFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
@@ -417,14 +418,18 @@ async function executeOffPage(
   task: DailyTask,
 ): Promise<{ proof: ProofOfWork; detail: string }> {
   const results: { source: string; status: string; url?: string }[] = [];
+  const targetKeywords = (project.targetKeywords as string[]) || [];
+  const keyword = targetKeywords[Math.floor(Math.random() * Math.min(targetKeywords.length, 5))] || project.domain;
+  const niche = project.niche || "gambling";
+  const aggressiveness = project.aggressiveness || 5;
+  const targetUrl = `https://${project.domain}`;
 
-  // Try PBN backlink building
+  // ── Phase 1: PBN backlink building ──
   if (task.requiresPBN) {
     try {
       const { executePBNBuild } = await import("./pbn-bridge");
-      const linkCount = Math.min(Math.max(project.aggressiveness, 2), 5);
+      const linkCount = Math.min(Math.max(aggressiveness, 2), 5);
       const buildResult = await executePBNBuild(project.userId, project.id, linkCount);
-      
       for (const post of buildResult.posts) {
         results.push({
           source: `PBN: ${post.siteId}`,
@@ -437,28 +442,33 @@ async function executeOffPage(
     }
   }
 
-  // AI generates web 2.0 / social bookmark content
-  const targetKeywords = (project.targetKeywords as string[]) || [];
-  const keyword = targetKeywords[Math.floor(Math.random() * Math.min(targetKeywords.length, 5))] || project.domain;
-  
-  const aiContent = await invokeLLM({
-    messages: [
-      { role: "system", content: "สร้าง anchor text variations สำหรับ backlink building ตอบเป็น JSON array of strings 10 รายการ" },
-      { role: "user", content: `สร้าง anchor text variations สำหรับ keyword "${keyword}" domain "${project.domain}" — ผสม exact match, partial match, branded, generic\n\nReturn JSON: ["anchor1", "anchor2", ...]` },
-    ],
-  });
-
-  let anchors: string[] = [];
+  // ── Phase 2: External backlink building (Web 2.0, Social, Comments, Directories, Tier 2) ──
   try {
-    const text = aiContent.choices[0]?.message?.content?.toString() || "[]";
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    anchors = JSON.parse(cleaned);
-  } catch {
-    anchors = [keyword, project.domain, `${keyword} ออนไลน์`, "คลิกที่นี่", project.domain.replace(/\./g, " ")];
+    const maxExternalLinks = Math.min(Math.max(aggressiveness * 2, 3), 15);
+    const externalSession = await runExternalBuildSession(
+      project.id,
+      targetUrl,
+      project.domain,
+      targetKeywords.slice(0, 5),
+      niche,
+      aggressiveness,
+      maxExternalLinks,
+    );
+    for (const r of externalSession.results) {
+      results.push({
+        source: `${r.sourceType}:${r.platform}`,
+        status: r.success ? "built" : `failed: ${r.error || "unknown"}`,
+        url: r.sourceUrl,
+      });
+    }
+  } catch (err: any) {
+    results.push({ source: "ExternalBLBuilder", status: `error: ${err.message}` });
   }
 
-  const builtLinks = results.filter(r => r.status === "published" || r.url).length;
-  const detail = `Off-Page: สร้าง ${builtLinks} backlinks, สร้าง ${anchors.length} anchor text variations สำหรับ "${keyword}"`;
+  const builtLinks = results.filter(r => r.status === "published" || r.status === "built" || r.url).length;
+  const pbnLinks = results.filter(r => r.source.startsWith("PBN") && r.status === "published").length;
+  const externalLinks = results.filter(r => !r.source.startsWith("PBN") && (r.status === "built" || r.url)).length;
+  const detail = `Off-Page: สร้าง ${builtLinks} backlinks (PBN: ${pbnLinks}, External: ${externalLinks}) สำหรับ "${keyword}"`;
 
   return {
     proof: {
@@ -467,8 +477,9 @@ async function executeOffPage(
       data: {
         totalAttempted: results.length,
         totalBuilt: builtLinks,
-        results: results.slice(0, 10),
-        anchorTexts: anchors,
+        pbnLinks,
+        externalLinks,
+        results: results.slice(0, 20),
         targetKeyword: keyword,
       },
     },
