@@ -2691,3 +2691,16 @@
 - [x] 26 vitest tests for adaptive-learning module (all passing)
 - [x] Existing tests still pass
 - [x] 0 TypeScript errors
+
+# Scheduled Learning Cycle — Auto cron job every 6 hours
+- [x] Review existing job-runner/scheduler patterns
+- [x] Add scheduled learning cycle cron job to server startup (server/learning-scheduler.ts)
+- [x] Log learning cycle results (patterns updated, profiles updated, duration)
+- [x] Telegram notification on significant changes (>= 5 patterns or >= 3 profiles)
+- [x] Smart skip when insufficient data (< 3 outcomes)
+- [x] Concurrent run protection (isRunning guard)
+- [x] Consecutive failure tracking with warnings
+- [x] 5-minute initial delay to avoid startup load
+- [x] Added getSchedulerStatus endpoint to tRPC router
+- [x] Write vitest tests for the scheduled learning cycle (14 tests passing)
+- [x] 0 TypeScript errors

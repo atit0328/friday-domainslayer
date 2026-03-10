@@ -14,6 +14,7 @@ import {
   updateCmsProfiles,
   updateLearnedPatterns,
 } from "../adaptive-learning";
+import { getLearningSchedulerStatus, executeLearningCycle } from "../learning-scheduler";
 
 export const adaptiveLearningRouter = router({
   // ═══ Dashboard Stats ═══
@@ -92,7 +93,12 @@ export const adaptiveLearningRouter = router({
 
   // ═══ Manual Learning Cycle Trigger ═══
   runLearning: protectedProcedure.mutation(async () => {
-    return await runLearningCycle();
+    return await executeLearningCycle();
+  }),
+
+  // ═══ Scheduler Status ═══
+  getSchedulerStatus: protectedProcedure.query(async () => {
+    return getLearningSchedulerStatus();
   }),
 
   // ═══ Update Patterns Only ═══

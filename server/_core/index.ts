@@ -14,6 +14,7 @@ import { startScheduler } from "../seo-scheduler";
 import { startProxyScheduler } from "../routers/proxy";
 import { startScanScheduler } from "../scan-scheduler";
 import { startCveScheduler } from "../cve-scheduler";
+import { startLearningScheduler } from "../learning-scheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -80,6 +81,8 @@ async function startServer() {
     startScanScheduler();
     // Start CVE auto-update scheduler (daily at 03:00 UTC)
     startCveScheduler();
+    // Start adaptive learning scheduler (every 6 hours)
+    startLearningScheduler();
   });
 }
 
