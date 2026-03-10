@@ -1,0 +1,19 @@
+{
+  "query": "SHOW TABLES LIKE 'strategy_outcome_logs'; SELECT COUNT(*) as total FROM strategy_outcome_logs;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SHOW TABLES LIKE 'strategy_outcome_logs'; SELECT COUNT(*) as total FROM strategy_outcome_logs;",
+  "rows": [
+    {
+      "Tables_in_5QWxsXug7WsY3BLQHWP3Uh (strategy_outcome_logs)": "strategy_outcome_logs"
+    },
+    {
+      "Tables_in_5QWxsXug7WsY3BLQHWP3Uh (strategy_outcome_logs)": "total"
+    },
+    {
+      "Tables_in_5QWxsXug7WsY3BLQHWP3Uh (strategy_outcome_logs)": "138"
+    }
+  ],
+  "messages": [],
+  "stdout": "Tables_in_5QWxsXug7WsY3BLQHWP3Uh (strategy_outcome_logs)\nstrategy_outcome_logs\ntotal\n138\n",
+  "stderr": "",
+  "execution_time_ms": 1914
+}

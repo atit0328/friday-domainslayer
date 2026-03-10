@@ -2844,3 +2844,23 @@
 ## Tests
 - [x] Write vitest tests for keyword-target-discovery (6 tests)
 - [x] 0 TypeScript errors
+
+# AI Adaptive Learning Enhancement — Stop Repeating Failed Methods + Evolve New Strategies
+## Audit
+- [x] Audit existing learning-scheduler.ts, strategy-outcome-logs, AI Commander learning
+- [x] Identify gaps: aiPlanAttackStrategy didn't use historical data, suggestBestStrategy wasn't wired in, DB queries had ORDER BY alias bugs
+## Enhancement
+- [x] Build method effectiveness tracker (getMethodEffectiveness) — per method + CMS/WAF profile
+- [x] Auto-blacklist attack methods with <10% success after 5+ attempts on target profile
+- [x] AI strategy evolution (evolveStrategies) — LLM analyzes failure/success patterns and generates new approaches
+- [x] Method selection uses historical success rates — aiPlanAttackStrategy now queries adaptive learning DB
+- [x] Feedback loop: attack result → recordAttackOutcome → runEnhancedLearningCycle → evolveStrategies → next attack uses updated data
+- [x] Fixed DB query bugs: ORDER BY alias issues in calculateMethodSuccessRates, queryHistoricalPatterns, updateCmsProfiles, getAdaptiveLearningStats
+- [x] Replaced sum(sql`...`) with sql<number>`SUM(...)` across all queries
+## Integration
+- [x] Wire learning feedback into agentic-attack-engine aiPlanAttackStrategy (historical data + method blacklist)
+- [x] Post-session learning upgraded to runEnhancedLearningCycle (includes strategy evolution)
+- [x] Learning scheduler upgraded to use enhanced cycle
+## Tests
+- [x] Write vitest tests for enhanced learning system (11 tests passed)
+- [x] 0 TypeScript errors

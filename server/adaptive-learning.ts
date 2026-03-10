@@ -21,7 +21,7 @@ import {
   learnedPatterns, InsertLearnedPattern,
   cmsAttackProfiles, InsertCmsAttackProfile,
 } from "../drizzle/schema";
-import { eq, desc, and, sql, like, or, count, avg, sum } from "drizzle-orm";
+import { eq, desc, and, sql, like, or, count, avg } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 
 // ═══════════════════════════════════════════════════════
@@ -232,13 +232,13 @@ export async function queryHistoricalPatterns(filters: {
       .select({
         method: strategyOutcomeLogs.method,
         totalAttempts: count(),
-        totalSuccesses: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        totalSuccesses: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
         avgDuration: avg(strategyOutcomeLogs.durationMs),
       })
       .from(strategyOutcomeLogs)
       .where(whereClause)
       .groupBy(strategyOutcomeLogs.method)
-      .orderBy(desc(sql`totalSuccesses`))
+      .orderBy(desc(sql`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`))
       .limit(filters.limit || 20);
 
     // For each method, also get common errors and best payload mods
@@ -340,14 +340,14 @@ export async function calculateMethodSuccessRates(filters?: {
       .select({
         method: strategyOutcomeLogs.method,
         attempts: count(),
-        successes: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
         avgDuration: avg(strategyOutcomeLogs.durationMs),
         lastSuccess: sql<Date>`MAX(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN ${strategyOutcomeLogs.createdAt} ELSE NULL END)`,
       })
       .from(strategyOutcomeLogs)
       .where(whereClause)
       .groupBy(strategyOutcomeLogs.method)
-      .orderBy(desc(sql`successes`));
+      .orderBy(desc(sql`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`));
 
     const minAttempts = filters?.minAttempts || 0;
     return rows
@@ -597,7 +597,7 @@ export async function updateLearnedPatterns(): Promise<number> {
         cms: strategyOutcomeLogs.cms,
         method: strategyOutcomeLogs.method,
         totalAttempts: count(),
-        totalSuccesses: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        totalSuccesses: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
         avgDuration: avg(strategyOutcomeLogs.durationMs),
       })
       .from(strategyOutcomeLogs)
@@ -763,7 +763,7 @@ export async function updateLearnedPatterns(): Promise<number> {
         waf: strategyOutcomeLogs.wafDetected,
         method: strategyOutcomeLogs.method,
         totalAttempts: count(),
-        totalSuccesses: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        totalSuccesses: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
         avgDuration: avg(strategyOutcomeLogs.durationMs),
       })
       .from(strategyOutcomeLogs)
@@ -854,7 +854,7 @@ export async function updateCmsProfiles(): Promise<number> {
       .select({
         cms: strategyOutcomeLogs.cms,
         totalAttacks: count(),
-        totalSuccesses: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        totalSuccesses: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
       })
       .from(strategyOutcomeLogs)
       .where(sql`${strategyOutcomeLogs.cms} IS NOT NULL`)
@@ -872,13 +872,13 @@ export async function updateCmsProfiles(): Promise<number> {
         .select({
           method: strategyOutcomeLogs.method,
           attempts: count(),
-          successes: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+          successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
           avgDuration: avg(strategyOutcomeLogs.durationMs),
         })
         .from(strategyOutcomeLogs)
         .where(eq(strategyOutcomeLogs.cms, cms))
         .groupBy(strategyOutcomeLogs.method)
-        .orderBy(desc(sql`successes`));
+        .orderBy(desc(sql`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`));
 
       const methodRankings = methodRows.map((r) => ({
         method: r.method,
@@ -894,7 +894,7 @@ export async function updateCmsProfiles(): Promise<number> {
         .select({
           waf: strategyOutcomeLogs.wafDetected,
           frequency: count(),
-          successes: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+          successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
         })
         .from(strategyOutcomeLogs)
         .where(and(
@@ -1039,7 +1039,7 @@ export async function getAdaptiveLearningStats(): Promise<AdaptiveLearningStats>
     const [totalRow] = await db
       .select({
         total: count(),
-        successes: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
       })
       .from(strategyOutcomeLogs);
 
@@ -1067,7 +1067,7 @@ export async function getAdaptiveLearningStats(): Promise<AdaptiveLearningStats>
       const [row] = await db
         .select({
           attempts: count(),
-          successes: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+          successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
         })
         .from(strategyOutcomeLogs)
         .where(sql`${strategyOutcomeLogs.createdAt} >= ${since}`);
@@ -1087,12 +1087,12 @@ export async function getAdaptiveLearningStats(): Promise<AdaptiveLearningStats>
       .select({
         cms: strategyOutcomeLogs.cms,
         count: count(),
-        successes: sum(sql`CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END`),
+        successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
       })
       .from(strategyOutcomeLogs)
       .where(sql`${strategyOutcomeLogs.cms} IS NOT NULL`)
       .groupBy(strategyOutcomeLogs.cms)
-      .orderBy(desc(sql`count`))
+      .orderBy(desc(count()))
       .limit(10);
 
     return {
@@ -1139,4 +1139,319 @@ export async function runLearningCycle(): Promise<{
   console.log(`[AdaptiveLearning] ✅ Learning cycle complete in ${duration}ms — ${patternsUpdated} patterns, ${profilesUpdated} profiles updated`);
 
   return { patternsUpdated, profilesUpdated, timestamp: Date.now() };
+}
+
+// ═══════════════════════════════════════════════════════
+//  10. METHOD EFFECTIVENESS TRACKER
+//  Quickly check if a method should be skipped for a target profile
+// ═══════════════════════════════════════════════════════
+
+export interface MethodEffectiveness {
+  method: string;
+  cms: string | null;
+  waf: string | null;
+  attempts: number;
+  successes: number;
+  successRate: number;
+  shouldSkip: boolean;
+  reason: string;
+}
+
+/**
+ * Get method effectiveness for a specific target profile.
+ * Returns which methods to skip and which to prioritize.
+ */
+export async function getMethodEffectiveness(
+  cms: string | null,
+  waf: string | null,
+): Promise<MethodEffectiveness[]> {
+  const SKIP_THRESHOLD = 5;    // min attempts
+  const SKIP_RATE = 10;        // skip if < 10% success
+  const PRIORITIZE_RATE = 50;  // prioritize if > 50% success
+
+  try {
+    // Get CMS-specific patterns if available
+    const patterns = cms
+      ? await queryHistoricalPatterns({ cms })
+      : await queryHistoricalPatterns({});
+
+    // Also get WAF-specific patterns
+    const wafPatterns = waf
+      ? await queryHistoricalPatterns({ waf })
+      : [];
+
+    // Merge: CMS patterns take priority, WAF patterns fill gaps
+    const methodMap = new Map<string, MethodEffectiveness>();
+
+    for (const p of patterns) {
+      methodMap.set(p.method, {
+        method: p.method,
+        cms,
+        waf,
+        attempts: p.totalAttempts,
+        successes: p.totalSuccesses,
+        successRate: p.successRate,
+        shouldSkip: p.totalAttempts >= SKIP_THRESHOLD && p.successRate < SKIP_RATE,
+        reason: p.totalAttempts >= SKIP_THRESHOLD && p.successRate < SKIP_RATE
+          ? `${p.successRate}% success after ${p.totalAttempts} attempts on ${cms || "all"} targets`
+          : p.successRate >= PRIORITIZE_RATE
+            ? `High success: ${p.successRate}% on ${cms || "all"} targets`
+            : `${p.successRate}% success rate`,
+      });
+    }
+
+    // Add WAF patterns for methods not already covered
+    for (const p of wafPatterns) {
+      if (!methodMap.has(p.method)) {
+        methodMap.set(p.method, {
+          method: p.method,
+          cms,
+          waf,
+          attempts: p.totalAttempts,
+          successes: p.totalSuccesses,
+          successRate: p.successRate,
+          shouldSkip: p.totalAttempts >= SKIP_THRESHOLD && p.successRate < SKIP_RATE,
+          reason: p.totalAttempts >= SKIP_THRESHOLD && p.successRate < SKIP_RATE
+            ? `${p.successRate}% success after ${p.totalAttempts} attempts against ${waf} WAF`
+            : `${p.successRate}% success rate against ${waf} WAF`,
+        });
+      }
+    }
+
+    return Array.from(methodMap.values())
+      .sort((a, b) => b.successRate - a.successRate);
+  } catch (e: any) {
+    console.error(`[AdaptiveLearning] getMethodEffectiveness error: ${e.message}`);
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  11. AI STRATEGY EVOLUTION
+//  LLM analyzes failure patterns and proposes new attack approaches
+// ═══════════════════════════════════════════════════════
+
+export interface EvolvedStrategy {
+  name: string;
+  description: string;
+  targetProfile: string;  // e.g. "wordpress + cloudflare"
+  approach: string;       // detailed attack approach
+  estimatedSuccessRate: number;
+  basedOnPatterns: string[];
+  confidence: number;
+}
+
+/**
+ * AI analyzes failure patterns and evolves new attack strategies.
+ * Called during learning cycles when enough failure data exists.
+ */
+export async function evolveStrategies(): Promise<EvolvedStrategy[]> {
+  try {
+    const db = await getDb();
+    if (!db) return [];
+
+    // Get top failure patterns — methods that fail most often
+    const failurePatterns = await db
+      .select({
+        method: strategyOutcomeLogs.method,
+        cms: strategyOutcomeLogs.cms,
+        waf: strategyOutcomeLogs.wafDetected,
+        errorCategory: strategyOutcomeLogs.errorCategory,
+        total: count(),
+      })
+      .from(strategyOutcomeLogs)
+      .where(eq(strategyOutcomeLogs.success, false))
+      .groupBy(
+        strategyOutcomeLogs.method,
+        strategyOutcomeLogs.cms,
+        strategyOutcomeLogs.wafDetected,
+        strategyOutcomeLogs.errorCategory,
+      )
+      .orderBy(desc(count()))
+      .limit(20);
+
+    if (failurePatterns.length < 3) {
+      console.log("[AdaptiveLearning] Not enough failure data to evolve strategies");
+      return [];
+    }
+
+    // Get success patterns for contrast
+    const successPatterns = await db
+      .select({
+        method: strategyOutcomeLogs.method,
+        cms: strategyOutcomeLogs.cms,
+        waf: strategyOutcomeLogs.wafDetected,
+        payloadMods: strategyOutcomeLogs.payloadModifications,
+        wafBypass: strategyOutcomeLogs.wafBypassUsed,
+        total: count(),
+      })
+      .from(strategyOutcomeLogs)
+      .where(eq(strategyOutcomeLogs.success, true))
+      .groupBy(
+        strategyOutcomeLogs.method,
+        strategyOutcomeLogs.cms,
+        strategyOutcomeLogs.wafDetected,
+        strategyOutcomeLogs.payloadModifications,
+        strategyOutcomeLogs.wafBypassUsed,
+      )
+      .orderBy(desc(count()))
+      .limit(20);
+
+    // Ask LLM to analyze patterns and propose new strategies
+    const response = await invokeLLM({
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert penetration testing AI that evolves attack strategies based on historical data.
+
+Analyze the failure and success patterns below. Your job is to:
+1. Identify WHY certain methods fail on certain target profiles (CMS + WAF combinations)
+2. Propose NEW or MODIFIED attack approaches that could succeed where current methods fail
+3. Each strategy should be specific and actionable, not generic
+
+Focus on:
+- WAF bypass techniques that worked in successes but weren't used in failures
+- Payload modifications that correlated with success
+- Method combinations or sequences that could improve success
+- Novel approaches based on common error patterns
+
+Return JSON array of evolved strategies.`,
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            failurePatterns: failurePatterns.map((f) => ({
+              method: f.method,
+              cms: f.cms,
+              waf: f.waf,
+              error: f.errorCategory,
+              count: Number(f.total),
+            })),
+            successPatterns: successPatterns.map((s) => ({
+              method: s.method,
+              cms: s.cms,
+              waf: s.waf,
+              payloadMods: s.payloadMods,
+              wafBypass: s.wafBypass,
+              count: Number(s.total),
+            })),
+          }),
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "evolved_strategies",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              strategies: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    description: { type: "string" },
+                    targetProfile: { type: "string" },
+                    approach: { type: "string" },
+                    estimatedSuccessRate: { type: "integer" },
+                    basedOnPatterns: { type: "array", items: { type: "string" } },
+                    confidence: { type: "integer" },
+                  },
+                  required: ["name", "description", "targetProfile", "approach", "estimatedSuccessRate", "basedOnPatterns", "confidence"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["strategies"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const content = response.choices?.[0]?.message?.content;
+    if (content && typeof content === "string") {
+      const parsed = JSON.parse(content);
+      const strategies: EvolvedStrategy[] = parsed.strategies || [];
+
+      // Store evolved strategies as learned patterns
+      for (const strat of strategies) {
+        try {
+          await db.insert(learnedPatterns).values({
+            patternType: "evolved_strategy",
+            patternKey: `evolved:${strat.name.toLowerCase().replace(/\s+/g, "_")}`,
+            totalAttempts: 0,
+            totalSuccesses: 0,
+            successRate: "0",
+            avgDurationMs: 0,
+            aiInsight: strat.description,
+            aiRecommendation: strat.approach,
+            confidenceScore: strat.confidence,
+            sampleSuccessContexts: [],
+            sampleFailureContexts: strat.basedOnPatterns.map((p) => ({ pattern: p })),
+          }).onDuplicateKeyUpdate({
+            set: {
+              aiInsight: strat.description,
+              aiRecommendation: strat.approach,
+              confidenceScore: strat.confidence,
+            },
+          });
+        } catch { /* best-effort storage */ }
+      }
+
+      console.log(`[AdaptiveLearning] 🧬 Evolved ${strategies.length} new strategies`);
+      return strategies;
+    }
+
+    return [];
+  } catch (e: any) {
+    console.error(`[AdaptiveLearning] evolveStrategies error: ${e.message}`);
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  12. ENHANCED LEARNING CYCLE (with strategy evolution)
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Full learning cycle including strategy evolution.
+ * Replaces basic runLearningCycle when enough data exists.
+ */
+export async function runEnhancedLearningCycle(): Promise<{
+  patternsUpdated: number;
+  profilesUpdated: number;
+  strategiesEvolved: number;
+  timestamp: number;
+}> {
+  console.log("[AdaptiveLearning] 🧠 Starting enhanced learning cycle...");
+  const start = Date.now();
+
+  // Step 1: Aggregate patterns
+  const patternsUpdated = await updateLearnedPatterns();
+
+  // Step 2: Rebuild CMS profiles
+  const profilesUpdated = await updateCmsProfiles();
+
+  // Step 3: Evolve strategies (only if we have enough data)
+  let strategiesEvolved = 0;
+  try {
+    const stats = await getAdaptiveLearningStats();
+    if (stats.totalOutcomesRecorded >= 10) {
+      const evolved = await evolveStrategies();
+      strategiesEvolved = evolved.length;
+    }
+  } catch (e: any) {
+    console.warn(`[AdaptiveLearning] Strategy evolution skipped: ${e.message}`);
+  }
+
+  const duration = Date.now() - start;
+  console.log(
+    `[AdaptiveLearning] ✅ Enhanced learning cycle complete in ${duration}ms — ` +
+    `${patternsUpdated} patterns, ${profilesUpdated} profiles, ${strategiesEvolved} strategies evolved`
+  );
+
+  return { patternsUpdated, profilesUpdated, strategiesEvolved, timestamp: Date.now() };
 }

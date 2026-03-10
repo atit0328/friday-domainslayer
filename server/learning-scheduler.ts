@@ -9,7 +9,7 @@
  * Pattern: setInterval-based scheduler (same as seo-scheduler, cve-scheduler)
  * Checks every 6 hours — no DB polling needed, just runs the cycle.
  */
-import { runLearningCycle, getAdaptiveLearningStats } from "./adaptive-learning";
+import { runLearningCycle, runEnhancedLearningCycle, getAdaptiveLearningStats } from "./adaptive-learning";
 import { sendTelegramNotification } from "./telegram-notifier";
 
 // ═══════════════════════════════════════════════
@@ -82,8 +82,8 @@ export async function executeLearningCycle(): Promise<{
     console.log(`[Learning Scheduler] 🧠 Starting learning cycle #${totalCyclesRun + 1}...`);
     console.log(`[Learning Scheduler]   Total outcomes: ${stats.totalOutcomesRecorded} | Success rate: ${stats.overallSuccessRate.toFixed(1)}%`);
 
-    // Run the actual learning cycle
-    const result = await runLearningCycle();
+    // Run the enhanced learning cycle (includes strategy evolution)
+    const result = await runEnhancedLearningCycle();
     const durationMs = Date.now() - startTime;
 
     // Update state

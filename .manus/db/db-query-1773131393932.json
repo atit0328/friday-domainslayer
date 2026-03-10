@@ -1,0 +1,106 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'strategy_outcome_logs' ORDER BY ORDINAL_POSITION;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'strategy_outcome_logs' ORDER BY ORDINAL_POSITION;",
+  "rows": [
+    {
+      "COLUMN_NAME": "id"
+    },
+    {
+      "COLUMN_NAME": "targetDomain"
+    },
+    {
+      "COLUMN_NAME": "solCms"
+    },
+    {
+      "COLUMN_NAME": "solCmsVersion"
+    },
+    {
+      "COLUMN_NAME": "solServerType"
+    },
+    {
+      "COLUMN_NAME": "solPhpVersion"
+    },
+    {
+      "COLUMN_NAME": "solWafDetected"
+    },
+    {
+      "COLUMN_NAME": "solWafStrength"
+    },
+    {
+      "COLUMN_NAME": "solVulnScore"
+    },
+    {
+      "COLUMN_NAME": "solMethod"
+    },
+    {
+      "COLUMN_NAME": "solExploitType"
+    },
+    {
+      "COLUMN_NAME": "solPayloadType"
+    },
+    {
+      "COLUMN_NAME": "solWafBypassUsed"
+    },
+    {
+      "COLUMN_NAME": "solPayloadMods"
+    },
+    {
+      "COLUMN_NAME": "solAttackPath"
+    },
+    {
+      "COLUMN_NAME": "solAttemptNumber"
+    },
+    {
+      "COLUMN_NAME": "solIsRetry"
+    },
+    {
+      "COLUMN_NAME": "solPreviousMethods"
+    },
+    {
+      "COLUMN_NAME": "solSuccess"
+    },
+    {
+      "COLUMN_NAME": "solHttpStatus"
+    },
+    {
+      "COLUMN_NAME": "solErrorCategory"
+    },
+    {
+      "COLUMN_NAME": "solErrorMessage"
+    },
+    {
+      "COLUMN_NAME": "solFilesPlaced"
+    },
+    {
+      "COLUMN_NAME": "solRedirectVerified"
+    },
+    {
+      "COLUMN_NAME": "solDurationMs"
+    },
+    {
+      "COLUMN_NAME": "solAiFailureCategory"
+    },
+    {
+      "COLUMN_NAME": "solAiReasoning"
+    },
+    {
+      "COLUMN_NAME": "solAiConfidence"
+    },
+    {
+      "COLUMN_NAME": "solAiEstimatedSuccess"
+    },
+    {
+      "COLUMN_NAME": "solSessionId"
+    },
+    {
+      "COLUMN_NAME": "solAgenticSessionId"
+    },
+    {
+      "COLUMN_NAME": "solCreatedAt"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\nid\ntargetDomain\nsolCms\nsolCmsVersion\nsolServerType\nsolPhpVersion\nsolWafDetected\nsolWafStrength\nsolVulnScore\nsolMethod\nsolExploitType\nsolPayloadType\nsolWafBypassUsed\nsolPayloadMods\nsolAttackPath\nsolAttemptNumber\nsolIsRetry\nsolPreviousMethods\nsolSuccess\nsolHttpStatus\nsolErrorCategory\nsolErrorMessage\nsolFilesPlaced\nsolRedirectVerified\nsolDurationMs\nsolAiFailureCategory\nsolAiReasoning\nsolAiConfidence\nsolAiEstimatedSuccess\nsolSessionId\nsolAgenticSessionId\nsolCreatedAt\n",
+  "stderr": "",
+  "execution_time_ms": 1521
+}
