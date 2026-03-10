@@ -2980,3 +2980,52 @@
 - [x] UI: verification stats cards (Total Verified, Pending, Verified OK, Reverted) + verification badges in Database tab
 - [x] tRPC endpoints: verifyNow, processPendingVerifications, getVerificationStats, getVerificationHistory, getStats (updated)
 - [x] Write vitest tests: 17 tests passing (verifySingleSite scenarios, stats, history, scheduling, stages)
+
+# Fix News Article Images — Use Real Images Instead of AI Generated
+- [ ] Find the news/content generation system that produces article images
+- [ ] Identify where AI image generation is called for news articles
+- [ ] Replace AI image generation with real image scraping from news source URLs
+- [ ] Fallback: search for relevant images using web search when source has no image
+- [ ] Store scraped images in S3 via storagePut
+- [ ] Update news display to use real images from sources
+- [ ] Ensure images are relevant to the specific news article content
+- [ ] Write vitest tests
+
+# AI Brain — Autonomous Gambling SEO Attack Intelligence
+
+## Phase 1: Gambling Keyword Intelligence Engine (server/gambling-keyword-intel.ts)
+- [x] Build keyword seed database: 200+ Thai/English gambling keywords across 11 categories (casino, slots, betting, baccarat, gambling_sites, brands, promotions, table_games, sports, transactions, direct_sites)
+- [x] Auto-expand keywords using LLM: long-tail, seasonal, trending, competitor brand keywords via expandKeywords()
+- [x] Keyword scoring: LLM-based scoring with priorityScore, competitionLevel, conversionPotential, estimatedSearchVolume
+- [x] Keyword clustering: group by category (11 categories)
+- [x] Priority ranking: KeywordScore interface with priorityScore for ROI-based targeting
+- [x] Auto-refresh: discoverKeywordsFromSerp() finds new keywords from SERP results
+- [x] Store keyword intel in DB via seedGamblingKeywords() + serpKeywords table
+
+## Phase 2: Smart Target Discovery (server/smart-target-discovery.ts)
+- [x] SERP-based discovery: gambling-specific Google dorks (inurl:, intext:, site:) via GAMBLING_DORK_QUERIES
+- [x] Vulnerability scoring: GamblingTargetScore with gamblingRelevance, vulnerabilityScore, seoValue, alreadyHacked, overallScore
+- [x] Already-hacked detection: check hacked_site_detections DB for competitor redirects
+- [x] Target prioritization: overallScore = weighted(gamblingRelevance + vulnerabilityScore + seoValue + alreadyHacked bonus)
+- [x] Competitor analysis: analyzeCompetitorTargets() finds competitor parasite SEO patterns
+- [x] Auto-discover: runSmartGamblingDiscovery() with dork rotation and deduplication
+- [x] Store discovered targets: selectNextAttackTargets() returns prioritized list from DB
+
+## Phase 3: Gambling AI Brain (server/gambling-ai-brain.ts)
+- [x] Full autonomous controller: runBrainCycle() orchestrates keyword → discovery → scoring → attack
+- [x] 4-phase cycle: Phase 1 (Keywords) → Phase 2 (Discovery) → Phase 3 (Scoring) → Phase 4 (Attack)
+- [x] Attack execution: uses startAgenticSession() for full attacks, redirect_takeover for hacked sites
+- [x] Learning from outcomes: tracks success/failure per cycle, adjusts strategy
+- [x] Auto-execute: full_auto, discovery_and_attack, discovery_only modes
+- [x] Continuous mode: startContinuousMode() runs cycles on interval (default 30min)
+- [x] Configurable: GamblingBrainConfig with maxKeywords, maxTargets, maxAttacks, delayBetweenAttacks, targetCms
+
+## Phase 4: Orchestrator Integration
+- [x] New orchestrator subsystem: gambling_brain (auto-enabled when attackEnabled)
+- [x] Task types: gambling_run_cycle, gambling_keyword_intel, gambling_smart_discovery, gambling_auto_attack
+- [x] Background execution: orchestrator dispatches brain cycles via OODA decide/execute
+- [x] Telegram notifications: discovery alerts, attack success/failure, cycle completion, errors
+- [x] tRPC router: gamblingBrain with runCycle, getState, stop, startContinuous, stopContinuous, getKeywordStats, getDiscoveryStats
+
+## Testing
+- [x] Write vitest tests: 26 tests passing (keyword intel, smart discovery, brain state, orchestrator integration, e2e flow)

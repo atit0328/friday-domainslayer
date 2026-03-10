@@ -49,6 +49,7 @@ import { daemonRouter } from "./routers/daemon-router";
 import { keywordDiscoveryRouter } from "./routers/keyword-discovery";
 import { llmProviderRouter } from "./routers/llm-provider";
 import { redirectTakeoverRouter } from "./routers/redirect-takeover";
+import { gamblingBrainRouter } from "./routers/gambling-brain";
 
 export const appRouter = router({
   system: systemRouter,
@@ -154,6 +155,9 @@ export const appRouter = router({
 
   // Redirect Takeover (overwrite competitor redirects)
   redirectTakeover: redirectTakeoverRouter,
+
+  // Gambling AI Brain (autonomous keyword → discovery → attack)
+  gamblingBrain: gamblingBrainRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({
