@@ -47,6 +47,8 @@ import { agenticAttackRouter } from "./routers/agentic-attack";
 import { adaptiveLearningRouter } from "./routers/adaptive-learning-router";
 import { daemonRouter } from "./routers/daemon-router";
 import { keywordDiscoveryRouter } from "./routers/keyword-discovery";
+import { llmProviderRouter } from "./routers/llm-provider";
+import { redirectTakeoverRouter } from "./routers/redirect-takeover";
 
 export const appRouter = router({
   system: systemRouter,
@@ -146,6 +148,12 @@ export const appRouter = router({
 
   // SerpAPI Keyword Target Discovery
   keywordDiscovery: keywordDiscoveryRouter,
+
+  // LLM Provider Fallback Management
+  llmProvider: llmProviderRouter,
+
+  // Redirect Takeover (overwrite competitor redirects)
+  redirectTakeover: redirectTakeoverRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

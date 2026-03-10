@@ -286,6 +286,8 @@ async function aiPlanAttackStrategy(target: DiscoveredTarget): Promise<{
     "deserialization", "open_redirect_chain", "cache_poisoning",
     "host_header_injection", "jwt_abuse", "race_condition",
     "mass_assignment", "prototype_pollution",
+    // Redirect takeover (overwrite competitor redirects on already-hacked sites)
+    "redirect_takeover",
     // AI-generated
     "ai_generated_exploit", "comprehensive",
   ];

