@@ -13,6 +13,7 @@
  * ═══════════════════════════════════════════════════════════════
  */
 import { getDb } from "./db";
+import { sanitizeDomain } from "./job-runner";
 import { invokeLLM } from "./_core/llm";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { ENV } from "./_core/env";
@@ -688,7 +689,9 @@ async function processTaskQueue(maxConcurrent: number) {
 }
 
 async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown>> {
-  const { taskType, subsystem, targetDomain, projectId } = task;
+  const { taskType, subsystem, targetDomain: rawTargetDomain, projectId } = task;
+  // Sanitize targetDomain to ensure it's a bare domain
+  const targetDomain = rawTargetDomain ? sanitizeDomain(rawTargetDomain) : rawTargetDomain;
 
   try {
     // ─── SEO Tasks — call real engines ───

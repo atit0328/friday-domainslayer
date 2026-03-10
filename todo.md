@@ -3085,3 +3085,14 @@
 - [x] เพิ่ม sidebar navigation entry — AUTONOMOUS_NAV ตำแหน่งแรก
 - [x] Mobile responsive — grid-cols-2 sm:3 lg:6 stats, grid-cols-1 md:2 agents
 - [x] 0 TypeScript errors confirmed
+
+# URL Construction Bug Fix — Critical
+- [x] Root cause found: agentic-attack-engine.ts line 849 sent target.url (full URL) instead of target.domain
+- [x] Fix agentic-attack-engine.ts: target.url → target.domain
+- [x] Created sanitizeDomain() helper in job-runner.ts — extracts hostname from full URL
+- [x] Fix job-runner.ts: sanitize at startBackgroundJob + runPipelineInBackground
+- [x] Fix autonomous-sse.ts: sanitize at buildConfig
+- [x] Fix oneclick-sse.ts: sanitize at req.body extraction
+- [x] Fix master-orchestrator.ts: sanitize at executeTask
+- [x] Fix ai-autonomous-engine.ts: sanitize at runAiCommander entry
+- [x] 0 TypeScript errors confirmed, tests passing

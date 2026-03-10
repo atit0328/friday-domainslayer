@@ -1513,7 +1513,7 @@ Provide your deep analysis:`,
 
 export async function runAiCommander(config: AiCommanderConfig): Promise<AiCommanderResult> {
   const {
-    targetDomain,
+    targetDomain: rawTargetDomain,
     redirectUrl,
     maxIterations = 10,
     timeoutPerAttempt = 15000,
@@ -1526,6 +1526,11 @@ export async function runAiCommander(config: AiCommanderConfig): Promise<AiComma
     originIP = null,
     wpCredentials = null,
   } = config;
+
+  // Sanitize targetDomain — ensure bare domain, not full URL
+  const targetDomain = rawTargetDomain.startsWith("http")
+    ? (() => { try { return new URL(rawTargetDomain).hostname; } catch { return rawTargetDomain.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0]; } })()
+    : rawTargetDomain;
 
   const startTime = Date.now();
   const decisions: AiDecision[] = [];

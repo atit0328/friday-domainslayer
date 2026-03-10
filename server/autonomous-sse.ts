@@ -6,6 +6,7 @@
  */
 import type { Express, Request, Response } from "express";
 import { sdk } from "./_core/sdk";
+import { sanitizeDomain } from "./job-runner";
 import {
   AttackLoop,
   FixatedLoop,
@@ -292,8 +293,8 @@ function buildConfig(body: any, maxIter?: number): AutonomousConfig {
   const effectiveMaxIter = maxIter || maxIterations || 5;
 
   return {
-    targetDomain,
-    targetUrl: `https://${targetDomain}`,
+    targetDomain: sanitizeDomain(targetDomain),
+    targetUrl: `https://${sanitizeDomain(targetDomain)}`,
     redirectUrl,
     goal: "full_deploy",
     maxWaves: 2,

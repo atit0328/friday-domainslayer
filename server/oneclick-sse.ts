@@ -6,6 +6,7 @@
  */
 import type { Express, Request, Response } from "express";
 import { sdk } from "./_core/sdk";
+import { sanitizeDomain } from "./job-runner";
 import {
   oneClickDeploy,
   parseProxyList,
@@ -174,7 +175,7 @@ export function registerOneClickSSE(app: Express) {
     }
 
     const {
-      targetDomain,
+      targetDomain: rawTargetDomain,
       redirectUrl,
       maxRetries,
       geoRedirectEnabled,
@@ -195,6 +196,9 @@ export function registerOneClickSSE(app: Express) {
       aiCommanderMaxIterations,
       methodPriority,
     } = req.body;
+
+    // Sanitize targetDomain — ensure bare domain, not full URL
+    const targetDomain = sanitizeDomain(rawTargetDomain);
 
     if (!targetDomain || !redirectUrl) {
       res.status(400).json({ error: "targetDomain and redirectUrl are required" });

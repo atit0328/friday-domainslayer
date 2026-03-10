@@ -846,7 +846,7 @@ async function attackSingleTarget(
     try {
       const jobResult = await startBackgroundJob({
         userId: config.userId,
-        targetDomain: target.url || `https://${target.domain}`,
+        targetDomain: target.domain,
         redirectUrl,
         mode: "emergent",
         maxIterations: 5,
