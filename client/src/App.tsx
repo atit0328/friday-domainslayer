@@ -46,6 +46,8 @@ const RedirectTakeover = lazy(() => import("./pages/RedirectTakeover"));
 const AdaptiveLearning = lazy(() => import("./pages/AdaptiveLearning"));
 const DaemonControlCenter = lazy(() => import("./pages/DaemonControlCenter"));
 const KeywordDiscovery = lazy(() => import("./pages/KeywordDiscovery"));
+const GamblingBrainDashboard = lazy(() => import("./pages/GamblingBrainDashboard"));
+const KeywordPerformancePage = lazy(() => import("./pages/KeywordPerformancePage"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -165,6 +167,8 @@ function ProtectedRouter() {
         <Route path="/adaptive-learning">{() => <SuperadminGuard><AdaptiveLearning /></SuperadminGuard>}</Route>
         <Route path="/daemon">{() => <SuperadminGuard><DaemonControlCenter /></SuperadminGuard>}</Route>
         <Route path="/keyword-discovery">{() => <SuperadminGuard><KeywordDiscovery /></SuperadminGuard>}</Route>
+        <Route path="/gambling-brain">{() => <SuperadminGuard><GamblingBrainDashboard /></SuperadminGuard>}</Route>
+        <Route path="/keyword-performance">{() => <SuperadminGuard><KeywordPerformancePage /></SuperadminGuard>}</Route>
         <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

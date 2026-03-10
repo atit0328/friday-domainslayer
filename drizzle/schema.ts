@@ -1740,3 +1740,44 @@ export const hackedSiteDetections = mysqlTable("hacked_site_detections", {
 });
 export type HackedSiteDetection = typeof hackedSiteDetections.$inferSelect;
 export type InsertHackedSiteDetection = typeof hackedSiteDetections.$inferInsert;
+
+
+// ═══════════════════════════════════════════════════════
+// Keyword Performance Tracking — correlate attacks with rank changes
+// ═══════════════════════════════════════════════════════
+export const keywordPerformance = mysqlTable("keyword_performance", {
+  id: int("id").autoincrement().primaryKey(),
+  keyword: varchar("keyword", { length: 500 }).notNull(),
+  targetDomain: varchar("targetDomain", { length: 512 }).notNull(),
+  parasiteDomain: varchar("parasiteDomain", { length: 512 }),
+  agenticSessionId: int("agenticSessionId"),
+  attackMethod: varchar("attackMethod", { length: 64 }),
+  attackedAt: timestamp("attackedAt"),
+  rankBefore: int("rankBefore"),
+  rankAfter1h: int("rankAfter1h"),
+  rankAfter24h: int("rankAfter24h"),
+  rankAfter7d: int("rankAfter7d"),
+  rankAfter30d: int("rankAfter30d"),
+  currentRank: int("currentRank"),
+  bestRank: int("bestRank"),
+  rankImprovement: int("rankImprovement"),
+  isOnPage1: boolean("isOnPage1").default(false).notNull(),
+  isInTop3: boolean("isInTop3").default(false).notNull(),
+  estimatedTraffic: int("estimatedTraffic").default(0).notNull(),
+  estimatedValue: decimal("estimatedValue", { precision: 10, scale: 2 }),
+  performanceScore: int("performanceScore").default(0).notNull(),
+  status: mysqlEnum("perfStatus", [
+    "pending", "tracking", "peaked", "stable", "lost", "completed"
+  ]).default("pending").notNull(),
+  nextCheckAt: timestamp("nextCheckAt"),
+  lastCheckedAt: timestamp("lastCheckedAt"),
+  totalChecks: int("totalChecks").default(0).notNull(),
+  category: varchar("perfCategory", { length: 64 }),
+  searchVolume: int("perfSearchVolume"),
+  keywordDifficulty: int("perfKeywordDifficulty"),
+  cpc: decimal("perfCpc", { precision: 8, scale: 2 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type KeywordPerformance = typeof keywordPerformance.$inferSelect;
+export type InsertKeywordPerformance = typeof keywordPerformance.$inferInsert;

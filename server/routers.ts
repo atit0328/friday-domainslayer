@@ -50,6 +50,7 @@ import { keywordDiscoveryRouter } from "./routers/keyword-discovery";
 import { llmProviderRouter } from "./routers/llm-provider";
 import { redirectTakeoverRouter } from "./routers/redirect-takeover";
 import { gamblingBrainRouter } from "./routers/gambling-brain";
+import { keywordPerformanceRouter } from "./routers/keyword-performance";
 
 export const appRouter = router({
   system: systemRouter,
@@ -158,6 +159,9 @@ export const appRouter = router({
 
   // Gambling AI Brain (autonomous keyword → discovery → attack)
   gamblingBrain: gamblingBrainRouter,
+
+  // Keyword Performance Tracking (ROI & rank correlation)
+  keywordPerformance: keywordPerformanceRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

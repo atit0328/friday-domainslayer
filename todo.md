@@ -3029,3 +3029,26 @@
 
 ## Testing
 - [x] Write vitest tests: 26 tests passing (keyword intel, smart discovery, brain state, orchestrator integration, e2e flow)
+
+# Gambling Brain Dashboard UI
+- [x] Create GamblingBrainDashboard.tsx page
+- [x] Brain Status card: current phase, isRunning, cycle count, uptime, continuous mode toggle
+- [x] Keyword Intelligence card: total keywords, categories breakdown, top scored keywords, recent expansions
+- [x] Target Discovery card: total targets found, high priority count, already-hacked count, recent discoveries
+- [x] Attack Progress card: attacks launched, success/fail rate, active sessions, recent results
+- [x] Cycle History timeline: show past brain cycles with duration, results, errors
+- [x] Real-time auto-refresh with polling (every 3-15s depending on data type)
+- [x] Start/Stop Brain controls + Continuous Mode toggle
+- [x] Add route in App.tsx and sidebar navigation
+- [x] Mobile responsive
+
+# Keyword Performance Tracking
+- [x] Add keyword_performance table to schema (keyword, targetDomain, attackDate, rankBefore, rankAfter, rankChange, lastChecked)
+- [x] Build keyword rank checker: after successful attack, track keyword ranking over time (server/keyword-performance-tracker.ts)
+- [x] Correlate attack success with actual rank improvement
+- [x] Performance scoring: which keywords are most profitable (rank improvement per attack effort)
+- [x] Feed performance data back to AI Brain for smarter keyword selection
+- [x] tRPC router: keywordPerformance with track, batchTrack, processChecks, getStats, getROI, getRecent
+- [x] UI: KeywordPerformancePage.tsx — Overview (best/worst performers), ROI Rankings, Recent Entries tabs
+- [x] Add route /keyword-performance in App.tsx and sidebar navigation
+- [x] 0 TypeScript errors, 49+ tests passing
