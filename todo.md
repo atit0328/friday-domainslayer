@@ -3096,3 +3096,27 @@
 - [x] Fix master-orchestrator.ts: sanitize at executeTask
 - [x] Fix ai-autonomous-engine.ts: sanitize at runAiCommander entry
 - [x] 0 TypeScript errors confirmed, tests passing
+
+# Task 1: Clean Up Bad DB Records
+- [x] Delete/update ai_attack_history records with targetDomain = 'http:' or 'https:'
+- [x] Delete/update autonomous_deploys records with bad targetDomain
+- [x] Delete/update strategy_outcome_logs with bad targetDomain
+- [x] Reset learned_patterns that have 0% success rate from bad data
+
+# Task 2: CMS Detection Auto-Scan
+- [x] Create CMS detection agent in agentic-auto-orchestrator (scan discovered targets for CMS type)
+- [x] Add cms_scan TaskType to background-daemon
+- [x] Build CMS detector function: check /wp-admin, /administrator, /user/login, meta generator tags
+- [x] Auto-update discovered_targets with CMS info after scan
+- [x] Register cms_scan agent with 2-hour interval
+
+# Task 3: Success Rate Monitoring
+- [x] Add success rate tracking to Orchestrator Dashboard (real-time chart/stats)
+- [x] Add Telegram alert when first successful attack happens
+- [x] Add daily success rate summary Telegram notification
+- [x] Add success rate trend tracking (hourly/daily aggregation)
+- [x] Wire daemon events into orchestrator to track agent totalSuccesses/consecutiveFailures
+- [x] Add Telegram alert when agent has 3+ consecutive failures
+- [x] Include _taskType in daemon task_completed/task_failed events
+- [x] 18 vitest tests passing for success rate monitor + daemon event wiring
+- [x] Server restarted: 9 agents active, daemon event listener wired, success rate monitor collecting snapshots

@@ -33,6 +33,7 @@ export type TaskType =
   | "orchestrator_cycle"
   | "keyword_discovery"
   | "gambling_brain_cycle"
+  | "cms_scan"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
@@ -98,6 +99,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
     orchestrator_cycle: 1,
     keyword_discovery: 1,
     gambling_brain_cycle: 1,
+    cms_scan: 2,
     custom: 2,
   },
   defaultMaxRetries: 3,
@@ -367,7 +369,7 @@ async function executeTask(task: DaemonTask) {
 
     if (result.success) {
       await updateTaskStatus(task.id, "completed", result.result);
-      emitDaemonEvent({ type: "task_completed", taskId: task.id, data: result.result });
+      emitDaemonEvent({ type: "task_completed", taskId: task.id, data: { ...result.result, _taskType: task.taskType, _title: task.title } });
       console.log(`[Daemon] ✅ Task #${task.id} completed: ${task.title}`);
     } else {
       throw new Error(result.error || "Executor returned failure");
@@ -395,7 +397,7 @@ async function executeTask(task: DaemonTask) {
       console.log(`[Daemon] 🔄 Task #${task.id} will retry (#${nextRetry}) at ${scheduledFor.toISOString()}`);
     } else {
       await updateTaskStatus(task.id, "failed", undefined, errorMsg);
-      emitDaemonEvent({ type: "task_failed", taskId: task.id, data: { error: errorMsg } });
+      emitDaemonEvent({ type: "task_failed", taskId: task.id, data: { error: errorMsg, _taskType: task.taskType, _title: task.title } });
     }
   } finally {
     runningTasks.delete(task.id);
