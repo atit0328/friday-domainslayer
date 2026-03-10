@@ -1,0 +1,21 @@
+CREATE TABLE `hacked_site_detections` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`domain` varchar(512) NOT NULL,
+	`url` text NOT NULL,
+	`isHacked` boolean NOT NULL DEFAULT false,
+	`competitorUrl` text,
+	`detectionMethods` json,
+	`targetPlatform` varchar(64),
+	`wpVersion` varchar(32),
+	`plugins` json,
+	`takeoverStatus` enum('not_attempted','in_progress','success','failed','partial') NOT NULL DEFAULT 'not_attempted',
+	`takeoverMethod` varchar(128),
+	`takeoverResult` text,
+	`takeoverAt` timestamp,
+	`priority` int NOT NULL DEFAULT 0,
+	`detectionSource` enum('manual_scan','batch_scan','agentic_discovery','attack_pipeline') NOT NULL DEFAULT 'manual_scan',
+	`scannedAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	`userId` varchar(128),
+	CONSTRAINT `hacked_site_detections_id` PRIMARY KEY(`id`)
+);

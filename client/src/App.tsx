@@ -42,6 +42,7 @@ const AutonomousCommandCenter = lazy(() => import("./pages/AutonomousCommandCent
 const CveDashboard = lazy(() => import("./pages/CveDashboard"));
 const ExploitAnalytics = lazy(() => import("./pages/ExploitAnalytics"));
 const AgenticAttack = lazy(() => import("./pages/AgenticAttack"));
+const RedirectTakeover = lazy(() => import("./pages/RedirectTakeover"));
 const AdaptiveLearning = lazy(() => import("./pages/AdaptiveLearning"));
 const DaemonControlCenter = lazy(() => import("./pages/DaemonControlCenter"));
 const KeywordDiscovery = lazy(() => import("./pages/KeywordDiscovery"));
@@ -160,6 +161,7 @@ function ProtectedRouter() {
         <Route path="/cve-database">{() => <SuperadminGuard><CveDashboard /></SuperadminGuard>}</Route>
         <Route path="/exploit-analytics">{() => <SuperadminGuard><ExploitAnalytics /></SuperadminGuard>}</Route>
         <Route path="/agentic-attack">{() => <SuperadminGuard><AgenticAttack /></SuperadminGuard>}</Route>
+        <Route path="/redirect-takeover">{() => <SuperadminGuard><RedirectTakeover /></SuperadminGuard>}</Route>
         <Route path="/adaptive-learning">{() => <SuperadminGuard><AdaptiveLearning /></SuperadminGuard>}</Route>
         <Route path="/daemon">{() => <SuperadminGuard><DaemonControlCenter /></SuperadminGuard>}</Route>
         <Route path="/keyword-discovery">{() => <SuperadminGuard><KeywordDiscovery /></SuperadminGuard>}</Route>

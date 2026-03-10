@@ -1677,3 +1677,45 @@ export const serpSearchRuns = mysqlTable("serp_search_runs", {
 });
 export type SerpSearchRun = typeof serpSearchRuns.$inferSelect;
 export type InsertSerpSearchRun = typeof serpSearchRuns.$inferInsert;
+
+// ═══════════════════════════════════════════════════════
+// Hacked Site Detections — Track already-compromised sites
+// ═══════════════════════════════════════════════════════
+export const hackedSiteDetections = mysqlTable("hacked_site_detections", {
+  id: int("id").autoincrement().primaryKey(),
+  domain: varchar("domain", { length: 512 }).notNull(),
+  url: text("url").notNull(),
+  // Detection results
+  isHacked: boolean("isHacked").default(false).notNull(),
+  competitorUrl: text("competitorUrl"),
+  detectionMethods: json("detectionMethods").$type<Array<{
+    type: string;
+    location: string;
+    competitorUrl: string;
+    confidence: string;
+    details: string;
+    rawSnippet?: string;
+  }>>(),
+  targetPlatform: varchar("targetPlatform", { length: 64 }),
+  wpVersion: varchar("wpVersion", { length: 32 }),
+  plugins: json("plugins").$type<string[]>(),
+  // Takeover status
+  takeoverStatus: mysqlEnum("takeoverStatus", [
+    "not_attempted", "in_progress", "success", "failed", "partial"
+  ]).default("not_attempted").notNull(),
+  takeoverMethod: varchar("takeoverMethod", { length: 128 }),
+  takeoverResult: text("takeoverResult"),
+  takeoverAt: timestamp("takeoverAt"),
+  // Priority for attack queue
+  priority: int("priority").default(0).notNull(), // Higher = more priority
+  // Source: how was this site found?
+  source: mysqlEnum("detectionSource", [
+    "manual_scan", "batch_scan", "agentic_discovery", "attack_pipeline"
+  ]).default("manual_scan").notNull(),
+  // Metadata
+  scannedAt: timestamp("scannedAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  userId: varchar("userId", { length: 128 }),
+});
+export type HackedSiteDetection = typeof hackedSiteDetections.$inferSelect;
+export type InsertHackedSiteDetection = typeof hackedSiteDetections.$inferInsert;

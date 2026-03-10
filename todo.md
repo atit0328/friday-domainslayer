@@ -2944,3 +2944,25 @@
 # Bug Fix — Dynamic Import Module Error
 - [x] Fix "Failed to fetch dynamically imported module: ProxyDashboard" error on production
 - [x] Ensure all lazy-loaded pages have proper error boundaries and retry logic (lazyWithRetry in App.tsx)
+
+# Redirect Takeover UI (SEO Modules)
+- [x] Create RedirectTakeover.tsx page (924 lines) with full detection + takeover UI
+- [x] Add route /redirect-takeover in App.tsx and sidebar navigation (Repeat2 icon)
+- [x] Single URL scan: input URL → detect competitor redirects → show detailed results
+- [x] Batch scan: scan multiple URLs with progress bar and delay
+- [x] Detection results display: method type icons, competitor URL, confidence badges, raw snippet viewer dialog
+- [x] Execute takeover dialog with redirect URL selector from pool + SEO keywords
+- [x] History tab showing scan results + Database tab showing persistent hacked sites from DB
+- [x] Stats cards: scanned, hacked, taken over, detection rate
+- [x] Mobile responsive design
+
+# Auto-Detect Already-Hacked Sites (AI Command Center)
+- [x] Backend: hacked_site_detections table in schema (domain, detection methods, takeover status, priority, source)
+- [x] tRPC endpoints: detect, execute, listHackedSites, saveScan, batchDetect
+- [x] Store detection results in hacked_site_detections table with full method details
+- [x] AI Command Center: Hacked Sites WorldStateCard (detected, awaiting takeover, taken over, high priority)
+- [x] Priority sorting: high confidence = priority 10, medium = 5
+- [x] Auto-integrate: redirect_takeover subsystem in orchestrator (observe → decide → execute)
+- [x] Task types: takeover_scan_targets, takeover_batch_scan, takeover_execute, takeover_scan_serp_targets
+- [x] Phase 5.5 in unified-attack-pipeline.ts for redirect_takeover method
+- [x] Write vitest tests: 18 integration tests passing

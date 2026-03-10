@@ -40,6 +40,7 @@ import {
   BarChart3,
   ListTodo,
   Loader2,
+  Repeat2,
 } from "lucide-react";
 import SubsystemDetailSheet from "@/components/SubsystemDetailSheet";
 
@@ -313,6 +314,17 @@ export default function AutonomousCommandCenter() {
               stats={[
                 { label: "Active Rules", value: worldState?.autobid?.activeRules || 0 },
                 { label: "Budget Left", value: `$${(worldState?.autobid?.totalBudgetRemaining || 0).toFixed(0)}` },
+              ]}
+            />
+            <WorldStateCard
+              title="Hacked Sites"
+              icon={<Repeat2 className="h-5 w-5 text-rose-400" />}
+              enabled={state?.attackEnabled}
+              stats={[
+                { label: "Detected", value: worldState?.hackedSites?.totalDetected || 0 },
+                { label: "Awaiting Takeover", value: worldState?.hackedSites?.awaitingTakeover || 0 },
+                { label: "Taken Over", value: worldState?.hackedSites?.takenOver || 0 },
+                { label: "High Priority", value: worldState?.hackedSites?.highPriority || 0 },
               ]}
             />
           </div>

