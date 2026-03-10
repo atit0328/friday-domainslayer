@@ -3193,3 +3193,21 @@
 - [x] Telegram alerts for successful blackhat operations ONLY (telegramSuccessOnly: true)
 - [x] Write vitest tests: 19 tests passing (config, types, registry, orchestrator integration, Telegram success-only)
 - [x] 0 TypeScript errors, server restarted, 10 agents active (including blackhat_brain)
+
+# Fix: Ensure Telegram Success Notifications from Blackhat Brain
+- [x] Verified sendTelegramNotification is called on every successful technique in blackhat brain (notifyBlackhatSuccess)
+- [x] Detailed success info sent: target, techniques, deployed URLs, duration, strategy
+- [x] Blackhat brain sends Telegram ONLY on success (successCount > 0), never on failure
+- [x] seo-agent.ts changed to success-only notifications (completed > 0)
+- [x] seo-scheduler.ts changed to success-only (totalCompleted > 0)
+- [x] WP error fix notification changed to type: "success"
+
+# Fix: Full Agentic SEO Automation (user adds domain → everything auto)
+- [x] Auto-call autoStartAfterScan from create mutation (runs for ALL projects, not just WP+autoCampaign)
+- [x] Auto-generate agent plan after scan completes (generateAgentPlan called in create flow)
+- [x] autoRunEnabled set to true via autoStartAfterScan (which enables it automatically)
+- [x] Auto-regenerate agent plan when all tasks are completed (seo-scheduler checks pendingTasks.length === 0)
+- [x] Telegram success-only notifications for all SEO/blackhat operations
+- [x] Fallback: if plan generation fails, still auto-start SEO via autoStartAfterScan
+- [x] 17 vitest tests passing for agentic SEO automation + Telegram success-only
+- [x] 0 TypeScript errors

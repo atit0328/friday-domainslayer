@@ -10,6 +10,9 @@ import * as serpTracker from "../serp-tracker";
 import { createWPClient } from "../wp-api";
 import { runPhase, runAllPhases, recoverStaleCampaigns, CAMPAIGN_PHASES, type PhaseResult } from "../campaign-engine";
 import { fetchDomainMetrics } from "../domain-metrics";
+import { autoStartAfterScan } from "../seo-scheduler";
+import { generateAgentPlan } from "../seo-agent";
+import { sendTelegramNotification } from "../telegram-notifier";
 
 // ═══ Schedule Helpers ═══
 const DAY_NAMES_TH: Record<number, string> = {
@@ -294,6 +297,43 @@ export const seoProjectsRouter = router({
             } catch (err: any) {
               console.error(`[Campaign] Failed for ${input.domain}:`, err.message);
             }
+          }
+
+          // ═══ AGENTIC AI: Auto-generate plan + auto-start SEO (NO manual button needed) ═══
+          console.log(`[Agentic SEO] 🧠 Auto-generating AI plan for ${input.domain}`);
+          try {
+            // Step 4: Auto-generate the AI agent plan
+            const plan = await generateAgentPlan(result.id);
+            console.log(`[Agentic SEO] ✅ Plan generated: ${plan.estimatedDays} days, ${plan.dailyTasks.reduce((s: number, d: any) => s + d.tasks.length, 0)} tasks, confidence: ${plan.confidence}%`);
+
+            await db.updateSeoProject(result.id, {
+              aiAgentStatus: "executing",
+            });
+
+            // Step 5: Auto-start SEO immediately (runs daily engine + enables auto-run)
+            console.log(`[Agentic SEO] 🚀 Auto-starting SEO for ${input.domain}`);
+            await autoStartAfterScan(result.id);
+
+            // Send Telegram success notification
+            try {
+              await sendTelegramNotification({
+                type: "success",
+                targetUrl: input.domain,
+                details: `🧠 Agentic SEO Auto-Started!\n` +
+                  `📋 Domain: ${input.domain}\n` +
+                  `📊 AI Plan: ${plan.estimatedDays} days, ${plan.dailyTasks.reduce((s: number, d: any) => s + d.tasks.length, 0)} tasks\n` +
+                  `🎯 Confidence: ${plan.confidence}%\n` +
+                  `⚡ Strategy: ${input.strategy}\n` +
+                  `🔥 Aggressiveness: ${input.aggressiveness}/10\n` +
+                  `✅ Auto-run enabled: ทุกวัน 10:00 น. (ICT)`,
+              });
+            } catch {}
+          } catch (planErr: any) {
+            console.error(`[Agentic SEO] Failed to auto-generate plan for ${input.domain}:`, planErr.message);
+            // Still start SEO even if plan generation fails
+            try {
+              await autoStartAfterScan(result.id);
+            } catch {}
           }
         } catch (err: any) {
           console.error(`[Auto-scan] Failed for ${input.domain}:`, err.message);

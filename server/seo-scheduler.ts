@@ -23,6 +23,7 @@ import { eq } from "drizzle-orm";
 import { calculateNextRunMultiDay } from "./routers/seo-automation";
 import { runAllProjectsDailyTasks } from "./seo-agent";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { generateAgentPlan } from "./seo-agent";
 
 const SCHEDULER_INTERVAL_MS = 30 * 60 * 1000; // Check every 30 minutes (was 60 min)
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
@@ -143,21 +144,56 @@ export async function runScheduledJobs(): Promise<{
     if (agentResult.totalTasks > 0) {
       console.log(`[SEO Scheduler] 🤖 AI Agent: ${agentResult.totalCompleted}/${agentResult.totalTasks} tasks สำเร็จ (${agentResult.projectsProcessed} projects)`);
       
-      // Send daily summary notification
-      try {
-        await sendTelegramNotification({
-          type: "info",
-          targetUrl: "SEO Agent Daily Summary",
-          details: `🤖 AI Agent Daily Report\n` +
-            `📊 Projects: ${agentResult.projectsProcessed}\n` +
-            `✅ Completed: ${agentResult.totalCompleted}/${agentResult.totalTasks}\n` +
-            `❌ Failed: ${agentResult.totalFailed}\n` +
-            `📅 Legacy SEO: ${executed}/${projects.length} projects`,
-        });
-      } catch {}
+      // Send Telegram only for success results
+      if (agentResult.totalCompleted > 0) {
+        try {
+          await sendTelegramNotification({
+            type: "success",
+            targetUrl: "SEO Agent Daily Summary",
+            details: `🤖 SEO Agent Success Report\n` +
+              `📊 Projects: ${agentResult.projectsProcessed}\n` +
+              `✅ Completed: ${agentResult.totalCompleted}/${agentResult.totalTasks}\n` +
+              `📅 Daily SEO: ${executed}/${projects.length} projects`,
+          });
+        } catch {}
+      }
     }
   } catch (err: any) {
     console.error("[SEO Scheduler] AI Agent daily tasks failed:", err.message);
+  }
+
+  // ═══ AGENTIC AI: Auto-regenerate plan when all tasks are completed ═══
+  try {
+    const { getAllActiveSeoProjects, getPendingAgentTasks } = await import("./db");
+    const allActiveProjects = await getAllActiveSeoProjects();
+    for (const project of allActiveProjects) {
+      const pendingTasks = await getPendingAgentTasks(project.id);
+      if (pendingTasks.length === 0) {
+        console.log(`[Agentic SEO] 🔄 Auto-regenerating plan for ${project.domain} (all tasks completed)`);
+        try {
+          const plan = await generateAgentPlan(project.id);
+          const totalTasks = plan.dailyTasks.reduce((s: number, d: any) => s + d.tasks.length, 0);
+          console.log(`[Agentic SEO] ✅ New plan: ${plan.estimatedDays} days, ${totalTasks} tasks`);
+          await updateSeoProject(project.id, { aiAgentStatus: "executing" });
+          
+          // Telegram success notification for plan regeneration
+          try {
+            await sendTelegramNotification({
+              type: "success",
+              targetUrl: project.domain,
+              details: `🔄 SEO Plan Auto-Regenerated\n` +
+                `📋 Domain: ${project.domain}\n` +
+                `📊 New Plan: ${plan.estimatedDays} days, ${totalTasks} tasks\n` +
+                `🎯 Confidence: ${plan.confidence}%`,
+            });
+          } catch {}
+        } catch (err: any) {
+          console.error(`[Agentic SEO] Failed to regenerate plan for ${project.domain}:`, err.message);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[Agentic SEO] Auto-regenerate check failed:", err.message);
   }
 
   return { checked: projects.length, executed, results, agentResult };

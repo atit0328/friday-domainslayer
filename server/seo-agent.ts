@@ -716,9 +716,9 @@ Provide specific, actionable results.` },
         if (fixes.some(f => f.success)) {
           try {
             await sendTelegramNotification({
-              type: "info",
+              type: "success",
               targetUrl: `https://${project.domain}`,
-              details: `\u{1f527} WP Error Fix: ${project.domain}\nApplied ${fixes.filter(f => f.success).length} fixes:\n${fixes.filter(f => f.success).map(f => `\u2705 ${f.action}`).join("\n")}${unfixedErrors.length > 0 ? `\n\n\u26a0\ufe0f ${unfixedErrors.length} errors still need manual attention` : ""}`,
+              details: `🔧 WP Error Fix Success: ${project.domain}\nApplied ${fixes.filter((f: any) => f.success).length} fixes:\n${fixes.filter((f: any) => f.success).map((f: any) => `✅ ${f.action}`).join("\n")}`,
             });
           } catch {}
         }
@@ -834,15 +834,16 @@ export async function runDailyTasks(
     lastActionAt: new Date(),
   });
 
-  // Send notification if there were results
-  if (results.length > 0) {
+  // Send Telegram notification ONLY for success results
+  if (completed > 0) {
     try {
+      const successTasks = results.filter(r => r.status === "completed");
       await sendTelegramNotification({
-        type: "info",
+        type: "success",
         targetUrl: project.domain,
-        details: `🤖 SEO Agent Report — ${project.domain}\n` +
-          `✅ Completed: ${completed} | ❌ Failed: ${failed} | ⏭️ Skipped: ${skipped}\n` +
-          `📋 Tasks: ${results.map(r => `${r.status === "completed" ? "✅" : r.status === "failed" ? "❌" : "⏭️"} ${r.taskType}`).join(", ")}`,
+        details: `🤖 SEO Agent Success — ${project.domain}\n` +
+          `✅ Completed: ${completed} tasks\n` +
+          `📋 Tasks: ${successTasks.map(r => `✅ ${r.taskType}`).join(", ")}`,
       });
     } catch {}
   }
