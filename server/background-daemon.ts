@@ -41,6 +41,7 @@ export type TaskType =
   | "gap_analysis"
   | "serp_hijack"
   | "serp_harvest"
+  | "content_distribute"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";

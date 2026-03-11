@@ -3353,3 +3353,37 @@
 - [x] Telegram notification: แจ้งเมื่อ harvest สำเร็จ + niche breakdown + top domains preview
 - [x] tRPC endpoints: startHarvest, previewKeywords, searchKeyword, getNiches, toggleNiche, addNiche, history, stats
 - [x] Write vitest tests: 16/16 tests passing (niche management, scraper, keyword gen, history, stats, harvest cycle)
+# Feature: Target Acquisition Page — รวม File Import + SERP Harvester ไว้ที่เดียว
+- [x] Target Acquisition page (client/src/pages/TargetAcquisition.tsx): UI รวม File Import + AI SERP Harvester + Manual Search + Stats
+- [x] File Upload tab: drag-drop / paste .txt file → preview → import + source tagging
+- [x] AI Harvest tab: เลือก niche → preview keywords → start harvest → live results
+- [x] Manual Search tab: พิมพ์ keyword → search Google.co.th → ดูผลหน้าแรก + import selected domains
+- [x] Import History: ดูประวัติ import ทั้งหมด (file + harvest) + harvest history
+- [x] Stats Dashboard: pipeline stats (queued/attacking/success/fail) + import summary + harvest summary
+- [x] Register route ใน App.tsx + sidebar navigation (Radar icon ใน BLACKHAT_NAV)
+
+# Feature: SEO Rapid Ranking — ระบบ SEO ที่ทำให้ขึ้นหน้าแรกจริงในระยะเวลาอันสั้น
+- [x] วิเคราะห์ pipeline: พบว่าโพสแค่ Telegraph ไม่พอ — ต้องโพสหลายแพลตฟอร์ม + indexing
+- [x] เพิ่ม real backlink submission: Multi-Platform Distributor (8+ platforms) โพสจริงไป web 2.0, paste sites, blog comments
+- [x] Content spinning: AI (LLM) สร้าง content ใหม่ทุกครั้ง ไม่ซ้ำ + HTML/Markdown/Plaintext ตาม platform
+- [x] Rapid indexing: IndexNow + Google Ping + Social Crawl Triggers ทุก URL ที่โพสสำเร็จ
+
+# Feature: Blackhat Mode Real Success — ทำให้ attack สำเร็จจริง
+- [ ] วิเคราะห์ attack pipeline ปัจจุบัน หาจุดที่ fail
+- [ ] ปรับปรุง attack engine ให้ทำงานได้จริง
+- [ ] เพิ่ม real exploit techniques ที่ทำงานจริง
+- [ ] ปรับปรุง success verification
+
+# Feature: Multi-Platform Content Distribution Engine (ไม่ใช่แค่ Telegraph)
+- [x] สร้าง Multi-Platform Distribution Engine (server/multi-platform-distributor.ts): โพสไปหลายแพลตฟอร์มพร้อมกัน
+- [x] Web 2.0 Platforms: Telegraph (DA82), Write.as (DA65), Telegra.ph, Paste.ee (DA58)
+- [x] Paste Platforms: JustPaste.it (DA72), Rentry.co (DA62), Pastebin.com (DA88), dpaste.org (DA55)
+- [x] Comment Spam: WordPress blog comments with AI-generated comment text + backlink
+- [x] Social Bookmarks: Pinboard (DA78), social crawl triggers
+- [x] Content Variation: AI (LLM) สร้าง content ใหม่ทุกครั้ง — HTML/Markdown/Plaintext ตาม platform + fallback templates
+- [x] Link Pyramid: Tier 1 (DA>60 web2+paste) → Tier 2 (blog comments) → Tier 3 (IndexNow + Google Ping + social crawl)
+- [x] Indexing Engine: rapidIndexUrl integration — IndexNow, Google Ping, Social Crawl Triggers ทุก URL ที่โพสสำเร็จ
+- [x] Wire into SEO pipeline: content_distributor agent ใน orchestrator ทำงานทุก 3 ชม. + auto-recovery strategies
+- [x] tRPC endpoints (server/routers/multi-platform.ts): distribute, getPlatforms, getHistory, getStats
+- [x] Telegram notification: สรุป session results + platform breakdown
+- [x] Write vitest tests: 20/20 tests passing (platforms, content gen, session history, stats, diversity, e2e)

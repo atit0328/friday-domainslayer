@@ -70,7 +70,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester" | "content_distributor";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -139,6 +139,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   serp_harvester: {
     enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  content_distributor: {
+    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -791,6 +795,55 @@ async function executeSerpHarvestTask(_task: DaemonTask, _signal: AbortSignal): 
   }
 }
 
+async function executeContentDistributeTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { distributeToAllPlatforms, recordSession } = await import("./multi-platform-distributor");
+    const { getAllActiveSeoProjects } = await import("./db");
+    const projects = await getAllActiveSeoProjects();
+    let totalSuccess = 0;
+    let totalPlatforms = 0;
+    let totalIndexed = 0;
+
+    for (const proj of projects.slice(0, 3)) {
+      try {
+        const keywords = ((proj as any).seedKeywords || (proj as any).targetKeywords || [proj.domain]) as string[];
+        const session = await distributeToAllPlatforms({
+          targetUrl: `https://${proj.domain}`,
+          targetDomain: proj.domain,
+          keyword: keywords[0] || proj.domain,
+          niche: proj.niche || "gambling",
+          anchorText: keywords[0] || proj.domain,
+          projectId: proj.id,
+        }, {
+          maxTier1: 6,
+          maxComments: 2,
+          enableIndexing: true,
+          enableTelegram: true,
+        });
+        recordSession(session);
+        totalSuccess += session.successCount;
+        totalPlatforms += session.totalPlatforms;
+        totalIndexed += session.indexedCount;
+      } catch (err: any) {
+        console.error(`[ContentDistributor] Failed for ${proj.domain}:`, err.message);
+      }
+    }
+
+    return {
+      success: totalSuccess > 0,
+      result: {
+        projectsProcessed: Math.min(projects.length, 3),
+        totalPlatforms,
+        totalSuccess,
+        totalIndexed,
+        message: `Multi-platform distribution: ${totalSuccess}/${totalPlatforms} posts across ${Math.min(projects.length, 3)} projects`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeSerpHijackTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { serpFeatureTick } = await import("./serp-feature-hijacker");
@@ -1044,6 +1097,7 @@ async function orchestratorTick() {
         gap_analyzer: "gap_analysis",
         serp_hijacker: "serp_hijack",
         serp_harvester: "serp_harvest",
+        content_distributor: "content_distribute",
       };
 
       const taskId = await enqueueTask({
@@ -1105,6 +1159,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("gap_analysis", executeGapAnalysisTask);
   registerExecutor("serp_hijack", executeSerpHijackTask);
   registerExecutor("serp_harvest", executeSerpHarvestTask);
+  registerExecutor("content_distribute", executeContentDistributeTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1522,6 +1577,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.enabled = false; },
     },
   ],
+  content_distributor: [
+    {
+      name: "increase_distribute_interval",
+      description: "Increase content distribution interval to 6h",
+      apply: (_name, config) => { config.intervalMs = 6 * 60 * 60_000; },
+    },
+    {
+      name: "reduce_distribute_platforms",
+      description: "Reduce distribution scope",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 8 * 60 * 60_000); },
+    },
+    {
+      name: "pause_content_distributor",
+      description: "Pause content distributor",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
 };
 
 /**
@@ -1613,6 +1685,7 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
   freshness_tick: "freshness_engine",
   gap_analysis: "gap_analyzer",
   serp_hijack: "serp_hijacker",
+  content_distribute: "content_distributor",
 };
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts

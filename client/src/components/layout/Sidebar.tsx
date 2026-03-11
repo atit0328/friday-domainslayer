@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock, Repeat2,
-  X, Activity, Database, BarChart3, Server, KeyRound,
+  X, Activity, Database, BarChart3, Server, KeyRound, Radar,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -31,6 +31,7 @@ const AI_NAV = [
 ];
 
 const BLACKHAT_NAV = [
+  { href: "/target-acquisition", icon: Radar, label: "Target Acquisition" },
   { href: "/agentic-attack", icon: Skull, label: "Agentic AI Attack" },
   { href: "/ai-attack", icon: Cpu, label: "AI Attack Engine" },
   { href: "/autonomous-history", icon: Clock, label: "Attack History" },

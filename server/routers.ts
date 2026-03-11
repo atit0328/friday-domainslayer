@@ -54,6 +54,7 @@ import { keywordPerformanceRouter } from "./routers/keyword-performance";
 import { sprintRouter } from "./routers/sprint-router";
 import { domainImportRouter } from "./routers/domain-import";
 import { serpHarvesterRouter } from "./routers/serp-harvester";
+import { multiPlatformRouter } from "./routers/multi-platform";
 
 export const appRouter = router({
   system: systemRouter,
@@ -174,6 +175,9 @@ export const appRouter = router({
 
   // Google Thailand SERP Harvester (AI keyword → Google.co.th → attack pipeline)
   serpHarvester: serpHarvesterRouter,
+
+  // Multi-Platform Content Distribution (Telegraph + JustPaste.it + Rentry + Write.as + Comments + Indexing)
+  multiPlatform: multiPlatformRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({
