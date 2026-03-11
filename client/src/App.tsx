@@ -55,6 +55,7 @@ const ContentFreshnessDashboard = lazy(() => import("./pages/ContentFreshnessDas
 const PlatformDiscoveryDashboard = lazy(() => import("./pages/PlatformDiscoveryDashboard"));
 const AlgorithmMonitorDashboard = lazy(() => import("./pages/AlgorithmMonitorDashboard"));
 const CompetitorGapDashboard = lazy(() => import("./pages/CompetitorGapDashboard"));
+const SeoBrain = lazy(() => import("./pages/SeoBrain"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -154,6 +155,7 @@ function ProtectedRouter() {
         <Route path="/orders" component={Orders} />
         <Route path="/algorithm" component={AlgorithmIntel} />
         <Route path="/rank-dashboard" component={RankDashboard} />
+        <Route path="/seo-brain" component={SeoBrain} />
         <Route path="/seo" component={SeoCommandCenter} />
         <Route path="/seo/:id" component={SeoProjectDetail} />
 

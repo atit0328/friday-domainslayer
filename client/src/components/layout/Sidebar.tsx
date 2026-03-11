@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock, Repeat2,
-  X, Activity, Database, BarChart3, Server, KeyRound, Radar,
+  X, Activity, Database, BarChart3, Server, KeyRound, Radar, Sparkles, Rocket,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -22,6 +22,7 @@ const DOMAIN_NAV = [
 ];
 
 const AI_NAV = [
+  { href: "/seo-brain", icon: Sparkles, label: "SEO Brain" },
   { href: "/chat", icon: Bot, label: "Friday AI Chat" },
   { href: "/seo", icon: Brain, label: "SEO Automation" },
   { href: "/modules", icon: Zap, label: "SEO Modules" },
@@ -165,21 +166,6 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         </nav>
       </div>
 
-      {/* Divider */}
-      <div className="mx-4 border-t border-sidebar-border" />
-
-      {/* AI Section */}
-      <div className="py-3">
-        {!collapsed && (
-          <div className="px-4 mb-2">
-            <span className="font-mono text-[10px] font-semibold tracking-widest text-violet/60 uppercase">Friday AI SEO</span>
-          </div>
-        )}
-        <nav className="space-y-0.5 px-1">
-          {AI_NAV.map((item) => renderNavItem(item, "violet"))}
-        </nav>
-      </div>
-
       {/* Blackhat Section — superadmin only */}
       {isSuperadmin && (
       <>
@@ -247,6 +233,21 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
       </div>
       </>
       )}
+
+      {/* Divider */}
+      <div className="mx-4 border-t border-sidebar-border" />
+
+      {/* Friday AI SEO — moved to bottom, separate from Blackhat */}
+      <div className="py-3">
+        {!collapsed && (
+          <div className="px-4 mb-2">
+            <span className="font-mono text-[10px] font-semibold tracking-widest text-violet/60 uppercase">Friday AI SEO</span>
+          </div>
+        )}
+        <nav className="space-y-0.5 px-1">
+          {AI_NAV.map((item) => renderNavItem(item, "violet"))}
+        </nav>
+      </div>
 
       {/* Divider */}
       <div className="mx-4 border-t border-sidebar-border" />

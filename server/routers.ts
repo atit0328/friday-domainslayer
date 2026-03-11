@@ -61,6 +61,7 @@ import { contentFreshnessRouter } from "./routers/content-freshness";
 import { platformDiscoveryRouter } from "./routers/platform-discovery";
 import { algorithmMonitorRouter } from "./routers/algorithm-monitor";
 import { competitorGapRouter } from "./routers/competitor-gap";
+import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 
 export const appRouter = router({
   system: systemRouter,
@@ -202,6 +203,9 @@ export const appRouter = router({
 
   // Competitor Content Gap Analyzer (with Algorithm Intelligence)
   competitorGap: competitorGapRouter,
+
+  // Friday AI SEO Orchestrator (autonomous 7-day sprint brain)
+  seoOrchestrator: seoOrchestratorRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

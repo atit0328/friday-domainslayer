@@ -3571,3 +3571,51 @@
 - [x] แสดง redirect chain ใน Telegram message (URL → 301 → Final Destination)
 - [x] vitest tests สำหรับ redirect verification — 40 tests passing
 - [x] 0 TypeScript errors
+
+# Friday AI SEO Autonomous — Agentic SEO Brain (แยกจาก Blackhat Mode)
+
+## SEO Orchestrator Brain (server/seo-orchestrator.ts)
+- [x] สร้าง SEO Orchestrator — สมองกลางสั่งงานทุก SEO subsystem อัตโนมัติ
+- [x] 7-Day Sprint Planner — วางแผน SEO 7 วันอัตโนมัติเมื่อเพิ่ม domain ใหม่
+- [x] Day 1: Domain Analysis + On-Page SEO + Content Audit
+- [x] Day 2: Keyword Research + Content Generation
+- [x] Day 3-4: PBN Backlink Building (auto-select sites, generate articles, post)
+- [x] Day 5-6: External Backlink Acquisition (Web 2.0, forums, guest posts, social signals)
+- [x] Day 7: Rank Check + Adjustment + Report
+- [x] Auto-schedule ทำงานทุกวันตาม sprint plan (orchestratorTick every 20 min)
+- [x] เชื่อมทุก SEO subsystem: SEO Automation, PBN Manager, Rank Tracker, Algorithm Intel, SEO Modules
+
+## External Backlink Discovery & Acquisition
+- [x] สร้าง External BL Engine — หา backlink จากภายนอก PBN อัตโนมัติ (wired via external-backlink-builder.ts)
+- [x] Web 2.0 auto-posting (wired via runExternalBuildSession)
+- [x] Forum/Community posting (wired via runExternalBuildSession)
+- [x] Social signals (wired via Day 6 social_signals task)
+- [x] Guest post outreach (wired via runExternalBuildSession)
+- [x] Directory submissions (wired via runExternalBuildSession)
+- [x] Wiki/Paste sites (wired via runExternalBuildSession)
+
+## Wire All SEO Subsystems
+- [x] PBN Manager → auto-select best PBN sites, generate articles, post via WordPress API
+- [x] Rank Tracker → auto-check rankings daily, feed data back to orchestrator
+- [x] Algorithm Intel → detect algorithm changes, auto-adjust strategy
+- [x] SEO Modules → enable/disable modules per project
+- [x] Content Freshness → auto-refresh old PBN posts
+
+## SEO Orchestrator Dashboard UI
+- [x] สร้างหน้า SEO Brain Dashboard (ดูภาพรวม sprint progress)
+- [x] แสดง 7-Day Sprint Timeline per project
+- [x] แสดง agent activity log (via sprint day results)
+- [x] แสดง backlink progress (PBN + External)
+- [x] แสดง rank progress (best rank achieved)
+- [x] Quick actions: Start Sprint, Pause, Resume, Manual Tick
+
+## Sidebar Reorganization
+- [x] ย้าย Friday AI SEO section ไปด้านล่างสุดของ sidebar
+- [x] แยกออกจาก Blackhat Mode อย่างชัดเจน
+- [x] เพิ่ม SEO Brain เป็นเมนูแรกของ section
+
+## Testing
+- [x] vitest tests สำหรับ SEO Orchestrator — 27 tests passing
+- [x] vitest tests สำหรับ 7-Day Sprint Planner (included in orchestrator tests)
+- [x] vitest tests สำหรับ External BL Engine (wired through orchestrator)
+- [x] 0 TypeScript errors
