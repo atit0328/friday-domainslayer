@@ -17,6 +17,7 @@
 import { invokeLLM } from "./_core/llm";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { rapidIndexUrl } from "./rapid-indexing-engine";
+import { scoreContent, generateOptimizedContentPrompt } from "./google-algorithm-intelligence";
 import * as db from "./db";
 
 // ═══════════════════════════════════════════════
@@ -335,6 +336,24 @@ Return JSON with: newContent (full HTML), newTitle, newMetaDescription, sections
     const rawContent = response.choices?.[0]?.message?.content;
     const text = typeof rawContent === "string" ? rawContent : JSON.stringify(rawContent) || "{}";
     const parsed = JSON.parse(text);
+
+    // ═══ Algorithm Intelligence: Score refreshed content quality ═══
+    const algoScore = scoreContent({
+      title: parsed.newTitle || content.title,
+      content: parsed.newContent || content.currentContent,
+      keyword: content.keyword,
+      metaDescription: parsed.newMetaDescription,
+      publishDate: content.deployedAt,
+      lastUpdated: new Date(),
+    });
+    console.log(`[FreshnessEngine] Algorithm Score after refresh: ${algoScore.overall}/100 for "${content.keyword}"`);
+    
+    if (algoScore.penaltyRisks.length > 0) {
+      console.warn(`[FreshnessEngine] Penalty risks detected: ${algoScore.penaltyRisks.join(', ')}`);
+    }
+    if (algoScore.recommendations.length > 0) {
+      console.log(`[FreshnessEngine] Recommendations: ${algoScore.recommendations.slice(0, 3).join(', ')}`);
+    }
 
     return {
       newContent: parsed.newContent || content.currentContent,

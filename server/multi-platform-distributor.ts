@@ -36,6 +36,7 @@ import { rapidIndexUrl, type IndexingRequest } from "./rapid-indexing-engine";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { getConfiguredAuthPlatforms } from "./web2-authenticated-platforms";
 import { trackContent } from "./content-freshness-engine";
+import { scoreContent, generateOptimizedContentPrompt, type ContentScore } from "./google-algorithm-intelligence";
 import * as db from "./db";
 import crypto from "crypto";
 
@@ -195,7 +196,46 @@ Return JSON:
 
     const text = response.choices[0]?.message?.content?.toString() || "{}";
     const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    return JSON.parse(cleaned);
+    const parsed = JSON.parse(cleaned);
+    
+    // ═══ Algorithm Intelligence: Score content quality before distribution ═══
+    const algoScore = scoreContent({
+      title: parsed.title,
+      content: parsed.content,
+      keyword: target.keyword,
+      metaDescription: parsed.excerpt,
+    });
+    console.log(`[Distributor] Algorithm Score: ${algoScore.overall}/100 for "${target.keyword}" on ${platform}`);
+    
+    // If score is critically low, regenerate with algorithm-optimized prompt
+    if (algoScore.overall < 40) {
+      console.log(`[Distributor] Score too low (${algoScore.overall}), regenerating with algorithm guidance...`);
+      const optimizedPrompt = generateOptimizedContentPrompt({
+        keyword: target.keyword,
+        niche: target.niche,
+        language: "Thai",
+        targetWordCount: Math.max(wordCount, 1200),
+      });
+      
+      try {
+        const retryResp = await invokeLLM({
+          messages: [
+            { role: "system", content: `You are an expert SEO content writer. ${optimizedPrompt}\nFormat: ${formatGuide[format]}\nNaturally embed this backlink: ${target.targetUrl} with anchor text "${target.anchorText}"` },
+            { role: "user", content: `Create optimized content for ${platform} about "${target.keyword}". Return JSON: { "title": "...", "content": "...", "excerpt": "...", "tags": [...] }` },
+          ],
+        });
+        const retryText = retryResp.choices[0]?.message?.content?.toString() || "{}";
+        const retryCleaned = retryText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        const retryParsed = JSON.parse(retryCleaned);
+        const retryScore = scoreContent({ title: retryParsed.title, content: retryParsed.content, keyword: target.keyword });
+        console.log(`[Distributor] Retry Algorithm Score: ${retryScore.overall}/100`);
+        if (retryScore.overall > algoScore.overall) return retryParsed;
+      } catch (e) {
+        console.error(`[Distributor] Retry failed, using original`);
+      }
+    }
+    
+    return parsed;
   } catch {
     // Fallback content
     const link = format === "html"

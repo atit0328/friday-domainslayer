@@ -29,6 +29,7 @@ import { invokeLLM } from "./_core/llm";
 import { rapidIndexUrl, type IndexingRequest } from "./rapid-indexing-engine";
 import { selectAnchorText } from "./keyword-sniper-engine";
 import { trackContent } from "./content-freshness-engine";
+import { scoreContent, generateOptimizedContentPrompt, type ContentScore } from "./google-algorithm-intelligence";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -72,6 +73,8 @@ interface GeneratedContent {
   content: string;
   metaDescription: string;
   tags: string[];
+  /** Algorithm Intelligence content score (0-100) */
+  algorithmScore?: ContentScore;
 }
 
 // ═══════════════════════════════════════════════
@@ -155,7 +158,79 @@ Return JSON with: title, content (HTML), metaDescription, tags (array)` },
     const raw = response.choices?.[0]?.message?.content;
     if (!raw) throw new Error("No content generated");
     const parsed = JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw));
-    return parsed as GeneratedContent;
+    
+    // ═══ Algorithm Intelligence: Score content before deployment ═══
+    const algoScore = scoreContent({
+      title: parsed.title,
+      content: parsed.content,
+      keyword,
+      metaDescription: parsed.metaDescription,
+      hasSchema: false,
+      hasImages: false,
+      hasTOC: parsed.content.toLowerCase().includes('table of contents') || parsed.content.includes('<ul') && parsed.content.includes('#'),
+      publishDate: new Date(),
+    });
+    
+    console.log(`[ParasiteBlitz] Algorithm Score: ${algoScore.overall}/100 for "${keyword}" (${platform})`);
+    
+    // If score is below 50, attempt to regenerate with algorithm-optimized prompt
+    if (algoScore.overall < 50) {
+      console.log(`[ParasiteBlitz] Score too low (${algoScore.overall}), regenerating with algorithm-optimized prompt...`);
+      console.log(`[ParasiteBlitz] Issues: ${algoScore.recommendations.slice(0, 3).join(', ')}`);
+      
+      const optimizedPrompt = generateOptimizedContentPrompt({
+        keyword,
+        niche: "online gambling",
+        language: language === "th" ? "Thai" : "English",
+        targetWordCount: 1800,
+        includeSchema: false,
+      });
+      
+      try {
+        const retryResponse = await invokeLLM({
+          messages: [
+            { role: "system", content: `You are an expert SEO content writer. ${optimizedPrompt}` },
+            { role: "user", content: `Write a ${angle} article for the platform "${platform}" about "${keyword}". Return JSON with: title, content (HTML), metaDescription, tags (array)` },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "parasite_content_optimized",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  content: { type: "string" },
+                  metaDescription: { type: "string" },
+                  tags: { type: "array", items: { type: "string" } },
+                },
+                required: ["title", "content", "metaDescription", "tags"],
+                additionalProperties: false,
+              },
+            },
+          },
+        });
+        const retryRaw = retryResponse.choices?.[0]?.message?.content;
+        if (retryRaw) {
+          const retryParsed = JSON.parse(typeof retryRaw === "string" ? retryRaw : JSON.stringify(retryRaw));
+          const retryScore = scoreContent({
+            title: retryParsed.title,
+            content: retryParsed.content,
+            keyword,
+            metaDescription: retryParsed.metaDescription,
+          });
+          console.log(`[ParasiteBlitz] Retry Algorithm Score: ${retryScore.overall}/100`);
+          if (retryScore.overall > algoScore.overall) {
+            return { ...retryParsed, algorithmScore: retryScore } as GeneratedContent;
+          }
+        }
+      } catch (retryErr: any) {
+        console.error(`[ParasiteBlitz] Retry failed, using original:`, retryErr.message);
+      }
+    }
+    
+    return { ...parsed, algorithmScore: algoScore } as GeneratedContent;
   } catch (err: any) {
     console.error(`[ParasiteBlitz] Content generation failed:`, err.message);
     // Fallback content

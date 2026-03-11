@@ -16,6 +16,7 @@
  */
 
 import { invokeLLM } from "./_core/llm";
+import { RANKING_FACTORS, type RankingFactor } from "./google-algorithm-intelligence";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -782,6 +783,28 @@ export async function runSchemaInjection(
   }>,
 ): Promise<SchemaInjectionReport> {
   console.log(`[SchemaInjector] Starting injection for ${config.domain} — ${contentPages.length} pages`);
+
+  // ═══ Algorithm Intelligence: Use ranking factor knowledge to prioritize schema types ═══
+  const schemaFactors = RANKING_FACTORS.filter(f =>
+    f.name.toLowerCase().includes('schema') ||
+    f.name.toLowerCase().includes('structured') ||
+    f.name.toLowerCase().includes('rich') ||
+    f.name.toLowerCase().includes('snippet') ||
+    f.name.toLowerCase().includes('markup')
+  );
+  if (schemaFactors.length > 0) {
+    console.log(`[SchemaInjector] Algorithm Intel: ${schemaFactors.length} schema-related ranking factors identified`);
+    const criticalFactors = schemaFactors.filter(f => f.impact === 'critical' || f.impact === 'high');
+    if (criticalFactors.length > 0) {
+      console.log(`[SchemaInjector] High-impact schema factors: ${criticalFactors.map(f => f.name).join(', ')}`);
+    }
+    // Log exploit tactics for schema-related factors
+    for (const f of schemaFactors) {
+      if (f.exploitable && f.exploitTactics?.length) {
+        console.log(`[SchemaInjector] Exploit tactic (${f.name}): ${f.exploitTactics[0]}`);
+      }
+    }
+  }
 
   const allSchemas: SchemaMarkup[] = [];
   const byType: Record<SchemaType, number> = {} as any;

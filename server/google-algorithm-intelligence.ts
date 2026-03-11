@@ -16,6 +16,17 @@
  */
 
 import { invokeLLM } from "./_core/llm";
+import {
+  EXPANDED_DOMAIN_FACTORS,
+  EXPANDED_PAGE_LEVEL_FACTORS,
+  EXPANDED_SITE_LEVEL_FACTORS,
+  EXPANDED_BACKLINK_FACTORS,
+  EXPANDED_USER_INTERACTION_FACTORS,
+  EXPANDED_SPECIAL_ALGORITHM_FACTORS,
+  EXPANDED_BRAND_SIGNAL_FACTORS,
+  EXPANDED_ON_SITE_SPAM_FACTORS,
+  EXPANDED_OFF_SITE_SPAM_FACTORS,
+} from "./ranking-factors-expansion";
 
 // ═══════════════════════════════════════════════
 //  RANKING FACTOR CATEGORIES
@@ -673,6 +684,19 @@ export const RANKING_FACTORS: RankingFactor[] = [
     evasionTips: ["Use established high-DA platforms instead of new domains", "Parasite SEO avoids sandbox"],
   },
 ];
+
+// Merge expanded factors into the main array (84 base + 138 expanded = 222 total)
+RANKING_FACTORS.push(
+  ...EXPANDED_DOMAIN_FACTORS,
+  ...EXPANDED_PAGE_LEVEL_FACTORS,
+  ...EXPANDED_SITE_LEVEL_FACTORS,
+  ...EXPANDED_BACKLINK_FACTORS,
+  ...EXPANDED_USER_INTERACTION_FACTORS,
+  ...EXPANDED_SPECIAL_ALGORITHM_FACTORS,
+  ...EXPANDED_BRAND_SIGNAL_FACTORS,
+  ...EXPANDED_ON_SITE_SPAM_FACTORS,
+  ...EXPANDED_OFF_SITE_SPAM_FACTORS,
+);
 
 // ═══════════════════════════════════════════════
 //  FAST-RANKING STRATEGY PROFILES

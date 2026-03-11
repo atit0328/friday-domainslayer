@@ -3483,3 +3483,21 @@
 - [x] Add sidebar navigation items for Query Parasite and Content Freshness
 - [x] Write vitest tests for algorithm intelligence engine (13 tests all passing)
 - [x] 0 TypeScript errors across all new files
+
+# Expand Algorithm Intelligence to 200+ Factors & Wire into Content Engines
+
+- [x] ขยาย Ranking Factors จาก 84 เป็น 222 factors (84 base + 138 expanded) ครบตาม Backlinko
+- [x] เพิ่ม Domain Factors ที่ขาด (domain history, whois, ccTLD, exact-match domain, etc.)
+- [x] เพิ่ม Page-Level Factors ที่ขาด (Core Web Vitals, page speed, mobile usability, multimedia, etc.)
+- [x] เพิ่ม Site-Level Factors ที่ขาด (site architecture, breadcrumbs, sitemap, server location, etc.)
+- [x] เพิ่ม Backlink Factors ที่ขาด (link age, co-citation, link diversity, reciprocal links, etc.)
+- [x] เพิ่ม User Interaction Factors ที่ขาด (pogosticking, Chrome data, repeat traffic, etc.)
+- [x] เพิ่ม Special Algorithm Factors ที่ขาด (YMYL, diversity, shopping results, geo-targeting, etc.)
+- [x] เพิ่ม Brand Signal Factors ที่ขาด (branded searches, social profiles, news mentions, etc.)
+- [x] เพิ่ม On-Site/Off-Site Spam Factors ที่ขาด (cloaking, doorway pages, link schemes, etc.)
+- [x] Wire scoreContent() เข้ากับ Parasite SEO Blitz engine (auto-score + retry if <50)
+- [x] Wire scoreContent() เข้ากับ Multi-Platform Distributor engine (auto-score + retry if <40)
+- [x] Wire scoreContent() เข้ากับ Content Freshness Engine (score after refresh + penalty warnings)
+- [x] Wire Algorithm Intelligence เข้ากับ Schema Markup Injector (factor-aware schema prioritization)
+- [x] อัพเดท vitest tests สำหรับ expanded factors (30 tests passing)
+- [x] 0 TypeScript errors
