@@ -46,6 +46,8 @@ const BLACKHAT_NAV = [
   { href: "/cve-database", icon: Database, label: "CVE Database" },
   { href: "/exploit-analytics", icon: BarChart3, label: "Exploit Analytics" },
   { href: "/adaptive-learning", icon: Brain, label: "Adaptive Learning" },
+  { href: "/query-parasite", icon: Search, label: "Query Parasite" },
+  { href: "/content-freshness", icon: Activity, label: "Content Freshness" },
 ];
 
 const AUTONOMOUS_NAV = [

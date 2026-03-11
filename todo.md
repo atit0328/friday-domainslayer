@@ -3453,3 +3453,33 @@
 - [x] เพิ่ม gambling keywords ใหม่ 6 sub-niches + ขยาย keywords เดิม
 - [x] ทุกอย่าง auto ไร้มนุษย์สั่งการ — 19 agents ทำงานอัตโนมัติผ่าน orchestrator daemon
 - [x] Write vitest tests: 11/11 passed (engine exports, dorks, tick, orchestrator, router, daemon)
+
+# MAJOR: Google Algorithm Intelligence — ระบบต้องเข้าใจ Google Algorithm อย่างลึกซึ้ง
+- [ ] Audit ระบบปัจจุบันว่ามี Algorithm Intelligence อะไรบ้าง
+- [ ] Research Google Algorithm factors ล่าสุด (ranking signals, penalties, updates)
+- [ ] สร้าง Google Algorithm Knowledge Base engine ที่ inform ทุก SEO decision
+- [ ] Wire algorithm intelligence เข้าทุก SEO engine (content, backlinks, attacks, sprints)
+- [ ] Write vitest tests
+
+# Google Algorithm Intelligence Engine
+
+- [x] Build comprehensive Google Algorithm Intelligence Engine (server/google-algorithm-intelligence.ts) with 84+ ranking factors
+- [x] Encode all ranking factor categories: domain, page_level, site_level, backlink, user_interaction, special_algorithm, brand_signal, on_site_spam, off_site_spam
+- [x] Add exploit tactics, penalty triggers, evasion tips, and fast-rank relevance scores for each factor
+- [x] Build content scoring system against ranking factors (title optimization, keyword placement, LSI coverage, topic depth, etc.)
+- [x] Build keyword strategy analyzer with AI (competition level, content guidelines, link building plan, anchor text distribution)
+- [x] Build link profile analyzer and link velocity calculator
+- [x] Build 8 fast-ranking attack strategies (Parasite SEO, Expired Domain, Redirect Hijack, etc.)
+- [x] Build 8 penalty avoidance rules (Penguin, Panda, Spam Brain, etc.)
+- [x] Create Algorithm Intelligence tRPC router (server/routers/algorithm-intelligence.ts) with 13 endpoints
+- [x] Rebuild Algorithm Intel page with 6 tabs: Overview, Ranking Factors, Content Scorer, Strategy Analyzer, Penalty Rules, Live Monitor
+- [x] Add factor search, category filter, exploitable-only filter to Ranking Factors tab
+- [x] Add AI-powered content scoring with 10 score dimensions and recommendations
+- [x] Add AI keyword strategy analysis with competition level, content guidelines, 7-day link building plan
+- [x] Create Query Parameter Parasite Dashboard (client/src/pages/QueryParasiteDashboard.tsx) with 5 tabs: Scan, Deploy, Campaign, AI Keywords, Google Dorks
+- [x] Create Content Freshness Dashboard (client/src/pages/ContentFreshnessDashboard.tsx) with 5 tabs: Overview, All Content, Stale Content, Refresh Cycle, Cycle History
+- [x] Create Content Freshness tRPC router (server/routers/content-freshness.ts) with 8 endpoints
+- [x] Add routes for new pages in App.tsx (SuperadminGuard protected)
+- [x] Add sidebar navigation items for Query Parasite and Content Freshness
+- [x] Write vitest tests for algorithm intelligence engine (13 tests all passing)
+- [x] 0 TypeScript errors across all new files

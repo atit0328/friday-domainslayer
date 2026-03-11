@@ -56,6 +56,8 @@ import { domainImportRouter } from "./routers/domain-import";
 import { serpHarvesterRouter } from "./routers/serp-harvester";
 import { multiPlatformRouter } from "./routers/multi-platform";
 import { queryParasiteRouter } from "./routers/query-parasite";
+import { algorithmIntelligenceRouter } from "./routers/algorithm-intelligence";
+import { contentFreshnessRouter } from "./routers/content-freshness";
 
 export const appRouter = router({
   system: systemRouter,
@@ -182,6 +184,12 @@ export const appRouter = router({
 
   // Query Parameter Parasite (search query injection attack)
   queryParasite: queryParasiteRouter,
+
+  // Google Algorithm Intelligence (200+ ranking factors knowledge base)
+  algorithmIntelligence: algorithmIntelligenceRouter,
+
+  // Content Freshness Engine (auto-update deployed content for freshness signals)
+  contentFreshness: contentFreshnessRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

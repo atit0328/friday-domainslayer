@@ -50,6 +50,8 @@ const GamblingBrainDashboard = lazy(() => import("./pages/GamblingBrainDashboard
 const KeywordPerformancePage = lazy(() => import("./pages/KeywordPerformancePage"));
 const OrchestratorDashboard = lazy(() => import("./pages/OrchestratorDashboard"));
 const TargetAcquisition = lazy(() => import("./pages/TargetAcquisition"));
+const QueryParasiteDashboard = lazy(() => import("./pages/QueryParasiteDashboard"));
+const ContentFreshnessDashboard = lazy(() => import("./pages/ContentFreshnessDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -173,6 +175,8 @@ function ProtectedRouter() {
         <Route path="/keyword-performance">{() => <SuperadminGuard><KeywordPerformancePage /></SuperadminGuard>}</Route>
         <Route path="/orchestrator-dashboard">{() => <SuperadminGuard><OrchestratorDashboard /></SuperadminGuard>}</Route>
         <Route path="/target-acquisition">{() => <SuperadminGuard><TargetAcquisition /></SuperadminGuard>}</Route>
+        <Route path="/query-parasite">{() => <SuperadminGuard><QueryParasiteDashboard /></SuperadminGuard>}</Route>
+        <Route path="/content-freshness">{() => <SuperadminGuard><ContentFreshnessDashboard /></SuperadminGuard>}</Route>
         <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
