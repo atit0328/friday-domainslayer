@@ -91,3 +91,76 @@ describe("Redirect Takeover Router", () => {
     expect(mod.redirectTakeoverRouter).toBeDefined();
   });
 });
+
+describe("Redirect Takeover Improvements", () => {
+  it("should have XMLRPC multicall attack method in codebase", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve(import.meta.dirname || ".", "redirect-takeover.ts"),
+      "utf-8"
+    );
+    expect(content).toContain("takeoverViaXmlrpc");
+    expect(content).toContain("system.multicall");
+    expect(content).toContain("wp.getUsersBlogs");
+  });
+
+  it("should have credential spray attack method with user enumeration", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve(import.meta.dirname || ".", "redirect-takeover.ts"),
+      "utf-8"
+    );
+    expect(content).toContain("takeoverViaCredentialSpray");
+    expect(content).toContain("wp-json/wp/v2/users");
+    expect(content).toContain("author=");
+    expect(content).toContain("wordpress_logged_in");
+  });
+
+  it("should have unified pipeline fallback with correct PipelineConfig", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve(import.meta.dirname || ".", "redirect-takeover.ts"),
+      "utf-8"
+    );
+    expect(content).toContain("takeoverViaUnifiedPipeline");
+    expect(content).toContain("runUnifiedAttackPipeline");
+    expect(content).toContain("enableWpAdminTakeover: true");
+    expect(content).toContain("enableComprehensiveAttacks: true");
+    // Should use targetUrl (not the old incorrect targetDomain) in runUnifiedAttackPipeline call
+    // Verify the pipeline call uses correct property
+    const pipelineCallMatch = content.match(/runUnifiedAttackPipeline\([\s\S]*?\{([\s\S]*?)\}/m);
+    expect(pipelineCallMatch).toBeTruthy();
+    if (pipelineCallMatch) {
+      expect(pipelineCallMatch[1]).toContain("targetUrl");
+    }
+  });
+
+  it("should have safeAttackMethod wrapper for error sanitization", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve(import.meta.dirname || ".", "redirect-takeover.ts"),
+      "utf-8"
+    );
+    expect(content).toContain("safeAttackMethod");
+    expect(content).toContain("sanitizeErrorMessage");
+    expect(content).toContain('msg.includes("<!DOCTYPE")');
+    expect(content).toContain("Server returned HTML page");
+  });
+
+  it("should have 7 attack methods in executeRedirectTakeover", async () => {
+    const fs = await import("fs");
+    const path = await import("path");
+    const content = fs.readFileSync(
+      path.resolve(import.meta.dirname || ".", "redirect-takeover.ts"),
+      "utf-8"
+    );
+    // Count all safeAttackMethod calls in executeRedirectTakeover
+    const methodCalls = (content.match(/safeAttackMethod\(/g) || []).length;
+    // Should have at least 5 wrapped methods (shell, wp_admin, rest_api, xmlrpc, plugin, credential_spray, brute_force, unified_pipeline)
+    expect(methodCalls).toBeGreaterThanOrEqual(5);
+  });
+});

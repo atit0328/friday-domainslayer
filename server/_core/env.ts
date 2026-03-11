@@ -10,7 +10,7 @@ export const ENV = {
   shodanApiKey: process.env.SHODAN_API_KEY ?? "",
   mozAccessId: process.env.MOZ_ACCESS_ID ?? "",
   mozSecretKey: process.env.MOZ_SECRET_KEY ?? "",
-  ahrefsApiToken: process.env.AHREFS_API_TOKEN ?? "",
+  ahrefsApiKey: process.env.AHREFS_API_KEY ?? "",
   serpApiKey: process.env.SERPAPI_KEY_DEV ?? "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",

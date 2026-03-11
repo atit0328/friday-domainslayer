@@ -1,0 +1,26 @@
+{
+  "query": "SELECT sdtStatus, COUNT(*) as cnt FROM serp_discovered_targets GROUP BY sdtStatus ORDER BY cnt DESC;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT sdtStatus, COUNT(*) as cnt FROM serp_discovered_targets GROUP BY sdtStatus ORDER BY cnt DESC;",
+  "rows": [
+    {
+      "sdtStatus": "attacking",
+      "cnt": "1354"
+    },
+    {
+      "sdtStatus": "failed",
+      "cnt": "39"
+    },
+    {
+      "sdtStatus": "discovered",
+      "cnt": "9"
+    },
+    {
+      "sdtStatus": "success",
+      "cnt": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "sdtStatus\tcnt\nattacking\t1354\nfailed\t39\ndiscovered\t9\nsuccess\t1\n",
+  "stderr": "",
+  "execution_time_ms": 1569
+}

