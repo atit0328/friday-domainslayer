@@ -370,6 +370,36 @@ export async function executeSprintDay(sprintId: string, dayNumber?: number): Pr
     }
   }
   
+  // ═══ PHASE 4.5: CTR Manipulation (Day 2+) ═══
+  if (day >= 2) {
+    console.log(`[7DaySprint] Phase 4.5: CTR Manipulation...`);
+    try {
+      const { executeCTRDay, initializeCTRCampaign, getCTRCampaignState } = await import("./ctr-manipulation-engine");
+      const ctrCampaignId = `ctr_sprint_${sprintId}`;
+      let ctrState = getCTRCampaignState(ctrCampaignId);
+      if (!ctrState) {
+        ctrState = await initializeCTRCampaign({
+          domain: state.config.domain,
+          targetUrl: state.config.targetUrl,
+          targetKeywords: activeKeywords.map(k => k.keyword),
+          niche: state.config.niche,
+          language: state.config.language,
+          platforms: ["reddit", "twitter", "pinterest", "quora", "linkedin"],
+          dailyPostLimit: state.config.aggressiveness === "extreme" ? 15 : state.config.aggressiveness === "aggressive" ? 10 : 5,
+          aggressiveness: state.config.aggressiveness,
+          enableViralHooks: true,
+          enableCommunitySeeding: true,
+          enableBrandedSearch: true,
+          enableContentRepurposing: true,
+        });
+      }
+      const ctrReport = await executeCTRDay(ctrState.id, day - 1);
+      console.log(`[7DaySprint] CTR: ${ctrReport.postsDeployed} posts deployed, ~${ctrReport.estimatedClicks} clicks`);
+    } catch (err: any) {
+      console.error(`[7DaySprint] CTR manipulation failed:`, err.message);
+    }
+  }
+
   // ═══ PHASE 5: Rank Tracking (Day 3+) ═══
   if (state.config.enableRankTracking && day >= 3) {
     console.log(`[7DaySprint] Phase 5: Rank tracking...`);

@@ -3228,3 +3228,27 @@
 - [x] Adaptive velocity adjustment: auto-adjust link velocity based on rank movement (Day 4+)
 - [x] Sprint Router (server/routers/sprint-router.ts): initSprint, quickStart, executeDay, runNextDay, getActive, getDetail, getSummary, rapidIndex, findKeywords, previewVelocity, tick
 - [x] Write vitest tests: 12 tests passing (keyword sniper, rapid indexing, parasite blitz, sprint orchestrator, sprint router)
+
+# Feature: CTR Manipulation Engine — Organic Click Signals
+- [x] Build CTR Manipulation Engine (server/ctr-manipulation-engine.ts) — 1,200+ lines
+- [x] Social Signal Blaster: mass deploy to Reddit, Twitter/X, Pinterest, Quora, LinkedIn + 6 content formats (discussion, thread, infographic, carousel, snippet, question)
+- [x] Community Seeding: AI finds relevant communities per niche + generates natural engagement posts with viral hooks
+- [x] Click Diversity Simulation: vary referral sources via multi-platform deployment + staggered scheduling
+- [x] Branded Search Signals: AI generates branded queries, comparison queries, navigational queries + suggested search patterns
+- [x] AI Content Repurposing: transform main content into social-optimized formats (15 content angles per keyword)
+- [x] Scheduling: stagger social posts over 7 days with platform-specific timing
+- [x] Wire into 7-Day Sprint as Phase 4.5 (Day 2-7) social signal booster
+- [x] ctrOrchestratorTick for daemon integration (ctr_tick task type + ctr_engine agent)
+- [x] Write vitest tests: 24 tests passing (campaign state, config, content generation, deploy, integration)
+
+# Feature: Auto-Sprint Trigger — Auto-start 7-Day Sprint on New SEO Project
+- [x] Auto-detect new SEO project creation via triggerAutoSprint() in seo-automation router create flow
+- [x] Auto-extract target keywords from scan results with waitForKeywords() (polls every 5s, max 60s)
+- [x] Auto-select sprint strategy: mapAggressiveness() converts project level (1-10) to sprint aggressiveness
+- [x] Wire into SEO project create flow: seo-automation.ts create procedure → triggerAutoSprint()
+- [x] Fallback: if plan generation fails, still triggers sprint + starts even without keywords (domain-based seeds)
+- [x] CTR campaign auto-starts alongside sprint when enableCTR=true
+- [x] Telegram notification when auto-sprint starts (success + failure alerts)
+- [x] Batch trigger: triggerSprintsForExistingProjects() for retroactive sprint on existing projects
+- [x] Configuration: eligible strategies, min keywords, aggressiveness mapping, CTR platforms
+- [x] Write vitest tests: included in 24 tests (config management, status tracking, trigger logic, aggressiveness mapping)

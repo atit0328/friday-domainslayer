@@ -69,7 +69,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -118,6 +118,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   sprint_engine: {
     enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  ctr_engine: {
+    enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -721,6 +725,23 @@ async function executeCmsScanTask(task: DaemonTask, signal: AbortSignal): Promis
 /**
  * Sprint Day Executor — runs the next day of all active 7-day sprints
  */
+async function executeCtrTickTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { ctrOrchestratorTick } = await import("./ctr-manipulation-engine");
+    const result = await ctrOrchestratorTick();
+    return {
+      success: true,
+      result: {
+        campaignsProcessed: result.campaignsProcessed,
+        totalPostsDeployed: result.totalPostsDeployed,
+        totalEstimatedClicks: result.totalEstimatedClicks,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeSprintDayTask(task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { orchestratorTick } = await import("./seven-day-sprint");
@@ -887,6 +908,7 @@ async function orchestratorTick() {
         cms_scan: "cms_scan",
         blackhat_brain: "blackhat_brain",
         sprint_engine: "sprint_day",
+        ctr_engine: "ctr_tick",
       };
 
       const taskId = await enqueueTask({
@@ -943,6 +965,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("cms_scan", executeCmsScanTask);
   registerExecutor("blackhat_brain", executeBlackhatBrainTask);
   registerExecutor("sprint_day", executeSprintDayTask);
+  registerExecutor("ctr_tick", executeCtrTickTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1275,6 +1298,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.enabled = false; },
     },
   ],
+  ctr_engine: [
+    {
+      name: "reduce_posts",
+      description: "Reduce daily post limit",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 18 * 60 * 60_000); },
+    },
+    {
+      name: "increase_interval",
+      description: "Increase CTR interval to 24h",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; },
+    },
+    {
+      name: "pause_ctr",
+      description: "Pause CTR engine",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
 };
 
 /**
@@ -1362,6 +1402,7 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
    cms_scan: "cms_scan",
   blackhat_brain: "blackhat_brain",
   sprint_day: "sprint_engine",
+  ctr_tick: "ctr_engine",
 };
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts

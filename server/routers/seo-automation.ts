@@ -13,6 +13,7 @@ import { fetchDomainMetrics } from "../domain-metrics";
 import { autoStartAfterScan } from "../seo-scheduler";
 import { generateAgentPlan } from "../seo-agent";
 import { sendTelegramNotification } from "../telegram-notifier";
+import { triggerAutoSprint } from "../auto-sprint-trigger";
 
 // ═══ Schedule Helpers ═══
 const DAY_NAMES_TH: Record<number, string> = {
@@ -328,11 +329,30 @@ export const seoProjectsRouter = router({
                   `✅ Auto-run enabled: ทุกวัน 10:00 น. (ICT)`,
               });
             } catch {}
+            // ═══ AUTO-SPRINT: Trigger 7-day sprint + CTR campaign ═══
+            try {
+              console.log(`[AutoSprint] 🎯 Triggering auto-sprint for ${input.domain}`);
+              const sprintResult = await triggerAutoSprint(result.id);
+              if (sprintResult.triggered) {
+                console.log(`[AutoSprint] ✅ Sprint ${sprintResult.sprintId} auto-started for ${input.domain}`);
+              } else {
+                console.log(`[AutoSprint] ⏭️ Sprint not triggered: ${sprintResult.reason}`);
+              }
+            } catch (sprintErr: any) {
+              console.error(`[AutoSprint] Failed for ${input.domain}:`, sprintErr.message);
+            }
           } catch (planErr: any) {
             console.error(`[Agentic SEO] Failed to auto-generate plan for ${input.domain}:`, planErr.message);
             // Still start SEO even if plan generation fails
             try {
               await autoStartAfterScan(result.id);
+            } catch {}
+            // Still try auto-sprint even if plan fails
+            try {
+              const sprintResult = await triggerAutoSprint(result.id);
+              if (sprintResult.triggered) {
+                console.log(`[AutoSprint] ✅ Sprint ${sprintResult.sprintId} auto-started (plan failed but sprint OK)`);
+              }
             } catch {}
           }
         } catch (err: any) {
