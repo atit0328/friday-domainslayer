@@ -13,6 +13,7 @@ import {
   PLATFORMS,
   type DistributionTarget,
 } from "../multi-platform-distributor";
+import { getAuthPlatformStatuses } from "../web2-authenticated-platforms";
 
 export const multiPlatformRouter = router({
   /**
@@ -26,7 +27,7 @@ export const multiPlatformRouter = router({
       niche: z.string().default("gambling"),
       anchorText: z.string(),
       projectId: z.number().optional(),
-      maxTier1: z.number().min(1).max(10).default(8),
+      maxTier1: z.number().min(1).max(20).default(15),
       maxComments: z.number().min(0).max(10).default(3),
       enableIndexing: z.boolean().default(true),
       enableTelegram: z.boolean().default(true),
@@ -80,5 +81,12 @@ export const multiPlatformRouter = router({
    */
   getStats: protectedProcedure.query(() => {
     return getDistributionStats();
+  }),
+
+  /**
+   * Get authenticated platform statuses
+   */
+  getAuthPlatforms: protectedProcedure.query(() => {
+    return getAuthPlatformStatuses();
   }),
 });

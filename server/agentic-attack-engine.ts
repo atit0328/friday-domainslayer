@@ -875,7 +875,7 @@ async function attackSingleTarget(
       });
 
       const deployId = jobResult.deployId;
-      const maxWaitMs = 5 * 60 * 1000;
+      const maxWaitMs = 12 * 60 * 1000; // 12 min per target — enough for full pipeline
       const pollInterval = 5000;
       const startTime = Date.now();
       let jobFinalStatus = "timeout";

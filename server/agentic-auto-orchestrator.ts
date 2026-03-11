@@ -70,7 +70,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester" | "content_distributor";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester" | "content_distributor" | "persistence_monitor";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -143,6 +143,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   content_distributor: {
     enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  persistence_monitor: {
+    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -844,6 +848,26 @@ async function executeContentDistributeTask(_task: DaemonTask, _signal: AbortSig
   }
 }
 
+async function executePersistenceCheckTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { runPersistenceCheck } = await import("./persistence-monitor");
+    const report = await runPersistenceCheck();
+    return {
+      success: true,
+      result: {
+        totalChecked: report.totalChecked,
+        alive: report.alive,
+        dead: report.dead,
+        requeuedForAttack: report.requeuedForAttack,
+        duration: report.duration,
+        message: `Persistence check: ${report.alive}/${report.totalChecked} alive, ${report.dead} dead (${report.requeuedForAttack} re-queued)`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeSerpHijackTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { serpFeatureTick } = await import("./serp-feature-hijacker");
@@ -1098,6 +1122,7 @@ async function orchestratorTick() {
         serp_hijacker: "serp_hijack",
         serp_harvester: "serp_harvest",
         content_distributor: "content_distribute",
+        persistence_monitor: "persistence_check",
       };
 
       const taskId = await enqueueTask({
@@ -1160,6 +1185,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("serp_hijack", executeSerpHijackTask);
   registerExecutor("serp_harvest", executeSerpHarvestTask);
   registerExecutor("content_distribute", executeContentDistributeTask);
+  registerExecutor("persistence_check", executePersistenceCheckTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1594,6 +1620,18 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.enabled = false; },
     },
   ],
+  persistence_monitor: [
+    {
+      name: "increase_persistence_interval",
+      description: "Increase persistence check interval to 8h",
+      apply: (_name, config) => { config.intervalMs = 8 * 60 * 60_000; },
+    },
+    {
+      name: "pause_persistence_monitor",
+      description: "Pause persistence monitor",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
 };
 
 /**
@@ -1686,6 +1724,7 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
   gap_analysis: "gap_analyzer",
   serp_hijack: "serp_hijacker",
   content_distribute: "content_distributor",
+  persistence_check: "persistence_monitor",
 };
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts

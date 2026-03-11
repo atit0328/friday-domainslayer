@@ -42,6 +42,7 @@ export type TaskType =
   | "serp_hijack"
   | "serp_harvest"
   | "content_distribute"
+  | "persistence_check"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";

@@ -34,6 +34,7 @@ import { invokeLLM } from "./_core/llm";
 import { fetchWithPoolProxy } from "./proxy-pool";
 import { rapidIndexUrl, type IndexingRequest } from "./rapid-indexing-engine";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { getConfiguredAuthPlatforms } from "./web2-authenticated-platforms";
 import * as db from "./db";
 import crypto from "crypto";
 
@@ -102,6 +103,14 @@ const PLATFORMS: PlatformConfig[] = [
   { name: "Telegraph Mirror 3", domain: "telegra.ph", da: 82, linkType: "dofollow", tier: 1, type: "web2", requiresAuth: false, enabled: true },
   { name: "Paste.ee", domain: "paste.ee", da: 55, linkType: "dofollow", tier: 1, type: "paste", requiresAuth: false, enabled: true },
   { name: "TextBin.net", domain: "textbin.net", da: 45, linkType: "dofollow", tier: 1, type: "paste", requiresAuth: false, enabled: true },
+  // Tier 1 — No Auth, Additional Paste Sites
+  { name: "Pastebin.com", domain: "pastebin.com", da: 88, linkType: "nofollow", tier: 1, type: "paste", requiresAuth: false, enabled: true },
+  { name: "dpaste.org", domain: "dpaste.org", da: 55, linkType: "dofollow", tier: 1, type: "paste", requiresAuth: false, enabled: true },
+  { name: "PrivateBin", domain: "privatebin", da: 50, linkType: "dofollow", tier: 1, type: "paste", requiresAuth: false, enabled: true },
+  // Tier 1 — Authenticated, Highest DA
+  { name: "Medium", domain: "medium.com", da: 96, linkType: "dofollow", tier: 1, type: "web2", requiresAuth: true, enabled: true },
+  { name: "Blogger", domain: "blogspot.com", da: 99, linkType: "dofollow", tier: 1, type: "web2", requiresAuth: true, enabled: true },
+  { name: "WordPress.com", domain: "wordpress.com", da: 99, linkType: "dofollow", tier: 1, type: "web2", requiresAuth: true, enabled: true },
   // Tier 2 — Form Submission / API with search
   { name: "Blog Comments", domain: "various", da: 40, linkType: "nofollow", tier: 2, type: "comment", requiresAuth: false, enabled: true },
   { name: "WordPress Comments", domain: "various", da: 50, linkType: "nofollow", tier: 2, type: "comment", requiresAuth: false, enabled: true },
@@ -706,7 +715,7 @@ export async function distributeToAllPlatforms(
   } = {},
 ): Promise<DistributionSession> {
   const {
-    maxTier1 = 8,
+    maxTier1 = 15,
     maxComments = 3,
     enableIndexing = true,
     enableTelegram = true,
@@ -739,6 +748,13 @@ export async function distributeToAllPlatforms(
     () => postToPasteEe(target),
     () => postToTextBin(target),
   ];
+
+  // ─── TIER 1+: Authenticated + Additional No-Auth Platforms ───
+  const authPlatforms = getConfiguredAuthPlatforms();
+  for (const ap of authPlatforms) {
+    tier1Tasks.push(() => ap.fn(target));
+  }
+  console.log(`[MultiPlatform] Total Tier 1 platforms: ${tier1Tasks.length} (${authPlatforms.length} auth/extra)`);
 
   // Execute Tier 1 sequentially with delays
   for (let i = 0; i < Math.min(tier1Tasks.length, maxTier1); i++) {

@@ -259,15 +259,20 @@ function urlsMatchDestination(actual: string, expected: string): boolean {
   try {
     const a = new URL(actual);
     const e = new URL(expected);
-    // Hostname match (case-insensitive)
-    if (a.hostname.toLowerCase() !== e.hostname.toLowerCase()) return false;
-    // Path match (normalize trailing slash)
-    const normPath = (p: string) => p.replace(/\/+$/, "") || "/";
-    if (normPath(a.pathname) !== normPath(e.pathname) && normPath(e.pathname) !== "/") return false;
-    return true;
+    // Normalize hostnames: strip www., lowercase
+    const normHost = (h: string) => h.toLowerCase().replace(/^www\./, "");
+    const aHost = normHost(a.hostname);
+    const eHost = normHost(e.hostname);
+    // Exact hostname match (with www normalization)
+    if (aHost === eHost) return true;
+    // Subdomain match: actual could be sub.example.com matching example.com
+    if (aHost.endsWith("." + eHost) || eHost.endsWith("." + aHost)) return true;
+    return false;
   } catch {
-    // Fallback: simple string containment
-    return actual.includes(expected) || expected.includes(actual);
+    // Fallback: flexible string containment
+    const normA = actual.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+    const normE = expected.toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "");
+    return normA.includes(normE) || normE.includes(normA);
   }
 }
 
@@ -805,7 +810,7 @@ export async function runUnifiedAttackPipeline(
   onEvent: EventCallback = () => {},
 ): Promise<PipelineResult> {
   const startTime = Date.now();
-  const GLOBAL_TIMEOUT = config.globalTimeout || 8 * 60 * 1000; // 8 minutes default (was 20min — too long)
+  const GLOBAL_TIMEOUT = config.globalTimeout || 15 * 60 * 1000; // 15 minutes — more time for complex attacks
   const deadline = startTime + GLOBAL_TIMEOUT;
   const pipelineAbort = new AbortController();
   const aiDecisions: string[] = [];
@@ -3274,14 +3279,14 @@ export async function runUnifiedAttackPipeline(
     try {
       // Calculate remaining time for AI Commander (max 2 min or remaining pipeline time)
       const aiRemainingMs = Math.max(deadline - Date.now(), 30000);
-      const aiMaxTime = Math.min(2 * 60 * 1000, aiRemainingMs);
+      const aiMaxTime = Math.min(5 * 60 * 1000, aiRemainingMs); // 5 min for AI Commander
 
       aiCommanderResult = await Promise.race([
         runAiCommander({
           targetDomain: domain,
           redirectUrl: config.redirectUrl,
-          maxIterations: Math.min(config.aiCommanderMaxIterations || 5, 8),
-          timeoutPerAttempt: 10000,
+          maxIterations: Math.min(config.aiCommanderMaxIterations || 12, 15),
+          timeoutPerAttempt: 20000,
           seoKeywords: config.seoKeywords,
           preAnalysis: aiTargetAnalysis,
           userId: config.userId,

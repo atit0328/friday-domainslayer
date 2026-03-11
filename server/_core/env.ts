@@ -17,4 +17,13 @@ export const ENV = {
   // Fallback LLM providers
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  // Authenticated Web 2.0 Platforms
+  mediumApiToken: process.env.MEDIUM_API_TOKEN ?? "",
+  mediumAuthorId: process.env.MEDIUM_AUTHOR_ID ?? "",
+  bloggerRefreshToken: process.env.BLOGGER_REFRESH_TOKEN ?? "",
+  bloggerClientId: process.env.BLOGGER_CLIENT_ID ?? "",
+  bloggerClientSecret: process.env.BLOGGER_CLIENT_SECRET ?? "",
+  bloggerBlogId: process.env.BLOGGER_BLOG_ID ?? "",
+  wpComAccessToken: process.env.WPCOM_ACCESS_TOKEN ?? "",
+  wpComSiteId: process.env.WPCOM_SITE_ID ?? "",
 };

