@@ -3558,3 +3558,16 @@
 - [x] Auto-discover + auto-post ทุกวันโดยไม่ต้องกดปุ่ม
 - [x] vitest tests
 - [x] 0 TypeScript errors
+
+# Redirect Verification Before Telegram Notification
+
+- [x] สร้าง Redirect Verification Engine (server/redirect-verifier.ts)
+- [x] HTTP HEAD/GET check deployed URLs — ตรวจสอบว่า URL ยังเข้าถึงได้ (200/301/302)
+- [x] Follow redirect chain — ตรวจสอบว่า redirect ไปปลายทางถูกต้อง
+- [x] Verify final destination matches expected redirect URL
+- [x] Handle edge cases: timeout, SSL errors, WAF blocks, JS redirects
+- [x] Wire verification เข้ากับ sendTelegramNotification filter
+- [x] เพิ่ม verification status ใน Telegram message (✅ Verified / ⚠️ Unverified)
+- [x] แสดง redirect chain ใน Telegram message (URL → 301 → Final Destination)
+- [x] vitest tests สำหรับ redirect verification — 40 tests passing
+- [x] 0 TypeScript errors

