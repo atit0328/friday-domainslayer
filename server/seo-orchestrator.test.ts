@@ -87,6 +87,8 @@ import {
   stopSeoOrchestrator,
   getSeoOrchestratorStatus,
   orchestratorTick,
+  sendSprintDailyReport,
+  sendAllSprintsProgressReport,
   type SeoSprintConfig,
   type SprintState,
 } from "./seo-orchestrator";
@@ -319,6 +321,67 @@ describe("SEO Orchestrator", () => {
     it("should handle external BL disabled", async () => {
       const state = await createSprint({ ...baseConfig, enableExternalBl: false });
       expect(state.config.enableExternalBl).toBe(false);
+    });
+  });
+
+  describe("Sprint Progress Notifications", () => {
+    it("should send daily report for a sprint", async () => {
+      const state = await createSprint(baseConfig);
+      // Execute Day 1 first so there's data to report
+      await executeSprintDay(state.id, 1);
+
+      const report = await sendSprintDailyReport(state.id);
+      expect(report).toBeDefined();
+      expect(typeof report).toBe("string");
+      expect(report).toContain("SEO SPRINT DAILY REPORT");
+      expect(report).toContain("test-casino.com");
+      expect(report).toContain("Day");
+      expect(report).toContain("PBN Links");
+      expect(report).toContain("External Links");
+    });
+
+    it("should throw error for non-existent sprint report", async () => {
+      await expect(sendSprintDailyReport("non-existent")).rejects.toThrow("Sprint non-existent not found");
+    });
+
+    it("should send digest for all active sprints", async () => {
+      await createSprint(baseConfig);
+      await createSprint({ ...baseConfig, projectId: 3, domain: "test3.com" });
+
+      const result = await sendAllSprintsProgressReport();
+      expect(result).toBeDefined();
+      expect(result.sent).toBeGreaterThanOrEqual(2);
+      expect(result.reports.length).toBeGreaterThanOrEqual(1);
+      expect(result.reports[0]).toContain("SEO SPRINT DAILY DIGEST");
+    });
+
+    it("should handle empty sprints digest", async () => {
+      // Clear all sprints first
+      const sprints = getActiveSeoSprints();
+      sprints.forEach(s => {
+        s.status = "completed"; // Mark as completed so they're not active
+      });
+
+      const result = await sendAllSprintsProgressReport();
+      expect(result.sent).toBe(0);
+      expect(result.reports[0]).toContain("ไม่มี sprint");
+    });
+
+    it("should include timeline in daily report", async () => {
+      const state = await createSprint(baseConfig);
+      await executeSprintDay(state.id, 1);
+
+      const report = await sendSprintDailyReport(state.id);
+      expect(report).toContain("Sprint Timeline");
+      expect(report).toContain("Day 1");
+      expect(report).toContain("Cumulative Totals");
+    });
+
+    it("should include progress bar in digest", async () => {
+      await createSprint(baseConfig);
+
+      const result = await sendAllSprintsProgressReport();
+      expect(result.reports[0]).toContain("Active Sprints");
     });
   });
 

@@ -64,7 +64,25 @@ export default function SeoBrain() {
   const resumeSprint = trpc.seoOrchestrator.resume.useMutation();
   const triggerTick = trpc.seoOrchestrator.triggerTick.useMutation({
     onSuccess: () => {
-      toast.info("🧠 Manual orchestrator tick triggered");
+      toast.info("\ud83e\udde0 Manual orchestrator tick triggered");
+    },
+  });
+
+  const sendDailyReport = trpc.seoOrchestrator.sendDailyReport.useMutation({
+    onSuccess: () => {
+      toast.success("\ud83d\udce8 Daily report sent to Telegram");
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const sendDigest = trpc.seoOrchestrator.sendDigest.useMutation({
+    onSuccess: (data) => {
+      toast.success(`\ud83d\udce8 Sprint digest sent (${data.sent} sprints)`);
+    },
+    onError: (err) => {
+      toast.error(err.message);
     },
   });
 
@@ -97,6 +115,15 @@ export default function SeoBrain() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => sendDigest.mutate()}
+            disabled={sendDigest.isPending}
+          >
+            <BarChart3 className="w-4 h-4 mr-1" />
+            {sendDigest.isPending ? "Sending..." : "Send Digest"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -307,6 +334,15 @@ export default function SeoBrain() {
                       >
                         <Play className="w-3 h-3 mr-1" />
                         Run Day
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => sendDailyReport.mutate({ sprintId: sprint.id })}
+                        disabled={sendDailyReport.isPending}
+                      >
+                        <BarChart3 className="w-3 h-3 mr-1" />
+                        Report
                       </Button>
                       {sprint.status === "active" ? (
                         <Button

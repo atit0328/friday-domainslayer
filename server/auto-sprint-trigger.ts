@@ -28,6 +28,11 @@ import {
 } from "./ctr-manipulation-engine";
 import { sendTelegramNotification } from "./telegram-notifier";
 import * as db from "./db";
+import {
+  createSprint as createOrchestratorSprint,
+  getSeoSprintByProject,
+  type SeoSprintConfig,
+} from "./seo-orchestrator";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -53,6 +58,7 @@ export interface AutoSprintConfig {
 export interface SprintTriggerResult {
   triggered: boolean;
   sprintId?: string;
+  orchestratorSprintId?: string;
   ctrCampaignId?: string;
   reason: string;
   projectId: number;
@@ -317,6 +323,37 @@ export async function triggerAutoSprint(projectId: number): Promise<SprintTrigge
     
     console.log(`[AutoSprint] ✅ Sprint ${state.id} started — Day 1: ${day1Report.contentDeployed} content, T1=${day1Report.linksBuilt.tier1} links, ${day1Report.pagesIndexed} indexed`);
     
+    // ═══ SEO ORCHESTRATOR SPRINT: Also create an orchestrator-managed sprint ═══
+    let orchestratorSprintId: string | undefined;
+    try {
+      // Check if orchestrator sprint already exists
+      const existingOrcSprint = getSeoSprintByProject(projectId);
+      if (!existingOrcSprint) {
+        const orcConfig: SeoSprintConfig = {
+          projectId,
+          domain: project.domain,
+          targetKeywords: keywords.slice(0, 15),
+          niche: project.niche || "gambling",
+          aggressiveness: project.aggressiveness,
+          maxPbnLinks: sprintConfig.aggressiveness === "extreme" ? 20 : sprintConfig.aggressiveness === "aggressive" ? 15 : 10,
+          maxExternalLinks: sprintConfig.aggressiveness === "extreme" ? 40 : sprintConfig.aggressiveness === "aggressive" ? 25 : 15,
+          enablePbn: true,
+          enableExternalBl: true,
+          enableContentGen: true,
+          enableRankTracking: true,
+          scheduleDays: [0, 1, 2, 3, 4, 5, 6], // Every day
+        };
+        const orcState = await createOrchestratorSprint(orcConfig);
+        orchestratorSprintId = orcState.id;
+        console.log(`[AutoSprint] 🧠 SEO Orchestrator sprint ${orcState.id} created for ${project.domain}`);
+      } else {
+        orchestratorSprintId = existingOrcSprint.id;
+        console.log(`[AutoSprint] 🧠 SEO Orchestrator sprint already exists: ${existingOrcSprint.id}`);
+      }
+    } catch (orcErr: any) {
+      console.error(`[AutoSprint] SEO Orchestrator sprint failed:`, orcErr.message);
+    }
+
     // Start CTR campaign if enabled
     if (currentConfig.enableCTR) {
       try {
@@ -336,12 +373,15 @@ export async function triggerAutoSprint(projectId: number): Promise<SprintTrigge
         title: `🚀 7-Day Sprint Auto-Started`,
         description: `Sprint ${sprintId} launched automatically.\n` +
           `Day 1: ${day1Report.contentDeployed} content deployed, ${day1Report.linksBuilt.tier1} T1 links, ${day1Report.pagesIndexed} pages indexed.\n` +
-          `CTR campaign: ${ctrCampaignId || "disabled"}`,
+          `CTR campaign: ${ctrCampaignId || "disabled"}
+` +
+          `SEO Orchestrator: ${orchestratorSprintId || "not started"}`,
         status: "completed",
         executedAt: new Date(),
         completedAt: new Date(),
         result: {
           sprintId,
+          orchestratorSprintId,
           ctrCampaignId,
           day1Report,
         } as any,
@@ -364,13 +404,15 @@ export async function triggerAutoSprint(projectId: number): Promise<SprintTrigge
           `  Links: T1=${day1Report.linksBuilt.tier1}\n` +
           `  Indexed: ${day1Report.pagesIndexed}\n` +
           `CTR Campaign: ${ctrCampaignId ? "✅ Active" : "❌ Disabled"}\n` +
-          `📅 Next 6 days will run automatically via daemon`,
+          `🧠 SEO Orchestrator: ${orchestratorSprintId ? "✅ Active" : "❌ Not started"}\n` +
+          `📅 Next 6 days will run automatically via daemon + orchestrator`,
       });
     } catch {}
     
     return {
       triggered: true,
       sprintId,
+      orchestratorSprintId,
       ctrCampaignId,
       reason: "Sprint auto-started successfully",
       projectId,

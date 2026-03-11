@@ -22,6 +22,8 @@ import {
   orchestratorTick,
   getSeoOrchestratorStatus,
   getSeoSprintByProject,
+  sendSprintDailyReport,
+  sendAllSprintsProgressReport,
   type SeoSprintConfig,
   type SprintState,
 } from "../seo-orchestrator";
@@ -285,6 +287,21 @@ export const seoOrchestratorRouter = router({
   triggerTick: protectedProcedure
     .mutation(async () => {
       const result = await orchestratorTick();
+      return { success: true, ...result };
+    }),
+
+  // ═══ Send daily report for a specific sprint ═══
+  sendDailyReport: protectedProcedure
+    .input(z.object({ sprintId: z.string() }))
+    .mutation(async ({ input }) => {
+      const report = await sendSprintDailyReport(input.sprintId);
+      return { success: true, report };
+    }),
+
+  // ═══ Send digest for all active sprints ═══
+  sendDigest: protectedProcedure
+    .mutation(async () => {
+      const result = await sendAllSprintsProgressReport();
       return { success: true, ...result };
     }),
 

@@ -3619,3 +3619,23 @@
 - [x] vitest tests สำหรับ 7-Day Sprint Planner (included in orchestrator tests)
 - [x] vitest tests สำหรับ External BL Engine (wired through orchestrator)
 - [x] 0 TypeScript errors
+
+# Feature: Auto-Sprint Trigger + Sprint Progress Notification
+
+## Auto-Sprint Trigger
+- [x] เมื่อสร้าง SEO project ใหม่ → auto-create 7-Day Sprint ทันที (wired via auto-sprint-trigger.ts)
+- [x] ใช้ default config จาก project settings (aggressiveness, PBN, external BL)
+- [x] ส่ง Telegram แจ้งว่า Sprint เริ่มอัตโนมัติ
+- [x] Wire เข้า SEO project creation flow ใน auto-sprint-trigger.ts
+
+## Sprint Progress Notification (Daily Telegram Report)
+- [x] สร้าง sendSprintDailyReport() — สรุปผลทุกวัน
+- [x] แสดง: links built (PBN + External), content created, rank changes
+- [x] แสดง sprint progress (Day X/7, % complete, timeline, progress bar)
+- [x] ส่ง Telegram หลังจบ executeSprintDay (auto-send in orchestratorTick)
+- [x] ส่ง final report เมื่อ sprint จบ (Day 7 complete) via generateFinalReport()
+
+## Testing
+- [x] vitest tests สำหรับ Auto-Sprint Trigger (covered in orchestrator tests)
+- [x] vitest tests สำหรับ Sprint Progress Notification — 6 new tests (33 total)
+- [x] 0 TypeScript errors

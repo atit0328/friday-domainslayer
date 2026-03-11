@@ -773,6 +773,10 @@ export async function orchestratorTick(): Promise<{
           state.status = "active";
           await executeSprintDay(sprintId, nextDay);
           daysExecuted++;
+          // Auto-send comprehensive daily report after each day
+          try {
+            await sendSprintDailyReport(sprintId);
+          } catch { /* ignore report errors */ }
         } else {
           state.status = "completed";
         }
@@ -929,6 +933,117 @@ export function resumeSeoSprint(sprintId: string): boolean {
   if (!state || state.status !== "paused") return false;
   state.status = "active";
   return true;
+}
+
+// ═══════════════════════════════════════════════
+//  SPRINT PROGRESS NOTIFICATIONS
+// ═══════════════════════════════════════════════
+
+/**
+ * Send daily progress report for a specific sprint
+ * Called after each day execution or manually via tRPC
+ */
+export async function sendSprintDailyReport(sprintId: string): Promise<string> {
+  const state = activeSprints.get(sprintId);
+  if (!state) throw new Error(`Sprint ${sprintId} not found`);
+  
+  const completedDays = state.days.filter(d => d.status === "completed");
+  const latestDay = completedDays[completedDays.length - 1];
+  const latestResult = latestDay?.results;
+  
+  // Cumulative totals
+  const allResults = state.days.map(d => d.results).filter(Boolean);
+  const totalPbn = allResults.reduce((sum, r) => sum + (r?.pbnLinksBuilt || 0), 0);
+  const totalExt = allResults.reduce((sum, r) => sum + (r?.externalLinksBuilt || 0), 0);
+  const totalContent = allResults.reduce((sum, r) => sum + (r?.contentGenerated || 0), 0);
+  const allRankChanges = allResults.flatMap(r => r?.rankChanges || []);
+  
+  // Build timeline
+  const timeline = state.days.map((d, i) => {
+    const dayNum = i + 1;
+    const statusIcon = d.status === "completed" ? "\u2705" : d.status === "running" ? "\u23f3" : d.status === "failed" ? "\u274c" : "\u2b1c";
+    const pbn = d.results?.pbnLinksBuilt || 0;
+    const ext = d.results?.externalLinksBuilt || 0;
+    const content = d.results?.contentGenerated || 0;
+    return `  ${statusIcon} Day ${dayNum}: ${d.phase}${d.status === "completed" ? ` — PBN:${pbn} EXT:${ext} Content:${content}` : ""}`;
+  }).join("\n");
+  
+  // Rank improvements
+  const rankSection = allRankChanges.length > 0
+    ? `\n\ud83d\udcc8 Keyword Rankings:\n${allRankChanges.slice(-10).map(r => {
+        const icon = r.newPosition < r.oldPosition ? "\ud83d\udcc8" : r.newPosition > r.oldPosition ? "\ud83d\udcc9" : "\u27a1\ufe0f";
+        return `  ${icon} ${r.keyword}: #${r.oldPosition} \u2192 #${r.newPosition}`;
+      }).join("\n")}`
+    : "\n\ud83d\udcc8 Rankings: \u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e21\u0e35\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25 (\u0e08\u0e30\u0e40\u0e23\u0e34\u0e48\u0e21\u0e15\u0e23\u0e27\u0e08 Day 4+)";
+  
+  const report = 
+    `\ud83d\udcca SEO SPRINT DAILY REPORT\n` +
+    `\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n` +
+    `\ud83c\udf10 Domain: ${state.domain}\n` +
+    `\ud83d\udcc5 Day ${state.currentDay}/7 | Progress: ${state.overallProgress}%\n` +
+    `\u23f1\ufe0f Started: ${state.createdAt.toLocaleDateString("th-TH")}\n\n` +
+    `\ud83d\udccb Sprint Timeline:\n${timeline}\n\n` +
+    `\ud83d\udcca Cumulative Totals:\n` +
+    `  \ud83d\udd17 PBN Links: ${totalPbn}\n` +
+    `  \ud83c\udf10 External Links: ${totalExt}\n` +
+    `  \ud83d\udcdd Content Pieces: ${totalContent}\n` +
+    `  \ud83c\udfc6 Best Rank: ${state.bestRankAchieved > 0 && state.bestRankAchieved < 100 ? `#${state.bestRankAchieved}` : "N/A"}\n` +
+    rankSection +
+    (latestResult?.aiSummary ? `\n\n\ud83e\udd16 AI Summary:\n${latestResult.aiSummary.slice(0, 300)}` : "") +
+    `\n\n\u26a1 Status: ${state.status.toUpperCase()}`;
+  
+  await notifyTelegram(report);
+  return report;
+}
+
+/**
+ * Send progress report for ALL active sprints (daily digest)
+ */
+export async function sendAllSprintsProgressReport(): Promise<{ sent: number; reports: string[] }> {
+  const reports: string[] = [];
+  const allSprints = Array.from(activeSprints.values());
+  const active = allSprints.filter(s => s.status === "active" || s.status === "initializing");
+  
+  if (active.length === 0) {
+    const msg = "\ud83d\udcca SEO Sprint Digest: \u0e44\u0e21\u0e48\u0e21\u0e35 sprint \u0e17\u0e35\u0e48\u0e01\u0e33\u0e25\u0e31\u0e07\u0e17\u0e33\u0e07\u0e32\u0e19\u0e2d\u0e22\u0e39\u0e48";
+    await notifyTelegram(msg);
+    return { sent: 0, reports: [msg] };
+  }
+  
+  // Header
+  const header = 
+    `\ud83d\udcca SEO SPRINT DAILY DIGEST\n` +
+    `\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n` +
+    `\ud83d\udcc5 ${new Date().toLocaleDateString("th-TH", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}\n` +
+    `\ud83c\udfc3 Active Sprints: ${active.length}\n\n`;
+  
+  const summaries = active.map(s => {
+    const allResults = s.days.map(d => d.results).filter(Boolean);
+    const totalPbn = allResults.reduce((sum, r) => sum + (r?.pbnLinksBuilt || 0), 0);
+    const totalExt = allResults.reduce((sum, r) => sum + (r?.externalLinksBuilt || 0), 0);
+    const totalContent = allResults.reduce((sum, r) => sum + (r?.contentGenerated || 0), 0);
+    const progressBar = generateProgressBar(s.overallProgress);
+    
+    return `\ud83c\udf10 ${s.domain}\n` +
+      `  ${progressBar} ${s.overallProgress}% (Day ${s.currentDay}/7)\n` +
+      `  \ud83d\udd17 PBN: ${totalPbn} | External: ${totalExt} | Content: ${totalContent}\n` +
+      `  \ud83c\udfc6 Best Rank: ${s.bestRankAchieved > 0 && s.bestRankAchieved < 100 ? `#${s.bestRankAchieved}` : "N/A"}`;
+  }).join("\n\n");
+  
+  const digest = header + summaries;
+  await notifyTelegram(digest);
+  reports.push(digest);
+  
+  return { sent: active.length, reports };
+}
+
+/**
+ * Generate a visual progress bar
+ */
+function generateProgressBar(percent: number): string {
+  const filled = Math.round(percent / 10);
+  const empty = 10 - filled;
+  return "\u2593".repeat(filled) + "\u2591".repeat(empty);
 }
 
 export function getSeoOrchestratorStatus(): {
