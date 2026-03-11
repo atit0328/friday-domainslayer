@@ -272,37 +272,16 @@ export async function triggerSocialCrawl(url: string): Promise<IndexingResult[]>
     });
   }
   
-  // Telegram link preview (triggers their crawler)
-  try {
-    const tgUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getUpdates`;
-    // Just sending a message with the URL triggers Telegram's link preview crawler
-    if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) {
-      const sendUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-      const response = await fetch(sendUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: process.env.TELEGRAM_CHAT_ID,
-          text: `🔍 Indexing: ${url}`,
-          disable_notification: true,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      results.push({
-        url,
-        method: "Social Crawl → Telegram Preview",
-        success: response.ok,
-        message: response.ok ? "Link preview triggered" : "Failed",
-      });
-    }
-  } catch (err: any) {
-    results.push({
-      url,
-      method: "Social Crawl → Telegram Preview",
-      success: false,
-      message: err.message,
-    });
-  }
+  // Telegram link preview — BLOCKED to prevent non-attack Telegram messages
+  // The indexing notification was sending "🔍 Indexing: url" to Telegram which is not an attack success
+  // Instead, just log locally and skip the Telegram API call
+  console.log(`[RapidIndex] [Telegram Blocked] Indexing trigger for ${url} — skipped to prevent noise`);
+  results.push({
+    url,
+    method: "Social Crawl → Telegram Preview",
+    success: false,
+    message: "Telegram notification blocked (attack-success-only mode)",
+  });
   
   return results;
 }

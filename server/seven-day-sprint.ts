@@ -878,27 +878,10 @@ function mapLinkType(type: string): "web2" | "social" | "comment" | "directory" 
 }
 
 async function sendSprintTelegram(title: string, message: string): Promise<void> {
-  try {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
-    if (!token || !chatId) return;
-    
-    const text = `${title}\n\n${message}`;
-    
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        parse_mode: "HTML",
-        disable_notification: false,
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-  } catch (err: any) {
-    console.error(`[7DaySprint] Telegram notification failed:`, err.message);
-  }
+  // BLOCKED: Sprint notifications are non-attack progress updates.
+  // All Telegram messages must go through sendTelegramNotification() which enforces attack-success-only filter.
+  console.log(`[7DaySprint] [Telegram Blocked] ${title}: ${message.substring(0, 120)}...`);
+  return;
 }
 
 // ═══════════════════════════════════════════════

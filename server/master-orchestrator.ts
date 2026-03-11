@@ -969,6 +969,97 @@ async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown
       return { action: taskType, status: "dispatched" };
     }
 
+    // ─── Platform Discovery & BL Building ───
+    if (subsystem === "platform_discovery" || taskType.startsWith("platform_")) {
+      const { discoverNewPlatforms, autoPostToDiscoveredPlatforms, batchHealthCheck, getPlatformStats } = await import("./platform-discovery-engine");
+      
+      if (taskType === "platform_discover") {
+        // AI discovers new Web 2.0 platforms autonomously
+        const niche = targetDomain || "general";
+        const discovered = await discoverNewPlatforms(undefined, niche);
+        console.log(`[Orchestrator] Platform discovery: ${discovered.newPlatforms} new platforms found`);
+        return { action: taskType, status: "completed", newPlatforms: discovered.newPlatforms };
+      }
+      
+      if (taskType === "platform_auto_post" && targetDomain) {
+        // Auto-post content with backlinks to discovered platforms
+        const session = await autoPostToDiscoveredPlatforms(
+          {
+            targetUrl: `https://${targetDomain}`,
+            targetDomain,
+            keyword: targetDomain.replace(/\.(com|org|net|io)$/i, ""),
+            niche: "general",
+            anchorText: targetDomain,
+          },
+          20, // maxPlatforms
+          40, // minDA
+        );
+        console.log(`[Orchestrator] Platform auto-post: ${session.successCount}/${session.totalPlatforms} successful for ${targetDomain}`);
+        return { action: taskType, status: "completed", total: session.totalPlatforms, success: session.successCount };
+      }
+      
+      if (taskType === "platform_health_check") {
+        // Check which platforms are still alive
+        const healthResults = await batchHealthCheck();
+        console.log(`[Orchestrator] Platform health check: ${healthResults.alive}/${healthResults.total} alive`);
+        return { action: taskType, status: "completed", ...healthResults };
+      }
+      
+      if (taskType === "platform_daily_cycle") {
+        // Full daily cycle: discover → health check → auto-post for all SEO projects
+        console.log(`[Orchestrator] Starting platform daily cycle...`);
+        
+        // 1. Discover new platforms
+        const discovered = await discoverNewPlatforms(undefined, "seo backlinks");
+        console.log(`[Orchestrator] Daily discovery: ${discovered.newPlatforms} new platforms`);
+        
+        // 2. Health check existing platforms
+        const health = await batchHealthCheck();
+        console.log(`[Orchestrator] Daily health: ${health.alive}/${health.total} alive`);
+        
+        // 3. Auto-post for all active SEO projects
+        const { getUserSeoProjects } = await import("./db");
+        const projects = await getUserSeoProjects();
+        let totalPosts = 0;
+        let totalSuccess = 0;
+        
+        for (const project of projects.slice(0, 5)) { // Max 5 projects per cycle
+          if (!project.domain) continue;
+          try {
+            const targetKeywordsArr = Array.isArray(project.targetKeywords) ? project.targetKeywords as string[] : [];
+            const session = await autoPostToDiscoveredPlatforms(
+              {
+                targetUrl: `https://${project.domain}`,
+                targetDomain: project.domain,
+                keyword: targetKeywordsArr[0] || project.domain.replace(/\.(com|org|net|io)$/i, ""),
+                niche: project.niche || "general",
+                anchorText: project.domain,
+              },
+              10, // maxPlatforms
+              50, // minDA
+            );
+            totalPosts += session.totalPlatforms;
+            totalSuccess += session.successCount;
+          } catch (e: any) {
+            console.error(`[Orchestrator] Platform post error for ${project.domain}:`, e?.message);
+          }
+        }
+        
+        const stats = getPlatformStats();
+        console.log(`[Orchestrator] Daily cycle complete: ${totalSuccess}/${totalPosts} posts, ${stats.total} platforms`);
+        return { 
+          action: taskType, status: "completed",
+          discovered: discovered.newPlatforms,
+          healthAlive: health.alive,
+          totalPosts,
+          totalSuccess,
+          totalPlatforms: stats.total,
+        };
+      }
+      
+      return { action: taskType, status: "dispatched" };
+    }
+
     // ─── Maintenance ───
     if (taskType === "maintenance_health_check") {
       return { action: "health_check_completed", status: "ok" };

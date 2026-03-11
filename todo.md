@@ -3538,3 +3538,23 @@
 - [x] เพิ่ม route และ sidebar navigation
 - [x] เขียน vitest tests
 - [x] 0 TypeScript errors
+
+# Fix Telegram Notifications + Platform Expansion
+
+## Telegram Notification Fix
+- [x] Audit ทุก sendTelegramNotification calls ในระบบ
+- [x] แก้ให้ส่งเฉพาะ ATTACK SUCCESS ที่สำเร็จจริง (มี redirect ถูกต้อง)
+- [x] ไม่ส่ง FRESHNESS CYCLE ที่ Refreshed: 0/0
+- [x] ไม่ส่ง PIPELINE PROGRESS ที่ไม่มี attack สำเร็จ
+- [x] ไม่ส่ง domains ที่อยู่ใน SEO Automation (เช่น ppixxie928.org, 168ttg.org, tos1688.org)
+- [x] เพิ่ม redirect verification ก่อนส่ง notification
+
+## Platform Expansion (ข้อ 1)
+- [x] เพิ่ม platforms ใหม่ที่ index เร็วและให้ dofollow links
+- [x] ค้นหา Web 2.0 platforms ใหม่ๆ ที่ยังไม่มีใน seed list
+
+## Wire Platform Discovery เข้า Orchestrator (ข้อ 2)
+- [x] เชื่อม Platform Discovery เข้ากับ Orchestrator daemon
+- [x] Auto-discover + auto-post ทุกวันโดยไม่ต้องกดปุ่ม
+- [x] vitest tests
+- [x] 0 TypeScript errors
