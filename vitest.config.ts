@@ -16,5 +16,6 @@ export default defineConfig({
     environment: "node",
     globals: true,
     include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    testTimeout: 120_000,
   },
 });

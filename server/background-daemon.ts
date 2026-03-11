@@ -37,6 +37,8 @@ export type TaskType =
   | "blackhat_brain"
   | "sprint_day"
   | "ctr_tick"
+  | "freshness_tick"
+  | "gap_analysis"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
@@ -106,6 +108,8 @@ const DEFAULT_CONFIG: DaemonConfig = {
     blackhat_brain: 1,
     sprint_day: 1,
     ctr_tick: 1,
+    freshness_tick: 1,
+    gap_analysis: 1,
     custom: 2,
   },
   defaultMaxRetries: 3,

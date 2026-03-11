@@ -82,6 +82,17 @@ import {
   generateLinkInsertionHtml,
   type ContentNode,
 } from "./internal-linking-ai";
+import {
+  trackContent,
+  runFreshnessCycle,
+  createDefaultFreshnessConfig,
+  calculateStaleness,
+  getStaleContent,
+} from "./content-freshness-engine";
+import {
+  runGapAnalysis,
+  createDefaultGapConfig,
+} from "./competitor-gap-analyzer";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -475,6 +486,59 @@ export async function executeSprintDay(sprintId: string, dayNumber?: number): Pr
       }
     } catch (err: any) {
       console.error(`[7DaySprint] Internal linking failed:`, err.message);
+    }
+  }
+
+  // ═══ PHASE 4.9: Content Freshness (Day 4+) ═══
+  if (day >= 4) {
+    console.log(`[7DaySprint] Phase 4.9: Content freshness check...`);
+    try {
+      // Track deployed parasite content for freshness monitoring
+      for (const dep of state.parasiteDeployments.slice(-20)) {
+        trackContent({
+          url: dep.url,
+          title: dep.title,
+          keyword: dep.keyword,
+          platform: "telegraph",
+          originalContent: dep.title, // simplified
+          domain: state.config.domain,
+        });
+      }
+
+      // Run freshness cycle on stale content
+      calculateStaleness();
+      const stale = getStaleContent(state.config.domain);
+      if (stale.length > 0) {
+        const freshnessConfig = createDefaultFreshnessConfig(state.config.domain, state.config.niche, state.config.language);
+        freshnessConfig.maxRefreshesPerCycle = Math.min(5, stale.length);
+        const cycle = await runFreshnessCycle(freshnessConfig);
+        console.log(`[7DaySprint] Freshness: refreshed ${cycle.refreshed} pages, ${cycle.totalWordsAdded} words added`);
+        report.adjustments.push(`Freshness: refreshed ${cycle.refreshed} stale pages`);
+      }
+    } catch (err: any) {
+      console.error(`[7DaySprint] Freshness cycle failed:`, err.message);
+    }
+  }
+
+  // ═══ PHASE 4.95: Competitor Gap Analysis (Day 3, 5, 7) ═══
+  if (day === 3 || day === 5 || day === 7) {
+    console.log(`[7DaySprint] Phase 4.95: Competitor gap analysis...`);
+    try {
+      const gapConfig = createDefaultGapConfig(
+        state.config.domain,
+        state.config.targetUrl,
+        state.config.seedKeywords,
+        state.config.niche,
+        state.config.language,
+      );
+      gapConfig.maxGapsToFill = day === 3 ? 5 : 3; // More aggressive on Day 3
+      gapConfig.minOpportunityScore = 60;
+
+      const gapAnalysis = await runGapAnalysis(gapConfig);
+      console.log(`[7DaySprint] Gaps: ${gapAnalysis.totalGaps} found, ${gapAnalysis.gapsFilled} filled, ${gapAnalysis.highOpportunityGaps} high-opp`);
+      report.adjustments.push(`Gap analysis: ${gapAnalysis.totalGaps} gaps, ${gapAnalysis.gapsFilled} filled`);
+    } catch (err: any) {
+      console.error(`[7DaySprint] Gap analysis failed:`, err.message);
     }
   }
 

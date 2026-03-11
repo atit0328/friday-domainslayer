@@ -69,7 +69,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -122,6 +122,14 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   ctr_engine: {
     enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  freshness_engine: {
+    enabled: true, intervalMs: 48 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  gap_analyzer: {
+    enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -725,6 +733,66 @@ async function executeCmsScanTask(task: DaemonTask, signal: AbortSignal): Promis
 /**
  * Sprint Day Executor — runs the next day of all active 7-day sprints
  */
+async function executeFreshnessTickTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { runFreshnessCycle, createDefaultFreshnessConfig } = await import("./content-freshness-engine");
+    const { getAllActiveSeoProjects: getSeoProjects } = await import("./db");
+    const projects = await getSeoProjects();
+    let totalRefreshed = 0;
+    let totalWordsAdded = 0;
+    for (const proj of projects.slice(0, 3)) {
+      try {
+        const config = createDefaultFreshnessConfig(proj.domain, proj.niche || "general", (proj as any).targetLanguage || "th");
+        config.maxRefreshesPerCycle = 5;
+        const cycle = await runFreshnessCycle(config);
+        totalRefreshed += cycle.refreshed;
+        totalWordsAdded += cycle.totalWordsAdded;
+      } catch (err: any) {
+        console.error(`[FreshnessTick] Failed for ${proj.domain}:`, err.message);
+      }
+    }
+    return {
+      success: true,
+      result: { projectsProcessed: projects.length, totalRefreshed, totalWordsAdded },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+async function executeGapAnalysisTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { runGapAnalysis, createDefaultGapConfig } = await import("./competitor-gap-analyzer");
+    const { getAllActiveSeoProjects } = await import("./db");
+    const projects = await getAllActiveSeoProjects();
+    let totalGaps = 0;
+    let totalFilled = 0;
+    for (const proj of projects.slice(0, 3)) {
+      try {
+        const config = createDefaultGapConfig(
+          proj.domain,
+          `https://${proj.domain}`,
+          (proj as any).seedKeywords || [],
+          proj.niche || "gambling",
+          (proj as any).targetLanguage || "th",
+        );
+        config.maxGapsToFill = 3;
+        const analysis = await runGapAnalysis(config);
+        totalGaps += analysis.totalGaps;
+        totalFilled += analysis.gapsFilled;
+      } catch (err: any) {
+        console.error(`[GapAnalysis] Failed for ${proj.domain}:`, err.message);
+      }
+    }
+    return {
+      success: true,
+      result: { projectsProcessed: projects.length, totalGaps, totalFilled },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeCtrTickTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { ctrOrchestratorTick } = await import("./ctr-manipulation-engine");
@@ -909,6 +977,8 @@ async function orchestratorTick() {
         blackhat_brain: "blackhat_brain",
         sprint_engine: "sprint_day",
         ctr_engine: "ctr_tick",
+        freshness_engine: "freshness_tick",
+        gap_analyzer: "gap_analysis",
       };
 
       const taskId = await enqueueTask({
@@ -966,6 +1036,8 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("blackhat_brain", executeBlackhatBrainTask);
   registerExecutor("sprint_day", executeSprintDayTask);
   registerExecutor("ctr_tick", executeCtrTickTask);
+  registerExecutor("freshness_tick", executeFreshnessTickTask);
+  registerExecutor("gap_analysis", executeGapAnalysisTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1315,6 +1387,40 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.enabled = false; },
     },
   ],
+  freshness_engine: [
+    {
+      name: "increase_freshness_interval",
+      description: "Increase freshness check interval to 72h",
+      apply: (_name, config) => { config.intervalMs = 72 * 60 * 60_000; },
+    },
+    {
+      name: "reduce_refresh_batch",
+      description: "Reduce refresh batch size",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 96 * 60 * 60_000); },
+    },
+    {
+      name: "pause_freshness",
+      description: "Pause freshness engine",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
+  gap_analyzer: [
+    {
+      name: "increase_gap_interval",
+      description: "Increase gap analysis interval to 48h",
+      apply: (_name, config) => { config.intervalMs = 48 * 60 * 60_000; },
+    },
+    {
+      name: "reduce_gap_scope",
+      description: "Reduce gap analysis scope",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 72 * 60 * 60_000); },
+    },
+    {
+      name: "pause_gap_analyzer",
+      description: "Pause gap analyzer",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
 };
 
 /**
@@ -1403,6 +1509,8 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
   blackhat_brain: "blackhat_brain",
   sprint_day: "sprint_engine",
   ctr_tick: "ctr_engine",
+  freshness_tick: "freshness_engine",
+  gap_analysis: "gap_analyzer",
 };
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts

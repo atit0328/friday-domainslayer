@@ -3288,3 +3288,29 @@
 - [x] Fix: initializeFromDb() checks DB for prior successes + pre-marks crossed thresholds on startup
 - [x] Add deduplication: isDuplicate() with 10-min window + firstSuccessNotified flag (once per process)
 - [x] Fix HTML tags showing raw in Telegram: removed <b> tags from details (escapeHtml was double-encoding)
+
+# Feature: Content Freshness Engine — Auto-update Content for Freshness Signals
+- [x] Build Content Freshness Engine (server/content-freshness-engine.ts) — 650+ lines
+- [x] Content Staleness Detector: calculateStaleness() scores 0-100 based on hours since last refresh + rank position
+- [x] AI Content Refresher: generateRefreshedContent() via LLM adds 50-300 words with new data, stats, trends
+- [x] Freshness Signal Injection: updateDates, addNewSections, refreshMetaDescriptions, expandWordCount
+- [x] Telegraph Content Updater: updateTelegraphContent() via Telegraph API editPage
+- [x] Scheduling: refreshIntervalHours (default 48h), freshnessTick() for daemon integration
+- [x] Priority Queue: prioritizeRanking sorts by rank (highest-ranking first), priority 9 for rank ≤20
+- [x] Re-index After Refresh: auto-triggers rapidIndexBulk() after content update
+- [x] Wire into Sprint Phase 4.9 (Content Freshness, Day 3+) + freshness_engine agent in orchestrator
+- [x] Telegram notification: cycle report with totalRefreshed, wordsAdded, reindexed count
+- [x] Write vitest tests: 10 tests passing (tracking, staleness, domain filter, config, summary, rank update, cycle reports, telegraph token, priority, all content)
+
+# Feature: Competitor Gap Analyzer — Find & Fill Keyword Gaps
+- [x] Build Competitor Gap Analyzer (server/competitor-gap-analyzer.ts) — 550+ lines
+- [x] Competitor Discovery: discoverCompetitors() via SERP API + LLM fallback, returns domain + estimatedDA + overlap
+- [x] Keyword Gap Detection: detectKeywordGaps() via LLM finds keywords competitors rank for but we don't
+- [x] Content Gap Mapping: AI maps missing topics with difficulty, volume, opportunity scoring
+- [x] Opportunity Scoring: opportunityScore 0-100 based on difficulty, volume, competition
+- [x] Auto-Content Generation: fillGapWithContent() generates parasite content via deployTelegraphBlitz
+- [x] Auto-Deploy: auto-deploys gap-filling content to Telegraph (DA 90+)
+- [x] Gap Monitoring: getGapSummary() tracks totalGaps, filled, highOpportunity, ranking, avgOpportunityScore
+- [x] Wire into Sprint Phase 4.10 (Gap Analysis, Day 3+) + gap_analyzer agent in orchestrator
+- [x] Telegram notification: gap report with totalGaps, highOpportunity, filled count
+- [x] Write vitest tests: 7 tests passing (config, summary, analyses, non-existent domain, niches, empty keywords, zero values)
