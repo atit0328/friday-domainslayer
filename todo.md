@@ -3422,3 +3422,6 @@
 - [x] Wire trackContent() เข้า parasite-seo-blitz.ts (deployTelegraphBlitz + deployToTelegraph with token/path)
 - [x] Fix seven-day-sprint.ts ให้ await async trackContent/calculateStaleness/getStaleContent
 - [x] Write vitest tests: 14/14 tests passing (trackContent, getTrackedContent, getStaleContent, calculateStaleness, updateContentRank, getFreshnessSummary, freshnessTick, refreshContent, createDefaultFreshnessConfig)
+
+# Feature: แสดง Focus Keywords ในหน้า SEO Command Center
+- [x] เพิ่มช่อง Focus Keywords ในแต่ละ project card ให้เห็น keywords หลักที่โฟกัสอยู่ (sorted by length, max 6 displayed, truncated, +N more)

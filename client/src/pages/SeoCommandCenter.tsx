@@ -594,6 +594,37 @@ export default function SeoCommandCenter() {
                         </div>
                       </div>
                     </div>
+                    {/* Focus Keywords */}
+                    {(() => {
+                      const kws = (project.targetKeywords as string[] | null);
+                      if (!kws || kws.length === 0) return null;
+                      // Sort: short keywords first (likely actual focus keywords), long strings (article titles) last
+                      const sorted = [...kws].sort((a, b) => a.length - b.length);
+                      const MAX_DISPLAY = 6;
+                      const displayed = sorted.slice(0, MAX_DISPLAY);
+                      const remaining = sorted.length - MAX_DISPLAY;
+                      return (
+                        <div className="flex items-start gap-2 mt-1.5 ml-[52px]">
+                          <Target className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                          <div className="flex flex-wrap gap-1">
+                            {displayed.map((kw, i) => (
+                              <span
+                                key={i}
+                                title={kw}
+                                className="inline-block px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20 text-[10px] font-medium max-w-[200px] truncate"
+                              >
+                                {kw}
+                              </span>
+                            ))}
+                            {remaining > 0 && (
+                              <span className="inline-block px-2 py-0.5 rounded-md bg-zinc-500/10 text-zinc-400 border border-zinc-500/20 text-[10px] font-medium">
+                                +{remaining} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Metrics Grid — always 3 cols min (compact 3x2 on mobile, 6 cols on md+) */}
