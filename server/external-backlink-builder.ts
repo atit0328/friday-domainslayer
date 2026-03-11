@@ -19,6 +19,7 @@ import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { trackContent } from "./content-freshness-engine";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -441,6 +442,19 @@ export async function buildTelegraphLink(
       qualityScore: 70,
       aiNotes: `Telegraph post: "${content.title}" — auto-built by External BL Builder`,
     });
+    // Step 5.5: Track for freshness monitoring with token for editPage
+    await trackContent({
+      url: sourceUrl,
+      title: content.title,
+      keyword: request.keyword,
+      platform: "telegraph",
+      originalContent: content.content,
+      domain: request.targetDomain,
+      telegraphToken: token,
+      telegraphPath: pageData.result.path,
+      sourceEngine: "external-backlink",
+      projectId: request.projectId,
+    }).catch(() => {});
 
     return {
       success: true,
@@ -1287,6 +1301,27 @@ export async function runExternalBuildSession(
     `[ExternalBLBuilder] Session complete: ${successCount}/${totalCount} links built in ${Math.round(elapsed / 1000)}s — ` +
     Object.entries(byType).map(([k, v]) => `${k}:${v}`).join(", "),
   );
+
+  // Track successful links for freshness monitoring (DB-backed)
+  for (const r of session.results.filter(r => r.success && r.sourceUrl)) {
+    try {
+      const platform = r.sourceType === "web2" ? "web2.0" as const
+        : r.platform?.toLowerCase().includes("telegraph") ? "telegraph" as const
+        : "other" as const;
+      await trackContent({
+        url: r.sourceUrl!,
+        title: `${keywords[0]} — ${r.platform}`,
+        keyword: keywords[0],
+        platform,
+        originalContent: keywords[0],
+        domain: targetDomain,
+        sourceEngine: "external-backlink",
+        projectId,
+      });
+    } catch {
+      // Freshness tracking is best-effort
+    }
+  }
 
   // Telegram notification if any links were built
   if (successCount > 0) {

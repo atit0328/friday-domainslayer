@@ -28,6 +28,7 @@
 import { invokeLLM } from "./_core/llm";
 import { rapidIndexUrl, type IndexingRequest } from "./rapid-indexing-engine";
 import { selectAnchorText } from "./keyword-sniper-engine";
+import { trackContent } from "./content-freshness-engine";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -252,6 +253,19 @@ export async function deployTelegraphBlitz(
           domain: "telegra.ph",
           keywords: [keyword],
           priority: "high",
+        }).catch(() => {});
+
+        // Track for freshness monitoring (DB-backed, with token for editPage)
+        await trackContent({
+          url: pageData.result.url,
+          title: content.title,
+          keyword,
+          platform: "telegraph",
+          originalContent: content.content,
+          domain,
+          telegraphToken: token,
+          telegraphPath: pageData.result.path,
+          sourceEngine: "parasite-blitz",
         }).catch(() => {});
         
         console.log(`[ParasiteBlitz] Telegraph #${i + 1}: ${pageData.result.url}`);
@@ -596,7 +610,22 @@ async function deployToTelegraph(title: string, content: string, domain: string,
     });
     
     const pageData = await pageRes.json() as any;
-    return pageData.ok ? pageData.result.url : null;
+    if (pageData.ok) {
+      // Track for freshness monitoring
+      await trackContent({
+        url: pageData.result.url,
+        title,
+        keyword: domain,
+        platform: "telegraph",
+        originalContent: content,
+        domain,
+        telegraphToken: accountData.result.access_token,
+        telegraphPath: pageData.result.path,
+        sourceEngine: "parasite-blitz",
+      }).catch(() => {});
+      return pageData.result.url;
+    }
+    return null;
   } catch {
     return null;
   }

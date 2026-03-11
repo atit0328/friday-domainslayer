@@ -3411,3 +3411,14 @@
 - [x] tRPC endpoint: getAuthPlatforms สำหรับดูสถานะ configured/not configured
 - [x] เพิ่ม env vars: MEDIUM_TOKEN, BLOGGER_API_KEY, BLOGGER_BLOG_ID, WPCOM_TOKEN, WPCOM_SITE_ID
 - [x] Write vitest tests: 20/20 tests passing (platform config, auth status, DA values, post without creds, persistence stats, integration)
+
+# Bug Fix: SEO Automation Freshness Cycle ไม่ทำงาน (0/0 ทุกอย่าง)
+- [x] วิเคราะห์ Freshness Cycle code: ทำไม Refreshed 0/0, Words added 0, Sections added 0, Re-indexed 0
+- [x] หาสาเหตุ: in-memory Map หายเมื่อ restart + ไม่มีการ wire trackContent() เข้า distributor/backlink-builder/parasite-blitz
+- [x] สร้าง tracked_content DB table (drizzle/schema.ts) + DB helpers (upsertTrackedContent, getAllTrackedContent, getStaleTrackedContent, updateTrackedContentStaleness, updateTrackedContentAfterRefresh, updateTrackedContentRank, getTrackedContentCount, getTrackedContentById)
+- [x] Rewrite content-freshness-engine.ts ให้ใช้ DB-backed storage แทน in-memory Map
+- [x] Wire trackContent() เข้า multi-platform-distributor.ts (หลัง Tier 1 post สำเร็จ)
+- [x] Wire trackContent() เข้า external-backlink-builder.ts (หลัง build link สำเร็จ + buildTelegraphLink with token/path)
+- [x] Wire trackContent() เข้า parasite-seo-blitz.ts (deployTelegraphBlitz + deployToTelegraph with token/path)
+- [x] Fix seven-day-sprint.ts ให้ await async trackContent/calculateStaleness/getStaleContent
+- [x] Write vitest tests: 14/14 tests passing (trackContent, getTrackedContent, getStaleContent, calculateStaleness, updateContentRank, getFreshnessSummary, freshnessTick, refreshContent, createDefaultFreshnessConfig)

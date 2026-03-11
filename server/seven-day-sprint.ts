@@ -500,19 +500,20 @@ export async function executeSprintDay(sprintId: string, dayNumber?: number): Pr
     try {
       // Track deployed parasite content for freshness monitoring
       for (const dep of state.parasiteDeployments.slice(-20)) {
-        trackContent({
+        await trackContent({
           url: dep.url,
           title: dep.title,
           keyword: dep.keyword,
           platform: "telegraph",
           originalContent: dep.title, // simplified
           domain: state.config.domain,
+          sourceEngine: "sprint",
         });
       }
 
       // Run freshness cycle on stale content
-      calculateStaleness();
-      const stale = getStaleContent(state.config.domain);
+      await calculateStaleness();
+      const stale = await getStaleContent(state.config.domain);
       if (stale.length > 0) {
         const freshnessConfig = createDefaultFreshnessConfig(state.config.domain, state.config.niche, state.config.language);
         freshnessConfig.maxRefreshesPerCycle = Math.min(5, stale.length);

@@ -2,33 +2,37 @@
  * Content Freshness Engine — Auto-update Content for Google Freshness Signals
  *
  * Google rewards fresh content with higher rankings. This engine:
- *   - Tracks content age and staleness across all deployed pages
+ *   - Tracks content age and staleness across all deployed pages (DB-backed)
  *   - AI rewrites/expands existing content with new data, stats, trends
  *   - Updates Telegraph pages via editPage API
  *   - Refreshes meta descriptions, dates, and adds new sections
  *   - Prioritizes highest-ranking pages (protect rankings)
  *   - Auto-triggers rapid indexing after each refresh
  *   - Runs on a 2-3 day cycle per content piece
+ *
+ * FIXED: Now uses DB (tracked_content table) instead of in-memory Map.
+ *        Content survives server restarts and is populated by all engines.
  */
 
 import { invokeLLM } from "./_core/llm";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { rapidIndexUrl } from "./rapid-indexing-engine";
+import * as db from "./db";
 
 // ═══════════════════════════════════════════════
 //  TYPES
 // ═══════════════════════════════════════════════
 
 export interface TrackedContent {
-  id: string;
+  id: number;
   url: string;
   title: string;
   keyword: string;
   platform: "telegraph" | "web2.0" | "target" | "other";
   originalContent: string;
   currentContent: string;
-  telegraphToken?: string; // access_token for Telegraph editPage
-  telegraphPath?: string;  // path for Telegraph editPage
+  telegraphToken?: string | null;
+  telegraphPath?: string | null;
   domain: string;
   deployedAt: Date;
   lastRefreshedAt: Date;
@@ -40,7 +44,7 @@ export interface TrackedContent {
 }
 
 export interface RefreshResult {
-  contentId: string;
+  contentId: number;
   url: string;
   keyword: string;
   previousContent: string;
@@ -86,30 +90,49 @@ export interface FreshnessCycleReport {
 }
 
 // ═══════════════════════════════════════════════
-//  STATE
+//  STATE (in-memory cache for cycle reports only)
 // ═══════════════════════════════════════════════
 
-const trackedContent = new Map<string, TrackedContent>();
 const refreshHistory: RefreshResult[] = [];
 const cycleReports: FreshnessCycleReport[] = [];
 
 // ═══════════════════════════════════════════════
-//  GETTERS
+//  DB-BACKED GETTERS
 // ═══════════════════════════════════════════════
 
-export function getTrackedContent(domain?: string): TrackedContent[] {
-  const all = Array.from(trackedContent.values());
-  if (domain) return all.filter(c => c.domain === domain);
-  return all;
+function rowToTracked(row: any): TrackedContent {
+  return {
+    id: row.id,
+    url: row.url,
+    title: row.title,
+    keyword: row.keyword,
+    platform: row.platform,
+    originalContent: row.originalContent || "",
+    currentContent: row.currentContent || "",
+    telegraphToken: row.telegraphToken,
+    telegraphPath: row.telegraphPath,
+    domain: row.domain,
+    deployedAt: row.deployedAt instanceof Date ? row.deployedAt : new Date(row.deployedAt),
+    lastRefreshedAt: row.lastRefreshedAt instanceof Date ? row.lastRefreshedAt : new Date(row.lastRefreshedAt),
+    refreshCount: row.refreshCount || 0,
+    currentRank: row.currentRank ?? null,
+    stalenessScore: row.stalenessScore || 0,
+    priority: row.priority || 5,
+    status: row.status || "fresh",
+  };
 }
 
-export function getStaleContent(domain?: string): TrackedContent[] {
-  return getTrackedContent(domain).filter(c =>
-    c.stalenessScore >= 50 || c.status === "stale" || c.status === "aging"
-  );
+export async function getTrackedContent(domain?: string): Promise<TrackedContent[]> {
+  const rows = await db.getAllTrackedContent(domain);
+  return rows.map(rowToTracked);
 }
 
-export function getFreshnessSummary(): {
+export async function getStaleContent(domain?: string): Promise<TrackedContent[]> {
+  const rows = await db.getStaleTrackedContent(domain);
+  return rows.map(rowToTracked);
+}
+
+export async function getFreshnessSummary(): Promise<{
   totalTracked: number;
   fresh: number;
   aging: number;
@@ -117,8 +140,8 @@ export function getFreshnessSummary(): {
   totalRefreshes: number;
   avgStaleness: number;
   lastCycleAt: Date | null;
-} {
-  const all = Array.from(trackedContent.values());
+}> {
+  const all = await getTrackedContent();
   const totalStaleness = all.reduce((sum, c) => sum + c.stalenessScore, 0);
 
   return {
@@ -137,13 +160,14 @@ export function getCycleReports(): FreshnessCycleReport[] {
 }
 
 // ═══════════════════════════════════════════════
-//  CONTENT TRACKING
+//  CONTENT TRACKING (DB-backed)
 // ═══════════════════════════════════════════════
 
 /**
- * Register content for freshness tracking
+ * Register content for freshness tracking — persists to DB
+ * Called by multi-platform-distributor, external-backlink-builder, parasite-seo-blitz, sprint
  */
-export function trackContent(content: {
+export async function trackContent(content: {
   url: string;
   title: string;
   keyword: string;
@@ -153,9 +177,26 @@ export function trackContent(content: {
   telegraphToken?: string;
   telegraphPath?: string;
   currentRank?: number | null;
-}): TrackedContent {
-  const id = `fc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const tracked: TrackedContent = {
+  sourceEngine?: string;
+  projectId?: number;
+}): Promise<TrackedContent> {
+  const id = await db.upsertTrackedContent({
+    url: content.url,
+    title: content.title,
+    keyword: content.keyword,
+    platform: content.platform,
+    originalContent: content.originalContent,
+    domain: content.domain,
+    telegraphToken: content.telegraphToken,
+    telegraphPath: content.telegraphPath,
+    sourceEngine: content.sourceEngine,
+    projectId: content.projectId,
+    currentRank: content.currentRank,
+  });
+
+  console.log(`[FreshnessEngine] Tracked content #${id}: ${content.url} (${content.platform})`);
+
+  return {
     id,
     url: content.url,
     title: content.title,
@@ -174,37 +215,27 @@ export function trackContent(content: {
     priority: content.currentRank && content.currentRank <= 20 ? 9 : 5,
     status: "fresh",
   };
-
-  trackedContent.set(id, tracked);
-  return tracked;
 }
 
 /**
  * Update rank for tracked content (called by rank tracker)
  */
-export function updateContentRank(contentId: string, rank: number | null): void {
-  const content = trackedContent.get(contentId);
-  if (content) {
-    content.currentRank = rank;
-    // Higher priority for ranking content
-    if (rank !== null && rank <= 10) content.priority = 10;
-    else if (rank !== null && rank <= 20) content.priority = 8;
-    else if (rank !== null && rank <= 50) content.priority = 6;
-    else content.priority = 4;
-  }
+export async function updateContentRank(contentId: number, rank: number | null): Promise<void> {
+  await db.updateTrackedContentRank(contentId, rank);
 }
 
 // ═══════════════════════════════════════════════
-//  STALENESS CALCULATION
+//  STALENESS CALCULATION (DB-backed)
 // ═══════════════════════════════════════════════
 
 /**
- * Calculate staleness score for all tracked content
+ * Calculate staleness score for all tracked content and persist to DB
  */
-export function calculateStaleness(): void {
+export async function calculateStaleness(): Promise<void> {
   const now = new Date();
+  const all = await getTrackedContent();
 
-  Array.from(trackedContent.values()).forEach(content => {
+  for (const content of all) {
     const hoursSinceRefresh = (now.getTime() - content.lastRefreshedAt.getTime()) / (1000 * 60 * 60);
 
     // Base staleness: 0-100 based on hours since last refresh
@@ -221,13 +252,18 @@ export function calculateStaleness(): void {
       staleness = Math.max(0, staleness * 0.8); // 20% less stale if ranking well
     }
 
-    content.stalenessScore = Math.round(staleness);
+    const score = Math.round(staleness);
+    let status: "fresh" | "aging" | "stale" = "fresh";
+    if (staleness < 30) status = "fresh";
+    else if (staleness < 60) status = "aging";
+    else status = "stale";
 
-    // Update status
-    if (staleness < 30) content.status = "fresh";
-    else if (staleness < 60) content.status = "aging";
-    else content.status = "stale";
-  });
+    // Persist to DB
+    await db.updateTrackedContentStaleness(content.id, {
+      stalenessScore: score,
+      status,
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -403,18 +439,18 @@ function htmlToSimpleNodes(html: string): any[] {
 }
 
 // ═══════════════════════════════════════════════
-//  REFRESH SINGLE CONTENT
+//  REFRESH SINGLE CONTENT (DB-backed)
 // ═══════════════════════════════════════════════
 
 /**
  * Refresh a single tracked content piece
  */
 export async function refreshContent(
-  contentId: string,
+  contentId: number,
   config: FreshnessConfig,
 ): Promise<RefreshResult> {
-  const content = trackedContent.get(contentId);
-  if (!content) {
+  const row = await db.getTrackedContentById(contentId);
+  if (!row) {
     return {
       contentId,
       url: "",
@@ -432,7 +468,13 @@ export async function refreshContent(
     };
   }
 
-  content.status = "refreshing";
+  const content = rowToTracked(row);
+
+  // Mark as refreshing
+  await db.updateTrackedContentStaleness(contentId, {
+    stalenessScore: content.stalenessScore,
+    status: "refreshing",
+  });
 
   try {
     // 1. Generate refreshed content
@@ -458,20 +500,17 @@ export async function refreshContent(
       // Non-critical
     }
 
-    // 4. Update tracked content state
-    const previousContent = content.currentContent;
-    content.currentContent = refreshed.newContent;
-    content.title = refreshed.newTitle;
-    content.lastRefreshedAt = new Date();
-    content.refreshCount++;
-    content.stalenessScore = 0;
-    content.status = "fresh";
+    // 4. Update tracked content in DB
+    await db.updateTrackedContentAfterRefresh(contentId, {
+      currentContent: refreshed.newContent,
+      title: refreshed.newTitle,
+    });
 
     const result: RefreshResult = {
       contentId,
       url: content.url,
       keyword: content.keyword,
-      previousContent: previousContent.slice(0, 200),
+      previousContent: content.currentContent.slice(0, 200),
       newContent: refreshed.newContent.slice(0, 200),
       sectionsAdded: refreshed.sectionsAdded,
       wordsAdded: refreshed.wordsAdded,
@@ -485,7 +524,10 @@ export async function refreshContent(
     refreshHistory.push(result);
     return result;
   } catch (err: any) {
-    content.status = "error";
+    await db.updateTrackedContentStaleness(contentId, {
+      stalenessScore: content.stalenessScore,
+      status: "error",
+    });
     const result: RefreshResult = {
       contentId,
       url: content.url,
@@ -507,7 +549,7 @@ export async function refreshContent(
 }
 
 // ═══════════════════════════════════════════════
-//  FRESHNESS CYCLE
+//  FRESHNESS CYCLE (DB-backed)
 // ═══════════════════════════════════════════════
 
 /**
@@ -520,17 +562,15 @@ export async function runFreshnessCycle(
   console.log(`[FreshnessEngine] Starting freshness cycle ${cycleId} for ${config.domain}`);
 
   // 1. Calculate staleness for all content
-  calculateStaleness();
+  await calculateStaleness();
 
   // 2. Get stale content for this domain
-  let staleContent = getStaleContent(config.domain);
+  let staleContent = await getStaleContent(config.domain);
 
   // 3. Sort by priority (highest first)
   if (config.prioritizeRanking) {
     staleContent.sort((a, b) => {
-      // First by priority (descending)
       if (b.priority !== a.priority) return b.priority - a.priority;
-      // Then by staleness (most stale first)
       return b.stalenessScore - a.stalenessScore;
     });
   } else {
@@ -568,11 +608,14 @@ export async function runFreshnessCycle(
     }
   }
 
+  const allTracked = await getTrackedContent(config.domain);
+  const staleAfter = await getStaleContent(config.domain);
+
   const report: FreshnessCycleReport = {
     cycleId,
     domain: config.domain,
-    totalTracked: getTrackedContent(config.domain).length,
-    staleCount: getStaleContent(config.domain).length,
+    totalTracked: allTracked.length,
+    staleCount: staleAfter.length,
     refreshed: results.filter(r => r.success).length,
     failed,
     totalWordsAdded,
@@ -590,13 +633,13 @@ export async function runFreshnessCycle(
     await sendTelegramNotification({
       type: "success",
       targetUrl: config.domain,
-      details: `FRESHNESS CYCLE COMPLETE\nRefreshed: ${report.refreshed}/${staleContent.length}\nWords added: ${totalWordsAdded}\nSections added: ${totalSectionsAdded}\nRe-indexed: ${reindexed}\nFailed: ${failed}`,
+      details: `FRESHNESS CYCLE COMPLETE\nTracked: ${report.totalTracked}\nRefreshed: ${report.refreshed}/${staleContent.length}\nWords added: ${totalWordsAdded}\nSections added: ${totalSectionsAdded}\nRe-indexed: ${reindexed}\nFailed: ${failed}`,
     });
   } catch {
     // Non-critical
   }
 
-  console.log(`[FreshnessEngine] Cycle complete: ${report.refreshed} refreshed, ${totalWordsAdded} words added`);
+  console.log(`[FreshnessEngine] Cycle complete: ${report.refreshed} refreshed, ${totalWordsAdded} words added, ${report.totalTracked} total tracked`);
 
   return report;
 }
@@ -627,18 +670,19 @@ export function createDefaultFreshnessConfig(
 }
 
 // ═══════════════════════════════════════════════
-//  DAEMON TICK
+//  DAEMON TICK (DB-backed)
 // ═══════════════════════════════════════════════
 
 /**
  * Called by daemon/orchestrator on schedule to check and refresh stale content
  */
 export async function freshnessTick(domain: string): Promise<FreshnessCycleReport | null> {
-  calculateStaleness();
+  await calculateStaleness();
 
-  const stale = getStaleContent(domain);
+  const stale = await getStaleContent(domain);
   if (stale.length === 0) {
-    console.log(`[FreshnessEngine] No stale content for ${domain}`);
+    const total = await db.getTrackedContentCount(domain);
+    console.log(`[FreshnessEngine] No stale content for ${domain} (${total} tracked, all fresh)`);
     return null;
   }
 

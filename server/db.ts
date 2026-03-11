@@ -11,6 +11,7 @@ import {
   aiAttackHistory, InsertAiAttackHistory,
   seoAgentTasks, InsertSEOAgentTask,
   seoContent, InsertSEOContent,
+  trackedContent, InsertTrackedContent,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -1024,4 +1025,154 @@ export async function getUserScopesSeoProjects(userId: number, isAdmin: boolean)
   return db.select().from(seoProjects)
     .where(eq(seoProjects.userId, userId))
     .orderBy(desc(seoProjects.updatedAt));
+}
+
+// ═══════════════════════════════════════════════
+// Tracked Content — DB-backed freshness tracking
+// ═══════════════════════════════════════════════
+
+import crypto from "crypto";
+
+function contentKey(url: string): string {
+  return crypto.createHash("md5").update(url).digest("hex");
+}
+
+export async function upsertTrackedContent(data: {
+  url: string;
+  title: string;
+  keyword: string;
+  platform: "telegraph" | "web2.0" | "target" | "other";
+  originalContent?: string;
+  domain: string;
+  telegraphToken?: string;
+  telegraphPath?: string;
+  sourceEngine?: string;
+  projectId?: number;
+  currentRank?: number | null;
+}): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const key = contentKey(data.url);
+
+  // Check if already exists
+  const existing = await db.select({ id: trackedContent.id })
+    .from(trackedContent)
+    .where(eq(trackedContent.contentKey, key))
+    .limit(1);
+
+  if (existing.length > 0) {
+    // Update last refreshed
+    await db.update(trackedContent)
+      .set({ lastRefreshedAt: new Date(), updatedAt: new Date() })
+      .where(eq(trackedContent.id, existing[0].id));
+    return existing[0].id;
+  }
+
+  const [result] = await db.insert(trackedContent).values({
+    contentKey: key,
+    url: data.url,
+    title: data.title,
+    keyword: data.keyword,
+    platform: data.platform,
+    originalContent: data.originalContent || data.title,
+    currentContent: data.originalContent || data.title,
+    telegraphToken: data.telegraphToken || null,
+    telegraphPath: data.telegraphPath || null,
+    domain: data.domain,
+    sourceEngine: data.sourceEngine || null,
+    projectId: data.projectId || null,
+    currentRank: data.currentRank ?? null,
+    stalenessScore: 0,
+    priority: (data.currentRank && data.currentRank <= 20) ? 9 : 5,
+    status: "fresh",
+  }).$returningId();
+  return result.id;
+}
+
+export async function getAllTrackedContent(domain?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  if (domain) {
+    return db.select().from(trackedContent)
+      .where(eq(trackedContent.domain, domain))
+      .orderBy(desc(trackedContent.deployedAt));
+  }
+  return db.select().from(trackedContent)
+    .orderBy(desc(trackedContent.deployedAt));
+}
+
+export async function getStaleTrackedContent(domain?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [
+    or(
+      gte(trackedContent.stalenessScore, 50),
+      eq(trackedContent.status, "stale"),
+      eq(trackedContent.status, "aging"),
+    ),
+  ];
+  if (domain) conditions.push(eq(trackedContent.domain, domain));
+  return db.select().from(trackedContent)
+    .where(and(...conditions))
+    .orderBy(desc(trackedContent.priority), desc(trackedContent.stalenessScore));
+}
+
+export async function updateTrackedContentStaleness(id: number, data: {
+  stalenessScore: number;
+  status: "fresh" | "aging" | "stale" | "refreshing" | "error";
+  priority?: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(trackedContent).set({
+    stalenessScore: data.stalenessScore,
+    status: data.status,
+    priority: data.priority,
+  }).where(eq(trackedContent.id, id));
+}
+
+export async function updateTrackedContentAfterRefresh(id: number, data: {
+  currentContent: string;
+  title: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(trackedContent).set({
+    currentContent: data.currentContent,
+    title: data.title,
+    lastRefreshedAt: new Date(),
+    refreshCount: sql`${trackedContent.refreshCount} + 1`,
+    stalenessScore: 0,
+    status: "fresh",
+  }).where(eq(trackedContent.id, id));
+}
+
+export async function updateTrackedContentRank(id: number, rank: number | null) {
+  const db = await getDb();
+  if (!db) return;
+  let priority = 4;
+  if (rank !== null && rank <= 10) priority = 10;
+  else if (rank !== null && rank <= 20) priority = 8;
+  else if (rank !== null && rank <= 50) priority = 6;
+  await db.update(trackedContent).set({
+    currentRank: rank,
+    priority,
+  }).where(eq(trackedContent.id, id));
+}
+
+export async function getTrackedContentCount(domain?: string): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const conditions = domain ? [eq(trackedContent.domain, domain)] : [];
+  const [result] = await db.select({ count: sql<number>`count(*)` })
+    .from(trackedContent)
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+  return result?.count || 0;
+}
+
+export async function getTrackedContentById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(trackedContent).where(eq(trackedContent.id, id)).limit(1);
+  return rows[0] || null;
 }

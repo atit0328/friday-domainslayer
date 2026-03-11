@@ -35,6 +35,7 @@ import { fetchWithPoolProxy } from "./proxy-pool";
 import { rapidIndexUrl, type IndexingRequest } from "./rapid-indexing-engine";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { getConfiguredAuthPlatforms } from "./web2-authenticated-platforms";
+import { trackContent } from "./content-freshness-engine";
 import * as db from "./db";
 import crypto from "crypto";
 
@@ -800,6 +801,28 @@ export async function distributeToAllPlatforms(
             });
           } catch {
             // DB logging is best-effort
+          }
+        }
+
+        // Track content for freshness monitoring (DB-backed)
+        if (result.publishedUrl) {
+          try {
+            const platformName = result.platform.toLowerCase();
+            const platform = platformName.includes("telegraph") ? "telegraph" as const
+              : (platformName.includes("medium") || platformName.includes("blogger") || platformName.includes("wordpress")) ? "web2.0" as const
+              : "other" as const;
+            await trackContent({
+              url: result.publishedUrl,
+              title: `${target.keyword} — ${result.platform}`,
+              keyword: target.keyword,
+              platform,
+              originalContent: target.keyword,
+              domain: target.targetDomain,
+              sourceEngine: "multi-platform",
+              projectId: target.projectId,
+            });
+          } catch {
+            // Freshness tracking is best-effort
           }
         }
       } else {

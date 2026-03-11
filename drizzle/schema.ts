@@ -1781,3 +1781,36 @@ export const keywordPerformance = mysqlTable("keyword_performance", {
 });
 export type KeywordPerformance = typeof keywordPerformance.$inferSelect;
 export type InsertKeywordPerformance = typeof keywordPerformance.$inferInsert;
+
+
+// ═══════════════════════════════════════════════════════
+// Tracked Content — DB-backed freshness tracking for SEO content
+// Persists across server restarts (replaces in-memory Map)
+// ═══════════════════════════════════════════════════════
+export const trackedContent = mysqlTable("tracked_content", {
+  id: int("id").autoincrement().primaryKey(),
+  contentKey: varchar("contentKey", { length: 128 }).notNull().unique(), // unique key for dedup (hash of url)
+  url: text("url").notNull(),
+  title: varchar("title", { length: 500 }).notNull(),
+  keyword: varchar("keyword", { length: 500 }).notNull(),
+  platform: mysqlEnum("tcPlatform", ["telegraph", "web2.0", "target", "other"]).default("other").notNull(),
+  originalContent: text("originalContent"),
+  currentContent: text("currentContent"),
+  telegraphToken: varchar("telegraphToken", { length: 255 }),
+  telegraphPath: varchar("telegraphPath", { length: 255 }),
+  domain: varchar("tcDomain", { length: 512 }).notNull(),
+  deployedAt: timestamp("tcDeployedAt").defaultNow().notNull(),
+  lastRefreshedAt: timestamp("tcLastRefreshedAt").defaultNow().notNull(),
+  refreshCount: int("tcRefreshCount").default(0).notNull(),
+  currentRank: int("tcCurrentRank"),
+  stalenessScore: int("tcStalenessScore").default(0).notNull(),
+  priority: int("tcPriority").default(5).notNull(),
+  status: mysqlEnum("tcStatus", ["fresh", "aging", "stale", "refreshing", "error"]).default("fresh").notNull(),
+  // Source tracking
+  sourceEngine: varchar("tcSourceEngine", { length: 64 }), // "multi-platform", "external-backlink", "parasite-blitz", "sprint"
+  projectId: int("tcProjectId"),
+  createdAt: timestamp("tcCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("tcUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type TrackedContentRow = typeof trackedContent.$inferSelect;
+export type InsertTrackedContent = typeof trackedContent.$inferInsert;
