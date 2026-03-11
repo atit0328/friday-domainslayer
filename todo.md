@@ -3252,3 +3252,39 @@
 - [x] Batch trigger: triggerSprintsForExistingProjects() for retroactive sprint on existing projects
 - [x] Configuration: eligible strategies, min keywords, aggressiveness mapping, CTR platforms
 - [x] Write vitest tests: included in 24 tests (config management, status tracking, trigger logic, aggressiveness mapping)
+
+# Feature: Schema Markup Injector — Auto-inject Structured Data for Rich Snippets
+- [x] Build Schema Markup Injector engine (server/schema-markup-injector.ts)
+- [x] FAQ Schema: AI generates Q&A pairs from content + injects FAQPage schema
+- [x] HowTo Schema: AI detects step-by-step content + generates HowTo schema
+- [x] Article Schema: auto-generate Article/NewsArticle schema for all deployed content
+- [x] BreadcrumbList Schema: auto-generate breadcrumb navigation schema
+- [x] Organization Schema: inject brand/organization entity data
+- [x] LocalBusiness Schema: for gambling/entertainment niche with geo-targeting
+- [x] Sitelinks Search Box: generate SearchAction schema for branded search
+- [x] WebPage Schema: auto-generate WebPage schema with keywords + dateModified
+- [x] Validation: validateSchema() checks required fields per schema type
+- [x] schemasToHtml() + injectSchemasIntoHtml() for automatic HTML injection
+- [x] Wire into Sprint as Phase 4.7 (Schema Markup Injection)
+- [x] Write vitest tests: 11 tests passing (Article, Breadcrumb, Organization, SearchAction, WebPage, LocalBusiness, HTML injection, validation, config, summary)
+
+# Feature: Internal Linking AI — Topical Authority via AI-driven Link Structure
+- [x] Build Internal Linking AI engine (server/internal-linking-ai.ts)
+- [x] Topic Cluster Mapping: AI groups keywords into 2-5 topical clusters via LLM
+- [x] Anchor Text AI: generate contextual, varied anchor text (exact 15%, partial 30%, branded 10%, generic 15%, contextual 30%)
+- [x] Hub-Spoke Model: pillar pages link to cluster pages and vice versa (bidirectional)
+- [x] Cross-platform Linking: connect different topic clusters via cross-cluster links
+- [x] Priority Page Boosting: extra links (up to 3) directed to priority URLs
+- [x] Minimum Links Enforcement: ensure every page has at least minLinksPerPage outbound links
+- [x] Link Equity Distribution: simplified PageRank calculation (10 iterations, 0.85 damping)
+- [x] generateLinkInsertionHtml(): auto-generate "Related Articles" HTML block
+- [x] getLinkRecommendations(): per-page link suggestions sorted by priority
+- [x] Wire into Sprint as Phase 4.8 (Internal Linking AI, Day 2+)
+- [x] Write vitest tests: 8 tests passing (config, equity, hub-spoke, HTML generation, recommendations, summary, edge cases)
+
+# Bug Fix: Duplicate Telegram Notifications (ATTACK SUCCESS spam)
+- [x] Fix: success-rate-monitor sending identical "ATTACK SUCCESS" messages repeatedly every 1-3 minutes
+- [x] Root cause: in-memory state reset on server restart → re-triggers "first success" notification
+- [x] Fix: initializeFromDb() checks DB for prior successes + pre-marks crossed thresholds on startup
+- [x] Add deduplication: isDuplicate() with 10-min window + firstSuccessNotified flag (once per process)
+- [x] Fix HTML tags showing raw in Telegram: removed <b> tags from details (escapeHtml was double-encoding)

@@ -70,6 +70,18 @@ import {
   type BacklinkBuildResult,
 } from "./external-backlink-builder";
 import * as serpTracker from "./serp-tracker";
+import {
+  generateSchemasForContent,
+  createDefaultConfig as createSchemaConfig,
+  schemasToHtml,
+  type SchemaInjectionConfig,
+} from "./schema-markup-injector";
+import {
+  buildLinkingStrategy,
+  createDefaultLinkingConfig,
+  generateLinkInsertionHtml,
+  type ContentNode,
+} from "./internal-linking-ai";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -397,6 +409,72 @@ export async function executeSprintDay(sprintId: string, dayNumber?: number): Pr
       console.log(`[7DaySprint] CTR: ${ctrReport.postsDeployed} posts deployed, ~${ctrReport.estimatedClicks} clicks`);
     } catch (err: any) {
       console.error(`[7DaySprint] CTR manipulation failed:`, err.message);
+    }
+  }
+
+  // ═══ PHASE 4.7: Schema Markup Injection (Day 1+) ═══
+  try {
+    console.log(`[7DaySprint] Phase 4.7: Schema markup injection...`);
+    const schemaConfig = createSchemaConfig(
+      state.config.domain,
+      state.config.niche || "gambling",
+      activeKeywords.slice(0, 5).map(k => typeof k === "string" ? k : k.keyword),
+    );
+
+    // Generate schemas for deployed parasite pages
+    const parasitePages = (state.parasiteDeployments || []).slice(0, 5).map((d: any) => ({
+      url: d.url || d.telegraphUrl || "",
+      title: d.title || d.keyword || "",
+      description: `${d.keyword} - comprehensive guide`,
+      keyword: d.keyword || "",
+    }));
+
+    if (parasitePages.length > 0) {
+      const schemas = await generateSchemasForContent(
+        schemaConfig,
+        parasitePages[0].url,
+        parasitePages[0].title,
+        parasitePages[0].description,
+        parasitePages[0].keyword,
+      );
+      console.log(`[7DaySprint] Schema: ${schemas.length} schemas generated (${schemas.filter(s => s.validated).length} valid)`);
+    }
+  } catch (err: any) {
+    console.error(`[7DaySprint] Schema injection failed:`, err.message);
+  }
+
+  // ═══ PHASE 4.8: Internal Linking AI (Day 2+) ═══
+  if (day >= 2) {
+    try {
+      console.log(`[7DaySprint] Phase 4.8: Internal linking...`);
+      const contentNodes: ContentNode[] = (state.parasiteDeployments || []).map((d: any, i: number) => ({
+        id: `node_${i}`,
+        url: d.url || d.telegraphUrl || "",
+        title: d.title || d.keyword || "",
+        keyword: d.keyword || "",
+        type: i === 0 ? "pillar" as const : "cluster" as const,
+        platform: "telegraph",
+        topicCluster: "",
+        pageAuthority: 90, // Telegraph DA
+        existingInboundLinks: 0,
+        existingOutboundLinks: 0,
+      }));
+
+      if (contentNodes.length >= 2) {
+        const linkingConfig = createDefaultLinkingConfig(
+          state.config.domain,
+          [state.config.targetUrl],
+        );
+        const strategy = await buildLinkingStrategy(
+          state.config.domain,
+          contentNodes,
+          activeKeywords.map(k => typeof k === "string" ? k : k.keyword),
+          linkingConfig,
+        );
+        console.log(`[7DaySprint] Linking: ${strategy.totalLinks} internal links across ${strategy.clusters.length} clusters`);
+      }
+    } catch (err: any) {
+      console.error(`[7DaySprint] Internal linking failed:`, err.message);
     }
   }
 

