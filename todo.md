@@ -3314,3 +3314,18 @@
 - [x] Wire into Sprint Phase 4.10 (Gap Analysis, Day 3+) + gap_analyzer agent in orchestrator
 - [x] Telegram notification: gap report with totalGaps, highOpportunity, filled count
 - [x] Write vitest tests: 7 tests passing (config, summary, analyses, non-existent domain, niches, empty keywords, zero values)
+
+# Feature: SERP Feature Hijacker — Win Featured Snippets, PAA, Knowledge Panels
+- [x] Build SERP Feature Hijacker engine (server/serp-feature-hijacker.ts) — 1,150+ lines
+- [x] SERP Feature Detection: detect 9 feature types (featured_snippet, people_also_ask, knowledge_panel, local_pack, image_pack, video_carousel, top_stories, sitelinks, ai_overview)
+- [x] Featured Snippet Optimizer: AI formats content as paragraph/list/table with 40-60 word optimal length
+- [x] People Also Ask (PAA) Hijacker: AI generates 5 Q&A pairs per keyword optimized for PAA boxes
+- [x] Knowledge Panel Builder: create structured entity data (name, description, facts, socialProfiles, images)
+- [x] Rich Result Optimizer: integrates with schema-markup-injector for FAQ + Article schemas
+- [x] Content Reformatter: reformatContentForFeature() with LLM-powered format conversion
+- [x] SERP Feature Tracker: checkFeatureWins() monitors wins/losses + in-memory campaign state
+- [x] Auto-deploy: deploys optimized content to Telegraph via deployTelegraphBlitz
+- [x] Wire into Sprint Phase 4.11 + serp_hijacker agent in orchestrator + serp_hijack daemon task
+- [x] Telegram notifications on SERP feature wins (win count + keyword list)
+- [x] serpFeatureTick() for daemon periodic execution across all SEO projects
+- [x] Write vitest tests: 16 tests passing (config, summary, campaigns, opportunities, content reformat, feature types, interface validation)

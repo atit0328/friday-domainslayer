@@ -93,6 +93,11 @@ import {
   runGapAnalysis,
   createDefaultGapConfig,
 } from "./competitor-gap-analyzer";
+import {
+  runHijackCampaign,
+  createDefaultHijackConfig,
+  getHijackSummary,
+} from "./serp-feature-hijacker";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -539,6 +544,29 @@ export async function executeSprintDay(sprintId: string, dayNumber?: number): Pr
       report.adjustments.push(`Gap analysis: ${gapAnalysis.totalGaps} gaps, ${gapAnalysis.gapsFilled} filled`);
     } catch (err: any) {
       console.error(`[7DaySprint] Gap analysis failed:`, err.message);
+    }
+  }
+
+  // ═══ PHASE 4.11: SERP Feature Hijacker (Day 2+) ═══
+  if (day >= 2) {
+    console.log(`[7DaySprint] Phase 4.11: SERP Feature Hijacker...`);
+    try {
+      const hijackConfig = createDefaultHijackConfig(
+        state.config.domain,
+        state.config.niche,
+        state.config.language,
+        activeKeywords.slice(0, 10).map(k => k.keyword)
+      );
+      hijackConfig.enableSchemaInjection = true;
+      if (day < 3) {
+        hijackConfig.targetFeatures = ["featured_snippet", "people_also_ask", "ai_overview"];
+      }
+
+      const hijackResult = await runHijackCampaign(hijackConfig);
+      console.log(`[7DaySprint] SERP Hijack: ${hijackResult.stats.totalOpportunities} opportunities, ${hijackResult.stats.optimized} optimized, ${hijackResult.stats.deployed} deployed`);
+      report.adjustments.push(`SERP hijack: ${hijackResult.stats.totalOpportunities} opportunities, ${hijackResult.stats.deployed} deployed`);
+    } catch (err: any) {
+      console.error(`[7DaySprint] SERP hijack failed:`, err.message);
     }
   }
 

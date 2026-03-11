@@ -39,6 +39,7 @@ export type TaskType =
   | "ctr_tick"
   | "freshness_tick"
   | "gap_analysis"
+  | "serp_hijack"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
@@ -110,6 +111,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
     ctr_tick: 1,
     freshness_tick: 1,
     gap_analysis: 1,
+    serp_hijack: 1,
     custom: 2,
   },
   defaultMaxRetries: 3,

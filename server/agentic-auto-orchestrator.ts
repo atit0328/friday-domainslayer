@@ -69,7 +69,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -130,6 +130,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   gap_analyzer: {
     enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  serp_hijacker: {
+    enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -760,6 +764,38 @@ async function executeFreshnessTickTask(_task: DaemonTask, _signal: AbortSignal)
   }
 }
 
+async function executeSerpHijackTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { serpFeatureTick } = await import("./serp-feature-hijacker");
+    const { getAllActiveSeoProjects } = await import("./db");
+    const projects = await getAllActiveSeoProjects();
+    let totalOpportunities = 0;
+    let totalDeployed = 0;
+    let totalWins = 0;
+    for (const proj of projects.slice(0, 3)) {
+      try {
+        const result = await serpFeatureTick(
+          proj.domain,
+          ((proj as any).seedKeywords || []).slice(0, 10),
+          proj.niche || "gambling",
+          (proj as any).targetLanguage || "th",
+        );
+        totalOpportunities += result.newOpportunities;
+        totalDeployed += result.deployed;
+        totalWins += result.wins;
+      } catch (err: any) {
+        console.error(`[SERPHijacker] Failed for ${proj.domain}:`, err.message);
+      }
+    }
+    return {
+      success: true,
+      result: { projectsProcessed: projects.length, totalOpportunities, totalDeployed, totalWins },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeGapAnalysisTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { runGapAnalysis, createDefaultGapConfig } = await import("./competitor-gap-analyzer");
@@ -979,6 +1015,7 @@ async function orchestratorTick() {
         ctr_engine: "ctr_tick",
         freshness_engine: "freshness_tick",
         gap_analyzer: "gap_analysis",
+        serp_hijacker: "serp_hijack",
       };
 
       const taskId = await enqueueTask({
@@ -1038,6 +1075,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("ctr_tick", executeCtrTickTask);
   registerExecutor("freshness_tick", executeFreshnessTickTask);
   registerExecutor("gap_analysis", executeGapAnalysisTask);
+  registerExecutor("serp_hijack", executeSerpHijackTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1421,6 +1459,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
       apply: (_name, config) => { config.enabled = false; },
     },
   ],
+  serp_hijacker: [
+    {
+      name: "increase_hijack_interval",
+      description: "Increase SERP hijack interval to 24h",
+      apply: (_name, config) => { config.intervalMs = 24 * 60 * 60_000; },
+    },
+    {
+      name: "reduce_hijack_scope",
+      description: "Reduce SERP hijack scope",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 48 * 60 * 60_000); },
+    },
+    {
+      name: "pause_serp_hijacker",
+      description: "Pause SERP hijacker",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
 };
 
 /**
@@ -1511,6 +1566,7 @@ const TASK_TYPE_TO_AGENT: Record<string, AgentName> = {
   ctr_tick: "ctr_engine",
   freshness_tick: "freshness_engine",
   gap_analysis: "gap_analyzer",
+  serp_hijack: "serp_hijacker",
 };
 const FAILURE_ALERT_THRESHOLD = 3;
 const failureAlertsSent = new Set<string>(); // Track which agents already sent failure alerts
