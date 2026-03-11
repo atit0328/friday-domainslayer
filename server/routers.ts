@@ -52,6 +52,7 @@ import { redirectTakeoverRouter } from "./routers/redirect-takeover";
 import { gamblingBrainRouter } from "./routers/gambling-brain";
 import { keywordPerformanceRouter } from "./routers/keyword-performance";
 import { sprintRouter } from "./routers/sprint-router";
+import { domainImportRouter } from "./routers/domain-import";
 
 export const appRouter = router({
   system: systemRouter,
@@ -166,6 +167,9 @@ export const appRouter = router({
 
   // 7-Day Rapid Ranking Sprint Engine
   sprint: sprintRouter,
+
+  // Domain File Import (add targets via .txt)
+  domainImport: domainImportRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

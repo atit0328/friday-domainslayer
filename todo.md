@@ -3329,3 +3329,13 @@
 - [x] Telegram notifications on SERP feature wins (win count + keyword list)
 - [x] serpFeatureTick() for daemon periodic execution across all SEO projects
 - [x] Write vitest tests: 16 tests passing (config, summary, campaigns, opportunities, content reformat, feature types, interface validation)
+
+# Feature: Target Domains .txt File Import — ใส่โดเมนเป้าหมายลงไฟล์แล้ว auto-attack
+- [x] Build domain file importer (server/domain-file-importer.ts): อ่านไฟล์ .txt ที่มี domain list แล้วนำเข้าระบบ
+- [x] tRPC endpoints (server/routers/domain-import.ts): importFromText, importDomains, preview, history, summary
+- [x] Domain parser: รองรับ format หลากหลาย (1 domain/line, with/without http, comments #, comma/tab-separated, quoted, ports, subdomains, CRLF)
+- [x] Auto-feed to attack pipeline: domain ที่ import เข้ามาถูก insert เข้า serpDiscoveredTargets ด้วย status "queued" → attack agent หยิบไป attack อัตโนมัติ
+- [x] Dedup: ไม่ import domain ซ้ำที่มีอยู่แล้วในระบบ + blacklist protection (google, facebook, etc.)
+- [x] Status tracking: import history + summary stats (totalImports, totalDomainsImported, duplicatesSkipped, lastImportAt)
+- [x] Telegram notification: แจ้งเมื่อ import สำเร็จ + จำนวน domain ที่เพิ่มเข้า + preview domains
+- [x] Write vitest tests: 22 tests passing (parseDomainList 13 tests, import summary, history, blacklist, edge cases 6 tests)
