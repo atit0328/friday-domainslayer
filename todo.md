@@ -3339,3 +3339,17 @@
 - [x] Status tracking: import history + summary stats (totalImports, totalDomainsImported, duplicatesSkipped, lastImportAt)
 - [x] Telegram notification: แจ้งเมื่อ import สำเร็จ + จำนวน domain ที่เพิ่มเข้า + preview domains
 - [x] Write vitest tests: 22 tests passing (parseDomainList 13 tests, import summary, history, blacklist, edge cases 6 tests)
+
+# Feature: Google Thailand SERP Harvester — AI ค้นหา keywords แล้วดึงโดเมนหน้าแรก Google เข้าระบบ Blackhat อัตโนมัติ
+- [x] AI Keyword Generator: ใช้ LLM สร้าง keywords ใหม่ตาม niche (generateKeywordsForNiche) + fallback to seed keywords
+- [x] Google.co.th Scraper: ค้นหา keyword บน SerpAPI (gl=th, hl=th) ดึง Top 10 หน้าแรก (scrapeGoogleThailand)
+- [x] Domain Extractor: แยก domain จาก SERP results แล้ว insert เข้า serpDiscoveredTargets + dedup
+- [x] Auto-feed to Blackhat pipeline: domain ที่ดึงมาถูกส่งเข้า attack queue อัตโนมัติ (status "queued")
+- [x] Keyword Rotation: AI สร้าง keywords ใหม่ทุกรอบ ไม่ซ้ำ (usedKeywordsCache + related search seeding)
+- [x] Niche Config: 6 niches (gambling, lottery, forex, adult, seo_services, ecommerce) + addNiche/toggleNiche
+- [x] Wire into Orchestrator: serp_harvester agent ทำงานทุก 2 ชม. + auto-recovery strategies
+- [x] Daemon task type: serp_harvest registered in background-daemon + executeSerpHarvestTask
+- [x] Blacklist filter: SKIP_DOMAINS + isBlacklisted + isOwnRedirectUrl
+- [x] Telegram notification: แจ้งเมื่อ harvest สำเร็จ + niche breakdown + top domains preview
+- [x] tRPC endpoints: startHarvest, previewKeywords, searchKeyword, getNiches, toggleNiche, addNiche, history, stats
+- [x] Write vitest tests: 16/16 tests passing (niche management, scraper, keyword gen, history, stats, harvest cycle)

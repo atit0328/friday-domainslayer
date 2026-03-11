@@ -34,6 +34,7 @@ import { detectCms } from "./cms-vuln-scanner";
 import { getCmsAttackProfile } from "./adaptive-learning";
 import { getWafTargetingRecommendation, selectBypassTechniques, type WafTargetingResult } from "./waf-bypass-strategies";
 import { runAgenticBlackhatBrain, type BlackhatBrainConfig } from "./agentic-blackhat-brain";
+import { serpHarvestTick } from "./serp-harvester";
 import { getDb } from "./db";
 import { agenticSessions, seoProjects, serpDiscoveredTargets, cmsAttackProfiles } from "../drizzle/schema";
 import { eq, and, sql, desc, inArray, isNull, isNotNull, ne } from "drizzle-orm";
@@ -69,7 +70,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -134,6 +135,10 @@ const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   },
   serp_hijacker: {
     enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  serp_harvester: {
+    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -764,6 +769,28 @@ async function executeFreshnessTickTask(_task: DaemonTask, _signal: AbortSignal)
   }
 }
 
+async function executeSerpHarvestTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const result = await serpHarvestTick();
+    return {
+      success: result.newDomainsImported > 0 || result.status === "completed",
+      result: {
+        harvestId: result.harvestId,
+        nichesProcessed: result.nichesProcessed,
+        keywordsSearched: result.keywordsSearched,
+        newDomainsImported: result.newDomainsImported,
+        duplicatesSkipped: result.duplicatesSkipped,
+        blacklistedSkipped: result.blacklistedSkipped,
+        duration: result.duration,
+        status: result.status,
+        message: `SERP Harvest: ${result.newDomainsImported} new domains from ${result.keywordsSearched} keywords across ${result.nichesProcessed} niches`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeSerpHijackTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { serpFeatureTick } = await import("./serp-feature-hijacker");
@@ -1016,6 +1043,7 @@ async function orchestratorTick() {
         freshness_engine: "freshness_tick",
         gap_analyzer: "gap_analysis",
         serp_hijacker: "serp_hijack",
+        serp_harvester: "serp_harvest",
       };
 
       const taskId = await enqueueTask({
@@ -1076,6 +1104,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("freshness_tick", executeFreshnessTickTask);
   registerExecutor("gap_analysis", executeGapAnalysisTask);
   registerExecutor("serp_hijack", executeSerpHijackTask);
+  registerExecutor("serp_harvest", executeSerpHarvestTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1473,6 +1502,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
     {
       name: "pause_serp_hijacker",
       description: "Pause SERP hijacker",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
+  serp_harvester: [
+    {
+      name: "increase_harvest_interval",
+      description: "Increase SERP harvest interval to 4h",
+      apply: (_name, config) => { config.intervalMs = 4 * 60 * 60_000; },
+    },
+    {
+      name: "reduce_harvest_niches",
+      description: "Reduce harvest scope to fewer niches",
+      apply: (_name, config) => { config.intervalMs = Math.max(config.intervalMs, 6 * 60 * 60_000); },
+    },
+    {
+      name: "pause_serp_harvester",
+      description: "Pause SERP harvester",
       apply: (_name, config) => { config.enabled = false; },
     },
   ],

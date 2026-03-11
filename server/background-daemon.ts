@@ -40,6 +40,7 @@ export type TaskType =
   | "freshness_tick"
   | "gap_analysis"
   | "serp_hijack"
+  | "serp_harvest"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
