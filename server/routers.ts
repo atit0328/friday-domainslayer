@@ -55,6 +55,7 @@ import { sprintRouter } from "./routers/sprint-router";
 import { domainImportRouter } from "./routers/domain-import";
 import { serpHarvesterRouter } from "./routers/serp-harvester";
 import { multiPlatformRouter } from "./routers/multi-platform";
+import { queryParasiteRouter } from "./routers/query-parasite";
 
 export const appRouter = router({
   system: systemRouter,
@@ -178,6 +179,9 @@ export const appRouter = router({
 
   // Multi-Platform Content Distribution (Telegraph + JustPaste.it + Rentry + Write.as + Comments + Indexing)
   multiPlatform: multiPlatformRouter,
+
+  // Query Parameter Parasite (search query injection attack)
+  queryParasite: queryParasiteRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

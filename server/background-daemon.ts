@@ -43,6 +43,7 @@ export type TaskType =
   | "serp_harvest"
   | "content_distribute"
   | "persistence_check"
+  | "query_parasite_tick"
   | "custom";
 
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "skipped";
@@ -115,6 +116,7 @@ const DEFAULT_CONFIG: DaemonConfig = {
     freshness_tick: 1,
     gap_analysis: 1,
     serp_hijack: 1,
+    query_parasite_tick: 1,
     custom: 2,
   },
   defaultMaxRetries: 3,

