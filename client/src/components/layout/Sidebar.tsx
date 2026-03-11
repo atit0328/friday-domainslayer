@@ -48,6 +48,9 @@ const BLACKHAT_NAV = [
   { href: "/adaptive-learning", icon: Brain, label: "Adaptive Learning" },
   { href: "/query-parasite", icon: Search, label: "Query Parasite" },
   { href: "/content-freshness", icon: Activity, label: "Content Freshness" },
+  { href: "/platform-discovery", icon: Radar, label: "Platform Discovery" },
+  { href: "/algorithm-monitor", icon: Activity, label: "Algo Monitor" },
+  { href: "/competitor-gap", icon: Crosshair, label: "Competitor Gap" },
 ];
 
 const AUTONOMOUS_NAV = [

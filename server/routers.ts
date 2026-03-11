@@ -58,6 +58,9 @@ import { multiPlatformRouter } from "./routers/multi-platform";
 import { queryParasiteRouter } from "./routers/query-parasite";
 import { algorithmIntelligenceRouter } from "./routers/algorithm-intelligence";
 import { contentFreshnessRouter } from "./routers/content-freshness";
+import { platformDiscoveryRouter } from "./routers/platform-discovery";
+import { algorithmMonitorRouter } from "./routers/algorithm-monitor";
+import { competitorGapRouter } from "./routers/competitor-gap";
 
 export const appRouter = router({
   system: systemRouter,
@@ -190,6 +193,15 @@ export const appRouter = router({
 
   // Content Freshness Engine (auto-update deployed content for freshness signals)
   contentFreshness: contentFreshnessRouter,
+
+  // Auto Platform Discovery & Registration Engine
+  platformDiscovery: platformDiscoveryRouter,
+
+  // Real-time Algorithm Update Monitor
+  algorithmMonitor: algorithmMonitorRouter,
+
+  // Competitor Content Gap Analyzer (with Algorithm Intelligence)
+  competitorGap: competitorGapRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

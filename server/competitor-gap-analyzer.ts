@@ -20,6 +20,7 @@ import { findLowCompetitionKeywords, type KeywordOpportunity } from "./keyword-s
 import { deployTelegraphBlitz, type ParasiteDeployment } from "./parasite-seo-blitz";
 import { rapidIndexBulk, type IndexingRequest } from "./rapid-indexing-engine";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { scoreContent, getCriticalFactors, getFactorsByCategory, generateOptimizedContentPrompt, type FactorCategory } from "./google-algorithm-intelligence";
 
 // ═══════════════════════════════════════════════
 //  TYPES
@@ -643,6 +644,162 @@ export async function runGapAnalysis(
   console.log(`[GapAnalyzer] Analysis complete: ${gaps.length} gaps found, ${analysis.gapsFilled} filled`);
 
   return analysis;
+}
+
+// ═══════════════════════════════════════════════
+//  ALGORITHM-AWARE CONTENT GAP ANALYSIS
+// ═══════════════════════════════════════════════
+
+/**
+ * Analyze competitor content against 222 ranking factors
+ * Returns specific factors where competitor is weak and we can exploit
+ */
+export async function analyzeCompetitorFactorGaps(
+  competitorDomain: string,
+  targetKeyword: string,
+  niche: string = "gambling",
+): Promise<{
+  competitorWeakFactors: Array<{ category: string; factorName: string; weakness: string; exploitStrategy: string; priority: number }>;
+  ourAdvantages: string[];
+  attackPlan: string[];
+  overallOpportunityScore: number;
+}> {
+  const criticalFactors = getCriticalFactors();
+  const categories: FactorCategory[] = ["domain", "page_level", "site_level", "backlink", "user_interaction", "special_algorithm", "brand_signal"];
+
+  const factorSummary = categories.map(cat => {
+    const factors = getFactorsByCategory(cat);
+    return `${cat}: ${factors.slice(0, 8).map(f => `${f.name} (impact:${f.impact})`).join(", ")}`;
+  }).join("\n");
+
+  const response = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: `You are a Google Algorithm expert analyzing competitor weaknesses against 222 ranking factors. Today is ${new Date().toISOString().split("T")[0]}.\n\nRanking Factor Categories:\n${factorSummary}\n\nCritical Factors: ${criticalFactors.slice(0, 15).map(f => f.name).join(", ")}`,
+      },
+      {
+        role: "user",
+        content: `Analyze competitor ${competitorDomain} for keyword "${targetKeyword}" in ${niche} niche.\n\nIdentify:\n1. 8-12 specific ranking factors where competitor is WEAK\n2. Our advantages we can exploit\n3. Step-by-step attack plan\n4. Overall opportunity score (0-100)\n\nReturn JSON.`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "factor_gap_analysis",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            competitorWeakFactors: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  category: { type: "string" },
+                  factorName: { type: "string" },
+                  weakness: { type: "string" },
+                  exploitStrategy: { type: "string" },
+                  priority: { type: "number" },
+                },
+                required: ["category", "factorName", "weakness", "exploitStrategy", "priority"],
+                additionalProperties: false,
+              },
+            },
+            ourAdvantages: { type: "array", items: { type: "string" } },
+            attackPlan: { type: "array", items: { type: "string" } },
+            overallOpportunityScore: { type: "number" },
+          },
+          required: ["competitorWeakFactors", "ourAdvantages", "attackPlan", "overallOpportunityScore"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = response.choices?.[0]?.message?.content;
+  let parsed: any = { competitorWeakFactors: [], ourAdvantages: [], attackPlan: [], overallOpportunityScore: 50 };
+  try {
+    if (content) parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+  } catch {}
+
+  return {
+    competitorWeakFactors: parsed.competitorWeakFactors || [],
+    ourAdvantages: parsed.ourAdvantages || [],
+    attackPlan: parsed.attackPlan || [],
+    overallOpportunityScore: parsed.overallOpportunityScore || 50,
+  };
+}
+
+/**
+ * Score our content vs competitor content using Algorithm Intelligence
+ */
+export async function compareContentScores(
+  ourContent: string,
+  competitorUrl: string,
+  keyword: string,
+): Promise<{
+  ourScore: number;
+  competitorEstimatedScore: number;
+  advantage: number;
+  improvements: string[];
+}> {
+  const ourScore = scoreContent({ title: "", content: ourContent, keyword });
+
+  // Estimate competitor score via AI
+  const response = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: "You are an SEO content quality scorer. Estimate the SEO score of a competitor's page based on its URL and the target keyword. Consider content quality, E-E-A-T, technical SEO, and user experience. Return a score 0-100.",
+      },
+      {
+        role: "user",
+        content: `Competitor URL: ${competitorUrl}\nTarget keyword: "${keyword}"\n\nEstimate their SEO content score (0-100) and list 3-5 improvements we should make.\n\nReturn JSON with: competitorScore (number), improvements (string array)`,
+      },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "competitor_score",
+        strict: true,
+        schema: {
+          type: "object",
+          properties: {
+            competitorScore: { type: "number" },
+            improvements: { type: "array", items: { type: "string" } },
+          },
+          required: ["competitorScore", "improvements"],
+          additionalProperties: false,
+        },
+      },
+    },
+  });
+
+  const content = response.choices?.[0]?.message?.content;
+  let parsed: any = { competitorScore: 60, improvements: [] };
+  try {
+    if (content) parsed = JSON.parse(typeof content === "string" ? content : JSON.stringify(content));
+  } catch {}
+
+  return {
+    ourScore: ourScore.overall,
+    competitorEstimatedScore: parsed.competitorScore || 60,
+    advantage: ourScore.overall - (parsed.competitorScore || 60),
+    improvements: parsed.improvements || [],
+  };
+}
+
+/**
+ * Generate algorithm-optimized content specifically designed to outrank a competitor
+ */
+export function generateOutrankPrompt(
+  competitorDomain: string,
+  keyword: string,
+  weakFactors: string[],
+): string {
+  const basePrompt = generateOptimizedContentPrompt({ keyword, niche: "gambling", language: "th" });
+  return `${basePrompt}\n\nCOMPETITOR OUTRANKING STRATEGY:\nTarget: ${competitorDomain}\nExploit these weak factors: ${weakFactors.join(", ")}\n\nYour content MUST:\n1. Be significantly better than ${competitorDomain} on every weak factor\n2. Include more comprehensive coverage of the topic\n3. Have stronger E-E-A-T signals\n4. Be more engaging and user-friendly\n5. Include more internal/external authority links\n6. Have better structured data potential`;
 }
 
 // ═══════════════════════════════════════════════

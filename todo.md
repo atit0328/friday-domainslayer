@@ -3501,3 +3501,40 @@
 - [x] Wire Algorithm Intelligence เข้ากับ Schema Markup Injector (factor-aware schema prioritization)
 - [x] อัพเดท vitest tests สำหรับ expanded factors (30 tests passing)
 - [x] 0 TypeScript errors
+
+# Real-time Algorithm Update Monitor
+
+- [x] สร้าง Algorithm Update Monitor engine (server/algorithm-update-monitor.ts)
+- [x] ดึงข่าว Google Algorithm Updates จาก Search Engine Journal/Moz/Google Blog ผ่าน LLM
+- [x] Parse และจัดหมวดหมู่ updates (Core Update, Spam Update, Helpful Content, Link Spam, etc.)
+- [x] Auto-adjust ranking factor weights ตาม algorithm changes
+- [x] สร้าง impact assessment สำหรับแต่ละ update (ส่งผลกระทบต่อ factor ไหนบ้าง)
+- [x] สร้าง tRPC router สำหรับ Algorithm Update Monitor
+- [x] สร้าง Algorithm Update Monitor dashboard UI
+- [x] เพิ่ม route และ sidebar navigation
+
+# Competitor Content Gap Analyzer
+
+- [x] สร้าง Competitor Content Gap Analyzer engine (server/competitor-gap-analyzer.ts)
+- [x] วิเคราะห์ content ของคู่แข่งเทียบกับ 222 ranking factors
+- [x] หา content gaps ที่เราสามารถเอาชนะได้
+- [x] สร้าง gap exploitation strategy พร้อม action plan
+- [x] สร้าง tRPC router สำหรับ Competitor Gap Analyzer
+- [x] สร้าง Competitor Content Gap Analyzer dashboard UI
+- [x] เพิ่ม route และ sidebar navigation
+- [x] เขียน vitest tests สำหรับทั้ง 2 engines
+- [x] 0 TypeScript errors
+
+# Auto Platform Discovery & Registration Engine (Agentic BL Builder)
+
+- [x] สร้าง Platform Discovery Engine — AI ค้นหาเว็บ Web 2.0/blog/forum/paste/wiki ใหม่ๆ อัตโนมัติ
+- [x] สร้าง Master Platform Database — 50+ platforms พร้อม API/method สำหรับ auto-register + auto-post
+- [x] สร้าง Auto Registration Engine — สมัครสมาชิกอัตโนมัติบนแพลตฟอร์มที่ค้นพบ
+- [x] สร้าง Auto Posting Engine — โพสต์ content + backlink อัตโนมัติ
+- [x] สร้าง Platform Learning System — เรียนรู้ว่าเว็บไหน index เร็ว, DA สูง, dofollow
+- [x] สร้าง Platform Performance Tracker — ติดตาม success rate, index rate, DA contribution
+- [x] สร้าง tRPC router สำหรับ Platform Discovery
+- [x] สร้าง Platform Discovery Dashboard UI
+- [x] เพิ่ม route และ sidebar navigation
+- [x] เขียน vitest tests
+- [x] 0 TypeScript errors

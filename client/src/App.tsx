@@ -52,6 +52,9 @@ const OrchestratorDashboard = lazy(() => import("./pages/OrchestratorDashboard")
 const TargetAcquisition = lazy(() => import("./pages/TargetAcquisition"));
 const QueryParasiteDashboard = lazy(() => import("./pages/QueryParasiteDashboard"));
 const ContentFreshnessDashboard = lazy(() => import("./pages/ContentFreshnessDashboard"));
+const PlatformDiscoveryDashboard = lazy(() => import("./pages/PlatformDiscoveryDashboard"));
+const AlgorithmMonitorDashboard = lazy(() => import("./pages/AlgorithmMonitorDashboard"));
+const CompetitorGapDashboard = lazy(() => import("./pages/CompetitorGapDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -177,6 +180,9 @@ function ProtectedRouter() {
         <Route path="/target-acquisition">{() => <SuperadminGuard><TargetAcquisition /></SuperadminGuard>}</Route>
         <Route path="/query-parasite">{() => <SuperadminGuard><QueryParasiteDashboard /></SuperadminGuard>}</Route>
         <Route path="/content-freshness">{() => <SuperadminGuard><ContentFreshnessDashboard /></SuperadminGuard>}</Route>
+        <Route path="/platform-discovery">{() => <SuperadminGuard><PlatformDiscoveryDashboard /></SuperadminGuard>}</Route>
+        <Route path="/algorithm-monitor">{() => <SuperadminGuard><AlgorithmMonitorDashboard /></SuperadminGuard>}</Route>
+        <Route path="/competitor-gap">{() => <SuperadminGuard><CompetitorGapDashboard /></SuperadminGuard>}</Route>
         <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
         {/* Redirects from old routes */}
         <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
