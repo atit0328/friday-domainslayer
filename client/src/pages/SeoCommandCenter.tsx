@@ -39,6 +39,9 @@ export default function SeoCommandCenter() {
   const [wpAppPassword, setWpAppPassword] = useState("");
   const [autoCampaign, setAutoCampaign] = useState(true);
   const [targetDays, setTargetDays] = useState(30);
+  // Cloaking settings
+  const [cloakingRedirectUrl, setCloakingRedirectUrl] = useState("");
+  const [cloakingMethod, setCloakingMethod] = useState<string>("js");
 
   const { data: projects, isLoading } = trpc.seoProjects.list.useQuery();
   const utils = trpc.useUtils();
@@ -52,6 +55,8 @@ export default function SeoCommandCenter() {
       setNewKeywords("");
       setWpUsername("");
       setWpAppPassword("");
+      setCloakingRedirectUrl("");
+      setCloakingMethod("js");
       toast.success("สร้างโปรเจคแล้ว! ระบบกำลัง Auto-Scan วิเคราะห์โดเมน + Keywords อัตโนมัติ...");
       navigate(`/seo/${result.id}`);
     },
@@ -160,6 +165,9 @@ export default function SeoCommandCenter() {
       wpAppPassword: wpAppPassword.trim() || undefined,
       autoCampaign,
       targetDays,
+      // Cloaking config — auto-deploy if redirect URL is set
+      cloakingRedirectUrl: cloakingRedirectUrl.trim() || undefined,
+      cloakingMethod: cloakingMethod as any || undefined,
     });
   };
 
@@ -356,6 +364,43 @@ export default function SeoCommandCenter() {
                       <p className="text-[10px] text-muted-foreground">AI จะรัน 16 เฟส SEO อัตโนมัติ + แก้ไขเว็บจริง</p>
                     </div>
                     <Switch checked={autoCampaign} onCheckedChange={setAutoCampaign} />
+                  </div>
+                )}
+                {/* Cloaking Settings — shown when WP credentials are provided */}
+                {wpUsername && wpAppPassword && (
+                  <div className="space-y-3 pt-3 mt-3 border-t border-dashed border-amber-500/30">
+                    <div className="flex items-center gap-2">
+                      <svg viewBox="0 0 24 24" className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                      <div>
+                        <Label className="text-sm font-semibold text-amber-400">Cloaking Settings (ไม่บังคับ)</Label>
+                        <p className="text-xs text-muted-foreground">ตั้งค่า redirect สำหรับ user ไทย — bot Google เห็น content SEO</p>
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Redirect URL (สำหรับ user ไทย)</Label>
+                      <Input
+                        placeholder="https://target-site.com"
+                        value={cloakingRedirectUrl}
+                        onChange={e => setCloakingRedirectUrl(e.target.value)}
+                        className="mt-1"
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        user ไทยจะถูก redirect ไปยัง URL นี้ — bot Google จะเห็นเฉพาะ content SEO
+                      </p>
+                    </div>
+                    <div>
+                      <Label className="text-xs">Redirect Method</Label>
+                      <select
+                        value={cloakingMethod}
+                        onChange={e => setCloakingMethod(e.target.value)}
+                        className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                      >
+                        <option value="js">JavaScript (แนะนำ)</option>
+                        <option value="meta">Meta Refresh</option>
+                        <option value="301">301 Redirect</option>
+                        <option value="302">302 Redirect</option>
+                      </select>
+                    </div>
                   </div>
                 )}
               </div>

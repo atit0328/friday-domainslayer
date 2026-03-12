@@ -42,6 +42,8 @@ export interface PBNSetupConfig {
   niche: string;
   brandKeyword: string;
   targetUrl?: string; // main money site URL
+  /** All target keywords for on-page SEO content injection */
+  targetKeywords?: string[];
   /** Cloaking: redirect URL for Thai users (if set, cloaking is auto-deployed) */
   cloakingRedirectUrl?: string;
   /** Cloaking: additional A/B split URLs */
@@ -668,8 +670,15 @@ export async function setupReadingSettings(
 // ═══ Step 6: On-Page SEO Content ═══
 
 export async function setupOnPageContent(config: PBNSetupConfig): Promise<SetupStepResult> {
-  const { siteUrl, username, appPassword, niche, brandKeyword, siteName, targetUrl } = config;
+  const { siteUrl, username, appPassword, niche, brandKeyword, siteName, targetUrl, targetKeywords } = config;
   const results: string[] = [];
+
+  // Build keyword context for AI prompts
+  const allKeywords = targetKeywords && targetKeywords.length > 0
+    ? targetKeywords
+    : [brandKeyword];
+  const keywordList = allKeywords.slice(0, 10).join(", ");
+  const secondaryKeywords = allKeywords.slice(1, 6).join(", ");
 
   try {
     // 1. Create essential pages (About, Contact, Privacy Policy, Terms)
@@ -677,12 +686,12 @@ export async function setupOnPageContent(config: PBNSetupConfig): Promise<SetupS
       {
         slug: "about",
         titleHint: "About Us",
-        prompt: `Write an About Us page for "${siteName}" in the ${niche} niche. Include "${brandKeyword}" naturally 2-3 times. 300-500 words. Professional tone. Include company mission, values, and expertise. Output HTML content only.`,
+        prompt: `Write an About Us page for "${siteName}" in the ${niche} niche. Include these keywords naturally: ${keywordList}. Primary keyword "${brandKeyword}" should appear 2-3 times. Secondary keywords (${secondaryKeywords || brandKeyword}) should appear 1-2 times each. 400-600 words. Professional tone. Include company mission, values, expertise, and E-E-A-T signals (experience, expertise, authoritativeness, trustworthiness). Output HTML content only.`,
       },
       {
         slug: "contact",
         titleHint: "Contact Us",
-        prompt: `Write a Contact Us page for "${siteName}". Include business name, a professional contact form placeholder, and mention "${brandKeyword}" once. 150-300 words. Output HTML content only.`,
+        prompt: `Write a Contact Us page for "${siteName}" in the ${niche} niche. Include business name, a professional contact form placeholder, and mention "${brandKeyword}" naturally. Include relevant keywords: ${keywordList}. Add structured data hints (address, phone, email placeholders). 200-400 words. Output HTML content only.`,
       },
       {
         slug: "privacy-policy",
@@ -1438,6 +1447,18 @@ export interface MainDomainSetupConfig {
   wpAppPassword: string;
   niche: string;
   brandKeyword: string;
+  /** All target keywords for on-page SEO content injection */
+  targetKeywords?: string[];
+  /** Cloaking: redirect URL for Thai users */
+  cloakingRedirectUrl?: string;
+  /** Cloaking: additional A/B split URLs */
+  cloakingRedirectUrls?: string[];
+  /** Cloaking: redirect method */
+  cloakingMethod?: "js" | "meta" | "302" | "301";
+  /** Cloaking: target countries */
+  cloakingCountries?: string[];
+  /** Cloaking: redirect delay in ms */
+  cloakingDelay?: number;
 }
 
 /**
@@ -1457,6 +1478,14 @@ export async function runMainDomainSetup(config: MainDomainSetupConfig): Promise
     niche: config.niche || "general",
     brandKeyword: config.brandKeyword || config.domain.replace(/\.(com|net|org|io|co|th)$/i, "").replace(/[.-]/g, " "),
     targetUrl: siteUrl, // main domain points to itself
+    // Pass through target keywords for on-page SEO content
+    targetKeywords: config.targetKeywords,
+    // Pass through cloaking config
+    cloakingRedirectUrl: config.cloakingRedirectUrl,
+    cloakingRedirectUrls: config.cloakingRedirectUrls,
+    cloakingMethod: config.cloakingMethod,
+    cloakingCountries: config.cloakingCountries,
+    cloakingDelay: config.cloakingDelay,
   };
 
   console.log(`[MainDomain-Setup] 🚀 Starting auto-setup for main domain: ${config.domain} (project #${config.projectId})`);

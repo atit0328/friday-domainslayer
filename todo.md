@@ -4012,3 +4012,34 @@
 ## Testing
 - [x] vitest tests สำหรับ theme data — 84 tests passed (เพิ่ม 6 tests ใหม่: pageSpeed, seoScore, unique names, category, preview images, tier ranking)
 - [x] 0 TypeScript errors
+
+# Feature: One-Click Full Setup — เพิ่มโดเมน + WP credentials → รัน pipeline อัตโนมัติจบ
+
+## Unified Full-Setup Pipeline
+- [x] ใช้ runFullSetup() + runMainDomainSetup() ที่มีอยู่แล้ว — รวม pre-check + 7 steps
+- [x] รับ parameters: domain, wpUsername, wpAppPassword, keywords (targetKeywords), redirectUrl (cloakingRedirectUrl)
+- [x] เรียก wpSitePreCheck() ก่อน → skip steps ที่ไม่จำเป็น
+- [x] Step 1: Theme (SEO-optimized, skip ถ้ามี custom theme)
+- [x] Step 2: Settings (permalink, title, description)
+- [x] Step 3: Plugins (Yoast SEO, Lazy Load)
+- [x] Step 4: Homepage (สร้าง content + brand keywords)
+- [x] Step 5: Reading Settings (front page + posts page)
+- [x] Step 6: On-Page SEO (แทรก targetKeywords ทั้งหมด, optimize meta, schema, E-E-A-T)
+- [x] Step 7: Cloaking Deploy (ถ้ามี cloakingRedirectUrl)
+- [x] Progress tracking + Telegram notifications ทุก step
+- [x] Error handling — ถ้า step ล้มเหลวให้ทำ step ถัดไปต่อ
+
+## Wire into SEO Project Creation
+- [x] เพิ่ม cloaking fields ใน create mutation input schema (cloakingRedirectUrl, cloakingRedirectUrls, cloakingMethod, cloakingCountries)
+- [x] Auto-trigger startMainDomainAutoSetup เมื่อสร้าง project ใหม่ + มี WP credentials — ส่ง targetKeywords + cloaking config ไปด้วย
+- [x] MainDomainSetupConfig รับ targetKeywords + cloaking fields แล้ว pass through ไป PBNSetupConfig
+
+## UI Updates
+- [x] เพิ่ม Cloaking Settings section ใน create project form (Redirect URL + Method)
+- [x] แสดงเมื่อใส่ WP credentials แล้วเท่านั้น (conditional render)
+- [x] Reset state on success (cloakingRedirectUrl, cloakingMethod)
+
+## Testing
+- [x] vitest tests สำหรับ one-click pipeline — 21 tests passed (one-click-setup.test.ts)
+- [x] Tests cover: MainDomainSetupConfig fields (4), PBNSetupConfig passthrough (2), keyword injection logic (4), config flow mapping (3), pipeline step order (4), create mutation input (4)
+- [x] 0 TypeScript errors (tsc --noEmit EXIT: 0)

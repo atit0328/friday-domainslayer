@@ -123,6 +123,14 @@ export const seoProjectsRouter = router({
       autoCampaign: z.boolean().default(false),
       // Agentic AI: target days for SEO plan
       targetDays: z.number().min(3).max(365).default(30),
+      // Cloaking: redirect URL for Thai users (auto-deploy if set)
+      cloakingRedirectUrl: z.string().url().optional(),
+      // Cloaking: additional A/B split URLs
+      cloakingRedirectUrls: z.array(z.string().url()).optional(),
+      // Cloaking: redirect method
+      cloakingMethod: z.enum(["js", "meta", "302", "301"]).optional(),
+      // Cloaking: target countries
+      cloakingCountries: z.array(z.string()).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       // Validate WP credentials if provided
@@ -358,6 +366,13 @@ export const seoProjectsRouter = router({
                   wpAppPassword: input.wpAppPassword,
                   niche: input.niche || "general",
                   brandKeyword: primaryKeyword,
+                  // Pass all keywords for on-page SEO content injection
+                  targetKeywords: allKw.length > 0 ? allKw : (input.targetKeywords || [primaryKeyword]),
+                  // Pass cloaking config for auto-deploy
+                  cloakingRedirectUrl: input.cloakingRedirectUrl,
+                  cloakingRedirectUrls: input.cloakingRedirectUrls,
+                  cloakingMethod: input.cloakingMethod,
+                  cloakingCountries: input.cloakingCountries,
                 });
                 console.log(`[WP-AutoSetup] 📋 Queued — running in background`);
               } catch (setupErr: any) {
