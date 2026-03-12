@@ -62,6 +62,7 @@ import { platformDiscoveryRouter } from "./routers/platform-discovery";
 import { algorithmMonitorRouter } from "./routers/algorithm-monitor";
 import { competitorGapRouter } from "./routers/competitor-gap";
 import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
+import { telegramAiRouter } from "./routers/telegram-ai";
 
 export const appRouter = router({
   system: systemRouter,
@@ -206,6 +207,9 @@ export const appRouter = router({
 
   // Friday AI SEO Orchestrator (autonomous 7-day sprint brain)
   seoOrchestrator: seoOrchestratorRouter,
+
+  // Telegram AI Chat Agent (conversational AI assistant)
+  telegramAi: telegramAiRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

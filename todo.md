@@ -3665,3 +3665,50 @@
 - [x] Telegram notifications: success, auto-renew, max-renewals-reached, auto-renew-failed
 - [x] vitest tests สำหรับ Auto-Renew Sprint (35 new tests, 62 total)
 - [x] 0 TypeScript errors
+
+# Feature: Telegram AI Chat Agent — คุยกับ AI ใน Telegram เหมือนคนจริง
+
+## Architecture
+- [x] วิเคราะห์ Telegram bot code ปัจจุบัน (telegram-notifier.ts)
+- [x] ออกแบบ AI Chat Agent architecture (LLM + system context + command execution)
+- [x] สร้าง Telegram webhook/polling handler รับข้อความจาก user (dual-mode: webhook + polling)
+
+## AI Conversational Engine
+- [x] สร้าง AI Chat Agent ที่เข้าใจบริบทระบบทั้งหมด (telegram-ai-agent.ts)
+- [x] System prompt ภาษาไทย — ตอบเหมือนคนจริง สบายๆ ไม่ใช่ bot
+- [x] รวม context จากทุก subsystem: sprints, blackhat, PBN, redirects, CVE, domains, rankings, content freshness, orchestrator
+- [x] Intent detection via LLM tool_choice: auto — ถาม status / สั่งงาน / ขอ report / สนทนาทั่วไป
+- [x] Conversation memory per chat (MAX_HISTORY = 20 messages)
+
+## Query Capabilities (ถามอะไรก็ตอบได้)
+- [x] "วันนี้ hack เว็บวาง redirect สำเร็จกี่เว็บ?" → check_attack_stats tool
+- [x] "สถานะ sprint ตอนนี้เป็นยังไง?" → check_sprint_status tool
+- [x] "PBN ตอนนี้มีกี่ตัว active?" → check_pbn_status tool
+- [x] "CVE ล่าสุดมีอะไรบ้าง?" → check_cve_database tool
+- [x] "โดเมนไหนกำลังจะหมดอายุ?" → context from PBN data
+- [x] "ranking keyword X ตอนนี้อยู่ที่เท่าไหร่?" → check_keyword_rank tool
+
+## Command Execution (สั่งงานผ่าน chat)
+- [x] "เอาโดเมนนี้ไป take over ให้หน่อย" → redirect_takeover tool
+- [x] "วาง redirect ที่เว็บนี้" → redirect_takeover tool
+- [x] "เริ่ม sprint ให้โดเมนนี้" → start_sprint tool (auto-renew ON)
+- [x] "หยุด sprint โดเมนนี้" → pause_resume_sprint tool
+- [x] "วิเคราะห์ SEO โดเมนนี้" → analyze_domain tool
+- [x] "เช็ค rank keyword นี้" → check_keyword_rank tool
+- [x] "โจมตีเว็บนี้" → run_blackhat_chain tool (full attack chain)
+- [x] "สั่ง agentic attack" → start_agentic_attack tool
+- [x] "สถานะ orchestrator" → get_orchestrator_status tool
+
+## Telegram Integration
+- [x] Webhook endpoint /api/telegram/webhook
+- [x] Long-polling mode (auto-start on server boot)
+- [x] Message handler with conversation history (per chat)
+- [x] Owner-only access (chatId verification)
+- [x] Update deduplication (processedUpdates Set)
+- [x] Error handling & fallback responses (Thai error messages)
+- [x] /start, /clear, /status commands
+- [x] tRPC router: telegramAi (status, startPolling, stopPolling, setWebhook, testMessage, clearChat)
+
+## Testing
+- [x] vitest tests สำหรับ Telegram AI Chat Agent (23 tests passed)
+- [x] 0 TypeScript errors

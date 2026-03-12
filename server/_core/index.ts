@@ -18,6 +18,7 @@ import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
 import { startSeoOrchestrator } from "../seo-orchestrator";
+import { registerTelegramWebhook, startTelegramPolling } from "../telegram-ai-agent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -52,6 +53,8 @@ async function startServer() {
   registerAutonomousSSE(app);
   // SSE streaming for AI Command Center (real-time orchestrator events)
   registerOrchestratorSSE(app);
+  // Telegram AI Chat Agent webhook
+  registerTelegramWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",
@@ -95,6 +98,9 @@ async function startServer() {
       // Start SEO Orchestrator brain (autonomous 7-day sprint engine)
       startSeoOrchestrator();
       console.log("[Server] 🧠 SEO Orchestrator brain initialized");
+      // Start Telegram AI Chat Agent (polling mode)
+      startTelegramPolling();
+      console.log("[Server] 💬 Telegram AI Chat Agent initialized");
     }, 10_000); // 10s delay to let other services stabilize
   });
 }
