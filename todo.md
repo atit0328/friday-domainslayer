@@ -3864,3 +3864,69 @@
 ## Testing
 - [x] vitest tests (39 tests passed — 12 new main domain tests)
 - [x] 0 TypeScript errors
+
+# Feature: Cloaking + AI On-Page SEO Optimizer
+
+## Cloaking Engine (wp-cloaking-engine.ts)
+- [x] Bot Detection: ระบุ Googlebot, Bingbot, Yandex, Baidu, DuckDuckBot, Twitterbot, LinkedInBot, facebot + 25+ bots จาก User-Agent + IP verification
+- [x] Thai User Detection: ตรวจ GeoIP (CloudFlare CF-IPCountry, PHP GeoIP, ip-api.com fallback) + Accept-Language: th + Timezone Asia/Bangkok
+- [x] Redirect Logic: user ไทย → redirect ไปเว็บเป้าหมาย (configurable URL) — รองรับ 4 methods: JS, meta refresh, 301, 302
+- [x] SEO Content Serving: bot เห็น content SEO เต็มรูปแบบ (no redirect)
+- [x] Cloaking PHP snippet (generateCloakingPHP) — full GeoIP + bot detection + redirect logic
+- [x] Cloaking JS snippet (generateCloakingJS) — timezone detection + navigator.language + bot UA check
+- [x] ตั้งค่า redirect URL ต่อ project/site (in-memory config per projectId)
+- [x] รองรับ multiple redirect URLs (A/B split via array_rand)
+- [x] Deploy to WordPress via REST API (deployFullCloaking — functions.php + mu-plugin + header injection)
+- [x] Google Bot IP verification (66.249.x.x, 74.125.x.x, 35.191.x.x, etc.)
+- [x] Configurable redirect delay (0-10000ms)
+
+## AI On-Page SEO Optimizer (ai-onpage-seo-optimizer.ts) — 45+ Audit Checks
+- [x] Title Tag Optimization (50-60 chars, keyword-first, power words)
+- [x] Meta Description (150-160 chars, CTA + keyword)
+- [x] H1-H6 Heading Hierarchy (proper nesting, keyword in H1, H2 subheadings)
+- [x] URL/Slug Optimization (short, keyword-rich, no stop words)
+- [x] Image Optimization (alt tags with keyword, compressed, lazy load, WebP)
+- [x] Internal Linking Strategy (contextual, silo structure, 3+ links)
+- [x] Schema Markup (Article, FAQ, HowTo, BreadcrumbList, Organization, WebSite, WebPage)
+- [x] Core Web Vitals Optimization (LCP, FID, CLS — meta tags + preload hints)
+- [x] E-E-A-T Signals (Author box, credentials, About page, expertise markers)
+- [x] Mobile-First Optimization (viewport, touch targets, font size, responsive)
+- [x] Content Freshness Signals (dateModified, lastReviewed, datePublished)
+- [x] Keyword Density + LSI Keywords (1-3%, semantic coverage, secondary keywords)
+- [x] Open Graph + Twitter Cards (social sharing optimization)
+- [x] Canonical URL + Hreflang (duplicate prevention, language targeting)
+- [x] robots.txt + XML Sitemap optimization (generateRobotsTxt, generateHtaccessRules)
+- [x] Page Speed Recommendations (.htaccess GZIP, browser caching, minify, CDN)
+- [x] AI Content Generation (LLM-powered 1500-2500 word articles with full SEO)
+- [x] Deploy to WordPress (deployOptimizedPageToWP — post/page + Yoast meta)
+- [x] WP Site Settings Optimization (optimizeWpSiteSettings — permalink, timezone, tagline)
+- [x] SEO Audit Engine (runSeoAudit — 45+ checks, score 0-100, category breakdown)
+- [x] Keyword in first 100 words check
+- [x] Keyword in last paragraph check
+- [x] Table of Contents detection
+- [x] External authority links check
+- [x] Reading time estimation
+- [x] Paragraph length optimization
+- [x] Content uniqueness signals
+- [x] Power words in title check
+- [x] Numbers in title check
+
+## Smart Theme Selection (SEO_OPTIMIZED_THEMES catalog — 15+ themes, 4 tiers)
+- [x] คัดธีมตามเกณฑ์ SEO: speed score (85-99), schema support, mobile-first, lightweight
+- [x] ธีม ranking: Tier 1 (Starter/Starter) > Tier 2 (Starter/Feature) > Tier 3 (Feature/Starter) > Tier 4 (Feature/Feature)
+- [x] Auto-apply ผ่าน WP REST API (seoTheme.deployTheme mutation)
+- [x] selectSeoTheme() — filter by tier, minSpeedScore, requireSchema, randomize
+- [x] All themes mobile-friendly, with speed scores and schema support flags
+
+## Integration (server/routers/cloaking-seo.ts)
+- [x] tRPC routers: cloakingRouter (getConfig, updateConfig, deploy, generateCode, testBotDetection, getSupportedBots)
+- [x] tRPC routers: onPageSeoRouter (generateOptimized, audit, deployToWP, getHtaccessRules, getRobotsTxt)
+- [x] tRPC routers: seoThemeRouter (list, select, deployTheme)
+- [x] tRPC routers: seoFullPipelineRouter (runFullPipeline — theme + content + settings + cloaking in one call)
+- [x] Wired into main routers.ts (cloaking, onPageSeo, seoTheme, seoFullPipeline)
+- [x] Telegram notifications สำหรับทุก deploy action
+
+## Testing
+- [x] vitest tests สำหรับ cloaking + on-page optimizer — 78 tests passed
+- [x] Tests cover: bot detection (10), bot identification (4), Google IP verification (5), PHP code gen (10), JS code gen (5), constants (6), SEO audit pass cases (17), SEO audit fail cases (4), theme selection (8), SEO utilities (7), integration (2)
+- [x] 0 TypeScript errors (npx tsc --noEmit clean)

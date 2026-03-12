@@ -63,6 +63,7 @@ import { algorithmMonitorRouter } from "./routers/algorithm-monitor";
 import { competitorGapRouter } from "./routers/competitor-gap";
 import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 import { telegramAiRouter } from "./routers/telegram-ai";
+import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter } from "./routers/cloaking-seo";
 
 export const appRouter = router({
   system: systemRouter,
@@ -210,6 +211,12 @@ export const appRouter = router({
 
   // Telegram AI Chat Agent (conversational AI assistant)
   telegramAi: telegramAiRouter,
+
+  // Cloaking + Advanced SEO Optimization
+  cloaking: cloakingRouter,
+  onPageSeo: onPageSeoRouter,
+  seoTheme: seoThemeRouter,
+  seoFullPipeline: seoFullPipelineRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({
