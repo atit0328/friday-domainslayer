@@ -4099,3 +4099,10 @@
 - [x] Write vitest tests: 34 tests (circuit breaker state, withTimeout, phase definitions, module exports)
 - [x] Force-advance stuck campaign in DB
 - [x] TypeScript compilation: 0 errors
+
+# Campaign Re-run / Restart Feature
+
+- [x] Add campaign restart tRPC procedure (restart from scratch or resume from last phase)
+- [x] Update frontend UI with retry/restart button for failed campaigns
+- [x] Write vitest tests for campaign restart (13 tests passed)
+- [x] Force-advance stuck campaigns in DB and verify re-run works

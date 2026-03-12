@@ -1927,6 +1927,31 @@ function CampaignTab({ projectId, project }: { projectId: number; project: any }
     },
   });
 
+  const resumeCampaign = trpc.seoProjects.resumeCampaign.useMutation({
+    onSuccess: (result) => {
+      refetch();
+      utils.seoProjects.get.invalidate({ id: projectId });
+      toast.success(
+        result.restarted
+          ? "Restart Campaign แล้ว! รันใหม่จากเฟส 1"
+          : `Resume Campaign แล้ว! ต่อจากเฟส ${result.fromPhase + 1}`,
+        { description: "ระบบทำงานในพื้นหลัง กลับมาดูความคืบหน้าได้ตลอด" },
+      );
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const restartCampaign = trpc.seoProjects.restartCampaign.useMutation({
+    onSuccess: () => {
+      refetch();
+      utils.seoProjects.get.invalidate({ id: projectId });
+      toast.success("Restart Campaign จากเฟส 1 แล้ว!", {
+        description: "ระบบรีเซ็ตและรันใหม่ทั้งหมดในพื้นหลัง",
+      });
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
   if (isLoading) return <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-orange-400" /></div>;
   if (!campaign) return <div className="text-center py-12 text-muted-foreground">ไม่พบข้อมูล Campaign</div>;
 
@@ -1986,47 +2011,108 @@ function CampaignTab({ projectId, project }: { projectId: number; project: any }
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-3 mt-4">
-            {campaign.status !== "completed" && (
+          <div className="flex flex-wrap gap-3 mt-4">
+            {/* Failed/Idle state: show Resume + Restart from scratch */}
+            {(campaign.status === "failed" || campaign.status === "idle" || campaign.status === "paused") && campaign.phase < 16 && (
               <>
                 <Button
-                  onClick={() => runNextPhase.mutate({ id: projectId })}
-                  disabled={runNextPhase.isPending || campaign.status === "running"}
-                  className="bg-orange-600 hover:bg-orange-700"
-                >
-                  {runNextPhase.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
-                  รันเฟสถัดไป ({campaign.phase + 1}/16)
-                </Button>
-                <Button
                   onClick={() => {
-                    if (confirm("รัน Campaign ทั้งหมดที่เหลือ? ระบบจะทำงานในพื้นหลัง")) {
+                    if (campaign.phase > 0) {
+                      resumeCampaign.mutate({ id: projectId });
+                    } else {
                       runAllPhases.mutate({ id: projectId });
                     }
                   }}
-                  disabled={runAllPhases.isPending || campaign.status === "running"}
-                  variant="outline"
-                  className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                  disabled={resumeCampaign.isPending || runAllPhases.isPending}
+                  className="bg-orange-600 hover:bg-orange-700"
                 >
-                  {runAllPhases.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-                  รันทั้งหมด
+                  {(resumeCampaign.isPending || runAllPhases.isPending) ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
+                  {campaign.phase > 0 ? `Resume จากเฟส ${campaign.phase + 1}/16` : "เริ่มรัน Campaign"}
                 </Button>
+                {campaign.phase > 0 && (
+                  <Button
+                    onClick={() => {
+                      if (confirm("Restart Campaign จากเฟส 1 ใหม่? ข้อมูลเฟสเดิมจะถูกรีเซ็ต")) {
+                        restartCampaign.mutate({ id: projectId });
+                      }
+                    }}
+                    disabled={restartCampaign.isPending}
+                    variant="outline"
+                    className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                  >
+                    {restartCampaign.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                    Restart ใหม่ทั้งหมด
+                  </Button>
+                )}
               </>
             )}
-            {campaign.phase > 0 && (
+
+            {/* Running state: show progress only */}
+            {campaign.status === "running" && (
+              <Badge variant="outline" className="text-sm py-2 px-4 bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse">
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                กำลังรันเฟส {campaign.phase + 1}/16...
+              </Badge>
+            )}
+
+            {/* Completed state: show Restart from scratch */}
+            {campaign.status === "completed" && (
               <Button
                 onClick={() => {
-                  if (confirm("รีเซ็ต Campaign? จะเริ่มนับเฟสใหม่จาก 0")) {
+                  if (confirm("Restart Campaign ใหม่ทั้งหมด? จะรีเซ็ตและรันจากเฟส 1 ใหม่")) {
+                    restartCampaign.mutate({ id: projectId });
+                  }
+                }}
+                disabled={restartCampaign.isPending}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                {restartCampaign.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                รันใหม่ทั้งหมด
+              </Button>
+            )}
+
+            {/* Run next phase button (for manual step-by-step) */}
+            {campaign.status !== "completed" && campaign.status !== "running" && (
+              <Button
+                onClick={() => runNextPhase.mutate({ id: projectId })}
+                disabled={runNextPhase.isPending}
+                variant="outline"
+                className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+              >
+                {runNextPhase.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+                รันทีละเฟส
+              </Button>
+            )}
+
+            {/* Reset button (stop without re-running) */}
+            {campaign.phase > 0 && campaign.status !== "running" && (
+              <Button
+                onClick={() => {
+                  if (confirm("รีเซ็ต Campaign? จะเริ่มนับเฟสใหม่จาก 0 (ไม่รันอัตโนมัติ)")) {
                     resetCampaign.mutate({ id: projectId });
                   }
                 }}
-                disabled={resetCampaign.isPending || campaign.status === "running"}
+                disabled={resetCampaign.isPending}
                 variant="outline"
                 className="border-red-500/30 text-red-400 hover:bg-red-500/10"
               >
-                <RefreshCw className="w-4 h-4 mr-1" /> รีเซ็ต
+                <XCircle className="w-4 h-4 mr-1" /> รีเซ็ต
               </Button>
             )}
           </div>
+
+          {/* Failed campaign alert */}
+          {campaign.status === "failed" && (
+            <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-red-400">Campaign หยุดทำงาน</p>
+                <p className="text-xs text-red-300/70 mt-1">
+                  หยุดที่เฟส {campaign.phase}/16 — กด <strong>Resume</strong> เพื่อต่อจากเฟสที่ค้าง หรือ <strong>Restart ใหม่ทั้งหมด</strong> เพื่อรันใหม่จากเฟส 1
+                </p>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

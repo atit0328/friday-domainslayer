@@ -1276,20 +1276,49 @@ export const seoProjectsRouter = router({
       return { started: true, fromPhase: currentPhase, totalPhases: 16 };
     }),
 
-  // Resume a stuck campaign — continues from the current phase
+  // Resume a stuck/failed campaign — continues from the current phase
   resumeCampaign: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const project = await db.getSeoProjectById(input.id);
       if (!project) throw new Error("Project not found");
       const currentPhase = project.campaignPhase || 0;
-      if (currentPhase >= 16) throw new Error("Campaign already completed");
-      if (project.campaignStatus !== "running" && project.campaignStatus !== "failed") {
-        throw new Error("Campaign is not in a stuck/failed state");
+
+      // If already completed (phase >= 16), reset to phase 0 and re-run
+      if (currentPhase >= 16) {
+        await db.updateSeoProject(input.id, {
+          campaignPhase: 0,
+          campaignProgress: 0,
+          campaignStatus: "running",
+          campaignEnabled: true,
+          campaignStartedAt: new Date(),
+          campaignCompletedAt: null,
+          campaignLastPhaseResult: `Restarted (was completed) at ${new Date().toISOString()}`,
+          totalWpChanges: 0,
+        });
+        (async () => {
+          try {
+            await runAllPhases(input.id);
+          } catch (err: any) {
+            console.error(`[Campaign] Restart failed for project ${input.id}:`, err.message);
+            await db.updateSeoProject(input.id, {
+              campaignStatus: "failed",
+              campaignLastPhaseResult: `Restart failed: ${err.message}`,
+            });
+          }
+        })();
+        return { resumed: true, fromPhase: 0, totalPhases: 16, restarted: true };
       }
-      // Reset status to running and resume
+
+      // Allow resume from any non-running state (failed, idle, paused, completed)
+      if (project.campaignStatus === "running") {
+        throw new Error("Campaign กำลังรันอยู่แล้ว — รอให้เสร็จหรือ reset ก่อน");
+      }
+
+      // Reset status to running and resume from current phase
       await db.updateSeoProject(input.id, {
         campaignStatus: "running",
+        campaignEnabled: true,
         campaignLastPhaseResult: `Resumed from phase ${currentPhase + 1} at ${new Date().toISOString()}`,
       });
       (async () => {
@@ -1303,7 +1332,46 @@ export const seoProjectsRouter = router({
           });
         }
       })();
-      return { resumed: true, fromPhase: currentPhase, totalPhases: 16 };
+      return { resumed: true, fromPhase: currentPhase, totalPhases: 16, restarted: false };
+    }),
+
+  // Restart campaign from scratch — reset all progress and re-run
+  restartCampaign: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const project = await db.getSeoProjectById(input.id);
+      if (!project) throw new Error("Project not found");
+
+      if (project.campaignStatus === "running") {
+        throw new Error("Campaign กำลังรันอยู่ — รอให้เสร็จหรือ reset ก่อน");
+      }
+
+      // Reset everything and start fresh
+      await db.updateSeoProject(input.id, {
+        campaignPhase: 0,
+        campaignProgress: 0,
+        campaignStatus: "running",
+        campaignEnabled: true,
+        campaignStartedAt: new Date(),
+        campaignCompletedAt: null,
+        campaignLastPhaseResult: `Restarted from scratch at ${new Date().toISOString()}`,
+        totalWpChanges: 0,
+      });
+
+      // Run in background
+      (async () => {
+        try {
+          await runAllPhases(input.id);
+        } catch (err: any) {
+          console.error(`[Campaign] Restart failed for project ${input.id}:`, err.message);
+          await db.updateSeoProject(input.id, {
+            campaignStatus: "failed",
+            campaignLastPhaseResult: `Restart failed: ${err.message}`,
+          });
+        }
+      })();
+
+      return { restarted: true, fromPhase: 0, totalPhases: 16 };
     }),
 
   // Recover all stale campaigns (stuck > 2 hours)
@@ -1316,6 +1384,11 @@ export const seoProjectsRouter = router({
   resetCampaign: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
+      const project = await db.getSeoProjectById(input.id);
+      if (!project) throw new Error("Project not found");
+      if (project.campaignStatus === "running") {
+        throw new Error("Campaign กำลังรันอยู่ — ไม่สามารถ reset ได้");
+      }
       await db.updateSeoProject(input.id, {
         campaignPhase: 0,
         campaignProgress: 0,
