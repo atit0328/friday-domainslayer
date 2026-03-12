@@ -608,6 +608,63 @@ describe("SEO Theme Selection", () => {
   it("should have all themes mobile-friendly", () => {
     expect(SEO_OPTIMIZED_THEMES.every(t => t.mobileFriendly)).toBe(true);
   });
+
+  it("should have pageSpeed scores for all themes", () => {
+    for (const theme of SEO_OPTIMIZED_THEMES) {
+      expect(theme.pageSpeed).toBeDefined();
+      expect(theme.pageSpeed.performance).toBeGreaterThanOrEqual(80);
+      expect(theme.pageSpeed.performance).toBeLessThanOrEqual(100);
+      expect(theme.pageSpeed.accessibility).toBeGreaterThanOrEqual(80);
+      expect(theme.pageSpeed.seo).toBeGreaterThanOrEqual(90);
+      expect(theme.pageSpeed.bestPractices).toBeGreaterThanOrEqual(90);
+    }
+  });
+
+  it("should have seoScore breakdown for all themes", () => {
+    for (const theme of SEO_OPTIMIZED_THEMES) {
+      expect(theme.seoScore).toBeDefined();
+      expect(theme.seoScore.overall).toBeGreaterThanOrEqual(70);
+      expect(theme.seoScore.overall).toBeLessThanOrEqual(100);
+      expect(theme.seoScore.titleOptimization).toBeGreaterThan(0);
+      expect(theme.seoScore.metaDescription).toBeGreaterThan(0);
+      expect(theme.seoScore.headingStructure).toBeGreaterThan(0);
+      expect(theme.seoScore.schemaMarkup).toBeGreaterThan(0);
+      expect(theme.seoScore.mobileResponsive).toBeGreaterThan(0);
+      expect(theme.seoScore.coreWebVitals).toBeGreaterThan(0);
+      expect(theme.seoScore.codeQuality).toBeGreaterThan(0);
+      expect(theme.seoScore.imageOptimization).toBeGreaterThan(0);
+      expect(theme.seoScore.internalLinking).toBeGreaterThan(0);
+      expect(theme.seoScore.contentReadability).toBeGreaterThan(0);
+    }
+  });
+
+  it("should have unique real theme names (not all flavor)", () => {
+    const names = new Set(SEO_OPTIMIZED_THEMES.map(t => t.name));
+    expect(names.size).toBeGreaterThanOrEqual(8);
+  });
+
+  it("should have category for all themes", () => {
+    const validCategories = ["starter", "multipurpose", "blog", "business", "developer"];
+    for (const theme of SEO_OPTIMIZED_THEMES) {
+      expect(validCategories).toContain(theme.category);
+    }
+  });
+
+  it("should have preview images for tier 1 and tier 2 themes with known slugs", () => {
+    const knownThemes = SEO_OPTIMIZED_THEMES.filter(t => 
+      ["generatepress", "astra", "kadence", "hello-elementor", "neve", "blocksy", "oceanwp"].includes(t.slug)
+    );
+    for (const theme of knownThemes) {
+      expect(theme.previewImage).toBeDefined();
+      expect(theme.previewImage).toContain("cloudfront.net");
+    }
+  });
+
+  it("should have tier 1 themes with higher seoScore than tier 4", () => {
+    const tier1Avg = SEO_OPTIMIZED_THEMES.filter(t => t.tier === 1).reduce((sum, t) => sum + t.seoScore.overall, 0) / SEO_OPTIMIZED_THEMES.filter(t => t.tier === 1).length;
+    const tier4Avg = SEO_OPTIMIZED_THEMES.filter(t => t.tier === 4).reduce((sum, t) => sum + t.seoScore.overall, 0) / SEO_OPTIMIZED_THEMES.filter(t => t.tier === 4).length;
+    expect(tier1Avg).toBeGreaterThan(tier4Avg);
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════

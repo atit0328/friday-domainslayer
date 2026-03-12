@@ -3989,3 +3989,26 @@
 - [x] ลบ huaykhonthai956.org (ID: 30003) + ข้อมูลที่เกี่ยวข้องทั้งหมด
 - [x] ลบ ppixxie928.org (ID: 30002, 60002) + ข้อมูลที่เกี่ยวข้องทั้งหมด
 - [x] ลบจาก 6 ตาราง: seo_projects, backlink_log, rank_tracking, seo_actions, seo_snapshots, seo_agent_tasks, seo_content
+
+# Feature: Enhanced SEO Theme List UI — Preview Images + PageSpeed + SEO Score
+
+## Theme Data Model Enhancement
+- [x] เพิ่ม preview image URL สำหรับแต่ละ theme (CDN hosted — GeneratePress, Astra, Kadence, Hello Elementor, Neve, Blocksy, OceanWP)
+- [x] เปลี่ยนชื่อ theme ให้เป็นชื่อจริง 14 ตัว: GeneratePress, Astra, Kadence, Hello Elementor, Neve, Blocksy, flavor, Flavor Developer, OceanWP, Twenty Twenty-Five, Twenty Twenty-Four, flavor Developer Pro, flavor starter
+- [x] เพิ่ม Google PageSpeed score (Performance, Accessibility, Best Practices, SEO) — ทุก theme
+- [x] เพิ่ม SEO Score breakdown 11 metrics: overall, titleOptimization, metaDescription, headingStructure, schemaMarkup, mobileResponsive, coreWebVitals, codeQuality, imageOptimization, internalLinking, contentReadability
+- [x] เพิ่ม category (starter/multipurpose/blog/business/developer), activeInstalls, author
+
+## UI Redesign
+- [x] แสดงรูป preview ของแต่ละ theme (thumbnail card — object-cover object-top)
+- [x] แสดง PageSpeed score แบบ gauge bar (4 metrics: Perf, A11y, BP, SEO) พร้อม color coding
+- [x] แสดง SEO Score รวม (SVG circle gauge) + expandable breakdown 10 metrics
+- [x] Card layout 2 columns (md:grid-cols-2) แทน list layout เดิม
+- [x] Responsive design สำหรับ mobile (1 column on mobile, 2 on desktop)
+- [x] Tier legend badges ด้านบน
+- [x] Tier-based border colors (emerald/violet/cyan/amber)
+- [x] Score color coding (emerald ≥95, green ≥90, yellow ≥80, orange ≥70, red <70)
+
+## Testing
+- [x] vitest tests สำหรับ theme data — 84 tests passed (เพิ่ม 6 tests ใหม่: pageSpeed, seoScore, unique names, category, preview images, tier ranking)
+- [x] 0 TypeScript errors

@@ -74,6 +74,7 @@ export default function CloakingSettings() {
   const [wpUsername, setWpUsername] = useState("");
   const [wpAppPassword, setWpAppPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [expandedTheme, setExpandedTheme] = useState<number | null>(null);
 
   // Queries
   const { data: projects, isLoading: loadingProjects } = trpc.seoProjects.list.useQuery();
@@ -869,68 +870,196 @@ export default function CloakingSettings() {
                   <Palette className="w-5 h-5 text-violet" />
                   SEO-Optimized Themes
                 </CardTitle>
-                <CardDescription>ธีม WordPress ที่ได้รับการจัดอันดับตามประสิทธิภาพ SEO — เลือกและติดตั้งได้ทันที</CardDescription>
+                <CardDescription>ธีม WordPress ที่ได้รับการจัดอันดับตามประสิทธิภาพ SEO — เลือกและติดตั้งได้ทันที พร้อม PageSpeed + SEO Score</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {seoThemes?.map((theme: any, i: number) => (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between p-3 rounded-lg bg-background/50 border border-border/30 hover:border-border/60 transition-all"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${
-                          theme.tier === 1 ? "bg-emerald/15 text-emerald" :
-                          theme.tier === 2 ? "bg-violet/15 text-violet" :
-                          theme.tier === 3 ? "bg-cyan-500/15 text-cyan-400" :
-                          "bg-muted text-muted-foreground"
-                        }`}>
-                          T{theme.tier}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium">{theme.name}</p>
-                          <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-xs text-muted-foreground">
-                              Speed: <span className="text-foreground font-mono">{theme.speedScore}</span>
-                            </span>
-                            {theme.schemaSupport && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1">Schema</Badge>
-                            )}
-                            {theme.mobileFriendly && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1">Mobile</Badge>
-                            )}
+                {/* Tier Legend */}
+                <div className="flex flex-wrap gap-3 mb-5 pb-4 border-b border-border/30">
+                  {[
+                    { tier: 1, label: "Tier 1 — Ultra Fast", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" },
+                    { tier: 2, label: "Tier 2 — Balanced", color: "bg-violet-500/15 text-violet-400 border-violet-500/30" },
+                    { tier: 3, label: "Tier 3 — Reliable", color: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30" },
+                    { tier: 4, label: "Tier 4 — Feature Rich", color: "bg-amber-500/15 text-amber-400 border-amber-500/30" },
+                  ].map(t => (
+                    <Badge key={t.tier} variant="outline" className={`text-xs py-1 px-2 ${t.color}`}>{t.label}</Badge>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {seoThemes?.map((theme: any, i: number) => {
+                    const tierColors = theme.tier === 1 ? { bg: "border-emerald-500/40 hover:border-emerald-500/70", badge: "bg-emerald-500/15 text-emerald-400", ring: "ring-emerald-500/20" }
+                      : theme.tier === 2 ? { bg: "border-violet-500/40 hover:border-violet-500/70", badge: "bg-violet-500/15 text-violet-400", ring: "ring-violet-500/20" }
+                      : theme.tier === 3 ? { bg: "border-cyan-500/40 hover:border-cyan-500/70", badge: "bg-cyan-500/15 text-cyan-400", ring: "ring-cyan-500/20" }
+                      : { bg: "border-amber-500/40 hover:border-amber-500/70", badge: "bg-amber-500/15 text-amber-400", ring: "ring-amber-500/20" };
+
+                    const scoreColor = (v: number) => v >= 95 ? "text-emerald-400" : v >= 90 ? "text-green-400" : v >= 80 ? "text-yellow-400" : v >= 70 ? "text-orange-400" : "text-red-400";
+                    const gaugeColor = (v: number) => v >= 90 ? "bg-emerald-500" : v >= 70 ? "bg-yellow-500" : "bg-red-500";
+
+                    return (
+                      <div
+                        key={i}
+                        className={`group rounded-xl border bg-card/60 backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-black/10 ${tierColors.bg} ${expandedTheme === i ? 'ring-2 ' + tierColors.ring : ''}`}
+                      >
+                        {/* Header: Preview + Basic Info */}
+                        <div className="p-4">
+                          <div className="flex gap-3">
+                            {/* Theme Preview Image */}
+                            <div className="w-24 h-18 sm:w-32 sm:h-24 rounded-lg overflow-hidden bg-muted/50 border border-border/30 shrink-0">
+                              {theme.previewImage ? (
+                                <img
+                                  src={theme.previewImage}
+                                  alt={`${theme.name} preview`}
+                                  className="w-full h-full object-cover object-top"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center">
+                                  <Palette className="w-8 h-8 text-muted-foreground/40" />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Theme Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <h3 className="font-semibold text-sm leading-tight">{theme.name}</h3>
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    <Badge variant="outline" className={`text-[10px] py-0 px-1.5 ${tierColors.badge}`}>T{theme.tier}</Badge>
+                                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-muted-foreground">{theme.category}</Badge>
+                                    {theme.activeInstalls && (
+                                      <span className="text-[10px] text-muted-foreground">{theme.activeInstalls}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Overall SEO Score Circle */}
+                                <div className="relative w-11 h-11 shrink-0">
+                                  <svg className="w-11 h-11 -rotate-90" viewBox="0 0 44 44">
+                                    <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3" className="text-muted/30" />
+                                    <circle cx="22" cy="22" r="18" fill="none" strokeWidth="3"
+                                      className={scoreColor(theme.seoScore?.overall || 0)}
+                                      strokeDasharray={`${((theme.seoScore?.overall || 0) / 100) * 113.1} 113.1`}
+                                      strokeLinecap="round"
+                                    />
+                                  </svg>
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className={`text-xs font-bold ${scoreColor(theme.seoScore?.overall || 0)}`}>{theme.seoScore?.overall || '—'}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Reason */}
+                              <p className="text-[11px] text-muted-foreground mt-1.5 line-clamp-2 leading-relaxed">{theme.reason}</p>
+                            </div>
+                          </div>
+
+                          {/* PageSpeed Gauges Row */}
+                          {theme.pageSpeed && (
+                            <div className="grid grid-cols-4 gap-2 mt-3 pt-3 border-t border-border/20">
+                              {[
+                                { label: "Perf", value: theme.pageSpeed.performance },
+                                { label: "A11y", value: theme.pageSpeed.accessibility },
+                                { label: "BP", value: theme.pageSpeed.bestPractices },
+                                { label: "SEO", value: theme.pageSpeed.seo },
+                              ].map(ps => (
+                                <div key={ps.label} className="text-center">
+                                  <div className="text-[10px] text-muted-foreground mb-1">{ps.label}</div>
+                                  <div className="relative h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                                    <div
+                                      className={`absolute inset-y-0 left-0 rounded-full transition-all ${gaugeColor(ps.value)}`}
+                                      style={{ width: `${ps.value}%` }}
+                                    />
+                                  </div>
+                                  <div className={`text-xs font-mono font-bold mt-0.5 ${scoreColor(ps.value)}`}>{ps.value}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Tags Row */}
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                            {theme.schemaSupport && <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-emerald-500/30 text-emerald-400">Schema</Badge>}
+                            {theme.mobileFriendly && <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-blue-500/30 text-blue-400">Mobile</Badge>}
+                            {theme.author && <span className="text-[10px] text-muted-foreground ml-auto">by {theme.author}</span>}
                           </div>
                         </div>
+
+                        {/* Expandable SEO Score Breakdown */}
+                        <div className="border-t border-border/20">
+                          <button
+                            onClick={() => setExpandedTheme(expandedTheme === i ? null : i)}
+                            className="w-full flex items-center justify-between px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <Sparkles className="w-3 h-3" />
+                              SEO Score Breakdown
+                            </span>
+                            {expandedTheme === i ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          </button>
+
+                          {expandedTheme === i && theme.seoScore && (
+                            <div className="px-4 pb-3 space-y-1.5">
+                              {[
+                                { label: "Title Optimization", key: "titleOptimization" },
+                                { label: "Meta Description", key: "metaDescription" },
+                                { label: "Heading Structure", key: "headingStructure" },
+                                { label: "Schema Markup", key: "schemaMarkup" },
+                                { label: "Mobile Responsive", key: "mobileResponsive" },
+                                { label: "Core Web Vitals", key: "coreWebVitals" },
+                                { label: "Code Quality", key: "codeQuality" },
+                                { label: "Image Optimization", key: "imageOptimization" },
+                                { label: "Internal Linking", key: "internalLinking" },
+                                { label: "Content Readability", key: "contentReadability" },
+                              ].map(metric => {
+                                const val = theme.seoScore[metric.key] || 0;
+                                return (
+                                  <div key={metric.key} className="flex items-center gap-2">
+                                    <span className="text-[11px] text-muted-foreground w-32 shrink-0">{metric.label}</span>
+                                    <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${gaugeColor(val)}`}
+                                        style={{ width: `${val}%` }}
+                                      />
+                                    </div>
+                                    <span className={`text-[11px] font-mono font-semibold w-7 text-right ${scoreColor(val)}`}>{val}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Install Button */}
+                        <div className="px-4 pb-3 pt-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              if (!wpUsername || !wpAppPassword) {
+                                toast.error("ใส่ WP credentials ที่แท็บ Deploy ก่อน");
+                                return;
+                              }
+                              deployThemeMut.mutate({
+                                domain: selectedProject?.domain || "",
+                                wpUsername,
+                                wpAppPassword,
+                                themeSlug: theme.slug,
+                              });
+                            }}
+                            disabled={deployThemeMut.isPending}
+                          >
+                            {deployThemeMut.isPending ? (
+                              <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                            ) : (
+                              <Download className="w-3 h-3 mr-1" />
+                            )}
+                            Install Theme
+                          </Button>
+                        </div>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          if (!wpUsername || !wpAppPassword) {
-                            toast.error("ใส่ WP credentials ที่แท็บ Deploy ก่อน");
-                            return;
-                          }
-                          deployThemeMut.mutate({
-                            domain: selectedProject?.domain || "",
-                            wpUsername,
-                            wpAppPassword,
-                            themeSlug: theme.slug,
-                          });
-                        }}
-                        disabled={deployThemeMut.isPending}
-                        className="shrink-0"
-                      >
-                        {deployThemeMut.isPending ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <>
-                            <Download className="w-3 h-3 mr-1" />
-                            Install
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
