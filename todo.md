@@ -3639,3 +3639,11 @@
 - [x] vitest tests สำหรับ Auto-Sprint Trigger (covered in orchestrator tests)
 - [x] vitest tests สำหรับ Sprint Progress Notification — 6 new tests (33 total)
 - [x] 0 TypeScript errors
+
+# Feature: SEO Brain Dashboard — เน้นเป้าหมาย "ติดหน้าแรกใน 7 วัน"
+
+- [x] เปลี่ยน "How SEO Brain Works" → "7-Day Page 1 Sprint" พร้อมเป้าหมายชัดเจน
+- [x] เพิ่ม KPI target แต่ละวัน (Audit 100%, 10-30 บทความ, 20-50 PBN, 30-80 External, 50-100 T2, 100+ Signals, Top 10)
+- [x] เพิ่ม headline เป้าหมายหลัก "ติดอันดับหน้าแรก Google ภายใน 7 วัน" + Crown icon + gradient
+- [x] เพิ่ม "Start All Sprints" ปุ่มเดียวกดสร้าง sprint ให้ทุกโปรเจกต์
+- [x] 0 TypeScript errors

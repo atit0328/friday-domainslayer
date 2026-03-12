@@ -18,7 +18,8 @@ import { toast } from "sonner";
 import {
   Sparkles, Brain, Rocket, Activity, Link2, FileText, TrendingUp,
   Play, Pause, RotateCcw, Zap, Clock, Target, CheckCircle2, XCircle,
-  AlertTriangle, ChevronRight, BarChart3, Globe, Cpu,
+  AlertTriangle, ChevronRight, BarChart3, Globe, Cpu, PlayCircle,
+  Trophy, Search, Share2, Layers, Settings2, Crown,
 } from "lucide-react";
 
 export default function SeoBrain() {
@@ -86,6 +87,38 @@ export default function SeoBrain() {
     },
   });
 
+  // Start All Sprints — create sprint for all projects without active sprint
+  const [startingAll, setStartingAll] = useState(false);
+  const projectsWithoutSprint = useMemo(
+    () => projects?.filter(p => !p.activeSprint) || [],
+    [projects]
+  );
+
+  const handleStartAllSprints = async () => {
+    if (projectsWithoutSprint.length === 0) {
+      toast.info("All projects already have active sprints");
+      return;
+    }
+    setStartingAll(true);
+    let success = 0;
+    let failed = 0;
+    for (const project of projectsWithoutSprint) {
+      try {
+        await createSprint.mutateAsync({
+          projectId: project.id,
+          aggressiveness: 7,
+          enablePbn: true,
+          enableExternalBl: true,
+        });
+        success++;
+      } catch {
+        failed++;
+      }
+    }
+    setStartingAll(false);
+    toast.success(`\ud83d\ude80 Started ${success} sprints${failed > 0 ? `, ${failed} failed` : ""}`);
+  };
+
   const handleCreateSprint = () => {
     if (!selectedProject) return;
     createSprint.mutate({
@@ -106,15 +139,33 @@ export default function SeoBrain() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Sparkles className="w-7 h-7 text-violet" />
-            SEO Brain
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Autonomous AI Orchestrator — ทำให้เว็บติด SEO ภายใน 7 วัน
-          </p>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet to-purple-600 flex items-center justify-center">
+              <Crown className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">
+                7-Day Page 1 Sprint
+              </h1>
+              <p className="text-muted-foreground text-sm mt-0.5">
+                เป้าหมาย: <span className="text-violet font-semibold">ติดอันดับหน้าแรก Google ภายใน 7 วัน</span>
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
+          {projectsWithoutSprint.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-emerald text-emerald hover:bg-emerald/10"
+              onClick={handleStartAllSprints}
+              disabled={startingAll}
+            >
+              <PlayCircle className="w-4 h-4 mr-1" />
+              {startingAll ? "Starting..." : `Start All (${projectsWithoutSprint.length})`}
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -444,37 +495,112 @@ export default function SeoBrain() {
         )}
       </div>
 
-      {/* How It Works */}
-      <Card className="border-violet/20 bg-violet/5">
+      {/* 7-Day Page 1 Sprint Plan */}
+      <Card className="border-violet/20 bg-gradient-to-br from-violet/5 to-purple-600/5">
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Brain className="w-5 h-5 text-violet" />
-            How SEO Brain Works
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-amber-400" />
+                แผนโจมตี 7 วัน — ติดหน้าแรก Google
+              </CardTitle>
+              <CardDescription className="mt-1">
+                AI วางแผนและดำเนินการทุกขั้นตอนอัตโนมัติ เป้าหมาย: Top 10 ทุก keyword
+              </CardDescription>
+            </div>
+            <Badge className="bg-violet/20 text-violet border-violet/30 text-xs">
+              Fully Autonomous
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-7 gap-2 text-center">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-3 text-center">
             {[
-              { day: "Day 1", label: "Foundation", desc: "Analysis + Strategy", icon: Target },
-              { day: "Day 2", label: "Content", desc: "AI Content + On-page", icon: FileText },
-              { day: "Day 3", label: "PBN Links", desc: "Tier 1 PBN Build", icon: Link2 },
-              { day: "Day 4", label: "External", desc: "Web 2.0 + Forums", icon: Globe },
-              { day: "Day 5", label: "Tier 2", desc: "Link Amplification", icon: Zap },
-              { day: "Day 6", label: "Social", desc: "Signals + Indexing", icon: TrendingUp },
-              { day: "Day 7", label: "Optimize", desc: "Rank Check + Adapt", icon: BarChart3 },
+              {
+                day: "Day 1", label: "วิเคราะห์", icon: Search,
+                goal: "หาจุดอ่อน + วางแผนโจมตี",
+                kpi: "Audit 100%",
+                tasks: ["Domain Analysis", "Competitor Gap", "Keyword Map", "Strategy Plan"],
+                color: "text-blue-400", bg: "bg-blue-500/10",
+              },
+              {
+                day: "Day 2", label: "Content", icon: FileText,
+                goal: "สร้าง SEO Content ทุก keyword",
+                kpi: "10-30 บทความ",
+                tasks: ["AI Content Gen", "On-Page SEO", "Schema Markup", "Internal Links"],
+                color: "text-emerald", bg: "bg-emerald/10",
+              },
+              {
+                day: "Day 3", label: "PBN Tier 1", icon: Link2,
+                goal: "สร้าง Backlink จาก PBN",
+                kpi: "20-50 PBN Links",
+                tasks: ["Select Best PBN", "Generate Articles", "Post + Verify", "Anchor Diversity"],
+                color: "text-violet", bg: "bg-violet/10",
+              },
+              {
+                day: "Day 4", label: "External BL", icon: Globe,
+                goal: "Backlink จากแหล่งภายนอก",
+                kpi: "30-80 Links",
+                tasks: ["Web 2.0", "Forums", "Guest Posts", "Directories"],
+                color: "text-cyan-400", bg: "bg-cyan-500/10",
+              },
+              {
+                day: "Day 5", label: "Tier 2", icon: Layers,
+                goal: "เสริมพลัง Tier 1 Links",
+                kpi: "50-100 T2 Links",
+                tasks: ["Tier 2 Build", "Link Amplify", "Index Boost", "Drip Feed"],
+                color: "text-orange-400", bg: "bg-orange-500/10",
+              },
+              {
+                day: "Day 6", label: "Social", icon: Share2,
+                goal: "Social Signals + Force Index",
+                kpi: "100+ Signals",
+                tasks: ["Social Shares", "Bookmarks", "Force Index", "CTR Boost"],
+                color: "text-pink-400", bg: "bg-pink-500/10",
+              },
+              {
+                day: "Day 7", label: "ตรวจผล", icon: Trophy,
+                goal: "เช็คอันดับ + ปรับกลยุทธ์",
+                kpi: "Target: Top 10",
+                tasks: ["Rank Check", "Gap Analysis", "Strategy Adjust", "Final Report"],
+                color: "text-amber-400", bg: "bg-amber-500/10",
+              },
             ].map((step, i) => {
               const Icon = step.icon;
               return (
-                <div key={i} className="flex flex-col items-center gap-1">
-                  <div className="w-10 h-10 rounded-full bg-violet/10 flex items-center justify-center">
-                    <Icon className="w-5 h-5 text-violet" />
+                <div key={i} className="flex flex-col items-center gap-1.5 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+                  <div className={`w-11 h-11 rounded-full ${step.bg} flex items-center justify-center`}>
+                    <Icon className={`w-5 h-5 ${step.color}`} />
                   </div>
-                  <p className="text-xs font-bold text-violet">{step.day}</p>
-                  <p className="text-xs font-medium">{step.label}</p>
-                  <p className="text-[10px] text-muted-foreground">{step.desc}</p>
+                  <p className={`text-xs font-bold ${step.color}`}>{step.day}</p>
+                  <p className="text-xs font-semibold">{step.label}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight">{step.goal}</p>
+                  <Badge variant="outline" className={`text-[9px] ${step.color} border-current/30 mt-0.5`}>
+                    {step.kpi}
+                  </Badge>
+                  <div className="mt-1 space-y-0.5 hidden md:block">
+                    {step.tasks.map((t, j) => (
+                      <p key={j} className="text-[9px] text-muted-foreground/70">• {t}</p>
+                    ))}
+                  </div>
                 </div>
               );
             })}
+          </div>
+          
+          {/* Bottom target banner */}
+          <div className="mt-4 p-3 rounded-lg bg-gradient-to-r from-violet/10 via-purple-600/10 to-amber-500/10 border border-violet/20 flex flex-col md:flex-row items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Target className="w-5 h-5 text-violet" />
+              <span className="text-sm font-medium">เป้าหมายสุดท้าย:</span>
+              <span className="text-sm font-bold text-violet">ทุก keyword ติด Top 10 Google</span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <span>ถ้ายังไม่ถึงเป้า →</span>
+              <Badge className="bg-violet/20 text-violet border-violet/30 text-[10px]">
+                Auto-Renew Sprint รอบ 2
+              </Badge>
+            </div>
           </div>
         </CardContent>
       </Card>
