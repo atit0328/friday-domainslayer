@@ -24,6 +24,24 @@ vi.mock("./telegram-notifier", () => ({
   })),
 }));
 
+// Mock env for multi-chat support
+vi.mock("./_core/env", () => ({
+  ENV: {
+    telegramChatId: "12345",
+    telegramChatId2: "1302522946",
+    telegramBotToken: "test-bot-token",
+    shodanApiKey: "",
+    mozAccessId: "",
+    mozSecretKey: "",
+    ahrefsApiKey: "",
+    serpApiKey: "",
+    openaiApiKey: "",
+    anthropicApiKey: "",
+    forgeApiUrl: "",
+    forgeApiKey: "",
+  },
+}));
+
 // Import after mocks
 import {
   processMessage,
@@ -32,6 +50,11 @@ import {
   startTelegramPolling,
   stopTelegramPolling,
   isTelegramPollingActive,
+  getAllowedChatIds,
+  generateExecutiveSummary,
+  startDailySummaryScheduler,
+  stopDailySummaryScheduler,
+  isDailySummarySchedulerActive,
 } from "./telegram-ai-agent";
 import { invokeLLM } from "./_core/llm";
 import { fetchWithPoolProxy } from "./proxy-pool";
@@ -581,6 +604,264 @@ describe("Telegram AI Chat Agent", () => {
       
       // Should contain raw tool result
       expect(reply).toContain("get_orchestrator_status");
+    });
+  });
+
+  // ═══ Multi-Chat Support ═══
+
+  describe("Multi-Chat Support", () => {
+    it("should return all configured chat IDs", () => {
+      const ids = getAllowedChatIds();
+      expect(ids).toContain(12345);
+      expect(ids).toContain(1302522946);
+      expect(ids.length).toBe(2);
+    });
+
+    it("should allow messages from second chat ID", async () => {
+      mockInvokeLLM.mockResolvedValue({
+        id: "test",
+        created: Date.now(),
+        model: "test",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "สวัสดีครับ" },
+          finish_reason: "stop",
+        }],
+      });
+
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 5000,
+        message: {
+          message_id: 1,
+          from: { id: 1302522946, first_name: "User2" },
+          chat: { id: 1302522946, type: "private" },
+          date: Date.now(),
+          text: "สวัสดี",
+        },
+      });
+
+      // Should process the message (call LLM)
+      expect(mockInvokeLLM).toHaveBeenCalled();
+    });
+
+    it("should reject messages from unauthorized chat IDs", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 5001,
+        message: {
+          message_id: 1,
+          from: { id: 99999, first_name: "Stranger" },
+          chat: { id: 99999, type: "private" },
+          date: Date.now(),
+          text: "hello",
+        },
+      });
+
+      // Should NOT call LLM for unauthorized users
+      expect(mockInvokeLLM).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══ Executive Daily Summary ═══
+
+  describe("Executive Daily Summary", () => {
+    it("should generate a summary string", async () => {
+      const summary = await generateExecutiveSummary();
+      expect(typeof summary).toBe("string");
+      expect(summary.length).toBeGreaterThan(0);
+    });
+
+    it("should include header with date", async () => {
+      const summary = await generateExecutiveSummary();
+      expect(summary).toContain("สรุปผลงาน DomainSlayer");
+    });
+
+    it("should include /menu tip at the end", async () => {
+      const summary = await generateExecutiveSummary();
+      expect(summary).toContain("/menu");
+    });
+
+    it("should NOT contain failure/error words", async () => {
+      const summary = await generateExecutiveSummary();
+      // Executive summary should only show successes
+      expect(summary).not.toContain("ล้มเหลว");
+      expect(summary).not.toContain("failed");
+    });
+  });
+
+  // ═══ Daily Summary Scheduler ═══
+
+  describe("Daily Summary Scheduler", () => {
+    afterEach(() => {
+      stopDailySummaryScheduler();
+    });
+
+    it("should track scheduler state", () => {
+      expect(isDailySummarySchedulerActive()).toBe(false);
+      startDailySummaryScheduler();
+      expect(isDailySummarySchedulerActive()).toBe(true);
+      stopDailySummaryScheduler();
+      expect(isDailySummarySchedulerActive()).toBe(false);
+    });
+
+    it("should not start multiple schedulers", () => {
+      startDailySummaryScheduler();
+      startDailySummaryScheduler(); // second call should be no-op
+      expect(isDailySummarySchedulerActive()).toBe(true);
+      stopDailySummaryScheduler();
+      expect(isDailySummarySchedulerActive()).toBe(false);
+    });
+  });
+
+  // ═══ Inline Keyboard & Callback Queries ═══
+
+  describe("Inline Keyboard & Callback Queries", () => {
+    it("should handle /menu command and send inline keyboard", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 6000,
+        message: {
+          message_id: 1,
+          from: { id: 12345, first_name: "Owner" },
+          chat: { id: 12345, type: "private" },
+          date: Date.now(),
+          text: "/menu",
+        },
+      });
+
+      // Should NOT call LLM for /menu
+      expect(mockInvokeLLM).not.toHaveBeenCalled();
+      // Should call sendMessage with inline_keyboard
+      const fetchCall = mockFetch.mock.calls.find(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(fetchCall).toBeDefined();
+      const body = JSON.parse((fetchCall![1] as any).body);
+      expect(body.reply_markup).toBeDefined();
+      expect(body.reply_markup.inline_keyboard).toBeDefined();
+      expect(body.reply_markup.inline_keyboard.length).toBeGreaterThanOrEqual(4);
+    });
+
+    it("should handle /summary command", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 6001,
+        message: {
+          message_id: 1,
+          from: { id: 12345, first_name: "Owner" },
+          chat: { id: 12345, type: "private" },
+          date: Date.now(),
+          text: "/summary",
+        },
+      });
+
+      // Should NOT call LLM
+      expect(mockInvokeLLM).not.toHaveBeenCalled();
+      // Should send a message
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("should handle callback_query for sprint status", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 6002,
+        callback_query: {
+          id: "cbq_001",
+          from: { id: 12345, first_name: "Owner" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "cb_sprint",
+        },
+      });
+
+      // Should NOT call LLM for callback queries
+      expect(mockInvokeLLM).not.toHaveBeenCalled();
+      // Should answer callback query + send reply
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("should handle callback_query for attack stats", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 6003,
+        callback_query: {
+          id: "cbq_002",
+          from: { id: 12345, first_name: "Owner" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "cb_attack",
+        },
+      });
+
+      expect(mockInvokeLLM).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("should handle callback_query for daily summary", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 6004,
+        callback_query: {
+          id: "cbq_003",
+          from: { id: 12345, first_name: "Owner" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "cb_summary",
+        },
+      });
+
+      expect(mockInvokeLLM).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    it("should reject callback_query from unauthorized users", async () => {
+      mockFetch.mockResolvedValue({
+        response: { json: () => Promise.resolve({ ok: true }) } as any,
+        usedProxy: null,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 6005,
+        callback_query: {
+          id: "cbq_004",
+          from: { id: 99999, first_name: "Stranger" },
+          message: { message_id: 1, chat: { id: 99999, type: "private" } },
+          data: "cb_sprint",
+        },
+      });
+
+      // Should NOT send any response to unauthorized user
+      // Only the answerCallbackQuery might be called, but sendMessage should not
+      const sendMessageCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(sendMessageCalls.length).toBe(0);
     });
   });
 });

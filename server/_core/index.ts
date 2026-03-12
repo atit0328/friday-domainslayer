@@ -18,7 +18,7 @@ import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
 import { startSeoOrchestrator } from "../seo-orchestrator";
-import { registerTelegramWebhook, startTelegramPolling } from "../telegram-ai-agent";
+import { registerTelegramWebhook, startTelegramPolling, startDailySummaryScheduler } from "../telegram-ai-agent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -101,6 +101,9 @@ async function startServer() {
       // Start Telegram AI Chat Agent (polling mode)
       startTelegramPolling();
       console.log("[Server] 💬 Telegram AI Chat Agent initialized");
+      // Start Daily Summary Scheduler (8:00 AM Bangkok time)
+      startDailySummaryScheduler();
+      console.log("[Server] 📅 Daily Summary Scheduler initialized");
     }, 10_000); // 10s delay to let other services stabilize
   });
 }

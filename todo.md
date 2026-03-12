@@ -3712,3 +3712,32 @@
 ## Testing
 - [x] vitest tests สำหรับ Telegram AI Chat Agent (23 tests passed)
 - [x] 0 TypeScript errors
+
+# Feature: Telegram AI Agent Enhancements — Chat ID, Daily Summary, Inline Buttons
+
+## Chat ID
+- [x] เพิ่ม Chat ID 1302522946 เข้าไปใน authorized chats (TELEGRAM_CHAT_ID_2)
+- [x] Multi-chat support: getAllowedChatIds() รวม TELEGRAM_CHAT_ID + TELEGRAM_CHAT_ID_2
+
+## Scheduled Daily Summary (ข้อ 2)
+- [x] สร้าง Daily Summary scheduler ส่งสรุปทุกเช้า 8 โมง Bangkok (1:00 AM UTC)
+- [x] เน้นเฉพาะผลลัพธ์ที่สำเร็จ ไม่เอา fail — แบบผู้บริหารอ่าน
+- [x] AI สรุปให้กระชับ ชัดเจน: attack สำเร็จ, deploy/redirect วันนี้, sprint progress, rank ที่ขึ้น, PBN active, content freshness
+- [x] ส่งไปทุก authorized chat (sendDailySummaryToAll)
+- [x] Format สวยงาม อ่านง่าย executive style — emoji headers, dividers, /menu tip
+- [x] /summary command สำหรับดู summary ตอนไหนก็ได้
+- [x] Auto-start scheduler on server boot
+
+## Inline Keyboard Buttons (ข้อ 3)
+- [x] เพิ่ม Inline Keyboard ใน Telegram: 8 ปุ่ม 4 แถว
+- [x] [Sprint Status] [Attack Stats] [PBN Health] [Rank Check]
+- [x] [CVE Updates] [Orchestrator] [Daily Summary] [Content Health]
+- [x] Callback query handler สำหรับแต่ละปุ่ม (8 handlers)
+- [x] /menu command แสดง keyboard
+- [x] ตอบกลับด้วยข้อมูลจริงจากระบบ (real-time data)
+- [x] answerCallbackQuery เพื่อลบ loading spinner
+- [x] Authorization check สำหรับ callback queries
+
+## Testing
+- [x] vitest tests สำหรับ Daily Summary + Inline Buttons (38 tests ผ่านทั้งหมด, 15 new)
+- [x] 0 TypeScript errors

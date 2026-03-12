@@ -38,6 +38,12 @@ interface TelegramUpdate {
     date: number;
     text?: string;
   };
+  callback_query?: {
+    id: string;
+    from: { id: number; first_name: string; username?: string };
+    message?: { message_id: number; chat: { id: number; type: string } };
+    data?: string;
+  };
 }
 
 interface ConversationMessage {
@@ -61,6 +67,19 @@ interface SystemContext {
 interface ToolCallResult {
   name: string;
   result: string;
+}
+
+// ═══════════════════════════════════════════════════════
+//  ALLOWED CHAT IDS — multi-chat support
+// ═══════════════════════════════════════════════════════
+
+export function getAllowedChatIds(): number[] {
+  const ids: number[] = [];
+  const id1 = ENV.telegramChatId;
+  const id2 = ENV.telegramChatId2;
+  if (id1) ids.push(parseInt(id1));
+  if (id2) ids.push(parseInt(id2));
+  return ids.filter(id => !isNaN(id));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1005,6 +1024,12 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   if (update.update_id <= lastProcessedUpdateId) return;
   lastProcessedUpdateId = update.update_id;
   
+  // Handle callback queries (inline keyboard button presses)
+  if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query);
+    return;
+  }
+  
   const msg = update.message;
   if (!msg?.text) return;
   
@@ -1014,9 +1039,9 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     return;
   }
   
-  // Owner-only access: only respond to the configured chat ID
-  const allowedChatId = parseInt(config.chatId);
-  if (msg.chat.id !== allowedChatId && msg.from.id !== allowedChatId) {
+  // Owner-only access: respond to all configured chat IDs
+  const allowedChatIds = getAllowedChatIds();
+  if (!allowedChatIds.includes(msg.chat.id) && !allowedChatIds.includes(msg.from.id)) {
     console.log(`[TelegramAI] Ignoring message from unauthorized chat: ${msg.chat.id}`);
     return;
   }
@@ -1055,6 +1080,17 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     return;
   }
   
+  if (msg.text === "/menu") {
+    await sendInlineKeyboard(config, msg.chat.id);
+    return;
+  }
+  
+  if (msg.text === "/summary") {
+    const summary = await generateExecutiveSummary();
+    await sendTelegramReply(config, msg.chat.id, summary, msg.message_id);
+    return;
+  }
+  
   // Process with AI
   console.log(`[TelegramAI] Processing message from ${msg.from.first_name}: "${msg.text.substring(0, 50)}..."`);
   
@@ -1084,7 +1120,7 @@ async function pollUpdates(): Promise<void> {
   if (!config) return;
   
   try {
-    const url = `https://api.telegram.org/bot${config.botToken}/getUpdates?offset=${pollingOffset}&timeout=30&allowed_updates=["message"]`;
+    const url = `https://api.telegram.org/bot${config.botToken}/getUpdates?offset=${pollingOffset}&timeout=30&allowed_updates=["message","callback_query"]`;
     const { response } = await fetchWithPoolProxy(url, {
       signal: AbortSignal.timeout(35000),
     }, { targetDomain: "api.telegram.org", timeout: 35000 });
@@ -1181,6 +1217,383 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+}
+
+// ═══════════════════════════════════════════════════════
+//  INLINE KEYBOARD BUTTONS — quick access menu
+// ═══════════════════════════════════════════════════════
+
+async function sendInlineKeyboard(config: TelegramConfig, chatId: number): Promise<void> {
+  try {
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "🎛 เลือกดูข้อมูลที่ต้องการครับ:",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "🏃 Sprint Status", callback_data: "cb_sprint" },
+              { text: "⚔️ Attack Stats", callback_data: "cb_attack" },
+            ],
+            [
+              { text: "🌐 PBN Health", callback_data: "cb_pbn" },
+              { text: "📊 Rank Check", callback_data: "cb_rank" },
+            ],
+            [
+              { text: "🔒 CVE Updates", callback_data: "cb_cve" },
+              { text: "🤖 Orchestrator", callback_data: "cb_orchestrator" },
+            ],
+            [
+              { text: "📝 Daily Summary", callback_data: "cb_summary" },
+              { text: "📄 Content Health", callback_data: "cb_content" },
+            ],
+          ],
+        },
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+  } catch (error: any) {
+    console.error(`[TelegramAI] Failed to send inline keyboard: ${error.message}`);
+  }
+}
+
+async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_query"]>): Promise<void> {
+  const config = getTelegramConfig();
+  if (!config) return;
+  
+  const chatId = cbq.message?.chat?.id;
+  if (!chatId) return;
+  
+  // Check authorization
+  const allowedChatIds = getAllowedChatIds();
+  if (!allowedChatIds.includes(chatId) && !allowedChatIds.includes(cbq.from.id)) return;
+  
+  // Answer callback query (removes loading spinner)
+  try {
+    await fetchWithPoolProxy(`https://api.telegram.org/bot${config.botToken}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: cbq.id }),
+      signal: AbortSignal.timeout(5000),
+    }, { targetDomain: "api.telegram.org", timeout: 5000 });
+  } catch {}
+  
+  let responseText = "";
+  
+  try {
+    switch (cbq.data) {
+      case "cb_sprint": {
+        const { getActiveSeoSprints, getSeoOrchestratorStatus } = await import("./seo-orchestrator");
+        const sprints = getActiveSeoSprints();
+        const status = getSeoOrchestratorStatus();
+        if (sprints.length === 0) {
+          responseText = "🏃 Sprint Status\n\nไม่มี sprint ที่ active อยู่ตอนนี้";
+        } else {
+          const lines = sprints.map(s =>
+            `• ${s.domain}\n  Day ${s.currentDay}/7 | Progress ${s.overallProgress}%\n  Best Rank: #${s.bestRankAchieved} | Round ${s.sprintRound}\n  Auto-Renew: ${s.autoRenewEnabled ? "ON ✅" : "OFF ❌"}`
+          );
+          responseText = `🏃 Sprint Status (${sprints.length} active)\nOrchestrator: ${status.isRunning ? "Running ✅" : "Stopped ❌"}\n\n${lines.join("\n\n")}`;
+        }
+        break;
+      }
+      case "cb_attack": {
+        const { getAttackStats } = await import("./db");
+        const stats = await getAttackStats();
+        responseText = `⚔️ Attack Stats\n\n` +
+          `✅ สำเร็จ: ${stats.totalSuccess} ครั้ง\n` +
+          `📊 Success Rate: ${stats.successRate}%\n\n` +
+          `🏆 Top Methods:\n${stats.topMethods.slice(0, 5).map(m => `  • ${m.method}: ${m.count}`).join("\n")}\n\n` +
+          `🖥 Top Platforms:\n${stats.topPlatforms.slice(0, 5).map(p => `  • ${p.platform}: ${p.count}`).join("\n")}`;
+        break;
+      }
+      case "cb_pbn": {
+        const { getUserPbnSites } = await import("./db");
+        const sites = await getUserPbnSites();
+        responseText = `🌐 PBN Health\n\n` +
+          `Total Sites: ${sites.length}\n` +
+          `Active: ${sites.filter((s: any) => s.status === "active").length}\n` +
+          `Inactive: ${sites.filter((s: any) => s.status !== "active").length}`;
+        if (sites.length > 0) {
+          responseText += `\n\nSites:\n${sites.slice(0, 10).map((s: any) => `  • ${s.url} [${s.status || "active"}]`).join("\n")}`;
+        }
+        break;
+      }
+      case "cb_rank": {
+        const { getRankDashboardStats } = await import("./db");
+        const stats = await getRankDashboardStats();
+        if (!stats) {
+          responseText = "📊 Rank Check\n\nยังไม่มีข้อมูล ranking";
+        } else {
+          responseText = `📊 Rank Dashboard\n\n` +
+            `🔑 Total Keywords: ${stats.totalKeywords}\n` +
+            `📈 Ranked: ${stats.rankedKeywords}\n` +
+            `🏆 Top 3: ${stats.top3} | Top 10: ${stats.top10}\n` +
+            `📊 Top 20: ${stats.top20} | Top 50: ${stats.top50}\n` +
+            `📍 Avg Position: #${stats.avgPosition}\n\n` +
+            `⬆️ Improved: ${stats.improved} | ⬇️ Declined: ${stats.declined} | ➡️ Stable: ${stats.stable}`;
+        }
+        break;
+      }
+      case "cb_cve": {
+        const { getCveSchedulerStatus } = await import("./cve-scheduler");
+        const cveStatus = getCveSchedulerStatus();
+        responseText = `🔒 CVE Updates\n\n` +
+          `Status: ${cveStatus.enabled ? "Enabled ✅" : "Disabled ❌"}\n` +
+          `Running: ${cveStatus.running ? "Yes" : "No"}\n` +
+          `Total Runs: ${cveStatus.totalRuns}\n` +
+          `Last Run: ${cveStatus.lastRunAt ? new Date(cveStatus.lastRunAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }) : "N/A"}`;
+        if (cveStatus.lastRunSummary) {
+          responseText += `\n\nผลล่าสุด:\n` +
+            `  Wordfence: ${cveStatus.lastRunSummary.wordfenceNew} ใหม่ / ${cveStatus.lastRunSummary.wordfenceTotal} ทั้งหมด\n` +
+            `  NVD: ${cveStatus.lastRunSummary.nvdNew} ใหม่ / ${cveStatus.lastRunSummary.nvdTotal} ทั้งหมด`;
+        }
+        break;
+      }
+      case "cb_orchestrator": {
+        const { getSeoOrchestratorStatus } = await import("./seo-orchestrator");
+        const status = getSeoOrchestratorStatus();
+        responseText = `🤖 Orchestrator Status\n\n` +
+          `Status: ${status.isRunning ? "Running ✅" : "Stopped ❌"}\n` +
+          `Active Sprints: ${status.activeSprints}\n` +
+          `Completed: ${status.totalCompleted}`;
+        if (status.sprints.length > 0) {
+          responseText += `\n\nSprints:\n` +
+            status.sprints.map(s => `  • ${s.domain} — Day ${s.day} | ${s.status} | ${s.progress}%`).join("\n");
+        }
+        break;
+      }
+      case "cb_summary": {
+        responseText = await generateExecutiveSummary();
+        break;
+      }
+      case "cb_content": {
+        const { getFreshnessSummary } = await import("./content-freshness-engine");
+        const summary = await getFreshnessSummary();
+        responseText = `📄 Content Health\n\n` +
+          `Total Tracked: ${summary.totalTracked}\n` +
+          `✅ Fresh: ${summary.fresh}\n` +
+          `⚠️ Aging: ${summary.aging}\n` +
+          `❌ Stale: ${summary.stale}\n` +
+          `🔄 Total Refreshes: ${summary.totalRefreshes}\n` +
+          `📊 Avg Staleness: ${summary.avgStaleness.toFixed(1)}%`;
+        break;
+      }
+      default:
+        responseText = "ไม่รู้จักคำสั่งนี้ ลอง /menu ใหม่ครับ";
+    }
+  } catch (error: any) {
+    responseText = `เกิดข้อผิดพลาด: ${error.message}`;
+  }
+  
+  await sendTelegramReply(config, chatId, responseText);
+}
+
+// ═══════════════════════════════════════════════════════
+//  EXECUTIVE DAILY SUMMARY — successes only, no failures
+// ═══════════════════════════════════════════════════════
+
+export async function generateExecutiveSummary(): Promise<string> {
+  const now = new Date();
+  const bangkokDate = now.toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok", year: "numeric", month: "long", day: "numeric" });
+  const bangkokTime = now.toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
+  
+  let sections: string[] = [];
+  sections.push(`📋 สรุปผลงาน DomainSlayer\n${bangkokDate} เวลา ${bangkokTime}`);
+  sections.push("─────────────────────");
+  
+  // 1. Attack Results — successes only
+  try {
+    const { getAttackStats } = await import("./db");
+    const stats = await getAttackStats();
+    if (stats.totalSuccess > 0) {
+      sections.push(
+        `⚔️ ผลโจมตี\n` +
+        `  ✅ สำเร็จ ${stats.totalSuccess} เว็บ\n` +
+        `  📊 อัตราสำเร็จ ${stats.successRate}%` +
+        (stats.topMethods.length > 0 ? `\n  🏆 วิธีที่ได้ผล: ${stats.topMethods.slice(0, 3).map(m => m.method).join(", ")}` : "")
+      );
+    }
+  } catch {}
+  
+  // 2. Deploy/Redirect — successes only (today)
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { eq, sql, count } = await import("drizzle-orm");
+      const { deployHistory } = await import("../drizzle/schema");
+      // Today's successful deploys
+      const [successRow] = await db.select({ cnt: count() })
+        .from(deployHistory)
+        .where(sql`${deployHistory.status} = 'success' AND DATE(${deployHistory.createdAt}) = CURDATE()`);
+      const todaySuccess = successRow?.cnt || 0;
+      
+      if (todaySuccess > 0) {
+        // Get total files deployed today
+        const [filesRow] = await db.select({ total: sql<number>`COALESCE(SUM(${deployHistory.filesDeployed}), 0)` })
+          .from(deployHistory)
+          .where(sql`${deployHistory.status} = 'success' AND DATE(${deployHistory.createdAt}) = CURDATE()`);
+        const totalFiles = filesRow?.total || 0;
+        
+        // Get total verified redirects today
+        const [redirectRow] = await db.select({ cnt: count() })
+          .from(deployHistory)
+          .where(sql`${deployHistory.redirectActive} = 1 AND DATE(${deployHistory.createdAt}) = CURDATE()`);
+        const redirectsActive = redirectRow?.cnt || 0;
+        
+        sections.push(
+          `🎯 วาง Redirect วันนี้\n` +
+          `  ✅ สำเร็จ ${todaySuccess} เว็บ\n` +
+          `  📁 ไฟล์ที่วาง ${totalFiles} ไฟล์\n` +
+          `  🔀 Redirect ทำงาน ${redirectsActive} เว็บ`
+        );
+      }
+    }
+  } catch {}
+  
+  // 3. Sprint Progress
+  try {
+    const { getActiveSeoSprints } = await import("./seo-orchestrator");
+    const sprints = getActiveSeoSprints();
+    if (sprints.length > 0) {
+      const sprintLines = sprints.map(s => {
+        let line = `  • ${s.domain} — Day ${s.currentDay}/7`;
+        if (s.bestRankAchieved < 999) line += ` | Best #${s.bestRankAchieved}`;
+        line += ` | Progress ${s.overallProgress}%`;
+        if (s.sprintRound > 1) line += ` | Round ${s.sprintRound}`;
+        return line;
+      });
+      sections.push(`🏃 SEO Sprint\n${sprintLines.join("\n")}`);
+    }
+  } catch {}
+  
+  // 4. Ranking Improvements — only show improvements
+  try {
+    const { getRankDashboardStats } = await import("./db");
+    const stats = await getRankDashboardStats();
+    if (stats && (stats.top10 > 0 || stats.improved > 0)) {
+      let rankText = `📈 Ranking`;
+      if (stats.top3 > 0) rankText += `\n  🥇 Top 3: ${stats.top3} keywords`;
+      if (stats.top10 > 0) rankText += `\n  🏆 Top 10: ${stats.top10} keywords`;
+      if (stats.improved > 0) rankText += `\n  ⬆️ ขึ้นอันดับ: ${stats.improved} keywords`;
+      if (stats.avgPosition > 0) rankText += `\n  📍 Avg Position: #${stats.avgPosition}`;
+      sections.push(rankText);
+    }
+  } catch {}
+  
+  // 5. PBN Network
+  try {
+    const { getUserPbnSites } = await import("./db");
+    const sites = await getUserPbnSites();
+    const active = sites.filter((s: any) => s.status === "active" || !s.status);
+    if (active.length > 0) {
+      sections.push(`🌐 PBN Network\n  ✅ Active: ${active.length} sites`);
+    }
+  } catch {}
+  
+  // 6. Content Freshness
+  try {
+    const { getFreshnessSummary } = await import("./content-freshness-engine");
+    const summary = await getFreshnessSummary();
+    if (summary.totalTracked > 0 && summary.fresh > 0) {
+      sections.push(
+        `📄 Content\n` +
+        `  ✅ Fresh: ${summary.fresh}/${summary.totalTracked}` +
+        (summary.totalRefreshes > 0 ? ` | Refreshed: ${summary.totalRefreshes}` : "")
+      );
+    }
+  } catch {}
+  
+  sections.push("─────────────────────");
+  sections.push("💡 พิมพ์ /menu เพื่อดูรายละเอียดเพิ่มเติม");
+  
+  // If no data sections were added (only header + dividers + footer)
+  if (sections.length <= 4) {
+    sections.splice(2, 0, "😴 วันนี้ยังไม่มีผลลัพธ์ใหม่");
+  }
+  
+  return sections.join("\n\n");
+}
+
+// ═══════════════════════════════════════════════════════
+//  DAILY SUMMARY SCHEDULER — 8:00 AM Bangkok time
+// ═══════════════════════════════════════════════════════
+
+let dailySummaryTimer: ReturnType<typeof setInterval> | null = null;
+
+function getNextBangkok8AM(): Date {
+  const now = new Date();
+  // Bangkok is UTC+7
+  const bangkokOffset = 7 * 60; // minutes
+  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const bangkokMinutes = utcMinutes + bangkokOffset;
+  const bangkokHour = Math.floor((bangkokMinutes % (24 * 60)) / 60);
+  
+  // Target: 8:00 AM Bangkok = 1:00 AM UTC
+  const targetUTCHour = 1; // 8 AM Bangkok = 1 AM UTC
+  
+  const next = new Date(now);
+  next.setUTCHours(targetUTCHour, 0, 0, 0);
+  
+  // If already past 8 AM Bangkok today, schedule for tomorrow
+  if (now >= next) {
+    next.setUTCDate(next.getUTCDate() + 1);
+  }
+  
+  return next;
+}
+
+async function sendDailySummaryToAll(): Promise<void> {
+  const config = getTelegramConfig();
+  if (!config) return;
+  
+  const summary = await generateExecutiveSummary();
+  const chatIds = getAllowedChatIds();
+  
+  for (const chatId of chatIds) {
+    try {
+      await sendTelegramReply(config, chatId, summary);
+      console.log(`[TelegramAI] Daily summary sent to chat ${chatId}`);
+    } catch (error: any) {
+      console.error(`[TelegramAI] Failed to send daily summary to ${chatId}: ${error.message}`);
+    }
+  }
+}
+
+export function startDailySummaryScheduler(): void {
+  if (dailySummaryTimer) return;
+  
+  const scheduleNext = () => {
+    const next8AM = getNextBangkok8AM();
+    const msUntil = next8AM.getTime() - Date.now();
+    
+    console.log(`[TelegramAI] 📅 Daily summary scheduled for ${next8AM.toISOString()} (${Math.round(msUntil / 60000)} min from now)`);
+    
+    dailySummaryTimer = setTimeout(async () => {
+      console.log("[TelegramAI] 📋 Sending daily executive summary...");
+      await sendDailySummaryToAll();
+      // Schedule next day
+      dailySummaryTimer = null;
+      scheduleNext();
+    }, msUntil);
+  };
+  
+  scheduleNext();
+}
+
+export function stopDailySummaryScheduler(): void {
+  if (dailySummaryTimer) {
+    clearTimeout(dailySummaryTimer);
+    dailySummaryTimer = null;
+    console.log("[TelegramAI] Daily summary scheduler stopped");
+  }
+}
+
+export function isDailySummarySchedulerActive(): boolean {
+  return dailySummaryTimer !== null;
 }
 
 export async function removeTelegramWebhook(): Promise<{ success: boolean; error?: string }> {
