@@ -3793,3 +3793,58 @@
 - [x] vitest tests สำหรับ SEO content structure (49 tests passed)
 - [x] Tests cover: stripHtml, countWords, keywordDensity, slug, validator (15 checks), score, schema, wpPayload, LLM integration, edge cases
 - [x] 0 TypeScript errors
+
+# Feature: PBN Site Auto-Setup Pipeline — WordPress Full Automation
+
+## Step 1: เลือกธีม (Theme Selection)
+- [x] ดึงรายการธีม WP ที่ติดตั้งแล้วผ่าน REST API (/wp/v2/themes)
+- [x] คัดธีมที่เหมาะกับ SEO — 10 SEO-friendly themes (twentytwentyfour, astra, generatepress, kadence, oceanwp, neve, flavflavor, flavor, flavor, flavor)
+- [x] สุ่มธีมไม่ซ้ำกันระหว่าง PBN sites (random selection from available)
+- [x] Activate theme ผ่าน REST API (POST /wp/v2/themes/{stylesheet})
+
+## Step 2: ตั้งค่าพื้นฐาน (Basic Settings)
+- [x] ปิด Discussion (comments) ผ่าน REST API (default_comment_status: closed)
+- [x] ตั้ง Permalink เป็น Post name (/%postname%/) via settings API
+- [x] ตั้ง Site Title + Description (AI generate ตาม niche + brandKeyword)
+- [x] ตั้ง Timezone, Date/Time format
+
+## Step 3: ติดตั้ง Plugin (Plugin Installation)
+- [x] ติดตั้ง/activate plugins ที่จำเป็นผ่าน REST API (/wp/v2/plugins)
+- [x] Yoast SEO (wordpress-seo)
+- [x] WP Super Cache
+- [x] Lazy Load (a3-lazy-load, smush, autoptimize)
+- [x] Graceful fallback เมื่อ Plugin API ไม่พร้อม
+
+## Step 4: Homepage Content
+- [x] สร้าง Homepage page พร้อม brand keyword focus (AI-generated)
+- [x] Schema markup (Organization + WebSite JSON-LD embedded)
+- [x] AI Generate featured image + upload to WP media + set as featured + alt tag
+- [x] Title / Meta Description / Yoast SEO fields (focuskw, metadesc)
+- [x] SEO content structure ครบถ้วน (H1, H2, paragraphs, CTA)
+
+## Step 5: Reading Settings
+- [x] ตั้ง Front Page เป็น Homepage ที่สร้าง (show_on_front: page)
+- [x] สร้าง Blog page + ตั้งเป็น Posts Page
+
+## Step 6: On-Page SEO Content
+- [x] สร้าง 4 Essential Pages: About Us, Contact Us, Privacy Policy, Terms of Service
+- [x] สร้าง 2+ SEO Blog Posts (AI topic planning + pbn-seo-content generator)
+- [x] ทุก post มี AI featured image + Yoast SEO fields + schema
+- [x] จัดการ on-page ทุกส่วนเพื่อ brand keyword ranking
+
+## Step 7: ติดตามผลลัพธ์
+- [x] Log setup progress ทุกขั้นตอน (console + progress tracking)
+- [x] Telegram notification เมื่อ setup เสร็จ (success/partial/failed)
+- [x] Progress tracking per site (getSetupProgress, getAllSetupProgress)
+- [x] Duration tracking per pipeline run
+
+## Integration
+- [x] tRPC endpoints: autoSetup, autoSetupProgress, autoSetupAll, autoSetupStep
+- [x] Individual step retry via autoSetupStep (6 steps selectable)
+- [x] Non-blocking execution (startAutoSetup runs in background)
+- [x] Admin-only access for setup mutations
+
+## Testing
+- [x] vitest tests สำหรับ auto-setup pipeline (27 tests passed)
+- [x] Tests cover: theme, settings, plugins, homepage, reading, onpage, full pipeline, progress, edge cases
+- [x] 0 TypeScript errors

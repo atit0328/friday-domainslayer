@@ -6,6 +6,7 @@ import { isGoDaddyConfigured, searchMarketplace, checkAvailability, validateCred
 import { analyzeDomainSEO, quickPreFilter, batchAnalyzeDomains, type SEOCriteria } from "../seo-analyzer";
 import * as pbnBridge from "../pbn-bridge";
 import * as pbnServices from "../pbn-services";
+import * as pbnAutoSetup from "../pbn-auto-setup";
 
 // ═══ Orders Router ═══
 export const ordersRouter = router({
@@ -721,6 +722,87 @@ export const pbnRouter = router({
   hotRanking: protectedProcedure
     .query(async ({ ctx }) => {
       return pbnServices.getHotPBNRanking(ctx.user.id);
+    }),
+
+  // ═══ PBN Auto-Setup Pipeline ═══
+
+  // Run full auto-setup for a PBN site (non-blocking)
+  autoSetup: adminProcedure
+    .input(z.object({
+      siteId: z.number(),
+      niche: z.string().min(1),
+      brandKeyword: z.string().min(1),
+      targetUrl: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sites = await db.getUserPbnSites(ctx.user.id);
+      const site = sites.find((s: any) => s.id === input.siteId);
+      if (!site) throw new Error("Site not found");
+      if (!site.username || !site.appPassword) throw new Error("Missing WordPress credentials (username + application password)");
+
+      pbnAutoSetup.startAutoSetup({
+        siteId: site.id,
+        siteUrl: site.url,
+        siteName: site.name,
+        username: site.username,
+        appPassword: site.appPassword,
+        niche: input.niche,
+        brandKeyword: input.brandKeyword,
+        targetUrl: input.targetUrl,
+      });
+
+      return { started: true, siteId: site.id, siteName: site.name };
+    }),
+
+  // Get auto-setup progress for a site
+  autoSetupProgress: protectedProcedure
+    .input(z.object({ siteId: z.number() }))
+    .query(async ({ input }) => {
+      return pbnAutoSetup.getSetupProgress(input.siteId) || null;
+    }),
+
+  // Get all active auto-setup progresses
+  autoSetupAll: protectedProcedure
+    .query(async () => {
+      return pbnAutoSetup.getAllSetupProgress();
+    }),
+
+  // Run individual setup steps (for retry/manual control)
+  autoSetupStep: adminProcedure
+    .input(z.object({
+      siteId: z.number(),
+      step: z.enum(["theme", "basic_settings", "plugins", "homepage", "reading_settings", "onpage_content"]),
+      niche: z.string().min(1),
+      brandKeyword: z.string().min(1),
+      targetUrl: z.string().optional(),
+      homepageId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const sites = await db.getUserPbnSites(ctx.user.id);
+      const site = sites.find((s: any) => s.id === input.siteId);
+      if (!site) throw new Error("Site not found");
+
+      const config: pbnAutoSetup.PBNSetupConfig = {
+        siteId: site.id,
+        siteUrl: site.url,
+        siteName: site.name,
+        username: site.username,
+        appPassword: site.appPassword,
+        niche: input.niche,
+        brandKeyword: input.brandKeyword,
+        targetUrl: input.targetUrl,
+      };
+
+      switch (input.step) {
+        case "theme": return pbnAutoSetup.setupTheme(config);
+        case "basic_settings": return pbnAutoSetup.setupBasicSettings(config);
+        case "plugins": return pbnAutoSetup.setupPlugins(config);
+        case "homepage": return pbnAutoSetup.setupHomepage(config);
+        case "reading_settings":
+          if (!input.homepageId) throw new Error("homepageId required for reading_settings step");
+          return pbnAutoSetup.setupReadingSettings(config, input.homepageId);
+        case "onpage_content": return pbnAutoSetup.setupOnPageContent(config);
+      }
     }),
 });
 
