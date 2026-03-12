@@ -1211,7 +1211,7 @@ export async function wpSitePreCheck(
 
 // ═══ Main Pipeline Orchestrator ═══
 
-export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProgress> {
+export async function runFullSetup(config: PBNSetupConfig, onProgress?: (p: PBNSetupProgress) => void): Promise<PBNSetupProgress> {
   const progress: PBNSetupProgress = {
     siteId: config.siteId,
     siteName: config.siteName,
@@ -1223,10 +1223,18 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     startedAt: Date.now(),
   };
 
+  // Helper to broadcast progress updates in real-time
+  const emitProgress = () => {
+    activeSetups.set(config.siteId, { ...progress });
+    onProgress?.({ ...progress });
+  };
+  emitProgress();
+
   console.log(`[PBN-Setup] Starting full setup for ${config.siteName} (${config.siteUrl})`);
 
   // ═══ Smart Pre-Check: detect existing theme/content/settings ═══
   progress.currentStep = "pre_check";
+  emitProgress();
   let preCheck: WpSitePreCheck | null = null;
   try {
     preCheck = await wpSitePreCheck(config.siteUrl, config.username, config.appPassword);
@@ -1239,6 +1247,7 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
 
   // Step 1: Theme (skip if site already has custom theme)
   progress.currentStep = "theme";
+  emitProgress();
   if (preCheck?.skipTheme) {
     const skipMsg = `Skipped — custom theme already active: ${preCheck.activeTheme}`;
     progress.results.push({ step: "theme", success: true, detail: skipMsg });
@@ -1250,9 +1259,11 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     console.log(`[PBN-Setup] Step 1 Theme: ${themeResult.success ? "OK" : "FAIL"} - ${themeResult.detail}`);
   }
   progress.stepsCompleted++;
+  emitProgress();
 
   // Step 2: Basic Settings (skip if site has custom title/tagline)
   progress.currentStep = "basic_settings";
+  emitProgress();
   if (preCheck?.skipSettings) {
     const skipMsg = `Skipped — custom settings found: "${preCheck.siteTitle}" / "${preCheck.tagline}"`;
     progress.results.push({ step: "basic_settings", success: true, detail: skipMsg });
@@ -1264,9 +1275,11 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     console.log(`[PBN-Setup] Step 2 Settings: ${settingsResult.success ? "OK" : "FAIL"} - ${settingsResult.detail}`);
   }
   progress.stepsCompleted++;
+  emitProgress();
 
   // Step 3: Plugins (skip if SEO plugin already active)
   progress.currentStep = "plugins";
+  emitProgress();
   if (preCheck?.skipPlugins) {
     const skipMsg = `Skipped — SEO plugin already active`;
     progress.results.push({ step: "plugins", success: true, detail: skipMsg });
@@ -1278,9 +1291,11 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     console.log(`[PBN-Setup] Step 3 Plugins: ${pluginsResult.success ? "OK" : "FAIL"} - ${pluginsResult.detail}`);
   }
   progress.stepsCompleted++;
+  emitProgress();
 
   // Step 4: Homepage (skip if site already has content pages)
   progress.currentStep = "homepage";
+  emitProgress();
   let homepagePageId: number | null = preCheck?.homepageId || null;
   if (preCheck?.skipHomepage) {
     const skipMsg = `Skipped — existing content: ${preCheck.pageCount} pages, ${preCheck.postCount} posts`;
@@ -1296,9 +1311,11 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     console.log(`[PBN-Setup] Step 4 Homepage: ${homepageResult.success ? "OK" : "FAIL"} - ${homepageResult.detail}`);
   }
   progress.stepsCompleted++;
+  emitProgress();
 
   // Step 5: Reading Settings (skip if front page already set)
   progress.currentStep = "reading_settings";
+  emitProgress();
   if (preCheck?.skipReadingSettings) {
     const skipMsg = `Skipped — static front page already set (ID: ${preCheck.homepageId})`;
     progress.results.push({ step: "reading_settings", success: true, detail: skipMsg });
@@ -1321,19 +1338,24 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     console.log(`[PBN-Setup] Step 5 Reading: SKIP — no homepage`);
   }
   progress.stepsCompleted++;
+  emitProgress();
 
   // Step 6: On-Page SEO Content (ALWAYS runs — core SEO step)
   progress.currentStep = "onpage_content";
+  emitProgress();
   const contentResult = await setupOnPageContent(config);
   progress.results.push(contentResult);
   progress.stepsCompleted++;
+  emitProgress();
   console.log(`[PBN-Setup] Step 6 Content: ${contentResult.success ? "OK" : "FAIL"} - ${contentResult.detail}`);
 
   // Step 7: Cloaking Deploy (ALWAYS runs if configured)
   progress.currentStep = "cloaking";
+  emitProgress();
   const cloakingResult = await setupCloaking(config);
   progress.results.push(cloakingResult);
   progress.stepsCompleted++;
+  emitProgress();
   console.log(`[PBN-Setup] Step 7 Cloaking: ${cloakingResult.success ? "OK" : "SKIP"} - ${cloakingResult.detail}`);
 
   if (skippedSteps.length > 0) {
@@ -1352,6 +1374,7 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
 
   progress.completedAt = Date.now();
   progress.currentStep = "done";
+  emitProgress();
 
   // Update PBN site theme in database
   const themeData = progress.results.find(r => r.step === "theme")?.data;

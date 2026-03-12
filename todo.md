@@ -4043,3 +4043,29 @@
 - [x] vitest tests สำหรับ one-click pipeline — 21 tests passed (one-click-setup.test.ts)
 - [x] Tests cover: MainDomainSetupConfig fields (4), PBNSetupConfig passthrough (2), keyword injection logic (4), config flow mapping (3), pipeline step order (4), create mutation input (4)
 - [x] 0 TypeScript errors (tsc --noEmit EXIT: 0)
+
+# Feature: Real-time Setup Progress Display
+
+## Server-side Progress Tracking
+- [x] ใช้ activeSetups Map (in-memory) สำหรับเก็บ step status — มีอยู่แล้ว ปรับให้ update real-time
+- [x] เพิ่ม emitProgress() callback ใน runFullSetup — update activeSetups Map ทุก step transition
+- [x] ใช้ tRPC query wpSetupProgress (มีอยู่แล้ว) — polling จาก client
+- [x] เก็บ step details: stepName, status, results (success/detail), stepsCompleted, totalSteps
+
+## Progress UI Component (SetupProgressPanel.tsx)
+- [x] สร้าง SetupProgressPanel component — card-based, responsive
+- [x] Progress bar แสดง % completion — color-coded (blue/emerald/red/amber)
+- [x] Step list 7 steps พร้อม status icon (Loader2 spinner/CheckCircle/SkipForward/XCircle/Clock)
+- [x] แสดง step ปัจจุบันที่กำลังรัน (blue highlight + border + description)
+- [x] แสดง elapsed time (formatDuration: seconds/minutes)
+- [x] แสดง summary badges เมื่อ pipeline เสร็จ (สำเร็จ/ล้มเหลว/ข้าม count)
+- [x] Auto-refresh ทุก 3 วินาที (refetchInterval: 3000 เมื่อ status=running, stop เมื่อ done)
+
+## Integration
+- [x] เพิ่ม SetupProgressPanel ใน SeoProjectDetail overview tab — ด้านบนสุด
+- [x] แสดงเมื่อ project มี WP credentials (wpUsername + wpAppPassword)
+
+## Testing
+- [x] vitest tests สำหรับ progress tracking — 24 tests passed (setup-progress.test.ts)
+- [x] Tests cover: data structure (3), step status detection (6), step order (5), emitProgress callback (2), activeSetups Map (3), duration formatting (3), pipeline simulation (2)
+- [x] 0 TypeScript errors

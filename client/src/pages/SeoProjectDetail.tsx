@@ -22,6 +22,7 @@ import {
   Users, Award, Eye, ArrowUpDown, LayoutDashboard, ClipboardList,
   Calendar, Hash, MapPin, Bot, Wrench, Download
 } from "lucide-react";
+import SetupProgressPanel from "@/components/SetupProgressPanel";
 
 export default function SeoProjectDetail() {
   const [, navigate] = useLocation();
@@ -413,6 +414,11 @@ export default function SeoProjectDetail() {
 
         {/* ═══ OVERVIEW TAB ═══ */}
         <TabsContent value="overview" className="space-y-4 mt-4">
+          {/* WP Auto-Setup Progress — shown when pipeline is running or recently completed */}
+          {project.wpUsername && project.wpAppPassword && (
+            <SetupProgressPanel projectId={projectId} />
+          )}
+
           <div className="grid md:grid-cols-2 gap-4">
             {/* AI Analysis */}
             <Card className="bg-card/50">
