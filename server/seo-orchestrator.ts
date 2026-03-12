@@ -67,6 +67,10 @@ export interface SeoSprintConfig {
   enableContentGen: boolean;
   enableRankTracking: boolean;
   scheduleDays: number[]; // 0-6 (Sun-Sat)
+  // Auto-Renew Sprint settings
+  autoRenew?: boolean;       // Enable auto-renew when rank > 10 after Day 7
+  maxRenewals?: number;      // Max renewal rounds (default: 5)
+  targetRank?: number;       // Target rank to achieve (default: 10 = Page 1)
 }
 
 export interface SprintDay {
@@ -133,6 +137,19 @@ export interface SprintState {
   totalContentPieces: number;
   bestRankAchieved: number;
   aiInsights: string[];
+  // Auto-Renew tracking
+  sprintRound: number;       // Current round (1, 2, 3...)
+  renewalHistory: RenewalRecord[];
+  autoRenewEnabled: boolean;
+}
+
+export interface RenewalRecord {
+  round: number;
+  completedAt: Date;
+  bestRank: number;
+  totalLinks: number;
+  renewed: boolean;  // true = auto-renewed, false = target achieved or max reached
+  reason: string;
 }
 
 // ═══════════════════════════════════════════════
@@ -175,6 +192,9 @@ export async function createSprint(config: SeoSprintConfig): Promise<SprintState
     totalContentPieces: 0,
     bestRankAchieved: 100,
     aiInsights: [],
+    sprintRound: config.autoRenew ? 1 : 1,
+    renewalHistory: [],
+    autoRenewEnabled: config.autoRenew ?? true, // Default: auto-renew ON
   };
   
   activeSprints.set(sprintId, state);
@@ -197,9 +217,10 @@ export async function createSprint(config: SeoSprintConfig): Promise<SprintState
     `🧠 SEO ORCHESTRATOR — Sprint Created\n\n` +
     `📍 Domain: ${config.domain}\n` +
     `🎯 Keywords: ${config.targetKeywords.slice(0, 3).join(", ")}\n` +
-    `📅 7-Day Plan Ready\n` +
+    `📅 7-Day Plan Ready${state.sprintRound > 1 ? ` (Round ${state.sprintRound})` : ""}\n` +
     `⚡ Aggressiveness: ${config.aggressiveness}/10\n` +
     `🔗 PBN: ${config.enablePbn ? "✅" : "❌"} | External: ${config.enableExternalBl ? "✅" : "❌"}\n` +
+    `🔄 Auto-Renew: ${state.autoRenewEnabled ? "✅ ON" : "❌ OFF"} (Target: Top ${config.targetRank || 10})\n` +
     `\nStarting Day 1 automatically...`
   );
   
@@ -444,10 +465,13 @@ export async function executeSprintDay(sprintId: string, dayNumber?: number): Pr
     `🤖 AI: ${result.aiSummary.slice(0, 200)}`
   );
   
-  // If Day 7 completed, mark sprint as done
+  // If Day 7 completed, check if auto-renew is needed
   if (targetDay === 7) {
     state.status = "completed";
     await generateFinalReport(state);
+    
+    // Auto-Renew: check if target rank achieved
+    await checkAndAutoRenew(state);
   }
   
   return result;
@@ -737,6 +761,158 @@ async function generateFinalReport(state: SprintState): Promise<string> {
   } catch (e) { /* ignore */ }
   
   return report;
+}
+
+// ═══════════════════════════════════════════════
+//  AUTO-RENEW SPRINT
+// ═══════════════════════════════════════════════
+
+const DEFAULT_MAX_RENEWALS = 5;
+const DEFAULT_TARGET_RANK = 10; // Page 1
+
+/**
+ * Check if sprint should auto-renew after Day 7 completion
+ * If rank > target: create new sprint with escalated aggressiveness
+ * If rank <= target: celebrate success, no renewal needed
+ */
+async function checkAndAutoRenew(state: SprintState): Promise<void> {
+  const targetRank = state.config.targetRank || DEFAULT_TARGET_RANK;
+  const maxRenewals = state.config.maxRenewals || DEFAULT_MAX_RENEWALS;
+  const currentRound = state.sprintRound;
+  
+  // Record this round in renewal history
+  const record: RenewalRecord = {
+    round: currentRound,
+    completedAt: new Date(),
+    bestRank: state.bestRankAchieved,
+    totalLinks: state.totalPbnLinks + state.totalExternalLinks,
+    renewed: false,
+    reason: "",
+  };
+  
+  // Check if auto-renew is disabled
+  if (!state.autoRenewEnabled) {
+    record.reason = "Auto-renew disabled";
+    state.renewalHistory.push(record);
+    await notifyTelegram(
+      `🏁 SPRINT COMPLETE — ${state.domain} (Round ${currentRound})\n\n` +
+      `🏆 Best Rank: #${state.bestRankAchieved}\n` +
+      `🔄 Auto-Renew: ❌ OFF\n` +
+      `ℹ️ Sprint ended. Enable auto-renew to continue.`
+    );
+    return;
+  }
+  
+  // Check if target rank achieved
+  if (state.bestRankAchieved <= targetRank) {
+    record.reason = `Target achieved! Rank #${state.bestRankAchieved} <= Top ${targetRank}`;
+    state.renewalHistory.push(record);
+    await notifyTelegram(
+      `🎉 TARGET ACHIEVED — ${state.domain}\n\n` +
+      `🏆 Rank: #${state.bestRankAchieved} (Target: Top ${targetRank})\n` +
+      `📅 Rounds: ${currentRound}\n` +
+      `🔗 Total Links: ${state.totalPbnLinks + state.totalExternalLinks}\n` +
+      `📝 Content: ${state.totalContentPieces} pieces\n\n` +
+      `✅ No renewal needed — keyword is on Page 1!`
+    );
+    return;
+  }
+  
+  // Check if max renewals reached
+  if (currentRound >= maxRenewals) {
+    record.reason = `Max renewals reached (${maxRenewals} rounds)`;
+    state.renewalHistory.push(record);
+    await notifyTelegram(
+      `⚠️ MAX RENEWALS REACHED — ${state.domain}\n\n` +
+      `🏆 Best Rank: #${state.bestRankAchieved} (Target: Top ${targetRank})\n` +
+      `📅 Rounds Used: ${currentRound}/${maxRenewals}\n` +
+      `🔗 Total Links: ${state.totalPbnLinks + state.totalExternalLinks}\n\n` +
+      `❌ Cannot auto-renew — maximum ${maxRenewals} rounds reached.\n` +
+      `💡 Consider manual review or strategy adjustment.`
+    );
+    return;
+  }
+  
+  // AUTO-RENEW: Create new sprint with escalated aggressiveness
+  record.renewed = true;
+  record.reason = `Rank #${state.bestRankAchieved} > Top ${targetRank} — auto-renewing (Round ${currentRound + 1})`;
+  state.renewalHistory.push(record);
+  
+  // Escalate aggressiveness for next round (cap at 10)
+  const escalatedAggressiveness = Math.min(10, state.config.aggressiveness + 1);
+  
+  // Increase link targets for next round
+  const linkMultiplier = 1 + (currentRound * 0.3); // +30% per round
+  const escalatedPbnLinks = Math.round(state.config.maxPbnLinks * linkMultiplier);
+  const escalatedExternalLinks = Math.round(state.config.maxExternalLinks * linkMultiplier);
+  
+  console.log(`[SEO Orchestrator] 🔄 Auto-renewing sprint for ${state.domain} — Round ${currentRound + 1} (aggr: ${escalatedAggressiveness}, PBN: ${escalatedPbnLinks}, EXT: ${escalatedExternalLinks})`);
+  
+  await notifyTelegram(
+    `🔄 AUTO-RENEW SPRINT — ${state.domain}\n\n` +
+    `🏆 Current Rank: #${state.bestRankAchieved} (Target: Top ${targetRank})\n` +
+    `📅 Starting Round ${currentRound + 1}/${maxRenewals}\n` +
+    `⚡ Aggressiveness: ${state.config.aggressiveness} → ${escalatedAggressiveness}/10\n` +
+    `🔗 PBN: ${state.config.maxPbnLinks} → ${escalatedPbnLinks} | External: ${state.config.maxExternalLinks} → ${escalatedExternalLinks}\n\n` +
+    `🧠 AI is escalating strategy to push for Page 1...`
+  );
+  
+  // Create new sprint with escalated config
+  try {
+    const renewedConfig: SeoSprintConfig = {
+      ...state.config,
+      aggressiveness: escalatedAggressiveness,
+      maxPbnLinks: escalatedPbnLinks,
+      maxExternalLinks: escalatedExternalLinks,
+      autoRenew: true,
+      maxRenewals: maxRenewals,
+      targetRank: targetRank,
+    };
+    
+    const newSprint = await createSprint(renewedConfig);
+    
+    // Transfer renewal history and round number
+    newSprint.sprintRound = currentRound + 1;
+    newSprint.renewalHistory = [...state.renewalHistory];
+    newSprint.autoRenewEnabled = true;
+    
+    // Start Day 1 of new sprint immediately
+    newSprint.status = "active";
+    await executeSprintDay(newSprint.id, 1).catch(e =>
+      console.error(`[SEO Orchestrator] Renewal Day 1 error for ${state.domain}:`, e?.message)
+    );
+    
+    // Remove old completed sprint from active map to free memory
+    activeSprints.delete(state.id);
+    
+    console.log(`[SEO Orchestrator] ✅ Auto-renewed: ${state.domain} Round ${currentRound + 1} started`);
+  } catch (err: any) {
+    console.error(`[SEO Orchestrator] ❌ Auto-renew failed for ${state.domain}:`, err?.message);
+    await notifyTelegram(
+      `❌ AUTO-RENEW FAILED — ${state.domain}\n\n` +
+      `Error: ${err?.message || "Unknown error"}\n` +
+      `Round ${currentRound + 1} could not be started.`
+    );
+  }
+}
+
+/**
+ * Toggle auto-renew for a specific sprint
+ */
+export function toggleSprintAutoRenew(sprintId: string, enabled: boolean): boolean {
+  const state = activeSprints.get(sprintId);
+  if (!state) return false;
+  state.autoRenewEnabled = enabled;
+  console.log(`[SEO Orchestrator] 🔄 Auto-renew ${enabled ? "enabled" : "disabled"} for ${state.domain}`);
+  return true;
+}
+
+/**
+ * Get renewal history for a sprint
+ */
+export function getSprintRenewalHistory(sprintId: string): RenewalRecord[] {
+  const state = activeSprints.get(sprintId);
+  return state?.renewalHistory || [];
 }
 
 // ═══════════════════════════════════════════════

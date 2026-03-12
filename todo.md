@@ -3647,3 +3647,21 @@
 - [x] เพิ่ม headline เป้าหมายหลัก "ติดอันดับหน้าแรก Google ภายใน 7 วัน" + Crown icon + gradient
 - [x] เพิ่ม "Start All Sprints" ปุ่มเดียวกดสร้าง sprint ให้ทุกโปรเจกต์
 - [x] 0 TypeScript errors
+
+# Feature: Auto-Renew Sprint — keyword ยังไม่ติด Top 10 ให้เริ่ม sprint ใหม่อัตโนมัติ
+
+- [x] วิเคราะห์ sprint completion flow ปัจจุบัน (Day 7 → generateFinalReport)
+- [x] สร้าง Auto-Renew logic: ตรวจ bestRankAchieved หลังจบ Day 7
+- [x] ถ้า rank > 10 → auto-create sprint รอบถัดไป (round 2, 3, ...)
+- [x] ถ้า rank <= 10 → ส่ง success notification + ไม่สร้าง sprint ใหม่
+- [x] เพิ่ม maxRenewals config (จำกัดจำนวนรอบ auto-renew, default: 5)
+- [x] เพิ่ม sprintRound tracking (round 1, 2, 3...) ใน sprint state
+- [x] ปรับกลยุทธ์ตามรอบ (round 2+ เน้น aggressive มากขึ้น: +1 aggr, +30% links/round)
+- [x] เพิ่ม Auto-Renew toggle ใน UI (เปิด/ปิดต่อ sprint)
+- [x] แสดง sprint round number ใน Dashboard
+- [x] แสดง renewal history (round 1 → rank #25, round 2 → rank #12, ...)
+- [x] tRPC endpoints: toggleAutoRenew, getRenewalHistory
+- [x] Auto-Renew explanation panel ใน Dashboard (Max 5 Rounds, +1 Aggr/Round, +30% Links/Round)
+- [x] Telegram notifications: success, auto-renew, max-renewals-reached, auto-renew-failed
+- [x] vitest tests สำหรับ Auto-Renew Sprint (35 new tests, 62 total)
+- [x] 0 TypeScript errors

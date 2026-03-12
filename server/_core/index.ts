@@ -17,6 +17,7 @@ import { startCveScheduler } from "../cve-scheduler";
 import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
+import { startSeoOrchestrator } from "../seo-orchestrator";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -91,6 +92,9 @@ async function startServer() {
     setTimeout(() => {
       startOrchestrator();
       console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
+      // Start SEO Orchestrator brain (autonomous 7-day sprint engine)
+      startSeoOrchestrator();
+      console.log("[Server] 🧠 SEO Orchestrator brain initialized");
     }, 10_000); // 10s delay to let other services stabilize
   });
 }

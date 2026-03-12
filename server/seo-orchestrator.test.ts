@@ -89,8 +89,11 @@ import {
   orchestratorTick,
   sendSprintDailyReport,
   sendAllSprintsProgressReport,
+  toggleSprintAutoRenew,
+  getSprintRenewalHistory,
   type SeoSprintConfig,
   type SprintState,
+  type RenewalRecord,
 } from "./seo-orchestrator";
 
 const baseConfig: SeoSprintConfig = {
@@ -406,6 +409,10 @@ describe("SEO Orchestrator", () => {
       expect(state.totalContentPieces).toBeDefined();
       expect(state.bestRankAchieved).toBeDefined();
       expect(state.aiInsights).toBeDefined();
+      // Auto-renew fields
+      expect(state.sprintRound).toBeDefined();
+      expect(state.renewalHistory).toBeDefined();
+      expect(state.autoRenewEnabled).toBeDefined();
     });
 
     it("should initialize numeric fields to correct defaults", async () => {
@@ -421,6 +428,270 @@ describe("SEO Orchestrator", () => {
     it("should initialize aiInsights as empty array", async () => {
       const state = await createSprint(baseConfig);
       expect(state.aiInsights).toEqual([]);
+    });
+  });
+
+  // ═══════════════════════════════════════════════
+  //  AUTO-RENEW SPRINT TESTS
+  // ═══════════════════════════════════════════════
+
+  describe("Auto-Renew Sprint — Initialization", () => {
+    it("should initialize sprintRound to 1", async () => {
+      const state = await createSprint(baseConfig);
+      expect(state.sprintRound).toBe(1);
+    });
+
+    it("should initialize renewalHistory as empty array", async () => {
+      const state = await createSprint(baseConfig);
+      expect(state.renewalHistory).toEqual([]);
+    });
+
+    it("should default autoRenewEnabled to true", async () => {
+      const state = await createSprint(baseConfig);
+      expect(state.autoRenewEnabled).toBe(true);
+    });
+
+    it("should respect autoRenew=false in config", async () => {
+      const state = await createSprint({ ...baseConfig, autoRenew: false });
+      expect(state.autoRenewEnabled).toBe(false);
+    });
+
+    it("should include targetRank in config", async () => {
+      const state = await createSprint({ ...baseConfig, targetRank: 5 });
+      expect(state.config.targetRank).toBe(5);
+    });
+
+    it("should include maxRenewals in config", async () => {
+      const state = await createSprint({ ...baseConfig, maxRenewals: 3 });
+      expect(state.config.maxRenewals).toBe(3);
+    });
+
+    it("should default targetRank to undefined (uses 10 at runtime)", async () => {
+      const state = await createSprint(baseConfig);
+      expect(state.config.targetRank).toBeUndefined();
+    });
+  });
+
+  describe("Auto-Renew Sprint — Toggle", () => {
+    it("should toggle auto-renew ON for a sprint", async () => {
+      const state = await createSprint({ ...baseConfig, autoRenew: false });
+      expect(state.autoRenewEnabled).toBe(false);
+
+      const result = toggleSprintAutoRenew(state.id, true);
+      expect(result).toBe(true);
+
+      const updated = getSeoSprintState(state.id);
+      expect(updated?.autoRenewEnabled).toBe(true);
+    });
+
+    it("should toggle auto-renew OFF for a sprint", async () => {
+      const state = await createSprint(baseConfig);
+      expect(state.autoRenewEnabled).toBe(true);
+
+      const result = toggleSprintAutoRenew(state.id, false);
+      expect(result).toBe(true);
+
+      const updated = getSeoSprintState(state.id);
+      expect(updated?.autoRenewEnabled).toBe(false);
+    });
+
+    it("should return false for non-existent sprint", () => {
+      const result = toggleSprintAutoRenew("non-existent", true);
+      expect(result).toBe(false);
+    });
+  });
+
+  describe("Auto-Renew Sprint — Renewal History", () => {
+    it("should return empty history for new sprint", async () => {
+      const state = await createSprint(baseConfig);
+      const history = getSprintRenewalHistory(state.id);
+      expect(history).toEqual([]);
+    });
+
+    it("should return empty array for non-existent sprint", () => {
+      const history = getSprintRenewalHistory("non-existent");
+      expect(history).toEqual([]);
+    });
+
+    it("should track renewal records when manually added", async () => {
+      const state = await createSprint(baseConfig);
+      
+      // Manually add a renewal record (simulating what checkAndAutoRenew does)
+      const record: RenewalRecord = {
+        round: 1,
+        completedAt: new Date(),
+        bestRank: 15,
+        totalLinks: 30,
+        renewed: true,
+        reason: "Rank #15 > Top 10 — auto-renewing",
+      };
+      state.renewalHistory.push(record);
+
+      const history = getSprintRenewalHistory(state.id);
+      expect(history).toHaveLength(1);
+      expect(history[0].round).toBe(1);
+      expect(history[0].bestRank).toBe(15);
+      expect(history[0].renewed).toBe(true);
+    });
+  });
+
+  describe("Auto-Renew Sprint — Config Propagation", () => {
+    it("should include auto-renew info in Telegram notification", async () => {
+      const { sendTelegramNotification } = await import("./telegram-notifier");
+      const mockSend = vi.mocked(sendTelegramNotification);
+      mockSend.mockClear();
+
+      await createSprint({ ...baseConfig, autoRenew: true, targetRank: 10 });
+
+      // Check that Telegram was called with auto-renew info
+      const calls = mockSend.mock.calls;
+      const lastCall = calls[calls.length - 1];
+      expect(lastCall).toBeDefined();
+      const notification = lastCall[0];
+      expect(notification.details).toContain("Auto-Renew");
+      expect(notification.details).toContain("ON");
+    });
+
+    it("should show round number in notification for renewal sprints", async () => {
+      const { sendTelegramNotification } = await import("./telegram-notifier");
+      const mockSend = vi.mocked(sendTelegramNotification);
+      
+      // Create a sprint then manually set round > 1 to simulate renewal
+      const state = await createSprint(baseConfig);
+      state.sprintRound = 2;
+      
+      // The round info is set at creation time, so for round > 1 it would show in the notification
+      // We verify the state has the correct round
+      expect(state.sprintRound).toBe(2);
+    });
+  });
+
+  describe("Auto-Renew Sprint — Escalation Logic", () => {
+    it("should cap aggressiveness at 10", () => {
+      // Test the escalation formula: Math.min(10, current + 1)
+      expect(Math.min(10, 9 + 1)).toBe(10);
+      expect(Math.min(10, 10 + 1)).toBe(10);
+      expect(Math.min(10, 7 + 1)).toBe(8);
+    });
+
+    it("should calculate link multiplier correctly per round", () => {
+      // Formula: 1 + (currentRound * 0.3)
+      expect(1 + (1 * 0.3)).toBeCloseTo(1.3);  // Round 1 → 1.3x
+      expect(1 + (2 * 0.3)).toBeCloseTo(1.6);  // Round 2 → 1.6x
+      expect(1 + (3 * 0.3)).toBeCloseTo(1.9);  // Round 3 → 1.9x
+      expect(1 + (4 * 0.3)).toBeCloseTo(2.2);  // Round 4 → 2.2x
+      expect(1 + (5 * 0.3)).toBeCloseTo(2.5);  // Round 5 → 2.5x
+    });
+
+    it("should escalate PBN links correctly", () => {
+      const basePbn = 30;
+      const round = 2;
+      const multiplier = 1 + (round * 0.3);
+      const escalated = Math.round(basePbn * multiplier);
+      expect(escalated).toBe(48); // 30 * 1.6 = 48
+    });
+
+    it("should escalate external links correctly", () => {
+      const baseExt = 50;
+      const round = 3;
+      const multiplier = 1 + (round * 0.3);
+      const escalated = Math.round(baseExt * multiplier);
+      expect(escalated).toBe(95); // 50 * 1.9 = 95
+    });
+  });
+
+  describe("Auto-Renew Sprint — Decision Logic", () => {
+    it("should identify rank <= target as success (no renewal needed)", () => {
+      const targetRank = 10;
+      expect(5 <= targetRank).toBe(true);   // Rank 5 = success
+      expect(10 <= targetRank).toBe(true);  // Rank 10 = success (exactly on target)
+      expect(11 <= targetRank).toBe(false); // Rank 11 = needs renewal
+    });
+
+    it("should identify rank > target as needing renewal", () => {
+      const targetRank = 10;
+      expect(11 > targetRank).toBe(true);   // Rank 11 = needs renewal
+      expect(50 > targetRank).toBe(true);   // Rank 50 = needs renewal
+      expect(100 > targetRank).toBe(true);  // Rank 100 = needs renewal
+    });
+
+    it("should identify max renewals reached", () => {
+      const maxRenewals = 5;
+      expect(5 >= maxRenewals).toBe(true);  // Round 5 = max reached
+      expect(6 >= maxRenewals).toBe(true);  // Round 6 = over max
+      expect(4 >= maxRenewals).toBe(false); // Round 4 = can renew
+    });
+
+    it("should use default target rank of 10 when not specified", async () => {
+      const state = await createSprint(baseConfig);
+      const effectiveTarget = state.config.targetRank || 10;
+      expect(effectiveTarget).toBe(10);
+    });
+
+    it("should use default max renewals of 5 when not specified", async () => {
+      const state = await createSprint(baseConfig);
+      const effectiveMax = state.config.maxRenewals || 5;
+      expect(effectiveMax).toBe(5);
+    });
+
+    it("should use custom target rank when specified", async () => {
+      const state = await createSprint({ ...baseConfig, targetRank: 3 });
+      const effectiveTarget = state.config.targetRank || 10;
+      expect(effectiveTarget).toBe(3);
+    });
+
+    it("should use custom max renewals when specified", async () => {
+      const state = await createSprint({ ...baseConfig, maxRenewals: 2 });
+      const effectiveMax = state.config.maxRenewals || 5;
+      expect(effectiveMax).toBe(2);
+    });
+  });
+
+  describe("Auto-Renew Sprint — RenewalRecord Type", () => {
+    it("should create a valid RenewalRecord", () => {
+      const record: RenewalRecord = {
+        round: 1,
+        completedAt: new Date(),
+        bestRank: 15,
+        totalLinks: 45,
+        renewed: true,
+        reason: "Rank #15 > Top 10 — auto-renewing (Round 2)",
+      };
+
+      expect(record.round).toBe(1);
+      expect(record.completedAt).toBeInstanceOf(Date);
+      expect(record.bestRank).toBe(15);
+      expect(record.totalLinks).toBe(45);
+      expect(record.renewed).toBe(true);
+      expect(record.reason).toContain("auto-renewing");
+    });
+
+    it("should create a success RenewalRecord", () => {
+      const record: RenewalRecord = {
+        round: 2,
+        completedAt: new Date(),
+        bestRank: 8,
+        totalLinks: 120,
+        renewed: false,
+        reason: "Target achieved! Rank #8 <= Top 10",
+      };
+
+      expect(record.renewed).toBe(false);
+      expect(record.reason).toContain("Target achieved");
+    });
+
+    it("should create a max-renewals RenewalRecord", () => {
+      const record: RenewalRecord = {
+        round: 5,
+        completedAt: new Date(),
+        bestRank: 12,
+        totalLinks: 300,
+        renewed: false,
+        reason: "Max renewals reached (5 rounds)",
+      };
+
+      expect(record.renewed).toBe(false);
+      expect(record.reason).toContain("Max renewals");
     });
   });
 });

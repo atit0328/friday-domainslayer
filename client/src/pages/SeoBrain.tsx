@@ -19,7 +19,7 @@ import {
   Sparkles, Brain, Rocket, Activity, Link2, FileText, TrendingUp,
   Play, Pause, RotateCcw, Zap, Clock, Target, CheckCircle2, XCircle,
   AlertTriangle, ChevronRight, BarChart3, Globe, Cpu, PlayCircle,
-  Trophy, Search, Share2, Layers, Settings2, Crown,
+  Trophy, Search, Share2, Layers, Settings2, Crown, RefreshCw, History,
 } from "lucide-react";
 
 export default function SeoBrain() {
@@ -81,6 +81,15 @@ export default function SeoBrain() {
   const sendDigest = trpc.seoOrchestrator.sendDigest.useMutation({
     onSuccess: (data) => {
       toast.success(`\ud83d\udce8 Sprint digest sent (${data.sent} sprints)`);
+    },
+    onError: (err) => {
+      toast.error(err.message);
+    },
+  });
+
+  const toggleAutoRenew = trpc.seoOrchestrator.toggleAutoRenew.useMutation({
+    onSuccess: (data) => {
+      toast.success(data.autoRenewEnabled ? "\ud83d\udd04 Auto-Renew Enabled" : "\u23f8 Auto-Renew Disabled");
     },
     onError: (err) => {
       toast.error(err.message);
@@ -374,9 +383,15 @@ export default function SeoBrain() {
                         <p className="font-bold text-amber-400">#{sprint.bestRankAchieved}</p>
                         <p className="text-[10px] text-muted-foreground">Best Rank</p>
                       </div>
+                      {sprint.sprintRound > 1 && (
+                        <div className="text-center">
+                          <p className="font-bold text-orange-400">R{sprint.sprintRound}</p>
+                          <p className="text-[10px] text-muted-foreground">Round</p>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-wrap">
                       <Button
                         variant="outline"
                         size="sm"
@@ -394,6 +409,16 @@ export default function SeoBrain() {
                       >
                         <BarChart3 className="w-3 h-3 mr-1" />
                         Report
+                      </Button>
+                      <Button
+                        variant={sprint.autoRenewEnabled ? "default" : "outline"}
+                        size="sm"
+                        className={sprint.autoRenewEnabled ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}
+                        onClick={() => toggleAutoRenew.mutate({ sprintId: sprint.id, enabled: !sprint.autoRenewEnabled })}
+                        disabled={toggleAutoRenew.isPending}
+                      >
+                        <RefreshCw className="w-3 h-3 mr-1" />
+                        {sprint.autoRenewEnabled ? "Auto-Renew ON" : "Auto-Renew OFF"}
                       </Button>
                       {sprint.status === "active" ? (
                         <Button
@@ -600,6 +625,31 @@ export default function SeoBrain() {
               <Badge className="bg-violet/20 text-violet border-violet/30 text-[10px]">
                 Auto-Renew Sprint รอบ 2
               </Badge>
+            </div>
+          </div>
+
+          {/* Auto-Renew Explanation */}
+          <div className="mt-3 p-3 rounded-lg bg-orange-500/5 border border-orange-500/20">
+            <div className="flex items-start gap-2">
+              <RefreshCw className="w-4 h-4 text-orange-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-orange-400">Auto-Renew Sprint System</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5 leading-relaxed">
+                  หลัง Day 7 ระบบจะตรวจ ranking อัตโนมัติ — ถ้ายังไม่ติด Top 10 จะเริ่ม Sprint รอบใหม่ทันที
+                  โดยเพิ่ม aggressiveness +1 และเพิ่มจำนวน backlinks +30% ต่อรอบ (สูงสุด 5 รอบ)
+                </p>
+                <div className="flex items-center gap-3 mt-1.5">
+                  <Badge variant="outline" className="text-[9px] text-orange-400 border-orange-400/30">
+                    Max 5 Rounds
+                  </Badge>
+                  <Badge variant="outline" className="text-[9px] text-orange-400 border-orange-400/30">
+                    +1 Aggressiveness/Round
+                  </Badge>
+                  <Badge variant="outline" className="text-[9px] text-orange-400 border-orange-400/30">
+                    +30% Links/Round
+                  </Badge>
+                </div>
+              </div>
             </div>
           </div>
         </CardContent>

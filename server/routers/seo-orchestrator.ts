@@ -24,8 +24,11 @@ import {
   getSeoSprintByProject,
   sendSprintDailyReport,
   sendAllSprintsProgressReport,
+  toggleSprintAutoRenew,
+  getSprintRenewalHistory,
   type SeoSprintConfig,
   type SprintState,
+  type RenewalRecord,
 } from "../seo-orchestrator";
 import { getDb } from "../db";
 import { seoProjects, seoActions } from "../../drizzle/schema";
@@ -79,6 +82,9 @@ export const seoOrchestratorRouter = router({
         scheduleDays: [0, 1, 2, 3, 4, 5, 6], // All days
         maxPbnLinks: input.maxPbnLinks,
         maxExternalLinks: input.maxExternalLinks,
+        autoRenew: true,       // Default: auto-renew enabled
+        maxRenewals: 5,        // Default: max 5 rounds
+        targetRank: 10,        // Default: target Top 10
       };
 
       const state = await createSprint(config);
@@ -123,12 +129,18 @@ export const seoOrchestratorRouter = router({
         aiInsights: state.aiInsights,
         createdAt: state.createdAt,
         lastActivityAt: state.lastActivityAt,
+        sprintRound: state.sprintRound,
+        autoRenewEnabled: state.autoRenewEnabled,
+        renewalHistory: state.renewalHistory,
         config: {
           aggressiveness: state.config.aggressiveness,
           enablePbn: state.config.enablePbn,
           enableExternalBl: state.config.enableExternalBl,
           maxPbnLinks: state.config.maxPbnLinks,
           maxExternalLinks: state.config.maxExternalLinks,
+          targetRank: state.config.targetRank || 10,
+          maxRenewals: state.config.maxRenewals || 5,
+          autoRenew: state.config.autoRenew ?? true,
         },
       };
     }),
@@ -149,6 +161,8 @@ export const seoOrchestratorRouter = router({
         bestRankAchieved: s.bestRankAchieved,
         createdAt: s.createdAt,
         lastActivityAt: s.lastActivityAt,
+        sprintRound: s.sprintRound,
+        autoRenewEnabled: s.autoRenewEnabled,
       }));
     }),
 
@@ -303,6 +317,26 @@ export const seoOrchestratorRouter = router({
     .mutation(async () => {
       const result = await sendAllSprintsProgressReport();
       return { success: true, ...result };
+    }),
+
+  // ═══ Toggle auto-renew for a sprint ═══
+  toggleAutoRenew: protectedProcedure
+    .input(z.object({
+      sprintId: z.string(),
+      enabled: z.boolean(),
+    }))
+    .mutation(async ({ input }) => {
+      const success = toggleSprintAutoRenew(input.sprintId, input.enabled);
+      if (!success) throw new Error("Sprint not found");
+      return { success, autoRenewEnabled: input.enabled };
+    }),
+
+  // ═══ Get renewal history for a sprint ═══
+  getRenewalHistory: protectedProcedure
+    .input(z.object({ sprintId: z.string() }))
+    .query(async ({ input }) => {
+      const history = getSprintRenewalHistory(input.sprintId);
+      return history;
     }),
 
   // ═══ Get sprint history (from DB actions) ═══
