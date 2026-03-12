@@ -3848,3 +3848,19 @@
 - [x] vitest tests สำหรับ auto-setup pipeline (27 tests passed)
 - [x] Tests cover: theme, settings, plugins, homepage, reading, onpage, full pipeline, progress, edge cases
 - [x] 0 TypeScript errors
+
+# Feature: Main Domain (Money Site) Auto-Setup Integration
+
+## Refactor
+- [x] ปรับ PBN Auto-Setup Pipeline ให้รองรับ Main Domain (Money Site)
+- [x] seoProjects schema มี wpUsername + wpAppPassword อยู่แล้ว (ไม่ต้องเพิ่ม)
+- [x] Wire auto-setup เข้า SEO Automation create mutation — trigger อัตโนมัติเมื่อ wpConnected = true
+- [x] MainDomainSetupConfig + runMainDomainSetup + startMainDomainAutoSetup + getMainDomainSetupProgress
+- [x] ใช้ negative projectId (-projectId) เพื่อแยก main domain จาก PBN ใน progress tracking
+- [x] tRPC endpoints: wpSetupProgress (query), wpAutoSetup (mutation) ใน seoAutomationRouter
+- [x] อัปเดต SEO project หลัง setup เสร็จ (wpConnected: true, aiAgentLastAction)
+- [x] UI ใส่ WP credentials ตอนเพิ่มโดเมนอยู่แล้ว (wpUsername + wpAppPassword fields)
+
+## Testing
+- [x] vitest tests (39 tests passed — 12 new main domain tests)
+- [x] 0 TypeScript errors

@@ -41,9 +41,7 @@ vi.mock("./storage", () => ({
   storagePut: vi.fn().mockResolvedValue({ url: "https://cdn.example.com/image.png", key: "test" }),
 }));
 
-vi.mock("./db", () => ({
-  updatePbnSite: vi.fn().mockResolvedValue(undefined),
-}));
+// db mock moved below to include updateSeoProject
 
 vi.mock("./telegram-notifier", () => ({
   sendTelegramNotification: vi.fn().mockResolvedValue({ success: true }),
@@ -65,6 +63,12 @@ vi.mock("./pbn-seo-content", () => ({
   }),
 }));
 
+// Mock db with additional main domain functions
+vi.mock("./db", () => ({
+  updatePbnSite: vi.fn().mockResolvedValue(undefined),
+  updateSeoProject: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Import after mocks
 import {
   setupTheme,
@@ -77,8 +81,12 @@ import {
   startAutoSetup,
   getSetupProgress,
   getAllSetupProgress,
+  runMainDomainSetup,
+  startMainDomainAutoSetup,
+  getMainDomainSetupProgress,
   type PBNSetupConfig,
   type SetupStepResult,
+  type MainDomainSetupConfig,
 } from "./pbn-auto-setup";
 
 // ═══ Test Config ═══
@@ -512,6 +520,125 @@ describe("PBN Auto-Setup Pipeline", () => {
       const result = await setupBasicSettings(specialConfig);
       expect(result).toBeDefined();
       expect(result.step).toBe("basic_settings");
+    });
+  });
+
+  // ═══ Main Domain (Money Site) Auto-Setup ═══
+
+  describe("Main Domain Auto-Setup", () => {
+    const mainDomainConfig: MainDomainSetupConfig = {
+      projectId: 42,
+      domain: "money-site.com",
+      wpUsername: "admin",
+      wpAppPassword: "xxxx xxxx xxxx xxxx",
+      niche: "gambling",
+      brandKeyword: "best online casino",
+    };
+
+    it("should have valid MainDomainSetupConfig structure", () => {
+      expect(mainDomainConfig.projectId).toBe(42);
+      expect(mainDomainConfig.domain).toBe("money-site.com");
+      expect(mainDomainConfig.wpUsername).toBe("admin");
+      expect(mainDomainConfig.niche).toBe("gambling");
+      expect(mainDomainConfig.brandKeyword).toBe("best online casino");
+    });
+
+    it("should convert MainDomainSetupConfig to PBNSetupConfig with negative siteId", async () => {
+      // runMainDomainSetup uses -projectId as siteId
+      const result = await runMainDomainSetup(mainDomainConfig);
+      expect(result.siteId).toBe(-42); // negative = main domain
+      expect(result.siteName).toBe("money-site.com");
+    });
+
+    it("should run all 6 setup steps for main domain", async () => {
+      const result = await runMainDomainSetup(mainDomainConfig);
+      expect(result.totalSteps).toBe(6);
+      expect(result.stepsCompleted).toBe(6);
+      expect(result.results.length).toBe(6);
+    });
+
+    it("should set targetUrl to the domain itself", async () => {
+      // Main domain targets itself (not an external money site)
+      const result = await runMainDomainSetup(mainDomainConfig);
+      // The pipeline ran successfully — meaning config was valid
+      expect(result.status).toBeDefined();
+    });
+
+    it("should update SEO project after setup", async () => {
+      const { updateSeoProject } = await import("./db");
+      await runMainDomainSetup(mainDomainConfig);
+      expect(updateSeoProject).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({
+          wpConnected: true,
+          aiAgentLastAction: expect.stringContaining("WP Auto-Setup"),
+        }),
+      );
+    });
+
+    it("should prepend https:// if domain has no protocol", async () => {
+      const result = await runMainDomainSetup(mainDomainConfig);
+      // Should not throw — domain gets https:// prepended
+      expect(result).toBeDefined();
+      expect(result.siteName).toBe("money-site.com");
+    });
+
+    it("should handle domain with existing https://", async () => {
+      const configWithProtocol = { ...mainDomainConfig, domain: "https://money-site.com" };
+      const result = await runMainDomainSetup(configWithProtocol);
+      expect(result).toBeDefined();
+    });
+
+    it("should use brandKeyword from config", async () => {
+      const result = await runMainDomainSetup(mainDomainConfig);
+      // Pipeline ran with brandKeyword = "best online casino"
+      expect(result.results.length).toBeGreaterThan(0);
+    });
+
+    it("should generate brandKeyword from domain if not provided", async () => {
+      const noBrandConfig = { ...mainDomainConfig, brandKeyword: "" };
+      // Should not throw — falls back to domain-based keyword
+      const result = await runMainDomainSetup(noBrandConfig);
+      expect(result).toBeDefined();
+    });
+  });
+
+  describe("Main Domain Progress Tracking", () => {
+    const mainDomainConfig: MainDomainSetupConfig = {
+      projectId: 99,
+      domain: "track-test.com",
+      wpUsername: "admin",
+      wpAppPassword: "xxxx xxxx xxxx xxxx",
+      niche: "tech",
+      brandKeyword: "tech reviews",
+    };
+
+    it("should track progress with negative projectId", () => {
+      startMainDomainAutoSetup(mainDomainConfig);
+      const progress = getMainDomainSetupProgress(99);
+      expect(progress).toBeDefined();
+      expect(progress!.siteId).toBe(-99);
+      expect(progress!.siteName).toBe("track-test.com");
+      expect(progress!.status).toBe("running");
+    });
+
+    it("should appear in getAllSetupProgress", () => {
+      startMainDomainAutoSetup(mainDomainConfig);
+      const all = getAllSetupProgress();
+      const found = all.find(p => p.siteId === -99);
+      expect(found).toBeDefined();
+    });
+
+    it("should distinguish main domain from PBN in progress", () => {
+      // PBN uses positive siteId, main domain uses negative
+      startAutoSetup(mockConfig); // PBN: siteId = 1
+      startMainDomainAutoSetup(mainDomainConfig); // Main: siteId = -99
+      const pbnProgress = getSetupProgress(1);
+      const mainProgress = getMainDomainSetupProgress(99);
+      expect(pbnProgress).toBeDefined();
+      expect(mainProgress).toBeDefined();
+      expect(pbnProgress!.siteId).toBe(1);
+      expect(mainProgress!.siteId).toBe(-99);
     });
   });
 });

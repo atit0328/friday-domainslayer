@@ -1058,3 +1058,109 @@ export function startAutoSetup(config: PBNSetupConfig): void {
       });
     });
 }
+
+
+// ═══════════════════════════════════════════════════════════════
+// Main Domain (Money Site) Auto-Setup
+// ═══════════════════════════════════════════════════════════════
+// Same pipeline as PBN but configured for the main money site.
+// Triggered automatically when a domain is added to SEO Automation
+// with WordPress credentials (wpUsername + wpAppPassword).
+// ═══════════════════════════════════════════════════════════════
+
+export interface MainDomainSetupConfig {
+  projectId: number;
+  domain: string;
+  wpUsername: string;
+  wpAppPassword: string;
+  niche: string;
+  brandKeyword: string;
+}
+
+/**
+ * Convert SEO project data into PBNSetupConfig and run the full setup.
+ * This is the entry point for main domain auto-setup.
+ */
+export async function runMainDomainSetup(config: MainDomainSetupConfig): Promise<PBNSetupProgress> {
+  const siteUrl = config.domain.startsWith("http") ? config.domain : `https://${config.domain}`;
+
+  // Use negative projectId to distinguish from PBN sites in progress tracking
+  const setupConfig: PBNSetupConfig = {
+    siteId: -config.projectId, // negative = main domain
+    siteUrl,
+    siteName: config.domain,
+    username: config.wpUsername,
+    appPassword: config.wpAppPassword,
+    niche: config.niche || "general",
+    brandKeyword: config.brandKeyword || config.domain.replace(/\.(com|net|org|io|co|th)$/i, "").replace(/[.-]/g, " "),
+    targetUrl: siteUrl, // main domain points to itself
+  };
+
+  console.log(`[MainDomain-Setup] 🚀 Starting auto-setup for main domain: ${config.domain} (project #${config.projectId})`);
+
+  const result = await runFullSetup(setupConfig);
+
+  // Update the SEO project with setup status
+  try {
+    const setupCompleted = result.status === "completed";
+    const setupDetails = result.results
+      .filter(r => r.success)
+      .map(r => `${r.step}: ${r.detail.slice(0, 60)}`)
+      .join(" | ");
+
+    await db.updateSeoProject(config.projectId, {
+      wpConnected: true,
+      aiAgentLastAction: `WP Auto-Setup ${result.status}: ${setupDetails.slice(0, 200)}`,
+    });
+
+    console.log(`[MainDomain-Setup] ${setupCompleted ? "✅" : "⚠️"} Setup ${result.status} for ${config.domain}`);
+  } catch (err: any) {
+    console.error(`[MainDomain-Setup] Failed to update project:`, err.message);
+  }
+
+  return result;
+}
+
+/**
+ * Start main domain auto-setup (non-blocking, fire-and-forget).
+ * Call this from the SEO Automation create mutation after WP credentials are validated.
+ */
+export function startMainDomainAutoSetup(config: MainDomainSetupConfig): void {
+  const siteId = -config.projectId;
+  const placeholder: PBNSetupProgress = {
+    siteId,
+    siteName: config.domain,
+    status: "running",
+    currentStep: "queued",
+    stepsCompleted: 0,
+    totalSteps: 6,
+    results: [],
+    startedAt: Date.now(),
+  };
+  activeSetups.set(siteId, placeholder);
+
+  console.log(`[MainDomain-Setup] 📋 Queued auto-setup for ${config.domain} (project #${config.projectId})`);
+
+  // Run async — don't await
+  runMainDomainSetup(config)
+    .then(result => {
+      activeSetups.set(siteId, result);
+    })
+    .catch(err => {
+      console.error(`[MainDomain-Setup] ❌ Pipeline failed for ${config.domain}:`, err.message);
+      activeSetups.set(siteId, {
+        ...placeholder,
+        status: "failed",
+        currentStep: "error",
+        completedAt: Date.now(),
+        results: [{ step: "pipeline", success: false, detail: err.message }],
+      });
+    });
+}
+
+/**
+ * Get setup progress for a main domain by project ID.
+ */
+export function getMainDomainSetupProgress(projectId: number): PBNSetupProgress | undefined {
+  return activeSetups.get(-projectId);
+}

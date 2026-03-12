@@ -14,6 +14,7 @@ import { autoStartAfterScan } from "../seo-scheduler";
 import { generateAgentPlan } from "../seo-agent";
 import { sendTelegramNotification } from "../telegram-notifier";
 import { triggerAutoSprint } from "../auto-sprint-trigger";
+import { startMainDomainAutoSetup, getMainDomainSetupProgress } from "../pbn-auto-setup";
 
 // ═══ Schedule Helpers ═══
 const DAY_NAMES_TH: Record<number, string> = {
@@ -340,6 +341,28 @@ export const seoProjectsRouter = router({
               }
             } catch (sprintErr: any) {
               console.error(`[AutoSprint] Failed for ${input.domain}:`, sprintErr.message);
+            }
+
+            // ═══ WP AUTO-SETUP: Full WordPress setup (theme, settings, plugins, homepage, content) ═══
+            if (wpConnected && input.wpUsername && input.wpAppPassword) {
+              try {
+                console.log(`[WP-AutoSetup] 🏗️ Starting WordPress auto-setup for ${input.domain}`);
+                const primaryKeyword = (input.targetKeywords && input.targetKeywords.length > 0)
+                  ? input.targetKeywords[0]
+                  : input.domain.replace(/\.(com|net|org|io|co|th)$/i, "").replace(/[.-]/g, " ");
+
+                startMainDomainAutoSetup({
+                  projectId: result.id,
+                  domain: input.domain,
+                  wpUsername: input.wpUsername,
+                  wpAppPassword: input.wpAppPassword,
+                  niche: input.niche || "general",
+                  brandKeyword: primaryKeyword,
+                });
+                console.log(`[WP-AutoSetup] 📋 Queued — running in background`);
+              } catch (setupErr: any) {
+                console.error(`[WP-AutoSetup] Failed to start for ${input.domain}:`, setupErr.message);
+              }
             }
           } catch (planErr: any) {
             console.error(`[Agentic SEO] Failed to auto-generate plan for ${input.domain}:`, planErr.message);
@@ -1285,6 +1308,45 @@ export const seoProjectsRouter = router({
         totalWpChanges: 0,
       });
       return { success: true };
+    }),
+
+  // ═══ WordPress Auto-Setup for Main Domain ═══
+
+  // Get WP auto-setup progress for a project
+  wpSetupProgress: protectedProcedure
+    .input(z.object({ projectId: z.number() }))
+    .query(({ input }) => {
+      const progress = getMainDomainSetupProgress(input.projectId);
+      return progress || null;
+    }),
+
+  // Trigger WP auto-setup manually for an existing project
+  wpAutoSetup: protectedProcedure
+    .input(z.object({ projectId: z.number() }))
+    .mutation(async ({ input }) => {
+      if (!isAdminUser(undefined as any)) {
+        // Admin check handled by protectedProcedure
+      }
+      const project = await db.getSeoProjectById(input.projectId);
+      if (!project) throw new Error("Project not found");
+      if (!project.wpUsername || !project.wpAppPassword) {
+        throw new Error("WordPress credentials not configured. Please add WP Username and Application Password first.");
+      }
+
+      const primaryKeyword = (Array.isArray(project.targetKeywords) && project.targetKeywords.length > 0)
+        ? (project.targetKeywords as string[])[0]
+        : project.domain.replace(/\.(com|net|org|io|co|th)$/i, "").replace(/[.-]/g, " ");
+
+      startMainDomainAutoSetup({
+        projectId: project.id,
+        domain: project.domain,
+        wpUsername: project.wpUsername,
+        wpAppPassword: project.wpAppPassword,
+        niche: project.niche || "general",
+        brandKeyword: primaryKeyword,
+      });
+
+      return { success: true, message: `WordPress auto-setup started for ${project.domain}` };
     }),
 });
 
