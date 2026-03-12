@@ -3930,3 +3930,31 @@
 - [x] vitest tests สำหรับ cloaking + on-page optimizer — 78 tests passed
 - [x] Tests cover: bot detection (10), bot identification (4), Google IP verification (5), PHP code gen (10), JS code gen (5), constants (6), SEO audit pass cases (17), SEO audit fail cases (4), theme selection (8), SEO utilities (7), integration (2)
 - [x] 0 TypeScript errors (npx tsc --noEmit clean)
+
+# Feature: Cloaking Settings UI + PBN Auto-Setup Integration
+
+## Cloaking Settings UI Page
+- [x] สร้างหน้า CloakingSettings.tsx — UI สำหรับตั้งค่า cloaking per project
+- [x] Redirect URL input (single + multiple A/B split)
+- [x] Redirect Method selector (JS / meta / 301 / 302)
+- [x] Target Countries multi-select (TH default + VN, MY, ID, PH, KH, LA, MM)
+- [x] Enable/Disable toggle
+- [x] Redirect delay slider (0-10s)
+- [x] Deploy to WP button (one-click deploy cloaking with domain/username/password)
+- [x] Generate Code tab (view PHP/JS code with copy button)
+- [x] Bot Detection tester (input UA + IP → check if bot, confidence, action)
+- [x] Add route /cloaking + sidebar navigation (AI_NAV section)
+
+## Wire Cloaking into PBN Auto-Setup Pipeline
+- [x] เพิ่ม Step 7: Cloaking Deploy ใน PBN auto-setup pipeline (setupCloaking function)
+- [x] เพิ่ม cloaking config ใน PBNSetupConfig (cloakingRedirectUrl, cloakingRedirectUrls, cloakingMethod, cloakingCountries, cloakingDelay)
+- [x] Auto-deploy cloaking หลัง content setup เสร็จ (Step 7 runs after Step 6)
+- [x] เพิ่ม cloaking step ใน Main Domain auto-setup (runMainDomainSetup → runFullSetup → Step 7)
+- [x] อัปเดต progress tracking (totalSteps: 6 → 7 ทั้ง runFullSetup, startAutoSetup, startMainDomainAutoSetup)
+- [x] Telegram notification สำหรับ cloaking step (auto-notify on successful deploy)
+
+## Testing
+- [x] vitest tests สำหรับ PBN cloaking integration — 13 tests passed (pbn-cloaking-pipeline.test.ts)
+- [x] Tests cover: skip when no URL (1), deploy with URL (1), WP config passing (1), custom method/countries (1), A/B split (1), Telegram notify (1), deploy details (1), failure handling (2), defaults (2), config fields (2)
+- [x] Total: 91 tests passed (78 cloaking-seo + 13 pipeline)
+- [x] 0 TypeScript errors

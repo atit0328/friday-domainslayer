@@ -56,6 +56,7 @@ const PlatformDiscoveryDashboard = lazy(() => import("./pages/PlatformDiscoveryD
 const AlgorithmMonitorDashboard = lazy(() => import("./pages/AlgorithmMonitorDashboard"));
 const CompetitorGapDashboard = lazy(() => import("./pages/CompetitorGapDashboard"));
 const SeoBrain = lazy(() => import("./pages/SeoBrain"));
+const CloakingSettings = lazy(() => import("./pages/CloakingSettings"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -158,6 +159,7 @@ function ProtectedRouter() {
         <Route path="/seo-brain" component={SeoBrain} />
         <Route path="/seo" component={SeoCommandCenter} />
         <Route path="/seo/:id" component={SeoProjectDetail} />
+        <Route path="/cloaking">{() => <SuperadminGuard><CloakingSettings /></SuperadminGuard>}</Route>
 
         {/* Superadmin-only routes (Blackhat section) */}
         <Route path="/blackhat">{() => { window.location.href = "/ai-attack"; return null; }}</Route>

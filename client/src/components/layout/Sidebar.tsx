@@ -27,6 +27,7 @@ const AI_NAV = [
   { href: "/seo", icon: Brain, label: "SEO Automation" },
   { href: "/modules", icon: Zap, label: "SEO Modules" },
   { href: "/pbn", icon: Link2, label: "PBN Manager" },
+  { href: "/cloaking", icon: Eye, label: "Cloaking Settings" },
   { href: "/algorithm", icon: Radio, label: "Algorithm Intel" },
   { href: "/rank-dashboard", icon: LineChart, label: "Rank Tracker" },
 ];

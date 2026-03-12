@@ -18,6 +18,11 @@ import { storagePut } from "./storage";
 import * as db from "./db";
 import { generateSeoContent, type SeoOptimizedContent } from "./pbn-seo-content";
 import { sendTelegramNotification } from "./telegram-notifier";
+import {
+  type CloakingConfig,
+  DEFAULT_CLOAKING_CONFIG,
+  deployFullCloaking,
+} from "./wp-cloaking-engine";
 
 // ═══ Types ═══
 
@@ -37,6 +42,16 @@ export interface PBNSetupConfig {
   niche: string;
   brandKeyword: string;
   targetUrl?: string; // main money site URL
+  /** Cloaking: redirect URL for Thai users (if set, cloaking is auto-deployed) */
+  cloakingRedirectUrl?: string;
+  /** Cloaking: additional A/B split URLs */
+  cloakingRedirectUrls?: string[];
+  /** Cloaking: redirect method */
+  cloakingMethod?: "js" | "meta" | "302" | "301";
+  /** Cloaking: target countries */
+  cloakingCountries?: string[];
+  /** Cloaking: redirect delay in ms */
+  cloakingDelay?: number;
 }
 
 export interface PBNSetupProgress {
@@ -900,6 +915,84 @@ Vary content types and tones for natural diversity.`,
   }
 }
 
+// ═══ Step 7: Cloaking Deploy ═══
+
+export async function setupCloaking(config: PBNSetupConfig): Promise<SetupStepResult> {
+  // Skip if no cloaking redirect URL configured
+  if (!config.cloakingRedirectUrl) {
+    return {
+      step: "cloaking",
+      success: true,
+      detail: "Skipped — no cloaking redirect URL configured",
+    };
+  }
+
+  try {
+    console.log(`[PBN-Setup] Step 7: Deploying cloaking to ${config.siteUrl}`);
+
+    // Build cloaking config from PBN setup config
+    const cloakingConfig: CloakingConfig = {
+      ...DEFAULT_CLOAKING_CONFIG,
+      redirectUrl: config.cloakingRedirectUrl,
+      redirectUrls: config.cloakingRedirectUrls || [],
+      enabled: true,
+      redirectMethod: config.cloakingMethod || "js",
+      redirectDelay: config.cloakingDelay || 0,
+      targetCountries: config.cloakingCountries || ["TH"],
+      verifyBotIp: false,
+    };
+
+    const result = await deployFullCloaking(
+      {
+        siteUrl: config.siteUrl,
+        username: config.username,
+        appPassword: config.appPassword,
+      },
+      cloakingConfig,
+    );
+
+    const successCount = result.methods.filter(m => m.success).length;
+    const totalCount = result.methods.length;
+
+    if (result.success) {
+      // Send cloaking-specific Telegram notification
+      try {
+        await sendTelegramNotification({
+          type: "info",
+          targetUrl: config.siteUrl,
+          details: `🕵️ Cloaking Auto-Deployed (PBN Pipeline)\n🌐 ${config.siteName}\n🔀 Redirect: ${config.cloakingRedirectUrl}\n🎯 Countries: ${cloakingConfig.targetCountries.join(", ")}\n📋 Method: ${cloakingConfig.redirectMethod}\n✅ ${successCount}/${totalCount} methods succeeded`,
+        });
+      } catch {}
+
+      return {
+        step: "cloaking",
+        success: true,
+        detail: `Cloaking deployed: ${successCount}/${totalCount} methods, redirect to ${config.cloakingRedirectUrl}`,
+        data: {
+          redirectUrl: config.cloakingRedirectUrl,
+          method: cloakingConfig.redirectMethod,
+          countries: cloakingConfig.targetCountries,
+          deployMethods: result.methods,
+        },
+      };
+    } else {
+      return {
+        step: "cloaking",
+        success: false,
+        detail: `Cloaking deploy failed: ${result.methods.map(m => m.detail).join("; ")}`,
+        data: { methods: result.methods },
+      };
+    }
+  } catch (err: any) {
+    console.error(`[PBN-Setup] Cloaking error:`, err.message);
+    return {
+      step: "cloaking",
+      success: false,
+      detail: `Cloaking error: ${err.message}`,
+    };
+  }
+}
+
 // ═══ Main Pipeline Orchestrator ═══
 
 export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProgress> {
@@ -909,7 +1002,7 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
     status: "running",
     currentStep: "initializing",
     stepsCompleted: 0,
-    totalSteps: 6,
+    totalSteps: 7,
     results: [],
     startedAt: Date.now(),
   };
@@ -967,6 +1060,13 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
   progress.results.push(contentResult);
   progress.stepsCompleted++;
   console.log(`[PBN-Setup] Step 6 Content: ${contentResult.success ? "OK" : "FAIL"} - ${contentResult.detail}`);
+
+  // Step 7: Cloaking Deploy (auto-deploy if redirectUrl is configured)
+  progress.currentStep = "cloaking";
+  const cloakingResult = await setupCloaking(config);
+  progress.results.push(cloakingResult);
+  progress.stepsCompleted++;
+  console.log(`[PBN-Setup] Step 7 Cloaking: ${cloakingResult.success ? "OK" : "SKIP"} - ${cloakingResult.detail}`);
 
   // Determine final status
   const failedSteps = progress.results.filter(r => !r.success).length;
@@ -1037,7 +1137,7 @@ export function startAutoSetup(config: PBNSetupConfig): void {
     status: "running",
     currentStep: "queued",
     stepsCompleted: 0,
-    totalSteps: 6,
+    totalSteps: 7,
     results: [],
     startedAt: Date.now(),
   };
@@ -1133,7 +1233,7 @@ export function startMainDomainAutoSetup(config: MainDomainSetupConfig): void {
     status: "running",
     currentStep: "queued",
     stepsCompleted: 0,
-    totalSteps: 6,
+    totalSteps: 7,
     results: [],
     startedAt: Date.now(),
   };
