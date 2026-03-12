@@ -1,0 +1,18 @@
+{
+  "query": "SELECT campaignRunStatus, COUNT(*) as cnt FROM seo_projects GROUP BY campaignRunStatus;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT campaignRunStatus, COUNT(*) as cnt FROM seo_projects GROUP BY campaignRunStatus;",
+  "rows": [
+    {
+      "campaignRunStatus": "completed",
+      "cnt": "4"
+    },
+    {
+      "campaignRunStatus": "failed",
+      "cnt": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "campaignRunStatus\tcnt\ncompleted\t4\nfailed\t1\n",
+  "stderr": "",
+  "execution_time_ms": 1492
+}

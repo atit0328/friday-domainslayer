@@ -265,14 +265,16 @@ export async function bulkRankCheck(
   let serpApiCount = 0;
   let llmCount = 0;
 
-  // Check SerpAPI availability first
-  const accountInfo = await serpApi.getAccountInfo();
-  const serpApiAvailable = accountInfo !== null && accountInfo.remaining > 0;
+  // Check SerpAPI availability first (circuit breaker + quota cache + account info)
+  const circuitOk = serpApi.isSerpApiAvailable();
+  const accountInfo = circuitOk ? await serpApi.getAccountInfo() : null;
+  const serpApiAvailable = circuitOk && accountInfo !== null && accountInfo.remaining > 0;
 
   if (serpApiAvailable) {
     console.log(`[SERP Tracker] SerpAPI available: ${accountInfo!.remaining} searches remaining`);
   } else {
-    console.log("[SERP Tracker] SerpAPI unavailable, using LLM fallback for all keywords");
+    const cbStatus = serpApi.getCircuitBreakerStatus();
+    console.log(`[SERP Tracker] SerpAPI unavailable (circuit=${cbStatus.isCircuitOpen}, quota=${cbStatus.isQuotaExhausted}), using LLM fallback for all keywords`);
   }
 
   for (const kw of keywords) {
@@ -460,9 +462,10 @@ export async function compareCompetitorRanks(
     leader: string;
   }[] = [];
 
-  // Try SerpAPI for real data
-  const accountInfo = await serpApi.getAccountInfo();
-  const serpApiAvailable = accountInfo !== null && accountInfo.remaining >= keywords.length;
+  // Try SerpAPI for real data (with circuit breaker check)
+  const circuitOk2 = serpApi.isSerpApiAvailable();
+  const accountInfo2 = circuitOk2 ? await serpApi.getAccountInfo() : null;
+  const serpApiAvailable = circuitOk2 && accountInfo2 !== null && accountInfo2.remaining >= keywords.length;
 
   if (serpApiAvailable) {
     for (const keyword of keywords) {

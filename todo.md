@@ -4088,3 +4088,14 @@
 - [x] 14 vitest tests passed (auto-redirect-takeover.test.ts)
 - [x] Tests cover: schema field (2), create input validation (4), pipeline logic (4), UI state (4)
 - [x] 0 TypeScript errors
+
+# SerpAPI Circuit Breaker + Campaign Engine Timeouts
+
+- [x] SerpAPI Circuit Breaker: after 3 consecutive failures → skip 30 min; quota exhausted → skip 1 hour
+- [x] Campaign Engine Phase Timeout: 5 min max per phase (auto-skip + continue on timeout)
+- [x] LLM Call Timeout: 60 seconds per invokeLLM call in campaign engine
+- [x] Update serp-tracker.ts to use circuit breaker check before calling SerpAPI
+- [x] Add getCircuitBreakerStatus() for monitoring/debugging
+- [x] Write vitest tests: 34 tests (circuit breaker state, withTimeout, phase definitions, module exports)
+- [x] Force-advance stuck campaign in DB
+- [x] TypeScript compilation: 0 errors

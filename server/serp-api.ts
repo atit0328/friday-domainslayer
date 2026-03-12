@@ -7,11 +7,99 @@
  * Auth: api_key query parameter
  * 
  * Uses SERPAPI_KEY_DEV for all searches
+ * 
+ * Features:
+ * - Circuit breaker: after 3 consecutive failures, skip SerpAPI for 30 minutes
+ * - Quota cache: if "run out of searches" detected, skip SerpAPI for 1 hour
+ * - Request timeout: 15 seconds per request (down from 30)
  */
 
 import { ENV } from "./_core/env";
 
 const SERPAPI_BASE_URL = "https://serpapi.com/search.json";
+
+// ═══ Circuit Breaker State ═══
+let consecutiveFailures = 0;
+let circuitOpenUntil = 0;        // timestamp when circuit breaker resets
+let quotaExhaustedUntil = 0;     // timestamp when quota exhaustion cache expires
+
+const MAX_CONSECUTIVE_FAILURES = 3;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 30 * 60 * 1000; // 30 minutes
+const QUOTA_EXHAUSTED_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+const REQUEST_TIMEOUT_MS = 15000; // 15 seconds
+
+/**
+ * Check if SerpAPI is available (circuit breaker + quota check)
+ */
+export function isSerpApiAvailable(): boolean {
+  const now = Date.now();
+  
+  // Check quota exhaustion cache first
+  if (quotaExhaustedUntil > now) {
+    return false;
+  }
+  
+  // Check circuit breaker
+  if (circuitOpenUntil > now) {
+    return false;
+  }
+  
+  // If circuit breaker expired, reset failures
+  if (circuitOpenUntil > 0 && circuitOpenUntil <= now) {
+    consecutiveFailures = 0;
+    circuitOpenUntil = 0;
+  }
+  
+  return true;
+}
+
+/**
+ * Record a successful API call — resets circuit breaker
+ */
+function recordSuccess() {
+  consecutiveFailures = 0;
+  circuitOpenUntil = 0;
+}
+
+/**
+ * Record a failed API call — may trip circuit breaker
+ */
+function recordFailure(isQuotaExhausted: boolean = false) {
+  if (isQuotaExhausted) {
+    quotaExhaustedUntil = Date.now() + QUOTA_EXHAUSTED_COOLDOWN_MS;
+    console.warn(`[SerpAPI] ⚠️ Quota exhausted — skipping SerpAPI for ${QUOTA_EXHAUSTED_COOLDOWN_MS / 60000} minutes`);
+    return;
+  }
+  
+  consecutiveFailures++;
+  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    console.warn(`[SerpAPI] ⚠️ Circuit breaker OPEN — ${consecutiveFailures} consecutive failures, skipping for ${CIRCUIT_BREAKER_COOLDOWN_MS / 60000} minutes`);
+  }
+}
+
+/**
+ * Reset circuit breaker (for testing or manual reset)
+ */
+export function resetCircuitBreaker() {
+  consecutiveFailures = 0;
+  circuitOpenUntil = 0;
+  quotaExhaustedUntil = 0;
+}
+
+/**
+ * Get circuit breaker status (for monitoring/debugging)
+ */
+export function getCircuitBreakerStatus() {
+  const now = Date.now();
+  return {
+    consecutiveFailures,
+    isCircuitOpen: circuitOpenUntil > now,
+    isQuotaExhausted: quotaExhaustedUntil > now,
+    circuitResetsIn: circuitOpenUntil > now ? Math.ceil((circuitOpenUntil - now) / 1000) : 0,
+    quotaResetsIn: quotaExhaustedUntil > now ? Math.ceil((quotaExhaustedUntil - now) / 1000) : 0,
+  };
+}
 
 export interface SerpResult {
   position: number;
@@ -51,6 +139,11 @@ export async function searchGoogle(
     device?: "desktop" | "mobile" | "tablet";
   } = {},
 ): Promise<SerpData | null> {
+  // Fast-fail: check circuit breaker + quota
+  if (!isSerpApiAvailable()) {
+    return null;
+  }
+
   const apiKey = getApiKey();
   if (!apiKey) {
     console.warn("[SerpAPI] No API key available (SERPAPI_KEY_DEV)");
@@ -71,16 +164,37 @@ export async function searchGoogle(
 
   try {
     const response = await fetch(`${SERPAPI_BASE_URL}?${params.toString()}`, {
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
       console.error(`[SerpAPI] HTTP ${response.status}: ${errorText.substring(0, 300)}`);
+      
+      // Check for quota exhaustion
+      if (errorText.includes("run out of searches") || errorText.includes("exceeded") || response.status === 429) {
+        recordFailure(true); // quota exhausted
+      } else {
+        recordFailure(false);
+      }
       return null;
     }
 
     const data = await response.json();
+    
+    // Check for error in response body (SerpAPI sometimes returns 200 with error)
+    if (data.error) {
+      console.error(`[SerpAPI] API error: ${data.error}`);
+      if (String(data.error).includes("run out of searches") || String(data.error).includes("exceeded")) {
+        recordFailure(true);
+      } else {
+        recordFailure(false);
+      }
+      return null;
+    }
+
+    // Success — reset circuit breaker
+    recordSuccess();
 
     const organicResults: SerpResult[] = (data.organic_results || []).map((r: any) => ({
       position: r.position ?? 0,
@@ -103,6 +217,7 @@ export async function searchGoogle(
     };
   } catch (err: any) {
     console.error(`[SerpAPI] Error searching "${keyword}": ${err.message}`);
+    recordFailure(false);
     return null;
   }
 }
@@ -172,6 +287,12 @@ export async function trackKeywords(
 
   // Process sequentially to avoid rate limits
   for (const keyword of keywords) {
+    // Fast-fail if circuit breaker tripped mid-batch
+    if (!isSerpApiAvailable()) {
+      results.push({ keyword, position: null, url: null, totalResults: null });
+      continue;
+    }
+
     const rank = await findDomainRank(keyword, domain, options);
     results.push({
       keyword,
@@ -207,11 +328,19 @@ export async function getAccountInfo(): Promise<{
     if (!response.ok) return null;
 
     const data = await response.json();
+    
+    const remaining = (data.searches_per_month ?? 0) - (data.this_month_usage ?? 0);
+    
+    // If remaining is 0 or negative, mark quota as exhausted
+    if (remaining <= 0) {
+      recordFailure(true);
+    }
+    
     return {
       plan: data.plan_name || "unknown",
       searchesPerMonth: data.searches_per_month ?? 0,
       thisMonthUsage: data.this_month_usage ?? 0,
-      remaining: (data.searches_per_month ?? 0) - (data.this_month_usage ?? 0),
+      remaining,
     };
   } catch {
     return null;

@@ -11,6 +11,26 @@ import * as serpTracker from "./serp-tracker";
 import { scrapeWebsite, extractKeywordsFromContent, type ScrapedContent } from "./web-scraper";
 import * as db from "./db";
 import { sendTelegramNotification } from "./telegram-notifier";
+import { isSerpApiAvailable, getCircuitBreakerStatus } from "./serp-api";
+
+// ═══ Timeout Utilities ═══
+const PHASE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per phase
+const LLM_TIMEOUT_MS = 60 * 1000;       // 60 seconds per LLM call
+
+/**
+ * Wrap any promise with a timeout — rejects with TimeoutError after ms
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`TIMEOUT: ${label} exceeded ${ms / 1000}s limit`));
+    }, ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 
 // ═══ Phase Definitions ═══
 export const CAMPAIGN_PHASES = [
@@ -59,14 +79,18 @@ function getWPClient(project: any): WordPressAPI | null {
   });
 }
 
-// ═══ Helper: Safe LLM JSON parse ═══
+// ═══ Helper: Safe LLM JSON parse (with 60s timeout) ═══
 async function llmJSON<T>(systemPrompt: string, userPrompt: string): Promise<T> {
-  const response = await invokeLLM({
-    messages: [
-      { role: "system", content: systemPrompt + "\n\nIMPORTANT: Return ONLY valid JSON. No markdown code blocks, no extra text." },
-      { role: "user", content: userPrompt },
-    ],
-  });
+  const response = await withTimeout(
+    invokeLLM({
+      messages: [
+        { role: "system", content: systemPrompt + "\n\nIMPORTANT: Return ONLY valid JSON. No markdown code blocks, no extra text." },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+    LLM_TIMEOUT_MS,
+    "LLM call",
+  );
   const content = response.choices[0]?.message?.content;
   const text = typeof content === "string" ? content : JSON.stringify(content);
   
@@ -993,8 +1017,14 @@ export async function runAllPhases(projectId: number): Promise<{
 
   try {
     for (let i = startPhase; i < 16; i++) {
+      const phaseStart = Date.now();
       try {
-        const result = await runPhase(projectId, i);
+        // Wrap each phase with 5-minute timeout
+        const result = await withTimeout(
+          runPhase(projectId, i),
+          PHASE_TIMEOUT_MS,
+          `Phase ${i} (${CAMPAIGN_PHASES[i]?.thaiName || "unknown"})`,
+        );
         results.push(result);
         totalWpChanges += result.wpChanges;
 
@@ -1003,18 +1033,21 @@ export async function runAllPhases(projectId: number): Promise<{
           console.warn(`[Campaign] Phase ${i} failed for project ${projectId}: ${result.detail}`);
         }
       } catch (phaseErr: any) {
-        // Catch any unhandled error from runPhase and continue
-        console.error(`[Campaign] Phase ${i} crashed for project ${projectId}:`, phaseErr.message);
+        const isTimeout = phaseErr.message?.startsWith("TIMEOUT:");
+        const errorLabel = isTimeout ? "timeout" : "crash";
+        console.error(`[Campaign] Phase ${i} ${errorLabel} for project ${projectId}:`, phaseErr.message);
         results.push({
           phase: i,
           phaseName: CAMPAIGN_PHASES[i]?.name || `Phase ${i}`,
           thaiName: CAMPAIGN_PHASES[i]?.thaiName || `เฟส ${i}`,
           status: "failed",
           actions: [],
-          aiAnalysis: `Phase crashed: ${phaseErr.message}`,
-          detail: `เฟสล้มเหลว (crash): ${phaseErr.message}`,
+          aiAnalysis: `Phase ${errorLabel}: ${phaseErr.message}`,
+          detail: isTimeout
+            ? `เฟส ${CAMPAIGN_PHASES[i]?.thaiName} หมดเวลา (${PHASE_TIMEOUT_MS / 1000}s limit) — ข้ามไปเฟสถัดไป`
+            : `เฟสล้มเหลว (${errorLabel}): ${phaseErr.message}`,
           wpChanges: 0,
-          duration: 0,
+          duration: Date.now() - phaseStart,
         });
         // Update project phase so it doesn't get stuck on the same phase
         const newPhase = i + 1;
@@ -1022,7 +1055,7 @@ export async function runAllPhases(projectId: number): Promise<{
         await db.updateSeoProject(projectId, {
           campaignPhase: newPhase,
           campaignProgress: progress,
-          campaignLastPhaseResult: { error: phaseErr.message, crashed: true } as any,
+          campaignLastPhaseResult: { error: phaseErr.message, crashed: !isTimeout, timedOut: isTimeout } as any,
         }).catch(() => {}); // Don't let DB error stop the loop
       }
     }
