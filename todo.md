@@ -3741,3 +3741,55 @@
 ## Testing
 - [x] vitest tests สำหรับ Daily Summary + Inline Buttons (38 tests ผ่านทั้งหมด, 15 new)
 - [x] 0 TypeScript errors
+
+# Feature: PBN Content SEO Optimization — 100% SEO Best Practices
+
+## Content Structure
+- [x] H1/H2/H3 heading hierarchy ถูกต้อง (1 H1, 3-6 H2, multiple H3, no level skipping)
+- [x] Table of Contents — pillar content type สร้าง 5-7 major sections
+- [x] Introduction paragraph พร้อม keyword (within first 100 words)
+- [x] Conclusion paragraph พร้อม CTA + keyword mention
+- [x] Short paragraphs (2-4 sentences max) อ่านง่าย + validator check
+- [x] Bullet points / numbered lists ผสม (validator checks <ul>/<ol>)
+
+## Keyword Optimization
+- [x] Primary keyword ใน H1, first paragraph, at least one H2, last paragraph
+- [x] LSI keywords 3-5 ตัวกระจายตลอดบทความ (LLM prompt enforces)
+- [x] Keyword density 0.5-2.5% (validator calculates + checks)
+- [x] Semantic variations ของ keyword (LLM generates naturally)
+- [x] Long-tail keywords ใน H3 headings (LLM prompt rule #8)
+- [x] Keyword bolded once with <strong> (validator checks)
+
+## On-Page SEO Elements
+- [x] Meta description (140-165 chars) พร้อม keyword + CTA
+- [x] Title length 50-60 chars (validator checks)
+- [x] Slug with keyword (generateSlug + validator)
+- [x] Internal link placeholders (2-3 links with href="#related-topic")
+- [x] External authority links (1-2 nofollow to Wikipedia/.edu/.gov)
+- [x] Target backlink วางตำแหน่งธรรมชาติ (paragraph 3-5, NOT first/last)
+- [x] Schema markup (Article schema — JSON-LD injected into content)
+- [x] Yoast SEO meta fields (title, metadesc, focuskw) via WordPress REST API
+
+## Content Quality
+- [x] Word count 800-1500 คำ (configurable min/max)
+- [x] Readability grade 6-8 (Flesch-Kincaid friendly, LLM enforced)
+- [x] 8 content types: article, review, news, tutorial, listicle, comparison, case_study, pillar
+- [x] 6 writing tones: professional, casual, academic, persuasive, storytelling, journalistic
+- [x] Content type rotation across PBN posts (natural footprint diversity)
+- [x] Niche-relevant content ตรงกับ PBN site (niche passed to LLM)
+- [x] Unique angle/perspective ทุกบทความ (varied types + tones)
+
+## SEO Content Validator (23 checks)
+- [x] สร้าง validateSeoContent() — 23 SEO rules checked
+- [x] SEO Score 0-100 weighted scoring (high-weight: title, H1, backlink, keyword)
+- [x] Console warning when score < 60 (flagged but still posts)
+- [x] SEO score logged per post in console
+- [x] calculateSeoScore(), calculateKeywordDensity(), countWords(), stripHtml()
+- [x] generateArticleSchema() — full Article JSON-LD
+- [x] buildWpPostPayload() — WordPress REST API with Yoast fields
+- [x] postToWordPressSeo() — enhanced WP posting with slug, meta, Yoast
+
+## Testing
+- [x] vitest tests สำหรับ SEO content structure (49 tests passed)
+- [x] Tests cover: stripHtml, countWords, keywordDensity, slug, validator (15 checks), score, schema, wpPayload, LLM integration, edge cases
+- [x] 0 TypeScript errors

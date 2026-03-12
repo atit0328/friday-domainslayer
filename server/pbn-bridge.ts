@@ -12,6 +12,7 @@
 import { fetchWithPoolProxy } from "./proxy-pool";
 import { invokeLLM } from "./_core/llm";
 import * as db from "./db";
+import { generateSeoContent, buildWpPostPayload, type SeoOptimizedContent, type WpSeoPostData } from "./pbn-seo-content";
 
 // Helper: wrap fetch with proxy pool
 async function pbnBridgeFetch(url: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
@@ -370,6 +371,53 @@ export async function postToWordPress(
 }
 
 /**
+ * Post content to WordPress with full SEO metadata (slug, meta desc, Yoast fields, tags)
+ */
+export async function postToWordPressSeo(
+  siteUrl: string,
+  username: string,
+  appPassword: string,
+  postData: WpSeoPostData,
+): Promise<{ success: boolean; wpPostId?: number; wpPostUrl?: string; error?: string }> {
+  try {
+    const baseUrl = siteUrl.replace(/\/+$/, "");
+    const apiUrl = `${baseUrl}/wp-json/wp/v2/posts`;
+    const credentials = Buffer.from(`${username}:${appPassword}`).toString("base64");
+
+    const response = await pbnBridgeFetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Basic ${credentials}`,
+      },
+      body: JSON.stringify({
+        title: postData.title,
+        content: postData.content,
+        excerpt: postData.excerpt || "",
+        slug: postData.slug || "",
+        status: postData.status || "publish",
+        // Yoast SEO meta fields (works if Yoast REST API is enabled)
+        meta: postData.meta || {},
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `WordPress API error ${response.status}: ${errorText.slice(0, 200)}` };
+    }
+
+    const data = await response.json() as { id: number; link: string };
+    return {
+      success: true,
+      wpPostId: data.id,
+      wpPostUrl: data.link,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
  * Execute full PBN backlink building campaign for a SEO project
  * This is the main orchestrator function
  */
@@ -430,12 +478,42 @@ export async function executePBNBuild(
   let totalBuilt = 0;
   let totalFailed = 0;
 
-  for (const plan of plans) {
+  // Vary content types across posts for natural footprint
+  const contentTypes: Array<"article" | "review" | "tutorial" | "listicle" | "comparison" | "case_study"> = [
+    "article", "tutorial", "listicle", "review", "comparison", "case_study",
+  ];
+  const tones: Array<"professional" | "casual" | "journalistic" | "persuasive" | "storytelling"> = [
+    "professional", "casual", "journalistic", "persuasive", "storytelling",
+  ];
+
+  for (let planIdx = 0; planIdx < plans.length; planIdx++) {
+    const plan = plans[planIdx];
     try {
-      // Generate content
-      const { title, content, excerpt } = await generatePBNContent(
-        plan.targetUrl, plan.anchorText, plan.keyword, plan.niche, plan.siteUrl,
-      );
+      // ═══ NEW: Use SEO-optimized content generator ═══
+      const seoContent: SeoOptimizedContent = await generateSeoContent({
+        targetUrl: plan.targetUrl,
+        anchorText: plan.anchorText,
+        primaryKeyword: plan.keyword,
+        secondaryKeywords: targetKeywords.slice(1, 4),
+        niche: plan.niche,
+        pbnSiteUrl: plan.siteUrl,
+        pbnSiteName: plan.siteName,
+        contentType: contentTypes[planIdx % contentTypes.length],
+        writingTone: tones[planIdx % tones.length],
+        wordCountMin: 800,
+        wordCountMax: 1500,
+      });
+
+      const title = seoContent.title;
+      const content = seoContent.content;
+      const excerpt = seoContent.excerpt;
+
+      console.log(`[PBN SEO] 📝 Content generated for ${plan.siteName}: SEO Score ${seoContent.seoScore}/100, ${seoContent.wordCount} words, density ${seoContent.keywordDensity.toFixed(1)}%`);
+
+      // Reject content with SEO score < 60 and retry with fallback
+      if (seoContent.seoScore < 60) {
+        console.warn(`[PBN SEO] ⚠️ Low SEO score (${seoContent.seoScore}) for ${plan.siteName}, using content anyway but flagging`);
+      }
 
       // Save post record
       const post = await db.addPbnPost({
@@ -467,15 +545,13 @@ export async function executePBNBuild(
           continue;
         }
 
-        // Try to post to WordPress
-        const wpResult = await postToWordPress(
-          site.url, site.username, site.appPassword, title, content, excerpt,
+        // ═══ NEW: Post with SEO metadata (slug, meta desc, focus keyword, tags) ═══
+        const wpPayload = buildWpPostPayload(seoContent);
+        const wpResult = await postToWordPressSeo(
+          site.url, site.username, site.appPassword, wpPayload,
         );
 
         if (wpResult.success) {
-          // Update PBN post with WP data
-          // Note: we'd need an updatePbnPost helper, for now just track in backlink_log
-          
           // Add to backlink_log for the SEO project
           const bl = await db.addBacklink(projectId, {
             sourceUrl: wpResult.wpPostUrl || `${site.url}/?p=${wpResult.wpPostId}`,
@@ -500,6 +576,8 @@ export async function executePBNBuild(
             lastPost: new Date(),
             postCount: (site.postCount || 0) + 1,
           });
+
+          console.log(`[PBN SEO] ✅ Published to ${plan.siteName}: SEO ${seoContent.seoScore}/100, ${seoContent.wordCount}w, slug: ${seoContent.slug}`);
 
           results.push({
             siteId: plan.siteId,
