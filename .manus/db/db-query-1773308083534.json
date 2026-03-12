@@ -1,0 +1,25 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'pbn_sites' AND COLUMN_NAME LIKE '%domain%' OR (TABLE_NAME = 'pbn_sites' AND COLUMN_NAME LIKE '%url%') OR (TABLE_NAME = 'pbn_sites' AND COLUMN_NAME LIKE '%name%');",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'pbn_sites' AND COLUMN_NAME LIKE '%domain%' OR (TABLE_NAME = 'pbn_sites' AND COLUMN_NAME LIKE '%url%') OR (TABLE_NAME = 'pbn_sites' AND COLUMN_NAME LIKE '%name%');",
+  "rows": [
+    {
+      "COLUMN_NAME": "name"
+    },
+    {
+      "COLUMN_NAME": "url"
+    },
+    {
+      "COLUMN_NAME": "username"
+    },
+    {
+      "COLUMN_NAME": "domainAge"
+    },
+    {
+      "COLUMN_NAME": "domainRegistrar"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\nname\nurl\nusername\ndomainAge\ndomainRegistrar\n",
+  "stderr": "",
+  "execution_time_ms": 1597
+}

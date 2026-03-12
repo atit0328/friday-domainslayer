@@ -993,6 +993,213 @@ export async function setupCloaking(config: PBNSetupConfig): Promise<SetupStepRe
   }
 }
 
+// ═══ WordPress Site Pre-Check ═══
+// Detect existing theme, content, settings, and plugins before running setup.
+// If the site already has custom theme/content, skip those steps and jump to SEO.
+
+export interface WpSitePreCheck {
+  hasCustomTheme: boolean;       // Active theme is NOT a default twenty* theme
+  activeTheme: string;           // Slug of the active theme
+  hasContent: boolean;           // Has published pages/posts beyond defaults
+  pageCount: number;             // Number of published pages
+  postCount: number;             // Number of published posts
+  hasHomepage: boolean;          // Has a static front page set
+  homepageId: number | null;     // ID of the front page (if set)
+  hasPostsPage: boolean;         // Has a posts page set
+  postsPageId: number | null;    // ID of the posts page (if set)
+  hasSeoPlugin: boolean;         // Yoast SEO or similar is active
+  hasCustomSettings: boolean;    // Site title/tagline are not default WP values
+  siteTitle: string;
+  tagline: string;
+  permalinkStructure: string;
+  skipTheme: boolean;            // Recommendation: skip theme step
+  skipSettings: boolean;         // Recommendation: skip settings step
+  skipPlugins: boolean;          // Recommendation: skip plugins step
+  skipHomepage: boolean;         // Recommendation: skip homepage step
+  skipReadingSettings: boolean;  // Recommendation: skip reading settings step
+  summary: string;               // Human-readable summary of what was found
+}
+
+const DEFAULT_WP_THEMES = [
+  "twentytwentyfive", "twentytwentyfour", "twentytwentythree",
+  "twentytwentytwo", "twentytwentyone", "twentytwenty",
+  "twentynineteen", "twentyeighteen", "twentyseventeen",
+  "twentysixteen", "twentyfifteen", "twentyfourteen", "twentythirteen",
+  "twentytwelve", "twentyeleven", "twentyten",
+];
+
+const DEFAULT_WP_TITLES = [
+  "wordpress", "my site", "my wordpress site", "just another wordpress site",
+  "another wordpress site", "a wordpress site", "site title", "",
+];
+
+const SEO_PLUGIN_SLUGS = [
+  "wordpress-seo", "all-in-one-seo", "rank-math", "seo-by-rank-math",
+  "the-seo-framework", "squirrly-seo", "smartcrawl-seo",
+];
+
+export async function wpSitePreCheck(
+  siteUrl: string,
+  username: string,
+  appPassword: string,
+): Promise<WpSitePreCheck> {
+  const result: WpSitePreCheck = {
+    hasCustomTheme: false,
+    activeTheme: "",
+    hasContent: false,
+    pageCount: 0,
+    postCount: 0,
+    hasHomepage: false,
+    homepageId: null,
+    hasPostsPage: false,
+    postsPageId: null,
+    hasSeoPlugin: false,
+    hasCustomSettings: false,
+    siteTitle: "",
+    tagline: "",
+    permalinkStructure: "",
+    skipTheme: false,
+    skipSettings: false,
+    skipPlugins: false,
+    skipHomepage: false,
+    skipReadingSettings: false,
+    summary: "",
+  };
+
+  const summaryParts: string[] = [];
+
+  // 1. Check active theme
+  try {
+    const themesRes = await wpApiFetch(siteUrl, "/wp/v2/themes", username, appPassword);
+    if (themesRes.ok && Array.isArray(themesRes.data)) {
+      const activeTheme = themesRes.data.find((t: any) => t.status === "active");
+      if (activeTheme) {
+        const slug = activeTheme.stylesheet || activeTheme.template || "";
+        result.activeTheme = slug;
+        result.hasCustomTheme = !DEFAULT_WP_THEMES.includes(slug.toLowerCase());
+        if (result.hasCustomTheme) {
+          result.skipTheme = true;
+          summaryParts.push(`Custom theme: ${slug} → skip theme setup`);
+        } else {
+          summaryParts.push(`Default theme: ${slug} → will install SEO theme`);
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Check published pages
+  try {
+    const pagesRes = await wpApiFetch(siteUrl, "/wp/v2/pages?status=publish&per_page=100", username, appPassword);
+    if (pagesRes.ok && Array.isArray(pagesRes.data)) {
+      // Filter out default "Sample Page" and empty pages
+      const realPages = pagesRes.data.filter((p: any) => {
+        const title = (p.title?.rendered || "").toLowerCase().trim();
+        const content = (p.content?.rendered || "").trim();
+        // Skip default WP sample page and empty pages
+        return title !== "sample page" && content.length > 100;
+      });
+      result.pageCount = realPages.length;
+    }
+  } catch {}
+
+  // 3. Check published posts
+  try {
+    const postsRes = await wpApiFetch(siteUrl, "/wp/v2/posts?status=publish&per_page=100", username, appPassword);
+    if (postsRes.ok && Array.isArray(postsRes.data)) {
+      const realPosts = postsRes.data.filter((p: any) => {
+        const title = (p.title?.rendered || "").toLowerCase().trim();
+        const content = (p.content?.rendered || "").trim();
+        return title !== "hello world" && title !== "hello world!" && content.length > 100;
+      });
+      result.postCount = realPosts.length;
+    }
+  } catch {}
+
+  result.hasContent = result.pageCount >= 1 || result.postCount >= 1;
+  if (result.hasContent) {
+    summaryParts.push(`Content found: ${result.pageCount} pages, ${result.postCount} posts → skip homepage creation`);
+    result.skipHomepage = true;
+  } else {
+    summaryParts.push(`No content found → will create homepage`);
+  }
+
+  // 4. Check site settings (title, tagline, reading settings)
+  try {
+    const settingsRes = await wpApiFetch(siteUrl, "/wp/v2/settings", username, appPassword);
+    if (settingsRes.ok) {
+      const s = settingsRes.data;
+      result.siteTitle = s.title || "";
+      result.tagline = s.description || "";
+      result.permalinkStructure = s.permalink_structure || "";
+
+      // Check if site title is customized (not default WP)
+      const titleLower = result.siteTitle.toLowerCase().trim();
+      const taglineLower = result.tagline.toLowerCase().trim();
+      const isDefaultTitle = DEFAULT_WP_TITLES.includes(titleLower) || titleLower === "";
+      const isDefaultTagline = taglineLower === "just another wordpress site" || taglineLower === "";
+
+      result.hasCustomSettings = !isDefaultTitle && !isDefaultTagline;
+      if (result.hasCustomSettings) {
+        result.skipSettings = true;
+        summaryParts.push(`Custom settings: "${result.siteTitle}" → skip settings`);
+      } else {
+        summaryParts.push(`Default settings → will configure title/tagline`);
+      }
+
+      // Check reading settings (static front page)
+      const showOnFront = s.show_on_front;
+      const pageOnFront = s.page_on_front;
+      const pageForPosts = s.page_for_posts;
+
+      if (showOnFront === "page" && pageOnFront && pageOnFront > 0) {
+        result.hasHomepage = true;
+        result.homepageId = pageOnFront;
+        result.skipReadingSettings = true;
+        summaryParts.push(`Static front page set (ID: ${pageOnFront}) → skip reading settings`);
+      }
+
+      if (pageForPosts && pageForPosts > 0) {
+        result.hasPostsPage = true;
+        result.postsPageId = pageForPosts;
+      }
+    }
+  } catch {}
+
+  // 5. Check installed plugins (SEO plugins)
+  try {
+    const pluginsRes = await wpApiFetch(siteUrl, "/wp/v2/plugins", username, appPassword);
+    if (pluginsRes.ok && Array.isArray(pluginsRes.data)) {
+      const activePlugins = pluginsRes.data.filter((p: any) => p.status === "active");
+      const activeSlugs = activePlugins.map((p: any) => (p.plugin || "").split("/")[0]);
+
+      result.hasSeoPlugin = activeSlugs.some((slug: string) =>
+        SEO_PLUGIN_SLUGS.some(seo => slug.includes(seo)),
+      );
+
+      if (result.hasSeoPlugin) {
+        result.skipPlugins = true;
+        summaryParts.push(`SEO plugin active → skip plugin installation`);
+      } else {
+        summaryParts.push(`No SEO plugin → will install Yoast SEO`);
+      }
+    }
+  } catch {}
+
+  // If homepage exists AND reading settings are set, skip both
+  if (result.hasHomepage && result.hasContent) {
+    result.skipHomepage = true;
+    result.skipReadingSettings = true;
+  }
+
+  result.summary = summaryParts.length > 0
+    ? summaryParts.join(" | ")
+    : "Fresh WordPress install — running full setup";
+
+  console.log(`[WP-PreCheck] ${siteUrl}: ${result.summary}`);
+
+  return result;
+}
+
 // ═══ Main Pipeline Orchestrator ═══
 
 export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProgress> {
@@ -1009,64 +1216,120 @@ export async function runFullSetup(config: PBNSetupConfig): Promise<PBNSetupProg
 
   console.log(`[PBN-Setup] Starting full setup for ${config.siteName} (${config.siteUrl})`);
 
-  // Step 1: Theme
+  // ═══ Smart Pre-Check: detect existing theme/content/settings ═══
+  progress.currentStep = "pre_check";
+  let preCheck: WpSitePreCheck | null = null;
+  try {
+    preCheck = await wpSitePreCheck(config.siteUrl, config.username, config.appPassword);
+    console.log(`[PBN-Setup] Pre-Check: ${preCheck.summary}`);
+  } catch (err: any) {
+    console.log(`[PBN-Setup] Pre-Check failed (running full setup): ${err.message}`);
+  }
+
+  const skippedSteps: string[] = [];
+
+  // Step 1: Theme (skip if site already has custom theme)
   progress.currentStep = "theme";
-  const themeResult = await setupTheme(config);
-  progress.results.push(themeResult);
+  if (preCheck?.skipTheme) {
+    const skipMsg = `Skipped — custom theme already active: ${preCheck.activeTheme}`;
+    progress.results.push({ step: "theme", success: true, detail: skipMsg });
+    skippedSteps.push("theme");
+    console.log(`[PBN-Setup] Step 1 Theme: SKIP — ${preCheck.activeTheme}`);
+  } else {
+    const themeResult = await setupTheme(config);
+    progress.results.push(themeResult);
+    console.log(`[PBN-Setup] Step 1 Theme: ${themeResult.success ? "OK" : "FAIL"} - ${themeResult.detail}`);
+  }
   progress.stepsCompleted++;
-  console.log(`[PBN-Setup] Step 1 Theme: ${themeResult.success ? "OK" : "FAIL"} - ${themeResult.detail}`);
 
-  // Step 2: Basic Settings
+  // Step 2: Basic Settings (skip if site has custom title/tagline)
   progress.currentStep = "basic_settings";
-  const settingsResult = await setupBasicSettings(config);
-  progress.results.push(settingsResult);
+  if (preCheck?.skipSettings) {
+    const skipMsg = `Skipped — custom settings found: "${preCheck.siteTitle}" / "${preCheck.tagline}"`;
+    progress.results.push({ step: "basic_settings", success: true, detail: skipMsg });
+    skippedSteps.push("settings");
+    console.log(`[PBN-Setup] Step 2 Settings: SKIP — "${preCheck.siteTitle}"`);
+  } else {
+    const settingsResult = await setupBasicSettings(config);
+    progress.results.push(settingsResult);
+    console.log(`[PBN-Setup] Step 2 Settings: ${settingsResult.success ? "OK" : "FAIL"} - ${settingsResult.detail}`);
+  }
   progress.stepsCompleted++;
-  console.log(`[PBN-Setup] Step 2 Settings: ${settingsResult.success ? "OK" : "FAIL"} - ${settingsResult.detail}`);
 
-  // Step 3: Plugins
+  // Step 3: Plugins (skip if SEO plugin already active)
   progress.currentStep = "plugins";
-  const pluginsResult = await setupPlugins(config);
-  progress.results.push(pluginsResult);
+  if (preCheck?.skipPlugins) {
+    const skipMsg = `Skipped — SEO plugin already active`;
+    progress.results.push({ step: "plugins", success: true, detail: skipMsg });
+    skippedSteps.push("plugins");
+    console.log(`[PBN-Setup] Step 3 Plugins: SKIP — SEO plugin active`);
+  } else {
+    const pluginsResult = await setupPlugins(config);
+    progress.results.push(pluginsResult);
+    console.log(`[PBN-Setup] Step 3 Plugins: ${pluginsResult.success ? "OK" : "FAIL"} - ${pluginsResult.detail}`);
+  }
   progress.stepsCompleted++;
-  console.log(`[PBN-Setup] Step 3 Plugins: ${pluginsResult.success ? "OK" : "FAIL"} - ${pluginsResult.detail}`);
 
-  // Step 4: Homepage
+  // Step 4: Homepage (skip if site already has content pages)
   progress.currentStep = "homepage";
-  const homepageResult = await setupHomepage(config);
-  progress.results.push(homepageResult);
+  let homepagePageId: number | null = preCheck?.homepageId || null;
+  if (preCheck?.skipHomepage) {
+    const skipMsg = `Skipped — existing content: ${preCheck.pageCount} pages, ${preCheck.postCount} posts`;
+    progress.results.push({ step: "homepage", success: true, detail: skipMsg, data: { pageId: homepagePageId } });
+    skippedSteps.push("homepage");
+    console.log(`[PBN-Setup] Step 4 Homepage: SKIP — ${preCheck.pageCount} pages exist`);
+  } else {
+    const homepageResult = await setupHomepage(config);
+    progress.results.push(homepageResult);
+    if (homepageResult.success && homepageResult.data?.pageId) {
+      homepagePageId = homepageResult.data.pageId;
+    }
+    console.log(`[PBN-Setup] Step 4 Homepage: ${homepageResult.success ? "OK" : "FAIL"} - ${homepageResult.detail}`);
+  }
   progress.stepsCompleted++;
-  console.log(`[PBN-Setup] Step 4 Homepage: ${homepageResult.success ? "OK" : "FAIL"} - ${homepageResult.detail}`);
 
-  // Step 5: Reading Settings (needs homepage ID)
+  // Step 5: Reading Settings (skip if front page already set)
   progress.currentStep = "reading_settings";
-  if (homepageResult.success && homepageResult.data?.pageId) {
-    const readingResult = await setupReadingSettings(config, homepageResult.data.pageId);
+  if (preCheck?.skipReadingSettings) {
+    const skipMsg = `Skipped — static front page already set (ID: ${preCheck.homepageId})`;
+    progress.results.push({ step: "reading_settings", success: true, detail: skipMsg });
+    progress.homepageId = preCheck.homepageId || undefined;
+    progress.postsPageId = preCheck.postsPageId || undefined;
+    skippedSteps.push("reading");
+    console.log(`[PBN-Setup] Step 5 Reading: SKIP — front page ID ${preCheck.homepageId}`);
+  } else if (homepagePageId) {
+    const readingResult = await setupReadingSettings(config, homepagePageId);
     progress.results.push(readingResult);
-    progress.homepageId = homepageResult.data.pageId;
+    progress.homepageId = homepagePageId;
     progress.postsPageId = readingResult.data?.postsPageId;
+    console.log(`[PBN-Setup] Step 5 Reading: ${readingResult.success ? "OK" : "FAIL"}`);
   } else {
     progress.results.push({
       step: "reading_settings",
       success: false,
-      detail: "Skipped — homepage not created",
+      detail: "Skipped — no homepage ID available",
     });
+    console.log(`[PBN-Setup] Step 5 Reading: SKIP — no homepage`);
   }
   progress.stepsCompleted++;
-  console.log(`[PBN-Setup] Step 5 Reading: ${progress.results[progress.results.length - 1].success ? "OK" : "FAIL"}`);
 
-  // Step 6: On-Page Content
+  // Step 6: On-Page SEO Content (ALWAYS runs — core SEO step)
   progress.currentStep = "onpage_content";
   const contentResult = await setupOnPageContent(config);
   progress.results.push(contentResult);
   progress.stepsCompleted++;
   console.log(`[PBN-Setup] Step 6 Content: ${contentResult.success ? "OK" : "FAIL"} - ${contentResult.detail}`);
 
-  // Step 7: Cloaking Deploy (auto-deploy if redirectUrl is configured)
+  // Step 7: Cloaking Deploy (ALWAYS runs if configured)
   progress.currentStep = "cloaking";
   const cloakingResult = await setupCloaking(config);
   progress.results.push(cloakingResult);
   progress.stepsCompleted++;
   console.log(`[PBN-Setup] Step 7 Cloaking: ${cloakingResult.success ? "OK" : "SKIP"} - ${cloakingResult.detail}`);
+
+  if (skippedSteps.length > 0) {
+    console.log(`[PBN-Setup] 🔄 Smart Pre-Check skipped ${skippedSteps.length} steps: ${skippedSteps.join(", ")} → jumped to SEO`);
+  }
 
   // Determine final status
   const failedSteps = progress.results.filter(r => !r.success).length;

@@ -3958,3 +3958,34 @@
 - [x] Tests cover: skip when no URL (1), deploy with URL (1), WP config passing (1), custom method/countries (1), A/B split (1), Telegram notify (1), deploy details (1), failure handling (2), defaults (2), config fields (2)
 - [x] Total: 91 tests passed (78 cloaking-seo + 13 pipeline)
 - [x] 0 TypeScript errors
+
+# Feature: Smart Pre-Check — Skip Steps if Site Already Has Theme/Content
+
+## WordPress Site Pre-Check (wpSitePreCheck function)
+- [x] สร้าง function wpSitePreCheck() — ตรวจสอบสถานะเว็บ WP ก่อน setup (5 checks via WP REST API)
+- [x] ตรวจ theme: เทียบกับ 16 default WP themes (twentyten — twentytwentyfive)
+- [x] ตรวจ content: filter out Sample Page + Hello World + short content (<100 chars)
+- [x] ตรวจ homepage: check show_on_front + page_on_front + page_for_posts
+- [x] ตรวจ plugins: detect 7 SEO plugins (Yoast, Rank Math, AIOSEO, etc.)
+- [x] ตรวจ settings: site title vs 8 default titles + tagline vs default
+
+## Pipeline Conditional Skip (runFullSetup modified)
+- [x] ปรับ runFullSetup ให้เรียก wpSitePreCheck() ก่อนทำ step ใดๆ
+- [x] Skip Step 1 (Theme) ถ้ามี custom theme แล้ว (preCheck.skipTheme)
+- [x] Skip Step 2 (Settings) ถ้า settings ตั้งค่าดีแล้ว (preCheck.skipSettings)
+- [x] Skip Step 3 (Plugins) ถ้ามี SEO plugins แล้ว (preCheck.skipPlugins)
+- [x] Skip Step 4 (Homepage) ถ้ามี homepage content แล้ว (preCheck.skipHomepage)
+- [x] Skip Step 5 (Reading Settings) ถ้า front page ตั้งค่าแล้ว (preCheck.skipReadingSettings)
+- [x] ทำ Step 6 (On-Page SEO) เสมอ — เป็นหัวใจหลัก (ALWAYS runs)
+- [x] ทำ Step 7 (Cloaking) เสมอ — ถ้ามี config (ALWAYS runs if configured)
+- [x] Safe fallback: ถ้า preCheck ล้มเหลว → run ALL steps (ไม่ skip อะไร)
+
+## Testing
+- [x] vitest tests สำหรับ pre-check + conditional skip — 34 tests passed (wp-precheck.test.ts)
+- [x] Tests cover: theme detection (4), settings detection (4), SEO plugin detection (5), content detection (5), skip logic (10), full scenarios (5), summary generation (2)
+- [x] 0 TypeScript errors
+
+## Database Cleanup
+- [x] ลบ huaykhonthai956.org (ID: 30003) + ข้อมูลที่เกี่ยวข้องทั้งหมด
+- [x] ลบ ppixxie928.org (ID: 30002, 60002) + ข้อมูลที่เกี่ยวข้องทั้งหมด
+- [x] ลบจาก 6 ตาราง: seo_projects, backlink_log, rank_tracking, seo_actions, seo_snapshots, seo_agent_tasks, seo_content
