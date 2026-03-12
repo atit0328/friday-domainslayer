@@ -1,0 +1,1 @@
+ALTER TABLE `seo_projects` ADD `autoRedirectTakeover` boolean DEFAULT false NOT NULL;

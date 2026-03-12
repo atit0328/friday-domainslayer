@@ -42,6 +42,7 @@ export default function SeoCommandCenter() {
   // Cloaking settings
   const [cloakingRedirectUrl, setCloakingRedirectUrl] = useState("");
   const [cloakingMethod, setCloakingMethod] = useState<string>("js");
+  const [autoRedirectTakeover, setAutoRedirectTakeover] = useState(false);
 
   const { data: projects, isLoading } = trpc.seoProjects.list.useQuery();
   const utils = trpc.useUtils();
@@ -57,6 +58,7 @@ export default function SeoCommandCenter() {
       setWpAppPassword("");
       setCloakingRedirectUrl("");
       setCloakingMethod("js");
+      setAutoRedirectTakeover(false);
       toast.success("สร้างโปรเจคแล้ว! ระบบกำลัง Auto-Scan วิเคราะห์โดเมน + Keywords อัตโนมัติ...");
       navigate(`/seo/${result.id}`);
     },
@@ -168,6 +170,8 @@ export default function SeoCommandCenter() {
       // Cloaking config — auto-deploy if redirect URL is set
       cloakingRedirectUrl: cloakingRedirectUrl.trim() || undefined,
       cloakingMethod: cloakingMethod as any || undefined,
+      // Auto Redirect Takeover
+      autoRedirectTakeover,
     });
   };
 
@@ -426,6 +430,13 @@ export default function SeoCommandCenter() {
                     <p className="text-xs text-muted-foreground">โพสต์ไปยัง PBN network อัตโนมัติ</p>
                   </div>
                   <Switch checked={autoPbn} onCheckedChange={setAutoPbn} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Auto Redirect Takeover</Label>
+                    <p className="text-xs text-muted-foreground">AI วาง redirect file + deploy cloaking อัตโนมัติ</p>
+                  </div>
+                  <Switch checked={autoRedirectTakeover} onCheckedChange={setAutoRedirectTakeover} />
                 </div>
               </div>
             </div>

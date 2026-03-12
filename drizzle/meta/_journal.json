@@ -274,6 +274,13 @@
       "when": 1773220731925,
       "tag": "0038_nostalgic_lenny_balinger",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1773314544228,
+      "tag": "0039_nosy_warhawk",
+      "breakpoints": true
     }
   ]
 }

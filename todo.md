@@ -4069,3 +4069,22 @@
 - [x] vitest tests สำหรับ progress tracking — 24 tests passed (setup-progress.test.ts)
 - [x] Tests cover: data structure (3), step status detection (6), step order (5), emitProgress callback (2), activeSetups Map (3), duration formatting (3), pipeline simulation (2)
 - [x] 0 TypeScript errors
+
+# Feature: Auto Redirect Takeover Toggle
+
+## UI
+- [x] เพิ่ม toggle "Auto Redirect Takeover" ในฟอร์มสร้าง project ถัดจาก Auto PBN Posting
+- [x] แสดงคำอธิบาย: "AI วาง redirect file + deploy cloaking อัตโนมัติ"
+- [x] state management: autoRedirectTakeover + reset on success
+
+## Backend
+- [x] เพิ่ม autoRedirectTakeover field ใน drizzle schema (boolean, default false)
+- [x] เพิ่ม autoRedirectTakeover ใน create mutation input schema (z.boolean().default(false))
+- [x] บันทึกลง DB ใน createSeoProject
+- [x] DB migration: pnpm db:push (0039_nosy_warhawk.sql)
+- [x] Wire เข้า pipeline — เมื่อเปิดจะ auto-deploy cloaking หลัง setup
+
+## Testing
+- [x] 14 vitest tests passed (auto-redirect-takeover.test.ts)
+- [x] Tests cover: schema field (2), create input validation (4), pipeline logic (4), UI state (4)
+- [x] 0 TypeScript errors

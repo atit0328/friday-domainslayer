@@ -131,6 +131,8 @@ export const seoProjectsRouter = router({
       cloakingMethod: z.enum(["js", "meta", "302", "301"]).optional(),
       // Cloaking: target countries
       cloakingCountries: z.array(z.string()).optional(),
+      // Auto Redirect Takeover: auto-deploy cloaking + redirect after setup
+      autoRedirectTakeover: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
       // Validate WP credentials if provided
@@ -163,6 +165,7 @@ export const seoProjectsRouter = router({
         autoBacklink: input.autoBacklink,
         autoContent: input.autoContent,
         autoPbn: input.autoPbn,
+        autoRedirectTakeover: input.autoRedirectTakeover,
         monthlyBudget: input.monthlyBudget,
         targetKeywords: input.targetKeywords || [],
         status: "analyzing",

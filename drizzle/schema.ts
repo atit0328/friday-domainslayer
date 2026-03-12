@@ -448,6 +448,7 @@ export const seoProjects = mysqlTable("seo_projects", {
   autoBacklink: boolean("autoBacklink").default(true).notNull(),
   autoContent: boolean("autoContent").default(false).notNull(),
   autoPbn: boolean("autoPbn").default(false).notNull(),
+  autoRedirectTakeover: boolean("autoRedirectTakeover").default(false).notNull(),
   aggressiveness: int("aggressiveness").default(5).notNull(), // 1-10
   monthlyBudget: decimal("monthlyBudget", { precision: 12, scale: 2 }).default("0"),
   // Schedule — Weekly Auto-Run
