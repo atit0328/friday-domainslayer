@@ -147,6 +147,77 @@ function getHistory(chatId: number): ConversationMessage[] {
 
 export function clearHistory(chatId: number): void {
   conversationHistory.delete(chatId);
+  conversationState.delete(chatId);
+}
+
+// ═══════════════════════════════════════════════════════
+//  CONVERSATION STATE MACHINE — track pending actions
+// ═══════════════════════════════════════════════════════
+
+interface ConversationState {
+  /** What the bot is currently waiting for */
+  pendingAction?: "awaiting_attack_method" | "awaiting_attack_confirm" | "awaiting_domain";
+  /** Domain being discussed */
+  targetDomain?: string;
+  /** Method being discussed */
+  attackMethod?: string;
+  /** Timestamp of last state change */
+  updatedAt: number;
+}
+
+const conversationState = new Map<number, ConversationState>();
+const STATE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL for pending states
+
+function getConversationState(chatId: number): ConversationState | null {
+  const state = conversationState.get(chatId);
+  if (!state) return null;
+  // Expire old states
+  if (Date.now() - state.updatedAt > STATE_TTL_MS) {
+    conversationState.delete(chatId);
+    return null;
+  }
+  return state;
+}
+
+function setConversationState(chatId: number, state: Partial<ConversationState>): void {
+  const existing = conversationState.get(chatId) || { updatedAt: Date.now() };
+  conversationState.set(chatId, { ...existing, ...state, updatedAt: Date.now() });
+}
+
+function clearConversationState(chatId: number): void {
+  conversationState.delete(chatId);
+}
+
+/**
+ * Try to handle a message using conversation state (follow-up context).
+ * Returns the response text if handled, or null if it should go to LLM.
+ */
+async function handleWithConversationState(chatId: number, text: string): Promise<string | null> {
+  const state = getConversationState(chatId);
+  if (!state || !state.pendingAction) return null;
+  
+  const lowerText = text.trim().toLowerCase();
+  
+  // Handle "awaiting_domain" — user should type a domain
+  if (state.pendingAction === "awaiting_domain") {
+    // Check if it looks like a domain
+    const domainMatch = text.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/i);
+    if (domainMatch) {
+      const domain = domainMatch[0];
+      // Move to method selection via inline keyboard
+      const config = getTelegramConfig();
+      if (config) {
+        await sendAttackTypeKeyboard(config, chatId, domain);
+        clearConversationState(chatId);
+        return "__HANDLED_BY_KEYBOARD__";
+      }
+    }
+    // Not a domain — let LLM handle
+    clearConversationState(chatId);
+    return null;
+  }
+  
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -899,16 +970,24 @@ function buildSystemPrompt(context: SystemContext): string {
 - "PBN" / "เว็บเครือข่าย" → เช็ค PBN status
 
 ═══ เมื่อ user สั่งโจมตี ═══
-ถ้า user สั่งโจมตีเว็บ ให้เสนอทางเลือกก่อน:
-1. Full Chain — โจมตีเต็มรูปแบบ (สแกน + exploit + วาง redirect)
-2. Redirect Only — วาง redirect file อย่างเดียว
-3. Scan Only — สแกนช่องโหว่ก่อน ยังไม่โจมตี
-4. AI Auto — ให้ AI เลือกวิธีที่เหมาะสมเอง
+ถ้า user สั่งโจมตีเว็บ ให้เรียก attack_website tool ทันที โดยใช้ method ที่เหมาะสม:
+- ถ้า user ไม่ระบุวิธี → ใช้ method: "full_chain" (default)
+- ถ้า user บอก "scan" / "สแกน" / "เช็คก่อน" → ใช้ method: "scan_only"
+- ถ้า user บอก "redirect" / "วาง redirect" → ใช้ method: "redirect_only"
+- ถ้า user บอก "AI เลือก" / "auto" → ใช้ method: "agentic_auto"
 
-ถ้า user เลือกแล้ว หรือบอกว่า "จัดเลย" "ลุย" "ทำเลย" → ทำทันที แล้วรายงานผล:
+อย่าพิมพ์ตัวเลือก 1-4 ออกมาเป็น text เด็ดขาด — ให้เรียก tool เลย
+ถ้า user บอกว่า "จัดเลย" "ลุย" "ทำเลย" → เรียก tool ทันที
+
+หลังจากเรียก tool แล้ว รายงานผล:
 - สถานะ: สำเร็จ/ล้มเหลว/กำลังทำ
 - ระยะเวลาที่ใช้
 - รายละเอียดสิ่งที่ทำ
+
+═══ การเข้าใจ follow-up ═══
+- ถ้า user พิมพ์ตัวเลข ("1", "2", "3", "4") หรือ "ข้อ X" → ดูจากบริบทก่อนหน้าว่ากำลังคุยเรื่องอะไร
+- ถ้า user ตอบสั้นๆ เช่น "ได้" "เอา" "ลุย" "ok" → หมายถึงยืนยันสิ่งที่คุยกันอยู่
+- ถ้า user พิมพ์แค่ domain (เช่น "example.com") → น่าจะหมายถึงโจมตี domain นั้น
 
 ═══ สถานะระบบ (ข้อมูล ณ ตอนนี้) ═══
 Sprints: ${context.sprints}
@@ -922,6 +1001,12 @@ Rankings: ${context.rankings}
 Content: ${context.content}
 
 เวลา: ${new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })}
+
+═══ กฎเด็ดขาดเรื่อง tool calling ═══
+- เมื่อ user สั่งทำอะไร (โจมตี, เช็คสถิติ, เช็ค rank) → เรียก tool ทันที อย่าตอบเป็น text ก่อนเรียก tool
+- ห้ามพิมพ์ตัวเลือกเป็น numbered list (1. xxx 2. xxx) เด็ดขาด — ให้เรียก tool แทนเสมอ
+- ห้ามตอบ text ก่อนเรียก tool — ถ้า user สั่งโจมตี ให้เรียก attack_website ทันที ไม่ต้องถามก่อน
+- ถ้า user พิมพ์แค่ domain name (เช่น "example.com") → เรียก attack_website ทันที ใช้ method: "full_chain"
 
 คุณมี tools ที่ใช้ได้ — ถ้าต้องการข้อมูลล่าสุดหรือทำงาน ให้เรียก tool เลย
 ตอบเป็นภาษาไทยเสมอ ยกเว้น technical terms`;
@@ -1209,6 +1294,17 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     
     // Process with AI
     console.log(`[TelegramAI] ${msg.from.first_name}: "${msg.text.substring(0, 80)}"`);
+    
+    // Check conversation state first (handle follow-ups without LLM)
+    const stateResult = await handleWithConversationState(msg.chat.id, msg.text);
+    if (stateResult === "__HANDLED_BY_KEYBOARD__") {
+      // Inline keyboard was sent, no need to reply
+      return;
+    }
+    if (stateResult) {
+      await sendTelegramReply(config, msg.chat.id, stateResult, msg.message_id);
+      return;
+    }
     
     // Send "typing" indicator
     try {
@@ -1855,11 +1951,14 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
         return; // Don't send responseText — the keyboard function handles it
       }
       case "atk_cancel": {
+        clearConversationState(chatId);
         responseText = "\u274C ยกเลิกแล้วครับ";
         break;
       }
       case "atk_custom": {
-        responseText = "\u270D\uFE0F พิมพ์ชื่อโดเมนที่ต้องการโจมตีมาเลยครับ\n\nเช่น 'โจมตี example.com' หรือ 'attack example.com'";
+        // Set state so next message with a domain will be handled as attack target
+        setConversationState(chatId, { pendingAction: "awaiting_domain" });
+        responseText = "\u270D\uFE0F พิมพ์ชื่อโดเมนที่ต้องการโจมตีมาเลยครับ\n\nเช่น example.com หรือ domainslayer.ai";
         break;
       }
       default: {

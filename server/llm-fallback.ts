@@ -2,9 +2,9 @@
  * LLM Fallback Provider System
  * 
  * Priority order:
- * 1. Built-in Manus LLM (default, free quota)
- * 2. OpenAI API (user's own key)
- * 3. Anthropic API (user's own key)
+ * 1. Anthropic API (Claude Opus 4 — smartest, primary)
+ * 2. OpenAI API (GPT-4o fallback)
+ * 3. Built-in Manus LLM (last resort)
  * 
  * Auto-detects quota exhaustion (412/429) and switches to next provider.
  * Tracks provider health and avoids repeatedly hitting exhausted providers.
@@ -247,7 +247,7 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
   const { system, messages } = convertToAnthropicMessages(params.messages);
 
   const payload: Record<string, unknown> = {
-    model: "claude-sonnet-4-20250514",
+    model: "claude-opus-4-6",
     max_tokens: 16384,
     messages,
   };
@@ -299,7 +299,7 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
   return {
     id: anthropicResult.id || `anthropic-${Date.now()}`,
     created: Math.floor(Date.now() / 1000),
-    model: anthropicResult.model || "claude-sonnet-4-20250514",
+    model: anthropicResult.model || "claude-opus-4-6",
     choices: [{
       index: 0,
       message: {
@@ -321,10 +321,10 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
 
 const providers: ProviderConfig[] = [
   {
-    name: "builtin",
-    label: "Built-in Manus LLM",
-    isAvailable: () => !!ENV.forgeApiKey,
-    invoke: invokeBuiltin,
+    name: "anthropic",
+    label: "Anthropic (Claude Opus 4)",
+    isAvailable: () => !!ENV.anthropicApiKey,
+    invoke: invokeAnthropic,
   },
   {
     name: "openai",
@@ -333,10 +333,10 @@ const providers: ProviderConfig[] = [
     invoke: invokeOpenAI,
   },
   {
-    name: "anthropic",
-    label: "Anthropic (Claude Sonnet)",
-    isAvailable: () => !!ENV.anthropicApiKey,
-    invoke: invokeAnthropic,
+    name: "builtin",
+    label: "Built-in Manus LLM",
+    isAvailable: () => !!ENV.forgeApiKey,
+    invoke: invokeBuiltin,
   },
 ];
 

@@ -53,8 +53,8 @@ async function startServer() {
   registerAutonomousSSE(app);
   // SSE streaming for AI Command Center (real-time orchestrator events)
   registerOrchestratorSSE(app);
-  // Telegram AI Chat Agent webhook
-  registerTelegramWebhook(app);
+  // Telegram AI Chat Agent webhook (disabled at startup — only register when webhook URL is explicitly set via tRPC)
+  // registerTelegramWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",

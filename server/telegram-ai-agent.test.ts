@@ -1129,14 +1129,186 @@ describe("Telegram AI Chat Agent", () => {
         },
       });
 
-      // Wait for async attack execution
+       // Wait for async attack execution
       await new Promise(r => setTimeout(r, 500));
-
       // Should have called sendMessage (initial progress) and editMessageText (updates)
       const allCalls = mockFetch.mock.calls.filter(c =>
         typeof c[0] === "string" && (c[0].includes("sendMessage") || c[0].includes("editMessageText"))
       );
       expect(allCalls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  CONVERSATION STATE MACHINE TESTS
+  // ═══════════════════════════════════════════════════════
+
+  describe("Conversation State Machine", () => {
+    it("should handle custom domain input after atk_custom callback", async () => {
+      clearHistory(12345);
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true, result: { message_id: 100 } })),
+        source: "direct" as const,
+      });
+
+      // Step 1: User clicks atk_custom button
+      await handleTelegramWebhook({
+        update_id: 99801,
+        callback_query: {
+          id: "cbq_custom",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_custom",
+        },
+      });
+
+      // Should send "type domain" prompt
+      const customCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(customCalls.length).toBeGreaterThanOrEqual(1);
+      const lastBody = JSON.parse(customCalls[customCalls.length - 1][1].body);
+      expect(lastBody.text).toContain("พิมพ์ชื่อโดเมน");
+    });
+
+    it("should handle domain input in awaiting_domain state", async () => {
+      clearHistory(12345);
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true, result: { message_id: 101 } })),
+        source: "direct" as const,
+      });
+
+      // Step 1: Trigger atk_custom to set state
+      await handleTelegramWebhook({
+        update_id: 99802,
+        callback_query: {
+          id: "cbq_custom2",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_custom",
+        },
+      });
+
+      mockFetch.mockClear();
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true, result: { message_id: 102 } })),
+        source: "direct" as const,
+      });
+
+      // Step 2: User types a domain
+      await handleTelegramWebhook({
+        update_id: 99803,
+        message: {
+          message_id: 200,
+          from: { id: 12345, first_name: "Test" },
+          chat: { id: 12345, type: "private" },
+          date: Math.floor(Date.now() / 1000),
+          text: "testdomain.com",
+        },
+      });
+
+      // Should send attack type keyboard (not go to LLM)
+      const kbCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(kbCalls.length).toBeGreaterThanOrEqual(1);
+      // Check that inline_keyboard is present in the response
+      const kbBody = JSON.parse(kbCalls[kbCalls.length - 1][1].body);
+      expect(kbBody.reply_markup?.inline_keyboard).toBeDefined();
+    });
+
+    it("should clear state on atk_cancel", async () => {
+      clearHistory(12345);
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true, result: { message_id: 103 } })),
+        source: "direct" as const,
+      });
+
+      // Set state first
+      await handleTelegramWebhook({
+        update_id: 99804,
+        callback_query: {
+          id: "cbq_custom3",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_custom",
+        },
+      });
+
+      mockFetch.mockClear();
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true, result: { message_id: 104 } })),
+        source: "direct" as const,
+      });
+
+      // Cancel
+      await handleTelegramWebhook({
+        update_id: 99805,
+        callback_query: {
+          id: "cbq_cancel",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_cancel",
+        },
+      });
+
+      // Should send cancel message
+      const cancelCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(cancelCalls.length).toBeGreaterThanOrEqual(1);
+      const cancelBody = JSON.parse(cancelCalls[cancelCalls.length - 1][1].body);
+      expect(cancelBody.text).toContain("ยกเลิก");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════
+  //  SYSTEM PROMPT TESTS
+  // ═══════════════════════════════════════════════════════
+
+  describe("System Prompt Improvements", () => {
+    it("should call tool directly when user asks to attack a domain", async () => {
+      clearHistory(12345);
+      const mockLLM = vi.mocked((await import("./_core/llm")).invokeLLM);
+      
+      // Mock LLM to return a tool call (attack_website) instead of text
+      mockLLM.mockResolvedValueOnce({
+        choices: [{
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "call_1",
+              type: "function",
+              function: {
+                name: "attack_website",
+                arguments: JSON.stringify({ domain: "test.com", method: "full_chain" }),
+              },
+            }],
+          },
+          finish_reason: "tool_calls",
+        }],
+      } as any);
+
+      // Mock second LLM call (after tool result)
+      mockLLM.mockResolvedValueOnce({
+        choices: [{
+          message: {
+            role: "assistant",
+            content: "เริ่มโจมตี test.com แล้วครับ",
+          },
+          finish_reason: "stop",
+        }],
+      } as any);
+
+      const result = await processMessage(12345, "โจมตี test.com");
+      
+      // LLM should have been called at least once
+      expect(mockLLM).toHaveBeenCalled();
+      // First call should include tools
+      const firstCall = mockLLM.mock.calls[0][0];
+      expect(firstCall.tools).toBeDefined();
+      expect(firstCall.tools!.length).toBeGreaterThan(0);
     });
   });
 });

@@ -4192,3 +4192,24 @@
 - [x] Fix "Failed query" error when checking attack stats via Telegram
 - [x] Improve dedup mechanism to handle edge cases
 - [x] Test fixes with vitest
+
+# Fix: Telegram Bot Intelligence Issues
+
+- [ ] Bot uses numbered text lists instead of inline keyboard buttons for attack method selection
+- [ ] Bot doesn't understand follow-up context (e.g. "2" or "ข้อ 2" after showing options)
+- [ ] Bot still sends- [x] Fix duplicate message replies (bot sends same response 2 times)
+- [x] Fix bot not understanding follow-up messages ("2", "ข้อ 2")
+- [x] Fix bot sending numbered text list instead of inline keyboard buttons
+- [x] Improve LLM system prompt for smarter, more natural conversation like GPT/Claude
+- [x] attack_website tool should use sendInlineKeyboard instead of returning numbered text
+- [x] Add conversation state tracking so bot remembers what it just asked
+
+# Overhaul: Telegram Bot LLM + Intelligence
+
+- [x] Switch to Claude Opus 4 via Anthropic API as primary LLM for Telegram bot
+- [x] Change LLM fallback order: Anthropic (Opus 4) → OpenAI → Built-in
+- [x] Fix duplicate replies: disable webhook at startup, use polling only
+- [x] Add smart attack intercept: detect "hack/โจมตี xxx" and send inline keyboard buttons
+- [x] Add conversation state machine for follow-up understanding
+- [x] Improve system prompt: remove numbered list instructions
+- [x] Test all changes
