@@ -141,17 +141,25 @@ const SEO_THEMES = [
   "flavor-developer-developer-developer-developer-developer-developer",
 ];
 
-// Curated list of SEO-friendly themes (lightweight, fast, schema-ready)
+// Curated list of SEO-friendly casino themes (lightweight, fast, schema-ready)
 const SEO_FRIENDLY_THEMES = [
+  // Casino Slots themes
+  "neon-jackpot",
+  "royal-spin",
+  "cyber-slots",
+  "lucky-fortune",
+  // Casino Lottery themes
+  "golden-lottery",
+  "mega-draw",
+  "lucky-numbers",
+  // Casino Baccarat themes
+  "vip-baccarat",
+  "monaco-elite",
+  "dragon-tiger",
+  // Fallback: WP default themes
   "twentytwentyfour",
   "twentytwentythree",
   "twentytwentytwo",
-  "twentytwentyone",
-  "twentytwenty",
-  "twentynineteen",
-  "twentyseventeen",
-  "twentysixteen",
-  "twentyfifteen",
 ];
 
 // Track which themes are used across PBN sites for diversity

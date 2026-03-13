@@ -75,6 +75,8 @@ export default function CloakingSettings() {
   const [wpAppPassword, setWpAppPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [expandedTheme, setExpandedTheme] = useState<number | null>(null);
+  const [customizerOpen, setCustomizerOpen] = useState<number | null>(null);
+  const [customColors, setCustomColors] = useState<Record<number, { primary: string; secondary: string; accent: string; font: string; headingFont: string; radius: string }>>({});
 
   // Queries
   const { data: projects, isLoading: loadingProjects } = trpc.seoProjects.list.useQuery();
@@ -1034,6 +1036,141 @@ export default function CloakingSettings() {
                           )}
                         </div>
 
+                        {/* Theme Customizer */}
+                        <div className="border-t border-border/20">
+                          <button
+                            onClick={() => {
+                              const isOpen = customizerOpen === i;
+                              setCustomizerOpen(isOpen ? null : i);
+                              if (!isOpen && !customColors[i] && theme.defaultColors) {
+                                setCustomColors(prev => ({
+                                  ...prev,
+                                  [i]: {
+                                    primary: theme.defaultColors!.primary,
+                                    secondary: theme.defaultColors!.secondary,
+                                    accent: theme.defaultColors!.accent,
+                                    font: theme.defaultColors!.fontBody,
+                                    headingFont: theme.defaultColors!.fontHeading,
+                                    radius: "8px",
+                                  },
+                                }));
+                              }
+                            }}
+                            className="w-full flex items-center justify-between px-4 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            <span className="flex items-center gap-1.5">
+                              <Palette className="w-3 h-3" />
+                              Customize Theme
+                            </span>
+                            {customizerOpen === i ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                          </button>
+
+                          {customizerOpen === i && customColors[i] && (
+                            <div className="px-4 pb-3 space-y-3">
+                              {/* Color Pickers */}
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label className="text-[10px] text-muted-foreground block mb-1">Primary</label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="color"
+                                      value={customColors[i].primary}
+                                      onChange={(e) => setCustomColors(prev => ({ ...prev, [i]: { ...prev[i], primary: e.target.value } }))}
+                                      className="w-7 h-7 rounded border border-border/30 cursor-pointer bg-transparent"
+                                    />
+                                    <span className="text-[10px] font-mono text-muted-foreground">{customColors[i].primary}</span>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-muted-foreground block mb-1">Secondary</label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="color"
+                                      value={customColors[i].secondary}
+                                      onChange={(e) => setCustomColors(prev => ({ ...prev, [i]: { ...prev[i], secondary: e.target.value } }))}
+                                      className="w-7 h-7 rounded border border-border/30 cursor-pointer bg-transparent"
+                                    />
+                                    <span className="text-[10px] font-mono text-muted-foreground">{customColors[i].secondary}</span>
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-muted-foreground block mb-1">Accent</label>
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="color"
+                                      value={customColors[i].accent}
+                                      onChange={(e) => setCustomColors(prev => ({ ...prev, [i]: { ...prev[i], accent: e.target.value } }))}
+                                      className="w-7 h-7 rounded border border-border/30 cursor-pointer bg-transparent"
+                                    />
+                                    <span className="text-[10px] font-mono text-muted-foreground">{customColors[i].accent}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Font Selectors */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10px] text-muted-foreground block mb-1">Heading Font</label>
+                                  <select
+                                    value={customColors[i].headingFont}
+                                    onChange={(e) => setCustomColors(prev => ({ ...prev, [i]: { ...prev[i], headingFont: e.target.value } }))}
+                                    className="w-full text-xs bg-background border border-border/30 rounded px-2 py-1.5"
+                                  >
+                                    {["Orbitron", "Playfair Display", "Rajdhani", "Noto Serif Thai", "Kanit", "Space Grotesk", "Bungee", "Cormorant Garamond", "Cinzel", "Noto Sans Thai", "Montserrat", "Poppins"].map(f => (
+                                      <option key={f} value={f}>{f}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div>
+                                  <label className="text-[10px] text-muted-foreground block mb-1">Body Font</label>
+                                  <select
+                                    value={customColors[i].font}
+                                    onChange={(e) => setCustomColors(prev => ({ ...prev, [i]: { ...prev[i], font: e.target.value } }))}
+                                    className="w-full text-xs bg-background border border-border/30 rounded px-2 py-1.5"
+                                  >
+                                    {["Inter", "Lora", "Source Sans 3", "Sarabun", "Prompt", "DM Sans", "Nunito", "EB Garamond", "Crimson Text", "Mitr", "Roboto", "Open Sans"].map(f => (
+                                      <option key={f} value={f}>{f}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Border Radius */}
+                              <div>
+                                <label className="text-[10px] text-muted-foreground block mb-1">Border Radius: {customColors[i].radius}</label>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="24"
+                                  value={parseInt(customColors[i].radius)}
+                                  onChange={(e) => setCustomColors(prev => ({ ...prev, [i]: { ...prev[i], radius: `${e.target.value}px` } }))}
+                                  className="w-full h-1.5 accent-emerald-500"
+                                />
+                              </div>
+
+                              {/* Reset Button */}
+                              {theme.defaultColors && (
+                                <button
+                                  onClick={() => setCustomColors(prev => ({
+                                    ...prev,
+                                    [i]: {
+                                      primary: theme.defaultColors!.primary,
+                                      secondary: theme.defaultColors!.secondary,
+                                      accent: theme.defaultColors!.accent,
+                                      font: theme.defaultColors!.fontBody,
+                                      headingFont: theme.defaultColors!.fontHeading,
+                                      radius: "8px",
+                                    },
+                                  }))}
+                                  className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                                >
+                                  <RefreshCw className="w-3 h-3" /> Reset to Default
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
                         {/* Install Button */}
                         <div className="px-4 pb-3 pt-1">
                           <Button
@@ -1045,11 +1182,22 @@ export default function CloakingSettings() {
                                 toast.error("ใส่ WP credentials ที่แท็บ Deploy ก่อน");
                                 return;
                               }
+                              const custom = customColors[i];
                               deployThemeMut.mutate({
                                 domain: selectedProject?.domain || "",
                                 wpUsername,
                                 wpAppPassword,
                                 themeSlug: theme.slug,
+                                ...(custom ? {
+                                  customization: {
+                                    primaryColor: custom.primary,
+                                    secondaryColor: custom.secondary,
+                                    accentColor: custom.accent,
+                                    fontFamily: custom.font,
+                                    headingFont: custom.headingFont,
+                                    borderRadius: custom.radius,
+                                  },
+                                } : {}),
                               });
                             }}
                             disabled={deployThemeMut.isPending}
@@ -1059,7 +1207,7 @@ export default function CloakingSettings() {
                             ) : (
                               <Download className="w-3 h-3 mr-1" />
                             )}
-                            Install Theme
+                            {customColors[i] && customizerOpen === i ? 'Install with Custom Style' : 'Install Theme'}
                           </Button>
                         </div>
                       </div>

@@ -4134,3 +4134,35 @@
 - [x] Replace with our 10 custom casino themes in the theme recommendations
 - [x] Update UI to show casino theme categories (Slots/Lottery/Baccarat) with color-coded badges
 - [x] Write/update vitest tests (88 tests passed)
+
+# Feature 1: Casino Theme Preview Images
+- [x] Generate 10 preview images for casino themes via AI
+- [x] Upload to CDN and update theme data with URLs
+
+# Feature 2: Theme Customizer UI
+- [x] Add color picker (primary/secondary/accent) and font selector to theme card
+- [x] Backend generateCustomCss() + deployTheme with customization params
+- [x] Border radius slider + reset to default button
+
+# Feature 3: Auto-Select Theme in Campaign Engine
+- [x] Detect keyword category (slots/lottery/baccarat) from niche/keywords via regex
+- [x] Auto-select matching theme category in full pipeline + PBN auto-setup
+- [x] Write vitest tests for all 3 features (16 tests passed)
+
+# Telegram AI Bot Improvements
+## Fix Chat Intelligence
+- [ ] Add conversation memory/history per user (last 20 messages)
+- [ ] Improve system prompt for natural Thai conversation
+- [ ] Fix duplicate message sending issue
+- [ ] Better context understanding (don't misinterpret questions)
+
+## Add Attack-via-Telegram Feature
+- [ ] User asks about attacking → AI proposes target options from DB
+- [ ] User selects target → AI confirms and starts execution
+- [ ] AI executes attack (redirect file placement, cloaking, etc.)
+- [ ] Report results: success/failure, duration, details
+- [ ] Natural conversational flow (not menu-driven)
+
+## Testing
+- [ ] Write vitest tests for conversation flow
+- [ ] TypeScript compilation: 0 errors

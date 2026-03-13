@@ -1203,6 +1203,8 @@ export interface SeoTheme {
   mobileFeatures?: string[];
   seoFeatures?: string[];
   tags?: string[];
+  /** Default color/font settings for customizer */
+  defaultColors?: { primary: string; secondary: string; accent: string; fontHeading: string; fontBody: string };
 }
 
 /** Casino-optimized themes — 10 unique designs for Slots, Lottery, Baccarat */
@@ -1212,7 +1214,7 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     slug: "neon-jackpot", name: "Neon Jackpot", tier: 1,
     speedScore: 97, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมสล็อต Cyberpunk Neon — แสงนีออนเรืองรอง, particle.js background, Schema GamblingService, PWA + bottom-nav",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/neon-jackpot_b06a3c01.png",
     category: "slots", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 96, accessibility: 94, bestPractices: 98, seo: 99 },
     seoScore: { overall: 97, titleOptimization: 98, metaDescription: 96, headingStructure: 98, schemaMarkup: 99, mobileResponsive: 98, coreWebVitals: 96, codeQuality: 95, imageOptimization: 94, internalLinking: 96, contentReadability: 95 },
@@ -1220,12 +1222,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "topic-clusters", "rich-snippets", "voice-search", "schema-gambling"],
     mobileFeatures: ["pwa", "touch-gestures", "bottom-nav", "swipe-cards", "haptic-feedback"],
     tags: ["slots", "neon", "cyberpunk", "dark-theme", "animated"],
+    defaultColors: { primary: "#00f0ff", secondary: "#ff00e5", accent: "#ffea00", fontHeading: "Orbitron", fontBody: "Inter" },
   },
   {
     slug: "royal-spin", name: "Royal Spin", tier: 1,
     speedScore: 96, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมสล็อตหรูหรา Royal Gold — สีทองแดงเข้ม, ornamental borders, Schema GamblingService, PWA + pull-to-refresh",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/royal-spin_ca5a66af.png",
     category: "slots", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 95, accessibility: 96, bestPractices: 99, seo: 99 },
     seoScore: { overall: 96, titleOptimization: 97, metaDescription: 95, headingStructure: 97, schemaMarkup: 98, mobileResponsive: 96, coreWebVitals: 95, codeQuality: 94, imageOptimization: 93, internalLinking: 95, contentReadability: 96 },
@@ -1233,12 +1236,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "internal-linking", "breadcrumbs"],
     mobileFeatures: ["pwa", "touch-gestures", "swipe-slider", "pull-to-refresh"],
     tags: ["slots", "royal", "gold", "luxury", "premium"],
+    defaultColors: { primary: "#d4af37", secondary: "#8b0000", accent: "#ffd700", fontHeading: "Playfair Display", fontBody: "Lora" },
   },
   {
     slug: "cyber-slots", name: "Cyber Slots", tier: 1,
     speedScore: 95, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมสล็อต Sci-Fi Futuristic — โทนน้ำเงินเขียวเรืองแสง, holographic effects, AMP-ready, offline-mode",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/cyber-slots_9d7f1470.png",
     category: "slots", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 97, accessibility: 95, bestPractices: 98, seo: 98 },
     seoScore: { overall: 95, titleOptimization: 96, metaDescription: 94, headingStructure: 96, schemaMarkup: 97, mobileResponsive: 97, coreWebVitals: 97, codeQuality: 93, imageOptimization: 92, internalLinking: 93, contentReadability: 94 },
@@ -1246,12 +1250,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "topic-clusters", "voice-search", "amp-pages"],
     mobileFeatures: ["pwa", "touch-gestures", "bottom-nav", "offline-mode", "push-notifications"],
     tags: ["slots", "cyber", "sci-fi", "futuristic", "tech"],
+    defaultColors: { primary: "#00e676", secondary: "#2979ff", accent: "#76ff03", fontHeading: "Rajdhani", fontBody: "Source Sans 3" },
   },
   {
     slug: "lucky-fortune", name: "Lucky Fortune", tier: 1,
     speedScore: 94, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมสล็อตจีนมงคล — สีแดงทอง, ลายมังกร, multi-language + hreflang, เหมาะตลาดเอเชีย",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/lucky-fortune_14d0b0e7.png",
     category: "slots", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 94, accessibility: 95, bestPractices: 98, seo: 99 },
     seoScore: { overall: 95, titleOptimization: 96, metaDescription: 95, headingStructure: 97, schemaMarkup: 98, mobileResponsive: 96, coreWebVitals: 94, codeQuality: 92, imageOptimization: 93, internalLinking: 94, contentReadability: 95 },
@@ -1259,6 +1264,7 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "multi-language", "hreflang"],
     mobileFeatures: ["pwa", "touch-gestures", "bottom-nav", "swipe-cards"],
     tags: ["slots", "chinese", "fortune", "lucky", "asian", "dragon"],
+    defaultColors: { primary: "#ff1744", secondary: "#ff6d00", accent: "#ffd600", fontHeading: "Noto Serif Thai", fontBody: "Sarabun" },
   },
 
   // ═══ LOTTERY (3 themes) ═══
@@ -1266,7 +1272,7 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     slug: "golden-lottery", name: "Golden Lottery", tier: 1,
     speedScore: 96, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมหวยทองคำหรูหรา — เน้นตัวเลขผลรางวัล, countdown timers, Schema Event, push-notifications",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/golden-lottery_be16ba6f.png",
     category: "lottery", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 96, accessibility: 97, bestPractices: 99, seo: 100 },
     seoScore: { overall: 97, titleOptimization: 98, metaDescription: 97, headingStructure: 98, schemaMarkup: 99, mobileResponsive: 97, coreWebVitals: 96, codeQuality: 95, imageOptimization: 94, internalLinking: 96, contentReadability: 97 },
@@ -1274,12 +1280,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "live-results", "structured-data-event"],
     mobileFeatures: ["pwa", "push-notifications", "bottom-nav", "number-picker"],
     tags: ["lottery", "gold", "numbers", "thai-lottery", "results"],
+    defaultColors: { primary: "#ffc107", secondary: "#ff9800", accent: "#ffeb3b", fontHeading: "Kanit", fontBody: "Prompt" },
   },
   {
     slug: "mega-draw", name: "Mega Draw", tier: 1,
     speedScore: 95, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมหวย Modern Minimal — glassmorphism, สีม่วงน้ำเงิน, HowTo schema, shake-to-random",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/mega-draw_999c848c.png",
     category: "lottery", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 97, accessibility: 96, bestPractices: 99, seo: 99 },
     seoScore: { overall: 96, titleOptimization: 97, metaDescription: 95, headingStructure: 97, schemaMarkup: 98, mobileResponsive: 97, coreWebVitals: 97, codeQuality: 94, imageOptimization: 93, internalLinking: 95, contentReadability: 96 },
@@ -1287,12 +1294,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "topic-clusters", "voice-search", "how-to-schema"],
     mobileFeatures: ["pwa", "touch-gestures", "swipe-cards", "shake-to-random", "bottom-nav"],
     tags: ["lottery", "modern", "minimal", "purple", "clean"],
+    defaultColors: { primary: "#7c4dff", secondary: "#448aff", accent: "#18ffff", fontHeading: "Space Grotesk", fontBody: "DM Sans" },
   },
   {
     slug: "lucky-numbers", name: "Lucky Numbers", tier: 1,
     speedScore: 93, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมหวย Retro Pop — สีสดใส, lottery wheel spinner, confetti animations, gamified content",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/lucky-numbers_4dcb2d2d.png",
     category: "lottery", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 93, accessibility: 95, bestPractices: 98, seo: 99 },
     seoScore: { overall: 94, titleOptimization: 95, metaDescription: 93, headingStructure: 96, schemaMarkup: 97, mobileResponsive: 96, coreWebVitals: 93, codeQuality: 91, imageOptimization: 92, internalLinking: 93, contentReadability: 94 },
@@ -1300,6 +1308,7 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "gamified-content", "engagement-signals"],
     mobileFeatures: ["pwa", "touch-gestures", "bottom-nav", "lottery-wheel", "confetti-effects"],
     tags: ["lottery", "retro", "pop", "colorful", "fun", "young"],
+    defaultColors: { primary: "#e91e63", secondary: "#9c27b0", accent: "#00e5ff", fontHeading: "Bungee", fontBody: "Nunito" },
   },
 
   // ═══ BACCARAT (3 themes) ═══
@@ -1307,7 +1316,7 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     slug: "vip-baccarat", name: "VIP Baccarat", tier: 1,
     speedScore: 95, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมบาคาร่า VIP Room — สีดำทอง, marble textures, expert-reviews schema, live-stream PiP",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/vip-baccarat_660b4343.png",
     category: "baccarat", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 94, accessibility: 96, bestPractices: 99, seo: 99 },
     seoScore: { overall: 96, titleOptimization: 97, metaDescription: 96, headingStructure: 97, schemaMarkup: 98, mobileResponsive: 96, coreWebVitals: 95, codeQuality: 94, imageOptimization: 93, internalLinking: 96, contentReadability: 96 },
@@ -1315,12 +1324,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "expert-reviews", "trust-signals"],
     mobileFeatures: ["pwa", "touch-gestures", "swipe-cards", "live-stream-pip"],
     tags: ["baccarat", "vip", "luxury", "gold", "black", "high-roller"],
+    defaultColors: { primary: "#c9a84c", secondary: "#1a1a2e", accent: "#e8d5a3", fontHeading: "Cormorant Garamond", fontBody: "EB Garamond" },
   },
   {
-    slug: "monaco-elite", name: "Monaco Elite", tier: 1,
+slug: "monaco-elite", name: "Monaco Elite", tier: 1,
     speedScore: 94, schemaSupport: true, mobileFriendly: true,
-    reason: "ธีมบาคาร่า Monaco Casino — สีเขียวเข้มทอง, คลาสสิกยุโรป, geo-targeting + multi-language",
-    previewImage: undefined,
+    reason: "ธีมบาคาร่า Monaco Casino — สีเขียวเข้มทอง, คลาสสิคยุโรป, geo-targeting + multi-language",
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/monaco-elite_f5950e5b.png",
     category: "baccarat", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 95, accessibility: 97, bestPractices: 99, seo: 100 },
     seoScore: { overall: 95, titleOptimization: 96, metaDescription: 95, headingStructure: 96, schemaMarkup: 97, mobileResponsive: 95, coreWebVitals: 94, codeQuality: 93, imageOptimization: 92, internalLinking: 95, contentReadability: 95 },
@@ -1328,12 +1338,13 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "geo-targeting", "multi-language"],
     mobileFeatures: ["pwa", "touch-gestures", "live-chat", "card-flip-animation"],
     tags: ["baccarat", "monaco", "european", "classic", "green", "elegant"],
+    defaultColors: { primary: "#00695c", secondary: "#004d40", accent: "#b8860b", fontHeading: "Cinzel", fontBody: "Crimson Text" },
   },
   {
     slug: "dragon-tiger", name: "Dragon Tiger", tier: 1,
     speedScore: 93, schemaSupport: true, mobileFriendly: true,
     reason: "ธีมบาคาร่า Dragon Tiger — เอเชียนฟิวชั่น สีแดงดำทอง, fire particles, hreflang + live-results",
-    previewImage: undefined,
+    previewImage: "https://d2xsxph8kpxj0f.cloudfront.net/310519663395086498/5QWxsXug7WsY3BLQHWP3Uh/dragon-tiger_4ada82d9.png",
     category: "baccarat", activeInstalls: "Casino", author: "Friday AI",
     pageSpeed: { performance: 93, accessibility: 95, bestPractices: 98, seo: 99 },
     seoScore: { overall: 95, titleOptimization: 96, metaDescription: 94, headingStructure: 97, schemaMarkup: 98, mobileResponsive: 96, coreWebVitals: 93, codeQuality: 92, imageOptimization: 93, internalLinking: 94, contentReadability: 95 },
@@ -1341,6 +1352,7 @@ export const SEO_OPTIMIZED_THEMES: SeoTheme[] = [
     seoFeatures: ["aeo-blocks", "rich-snippets", "multi-language", "hreflang", "live-results"],
     mobileFeatures: ["pwa", "touch-gestures", "bottom-nav", "card-reveal", "dragon-animation"],
     tags: ["baccarat", "dragon", "tiger", "asian", "red", "gold", "fusion"],
+    defaultColors: { primary: "#d32f2f", secondary: "#f57f17", accent: "#ff6f00", fontHeading: "Noto Sans Thai", fontBody: "Mitr" },
   },
 ];
 

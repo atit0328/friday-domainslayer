@@ -38,6 +38,43 @@ import {
 import * as db from "../db";
 import { sendTelegramNotification, type TelegramNotification } from "../telegram-notifier";
 
+// ═══ Custom CSS Generator for Theme Customization ═══
+function generateCustomCss(customization: {
+  primaryColor?: string;
+  secondaryColor?: string;
+  accentColor?: string;
+  fontFamily?: string;
+  headingFont?: string;
+  borderRadius?: string;
+}): string {
+  const rules: string[] = [];
+  rules.push(':root {');
+  if (customization.primaryColor) rules.push(`  --primary-color: ${customization.primaryColor};`);
+  if (customization.secondaryColor) rules.push(`  --secondary-color: ${customization.secondaryColor};`);
+  if (customization.accentColor) rules.push(`  --accent-color: ${customization.accentColor};`);
+  if (customization.fontFamily) rules.push(`  --font-family: ${customization.fontFamily};`);
+  if (customization.headingFont) rules.push(`  --heading-font: ${customization.headingFont};`);
+  if (customization.borderRadius) rules.push(`  --border-radius: ${customization.borderRadius};`);
+  rules.push('}');
+  if (customization.fontFamily) {
+    rules.push(`body { font-family: ${customization.fontFamily}, sans-serif; }`);
+  }
+  if (customization.headingFont) {
+    rules.push(`h1, h2, h3, h4, h5, h6 { font-family: ${customization.headingFont}, sans-serif; }`);
+  }
+  if (customization.primaryColor) {
+    rules.push(`a, .btn-primary, .wp-block-button__link { color: ${customization.primaryColor}; }`);
+    rules.push(`.btn-primary, .wp-block-button__link { background-color: ${customization.primaryColor}; border-color: ${customization.primaryColor}; }`);
+  }
+  if (customization.accentColor) {
+    rules.push(`.accent, .highlight, .badge { background-color: ${customization.accentColor}; }`);
+  }
+  if (customization.borderRadius) {
+    rules.push(`.card, .btn, .wp-block-button__link, img { border-radius: ${customization.borderRadius}; }`);
+  }
+  return rules.length > 2 ? rules.join('\n') : '';
+}
+
 // ═══ In-memory cloaking configs per project ═══
 const cloakingConfigs = new Map<number, CloakingConfig>();
 
@@ -354,6 +391,14 @@ export const seoThemeRouter = router({
       wpUsername: z.string(),
       wpAppPassword: z.string(),
       themeSlug: z.string(),
+      customization: z.object({
+        primaryColor: z.string().optional(),
+        secondaryColor: z.string().optional(),
+        accentColor: z.string().optional(),
+        fontFamily: z.string().optional(),
+        headingFont: z.string().optional(),
+        borderRadius: z.string().optional(),
+      }).optional(),
     }))
     .mutation(async ({ input }) => {
       const siteUrl = input.domain.startsWith("http") ? input.domain : `https://${input.domain}`;
@@ -393,7 +438,29 @@ export const seoThemeRouter = router({
           }
         }
 
-        return { success: true, detail: `Theme "${input.themeSlug}" activated` };
+        // Apply customization via WP Customizer API if provided
+        if (input.customization) {
+          const customCss = generateCustomCss(input.customization);
+          if (customCss) {
+            try {
+              // Add custom CSS via WP REST API
+              await fetch(`${siteUrl}/wp-json/wp/v2/settings`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Basic ${auth}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  custom_css: customCss,
+                }),
+              });
+            } catch {
+              // Non-critical: theme still activated even if custom CSS fails
+            }
+          }
+        }
+
+        return { success: true, detail: `Theme "${input.themeSlug}" activated${input.customization ? ' with custom styling' : ''}` };
       } catch (err: any) {
         return { success: false, detail: `Error: ${err.message}` };
       }
@@ -424,9 +491,19 @@ export const seoFullPipelineRouter = router({
       const siteUrl = input.domain.startsWith("http") ? input.domain : `https://${input.domain}`;
       const results: { step: string; success: boolean; detail: string; data?: any }[] = [];
 
-      // Step 1: Select and deploy SEO theme
+      // Step 1: Auto-select and deploy SEO theme based on niche/keywords
       try {
-        const theme = selectSeoTheme({ preferTier: 1, randomize: true });
+        // Auto-detect casino category from niche/keywords
+        const nicheLower = (input.niche + ' ' + input.primaryKeyword + ' ' + input.secondaryKeywords.join(' ')).toLowerCase();
+        let autoCategory: string | undefined;
+        if (/สล็อต|slot|spin|jackpot|สปิน/.test(nicheLower)) {
+          autoCategory = 'slots';
+        } else if (/หวย|lottery|lotto|ลอตเตอรี่|ตัวเลข/.test(nicheLower)) {
+          autoCategory = 'lottery';
+        } else if (/บาคาร่า|baccarat|ไพ่|เสือมังกร|dragon.*tiger|คาสิโน|casino/.test(nicheLower)) {
+          autoCategory = 'baccarat';
+        }
+        const theme = selectSeoTheme({ preferTier: 1, preferCategory: autoCategory, randomize: true });
         const auth = Buffer.from(`${input.wpUsername}:${input.wpAppPassword}`).toString("base64");
         
         const themeRes = await fetch(`${siteUrl}/wp-json/wp/v2/themes/${theme.slug}`, {
@@ -438,7 +515,7 @@ export const seoFullPipelineRouter = router({
         results.push({
           step: "theme",
           success: themeRes.ok,
-          detail: themeRes.ok ? `Activated: ${theme.name} (Speed: ${theme.speedScore})` : `Theme activation failed`,
+          detail: themeRes.ok ? `Activated: ${theme.name} [${autoCategory || 'auto'}] (Speed: ${theme.speedScore})` : `Theme activation failed`,
           data: theme,
         });
       } catch (err: any) {
