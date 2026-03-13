@@ -1,0 +1,37 @@
+{
+  "query": "SELECT id, domain, campaignRunStatus, campaignPhase, campaignTotalPhases, campaignProgress, updatedAt FROM seo_projects WHERE campaignRunStatus = 'running' OR campaignRunStatus = 'pending' ORDER BY updatedAt DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, domain, campaignRunStatus, campaignPhase, campaignTotalPhases, campaignProgress, updatedAt FROM seo_projects WHERE campaignRunStatus = 'running' OR campaignRunStatus = 'pending' ORDER BY updatedAt DESC LIMIT 10;",
+  "rows": [
+    {
+      "id": "120002",
+      "domain": "redhotsuz.com",
+      "campaignRunStatus": "running",
+      "campaignPhase": "8",
+      "campaignTotalPhases": "16",
+      "campaignProgress": "50",
+      "updatedAt": "2026-03-13 15:40:45"
+    },
+    {
+      "id": "60001",
+      "domain": "snc168cc.com",
+      "campaignRunStatus": "running",
+      "campaignPhase": "15",
+      "campaignTotalPhases": "16",
+      "campaignProgress": "94",
+      "updatedAt": "2026-03-13 15:38:28"
+    },
+    {
+      "id": "1",
+      "domain": "tos1688.org",
+      "campaignRunStatus": "running",
+      "campaignPhase": "1",
+      "campaignTotalPhases": "16",
+      "campaignProgress": "6",
+      "updatedAt": "2026-03-13 02:51:55"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tdomain\tcampaignRunStatus\tcampaignPhase\tcampaignTotalPhases\tcampaignProgress\tupdatedAt\n120002\tredhotsuz.com\trunning\t8\t16\t50\t2026-03-13 15:40:45\n60001\tsnc168cc.com\trunning\t15\t16\t94\t2026-03-13 15:38:28\n1\ttos1688.org\trunning\t1\t16\t6\t2026-03-13 02:51:55\n",
+  "stderr": "",
+  "execution_time_ms": 1599
+}

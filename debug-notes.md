@@ -26,3 +26,10 @@
 2. Files Deployed shows "https://https://..." → URL is being double-prefixed
 3. Pipeline still reports "ล้มเหลว" even though shellless "สำเร็จ"
 4. Success = NO despite shellless working
+
+## Campaign Stuck Issue 2026-03-13
+- SEO Command Center shows Total Projects: 0, Active: 0 despite 5 projects in DB
+- Two loading spinners visible on page
+- DB status after force-reset: failed (3) + idle (2)
+- Force-reset UPDATE ran but rows=0 first time (may have already been reset by previous session)
+- Second UPDATE also rows=0 — campaigns were already in failed/idle state

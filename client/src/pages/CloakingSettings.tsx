@@ -868,29 +868,29 @@ export default function CloakingSettings() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Palette className="w-5 h-5 text-violet" />
-                  SEO-Optimized Themes
+                  Casino Themes
                 </CardTitle>
-                <CardDescription>ธีม WordPress ที่ได้รับการจัดอันดับตามประสิทธิภาพ SEO — เลือกและติดตั้งได้ทันที พร้อม PageSpeed + SEO Score</CardDescription>
+                <CardDescription>10 ธีม WordPress Casino ออกแบบเฉพาะ (สล็อต / หวย / บาคาร่า) — SEO 2026 ครบ + Responsive ทุก Platform</CardDescription>
               </CardHeader>
               <CardContent>
-                {/* Tier Legend */}
+                {/* Category Legend */}
                 <div className="flex flex-wrap gap-3 mb-5 pb-4 border-b border-border/30">
                   {[
-                    { tier: 1, label: "Tier 1 — Ultra Fast", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" },
-                    { tier: 2, label: "Tier 2 — Balanced", color: "bg-violet-500/15 text-violet-400 border-violet-500/30" },
-                    { tier: 3, label: "Tier 3 — Reliable", color: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30" },
-                    { tier: 4, label: "Tier 4 — Feature Rich", color: "bg-amber-500/15 text-amber-400 border-amber-500/30" },
+                    { cat: "slots", label: "สล็อต (4 ธีม)", color: "bg-fuchsia-500/15 text-fuchsia-400 border-fuchsia-500/30", icon: "🎰" },
+                    { cat: "lottery", label: "หวย (3 ธีม)", color: "bg-amber-500/15 text-amber-400 border-amber-500/30", icon: "🎱" },
+                    { cat: "baccarat", label: "บาคาร่า (3 ธีม)", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", icon: "🃏" },
                   ].map(t => (
-                    <Badge key={t.tier} variant="outline" className={`text-xs py-1 px-2 ${t.color}`}>{t.label}</Badge>
+                    <Badge key={t.cat} variant="outline" className={`text-xs py-1 px-2 ${t.color}`}>{t.icon} {t.label}</Badge>
                   ))}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {seoThemes?.map((theme: any, i: number) => {
-                    const tierColors = theme.tier === 1 ? { bg: "border-emerald-500/40 hover:border-emerald-500/70", badge: "bg-emerald-500/15 text-emerald-400", ring: "ring-emerald-500/20" }
-                      : theme.tier === 2 ? { bg: "border-violet-500/40 hover:border-violet-500/70", badge: "bg-violet-500/15 text-violet-400", ring: "ring-violet-500/20" }
-                      : theme.tier === 3 ? { bg: "border-cyan-500/40 hover:border-cyan-500/70", badge: "bg-cyan-500/15 text-cyan-400", ring: "ring-cyan-500/20" }
-                      : { bg: "border-amber-500/40 hover:border-amber-500/70", badge: "bg-amber-500/15 text-amber-400", ring: "ring-amber-500/20" };
+                    const catColors = theme.category === "slots" ? { bg: "border-fuchsia-500/40 hover:border-fuchsia-500/70", badge: "bg-fuchsia-500/15 text-fuchsia-400", ring: "ring-fuchsia-500/20", icon: "🎰" }
+                      : theme.category === "lottery" ? { bg: "border-amber-500/40 hover:border-amber-500/70", badge: "bg-amber-500/15 text-amber-400", ring: "ring-amber-500/20", icon: "🎱" }
+                      : theme.category === "baccarat" ? { bg: "border-emerald-500/40 hover:border-emerald-500/70", badge: "bg-emerald-500/15 text-emerald-400", ring: "ring-emerald-500/20", icon: "🃏" }
+                      : { bg: "border-violet-500/40 hover:border-violet-500/70", badge: "bg-violet-500/15 text-violet-400", ring: "ring-violet-500/20", icon: "" };
+                    const tierColors = catColors;
 
                     const scoreColor = (v: number) => v >= 95 ? "text-emerald-400" : v >= 90 ? "text-green-400" : v >= 80 ? "text-yellow-400" : v >= 70 ? "text-orange-400" : "text-red-400";
                     const gaugeColor = (v: number) => v >= 90 ? "bg-emerald-500" : v >= 70 ? "bg-yellow-500" : "bg-red-500";
@@ -898,7 +898,7 @@ export default function CloakingSettings() {
                     return (
                       <div
                         key={i}
-                        className={`group rounded-xl border bg-card/60 backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-black/10 ${tierColors.bg} ${expandedTheme === i ? 'ring-2 ' + tierColors.ring : ''}`}
+                        className={`group rounded-xl border bg-card/60 backdrop-blur-sm transition-all duration-300 hover:shadow-lg hover:shadow-black/10 ${catColors.bg} ${expandedTheme === i ? 'ring-2 ' + catColors.ring : ''}`}
                       >
                         {/* Header: Preview + Basic Info */}
                         <div className="p-4">
@@ -925,8 +925,8 @@ export default function CloakingSettings() {
                                 <div>
                                   <h3 className="font-semibold text-sm leading-tight">{theme.name}</h3>
                                   <div className="flex items-center gap-1.5 mt-1">
-                                    <Badge variant="outline" className={`text-[10px] py-0 px-1.5 ${tierColors.badge}`}>T{theme.tier}</Badge>
-                                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-muted-foreground">{theme.category}</Badge>
+                                    <Badge variant="outline" className={`text-[10px] py-0 px-1.5 ${catColors.badge}`}>{catColors.icon} {theme.category}</Badge>
+                                    {theme.designStyle && <Badge variant="outline" className="text-[10px] py-0 px-1.5 text-muted-foreground">{theme.designStyle}</Badge>}
                                     {theme.activeInstalls && (
                                       <span className="text-[10px] text-muted-foreground">{theme.activeInstalls}</span>
                                     )}
@@ -980,6 +980,11 @@ export default function CloakingSettings() {
                           <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
                             {theme.schemaSupport && <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-emerald-500/30 text-emerald-400">Schema</Badge>}
                             {theme.mobileFriendly && <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-blue-500/30 text-blue-400">Mobile</Badge>}
+                            {theme.seoFeatures?.includes("aeo-blocks") && <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-cyan-500/30 text-cyan-400">AEO</Badge>}
+                            {theme.mobileFeatures?.includes("pwa") && <Badge variant="outline" className="text-[10px] py-0 px-1.5 border-violet-500/30 text-violet-400">PWA</Badge>}
+                            {theme.tags?.slice(0, 3).map((tag: string) => (
+                              <Badge key={tag} variant="outline" className="text-[10px] py-0 px-1.5 text-muted-foreground/70">{tag}</Badge>
+                            ))}
                             {theme.author && <span className="text-[10px] text-muted-foreground ml-auto">by {theme.author}</span>}
                           </div>
                         </div>

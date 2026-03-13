@@ -4128,3 +4128,9 @@
 ## Testing
 - [x] Write vitest tests for theme engine (31 tests passed)
 - [x] TypeScript compilation: 0 errors
+
+# Replace Generic WP Themes with Casino Themes
+- [x] Find and remove generic theme data (GeneratePress, Astra, Kadence, Hello Elementor)
+- [x] Replace with our 10 custom casino themes in the theme recommendations
+- [x] Update UI to show casino theme categories (Slots/Lottery/Baccarat) with color-coded badges
+- [x] Write/update vitest tests (88 tests passed)

@@ -1,0 +1,45 @@
+{
+  "query": "SELECT id, domain, campaignRunStatus, campaignPhase, campaignProgress FROM seo_projects WHERE campaignEnabled = 1 ORDER BY id DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, domain, campaignRunStatus, campaignPhase, campaignProgress FROM seo_projects WHERE campaignEnabled = 1 ORDER BY id DESC LIMIT 10;",
+  "rows": [
+    {
+      "id": "120002",
+      "domain": "redhotsuz.com",
+      "campaignRunStatus": "failed",
+      "campaignPhase": "9",
+      "campaignProgress": "0"
+    },
+    {
+      "id": "60001",
+      "domain": "snc168cc.com",
+      "campaignRunStatus": "failed",
+      "campaignPhase": "15",
+      "campaignProgress": "0"
+    },
+    {
+      "id": "30001",
+      "domain": "168ttg.org",
+      "campaignRunStatus": "completed",
+      "campaignPhase": "16",
+      "campaignProgress": "100"
+    },
+    {
+      "id": "2",
+      "domain": "168topgame.tips",
+      "campaignRunStatus": "completed",
+      "campaignPhase": "16",
+      "campaignProgress": "100"
+    },
+    {
+      "id": "1",
+      "domain": "tos1688.org",
+      "campaignRunStatus": "failed",
+      "campaignPhase": "1",
+      "campaignProgress": "0"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tdomain\tcampaignRunStatus\tcampaignPhase\tcampaignProgress\n120002\tredhotsuz.com\tfailed\t9\t0\n60001\tsnc168cc.com\tfailed\t15\t0\n30001\t168ttg.org\tcompleted\t16\t100\n2\t168topgame.tips\tcompleted\t16\t100\n1\ttos1688.org\tfailed\t1\t0\n",
+  "stderr": "",
+  "execution_time_ms": 1604
+}

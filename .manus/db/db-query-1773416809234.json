@@ -1,0 +1,25 @@
+{
+  "query": "SELECT id, domain, campaignRunStatus FROM seo_projects WHERE campaignRunStatus != 'idle' AND campaignRunStatus != 'completed';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, domain, campaignRunStatus FROM seo_projects WHERE campaignRunStatus != 'idle' AND campaignRunStatus != 'completed';",
+  "rows": [
+    {
+      "id": "1",
+      "domain": "tos1688.org",
+      "campaignRunStatus": "failed"
+    },
+    {
+      "id": "60001",
+      "domain": "snc168cc.com",
+      "campaignRunStatus": "failed"
+    },
+    {
+      "id": "120002",
+      "domain": "redhotsuz.com",
+      "campaignRunStatus": "failed"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tdomain\tcampaignRunStatus\n1\ttos1688.org\tfailed\n60001\tsnc168cc.com\tfailed\n120002\tredhotsuz.com\tfailed\n",
+  "stderr": "",
+  "execution_time_ms": 1623
+}

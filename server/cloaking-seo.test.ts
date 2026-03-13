@@ -577,8 +577,17 @@ describe("SEO Theme Selection", () => {
   });
 
   it("should filter by tier", () => {
-    const theme = selectSeoTheme({ preferTier: 3 });
-    expect(theme.tier).toBe(3);
+    const theme = selectSeoTheme({ preferTier: 1 });
+    expect(theme.tier).toBe(1);
+  });
+
+  it("should filter by category", () => {
+    const slotsTheme = selectSeoTheme({ preferCategory: "slots" });
+    expect(slotsTheme.category).toBe("slots");
+    const lotteryTheme = selectSeoTheme({ preferCategory: "lottery" });
+    expect(lotteryTheme.category).toBe("lottery");
+    const baccaratTheme = selectSeoTheme({ preferCategory: "baccarat" });
+    expect(baccaratTheme.category).toBe("baccarat");
   });
 
   it("should filter by minimum speed score", () => {
@@ -643,27 +652,49 @@ describe("SEO Theme Selection", () => {
     expect(names.size).toBeGreaterThanOrEqual(8);
   });
 
-  it("should have category for all themes", () => {
-    const validCategories = ["starter", "multipurpose", "blog", "business", "developer"];
+  it("should have casino category for all themes", () => {
+    const validCategories = ["slots", "lottery", "baccarat"];
     for (const theme of SEO_OPTIMIZED_THEMES) {
       expect(validCategories).toContain(theme.category);
     }
   });
 
-  it("should have preview images for tier 1 and tier 2 themes with known slugs", () => {
-    const knownThemes = SEO_OPTIMIZED_THEMES.filter(t => 
-      ["generatepress", "astra", "kadence", "hello-elementor", "neve", "blocksy", "oceanwp"].includes(t.slug)
-    );
-    for (const theme of knownThemes) {
-      expect(theme.previewImage).toBeDefined();
-      expect(theme.previewImage).toContain("cloudfront.net");
+  it("should have 4 slots, 3 lottery, 3 baccarat themes", () => {
+    expect(SEO_OPTIMIZED_THEMES.filter(t => t.category === "slots").length).toBe(4);
+    expect(SEO_OPTIMIZED_THEMES.filter(t => t.category === "lottery").length).toBe(3);
+    expect(SEO_OPTIMIZED_THEMES.filter(t => t.category === "baccarat").length).toBe(3);
+  });
+
+  it("should have casino-specific fields for all themes", () => {
+    for (const theme of SEO_OPTIMIZED_THEMES) {
+      expect(theme.designStyle).toBeDefined();
+      expect(theme.seoFeatures).toBeDefined();
+      expect(theme.seoFeatures!.length).toBeGreaterThanOrEqual(3);
+      expect(theme.mobileFeatures).toBeDefined();
+      expect(theme.mobileFeatures!.length).toBeGreaterThanOrEqual(3);
+      expect(theme.tags).toBeDefined();
+      expect(theme.tags!.length).toBeGreaterThanOrEqual(3);
     }
   });
 
-  it("should have tier 1 themes with higher seoScore than tier 4", () => {
-    const tier1Avg = SEO_OPTIMIZED_THEMES.filter(t => t.tier === 1).reduce((sum, t) => sum + t.seoScore.overall, 0) / SEO_OPTIMIZED_THEMES.filter(t => t.tier === 1).length;
-    const tier4Avg = SEO_OPTIMIZED_THEMES.filter(t => t.tier === 4).reduce((sum, t) => sum + t.seoScore.overall, 0) / SEO_OPTIMIZED_THEMES.filter(t => t.tier === 4).length;
-    expect(tier1Avg).toBeGreaterThan(tier4Avg);
+  it("should have all themes by Friday AI", () => {
+    for (const theme of SEO_OPTIMIZED_THEMES) {
+      expect(theme.author).toBe("Friday AI");
+    }
+  });
+
+  it("should have all themes with SEO score >= 93", () => {
+    for (const theme of SEO_OPTIMIZED_THEMES) {
+      expect(theme.seoScore.overall).toBeGreaterThanOrEqual(93);
+    }
+  });
+
+  it("should have unique casino theme slugs", () => {
+    const slugs = SEO_OPTIMIZED_THEMES.map(t => t.slug);
+    const casinoSlugs = ["neon-jackpot", "royal-spin", "cyber-slots", "lucky-fortune", "golden-lottery", "mega-draw", "lucky-numbers", "vip-baccarat", "monaco-elite", "dragon-tiger"];
+    for (const slug of casinoSlugs) {
+      expect(slugs).toContain(slug);
+    }
   });
 });
 
