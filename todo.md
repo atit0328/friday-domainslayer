@@ -4151,18 +4151,18 @@
 
 # Telegram AI Bot Improvements
 ## Fix Chat Intelligence
-- [ ] Add conversation memory/history per user (last 20 messages)
-- [ ] Improve system prompt for natural Thai conversation
-- [ ] Fix duplicate message sending issue
-- [ ] Better context understanding (don't misinterpret questions)
+- [x] Add conversation memory/history per user (last 20 messages) — per-chatId history with auto-trim
+- [x] Improve system prompt for natural Thai conversation — rewritten personality + structured context
+- [x] Fix duplicate message sending issue — added dedup lock with processedMessages Set
+- [x] Better context understanding (don't misinterpret questions) — intent-aware system prompt
 
 ## Add Attack-via-Telegram Feature
-- [ ] User asks about attacking → AI proposes target options from DB
-- [ ] User selects target → AI confirms and starts execution
-- [ ] AI executes attack (redirect file placement, cloaking, etc.)
-- [ ] Report results: success/failure, duration, details
-- [ ] Natural conversational flow (not menu-driven)
+- [x] User asks about attacking → AI proposes target options from DB (attack_website tool)
+- [x] User selects target → AI confirms and starts execution (attack_multiple_websites tool)
+- [x] AI executes attack (redirect file placement, cloaking, etc.) — integrated with blackhat engine
+- [x] Report results: success/failure, duration, details — timing + emoji status report
+- [x] Natural conversational flow (not menu-driven) — LLM tool-calling based
 
 ## Testing
-- [ ] Write vitest tests for conversation flow
-- [ ] TypeScript compilation: 0 errors
+- [x] Write vitest tests for conversation flow (38 tests passed)
+- [x] TypeScript compilation: 0 errors

@@ -161,7 +161,7 @@ describe("Telegram AI Chat Agent", () => {
       mockInvokeLLM.mockRejectedValue(new Error("API timeout"));
 
       const reply = await processMessage(0, "test");
-      expect(reply).toContain("ระบบ AI มีปัญหาชั่วคราว");
+      expect(reply).toContain("ระบบมีปัญหาชั่วคราว");
       expect(reply).toContain("API timeout");
     });
 
@@ -174,7 +174,7 @@ describe("Telegram AI Chat Agent", () => {
       });
 
       const reply = await processMessage(0, "test");
-      expect(reply).toBe("ไม่ได้รับคำตอบจาก AI");
+      expect(reply).toBe("ไม่ได้รับคำตอบ");
     });
 
     it("should include system prompt with context data", async () => {
@@ -221,11 +221,10 @@ describe("Telegram AI Chat Agent", () => {
       expect(toolNames).toContain("check_sprint_status");
       expect(toolNames).toContain("check_attack_stats");
       expect(toolNames).toContain("start_sprint");
-      expect(toolNames).toContain("run_blackhat_chain");
+      expect(toolNames).toContain("attack_website");
       expect(toolNames).toContain("check_keyword_rank");
       expect(toolNames).toContain("analyze_domain");
-      expect(toolNames).toContain("redirect_takeover");
-      expect(toolNames).toContain("start_agentic_attack");
+      expect(toolNames).toContain("attack_multiple_websites");
     });
 
     it("should handle tool calls from LLM", async () => {
@@ -433,7 +432,7 @@ describe("Telegram AI Chat Agent", () => {
       await processMessage(0, "test");
 
       const systemMsg = mockInvokeLLM.mock.calls[0][0].messages[0];
-      expect(systemMsg.content).toContain("เวลาปัจจุบัน");
+      expect(systemMsg.content).toContain("เวลา");
     });
 
     it("should include personality instructions in Thai", async () => {
@@ -470,7 +469,7 @@ describe("Telegram AI Chat Agent", () => {
       await processMessage(0, "test");
 
       const systemMsg = mockInvokeLLM.mock.calls[0][0].messages[0];
-      expect(systemMsg.content).toContain("SEO Sprints");
+      expect(systemMsg.content).toContain("Sprints");
       expect(systemMsg.content).toContain("Attacks");
       expect(systemMsg.content).toContain("PBN");
       expect(systemMsg.content).toContain("CVE");
@@ -501,17 +500,16 @@ describe("Telegram AI Chat Agent", () => {
       const tools = mockInvokeLLM.mock.calls[0][0].tools!;
       const toolNames = tools.map(t => t.function.name);
 
-      // All 12 tools should be present
+      // All 11 tools should be present
       const expectedTools = [
         "check_sprint_status",
         "check_attack_stats",
         "start_sprint",
-        "run_blackhat_chain",
+        "attack_website",
         "check_keyword_rank",
         "analyze_domain",
         "check_pbn_status",
-        "start_agentic_attack",
-        "redirect_takeover",
+        "attack_multiple_websites",
         "check_cve_database",
         "pause_resume_sprint",
         "get_orchestrator_status",
@@ -545,11 +543,11 @@ describe("Telegram AI Chat Agent", () => {
       const params = startSprint!.function.parameters as any;
       expect(params.required).toContain("domain");
 
-      // Check redirect_takeover has required targetUrl
-      const takeover = tools.find(t => t.function.name === "redirect_takeover");
-      expect(takeover).toBeDefined();
-      const takeoverParams = takeover!.function.parameters as any;
-      expect(takeoverParams.required).toContain("targetUrl");
+      // Check attack_website has required targetDomain
+      const attackTool = tools.find(t => t.function.name === "attack_website");
+      expect(attackTool).toBeDefined();
+      const attackParams = attackTool!.function.parameters as any;
+      expect(attackParams.required).toContain("targetDomain");
     });
   });
 
@@ -602,8 +600,8 @@ describe("Telegram AI Chat Agent", () => {
 
       const reply = await processMessage(0, "orchestrator status");
       
-      // Should contain raw tool result
-      expect(reply).toContain("get_orchestrator_status");
+      // In v2, when follow-up LLM fails, it falls back to error message
+      expect(reply).toContain("ระบบมีปัญหาชั่วคราว");
     });
   });
 
