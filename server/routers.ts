@@ -64,6 +64,7 @@ import { competitorGapRouter } from "./routers/competitor-gap";
 import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 import { telegramAiRouter } from "./routers/telegram-ai";
 import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter } from "./routers/cloaking-seo";
+import { wpThemesRouter } from "./routers/wp-themes";
 
 export const appRouter = router({
   system: systemRouter,
@@ -217,6 +218,9 @@ export const appRouter = router({
   onPageSeo: onPageSeoRouter,
   seoTheme: seoThemeRouter,
   seoFullPipeline: seoFullPipelineRouter,
+
+  // WordPress Casino Theme Templates
+  wpThemes: wpThemesRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

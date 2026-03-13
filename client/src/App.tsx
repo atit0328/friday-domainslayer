@@ -52,6 +52,7 @@ const OrchestratorDashboard = lazy(() => import("./pages/OrchestratorDashboard")
 const TargetAcquisition = lazy(() => import("./pages/TargetAcquisition"));
 const QueryParasiteDashboard = lazy(() => import("./pages/QueryParasiteDashboard"));
 const ContentFreshnessDashboard = lazy(() => import("./pages/ContentFreshnessDashboard"));
+const WpThemes = lazy(() => import("./pages/WpThemes"));
 const PlatformDiscoveryDashboard = lazy(() => import("./pages/PlatformDiscoveryDashboard"));
 const AlgorithmMonitorDashboard = lazy(() => import("./pages/AlgorithmMonitorDashboard"));
 const CompetitorGapDashboard = lazy(() => import("./pages/CompetitorGapDashboard"));
@@ -193,6 +194,9 @@ function ProtectedRouter() {
         <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/blackhat-old">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/users">{() => <SuperadminGuard><UserManagement /></SuperadminGuard>}</Route>
+
+        {/* WP Casino Themes */}
+        <Route path="/wp-themes" component={WpThemes} />
 
         <Route path="/settings" component={Settings} />
         <Route path="/404" component={NotFound} />

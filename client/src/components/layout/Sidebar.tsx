@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
   History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock, Repeat2,
-  X, Activity, Database, BarChart3, Server, KeyRound, Radar, Sparkles, Rocket,
+  X, Activity, Database, BarChart3, Server, KeyRound, Radar, Sparkles, Rocket, Palette,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -61,6 +61,10 @@ const AUTONOMOUS_NAV = [
   { href: "/gambling-brain", icon: Brain, label: "Gambling AI Brain" },
   { href: "/keyword-performance", icon: BarChart3, label: "Keyword Performance" },
   { href: "/daemon", icon: Server, label: "Daemon Control" },
+];
+
+const WP_THEMES_NAV = [
+  { href: "/wp-themes", icon: Palette, label: "WP Casino Themes" },
 ];
 
 const SYSTEM_NAV = [
@@ -247,6 +251,38 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         )}
         <nav className="space-y-0.5 px-1">
           {AI_NAV.map((item) => renderNavItem(item, "violet"))}
+        </nav>
+      </div>
+
+      {/* Divider */}
+      <div className="mx-4 border-t border-sidebar-border" />
+
+      {/* WP Casino Themes */}
+      <div className="py-3">
+        {!collapsed && (
+          <div className="px-4 mb-2">
+            <span className="font-mono text-[10px] font-semibold tracking-widest text-amber-400/60 uppercase">WP Themes</span>
+          </div>
+        )}
+        <nav className="space-y-0.5 px-1">
+          {WP_THEMES_NAV.map((item) => {
+            const active = location.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <Link key={item.href} href={item.href} onClick={handleNavClick}>
+                <div
+                  className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
+                    active
+                      ? "bg-amber-500/10 text-amber-400 border-l-amber-400"
+                      : "text-muted-foreground hover:text-amber-400 hover:bg-amber-500/5 active:bg-amber-500/15 border-l-transparent"
+                  } ${collapsed ? "justify-center px-2" : ""}`}
+                >
+                  <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
+                  {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
+                </div>
+              </Link>
+            );
+          })}
         </nav>
       </div>
 

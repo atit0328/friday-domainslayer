@@ -4106,3 +4106,25 @@
 - [x] Update frontend UI with retry/restart button for failed campaigns
 - [x] Write vitest tests for campaign restart (13 tests passed)
 - [x] Force-advance stuck campaigns in DB and verify re-run works
+
+# WordPress Casino Theme Generator (10 Themes)
+
+## Research & Design
+- [x] Research SEO 2026 best practices for casino/gambling sites
+- [x] Design 10 unique theme specs: 4 Slots, 3 Lottery, 3 Baccarat
+
+## Backend
+- [x] Create wp_themes table in database schema
+- [x] Build theme generator engine (server/theme-engine.ts) — generates full WP theme files
+- [x] Add SEO 2026 features: Schema.org GamblingService, Core Web Vitals, mobile-first, AMP-ready
+- [x] Add tRPC procedures: listThemes, getTheme, generateTheme, deployTheme, previewTheme
+
+## Frontend
+- [x] Create ThemeGallery page with category filters (Slots/Lottery/Baccarat)
+- [x] Theme preview cards with live preview modal
+- [x] One-click deploy theme to WordPress site
+- [x] Add route and sidebar navigation
+
+## Testing
+- [x] Write vitest tests for theme engine (31 tests passed)
+- [x] TypeScript compilation: 0 errors

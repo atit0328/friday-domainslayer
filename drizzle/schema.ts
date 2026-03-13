@@ -1815,3 +1815,43 @@ export const trackedContent = mysqlTable("tracked_content", {
 });
 export type TrackedContentRow = typeof trackedContent.$inferSelect;
 export type InsertTrackedContent = typeof trackedContent.$inferInsert;
+
+
+// ═══════════════════════════════════════════════
+// WordPress Casino Theme Templates
+// ═══════════════════════════════════════════════
+export const wpThemes = mysqlTable("wp_themes", {
+  id: int("id").autoincrement().primaryKey(),
+  slug: varchar("slug", { length: 128 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  category: mysqlEnum("category", ["slots", "lottery", "baccarat"]).notNull(),
+  description: text("description"),
+  // Design specs
+  primaryColor: varchar("primaryColor", { length: 32 }).notNull(),
+  secondaryColor: varchar("secondaryColor", { length: 32 }).notNull(),
+  accentColor: varchar("accentColor", { length: 32 }).notNull(),
+  bgColor: varchar("bgColor", { length: 32 }).notNull(),
+  textColor: varchar("textColor", { length: 32 }).notNull(),
+  fontHeading: varchar("fontHeading", { length: 128 }).notNull(),
+  fontBody: varchar("fontBody", { length: 128 }).notNull(),
+  layoutStyle: varchar("layoutStyle", { length: 64 }).notNull(), // "fullwidth", "boxed", "sidebar-left", "sidebar-right"
+  heroStyle: varchar("heroStyle", { length: 64 }).notNull(), // "video-bg", "slider", "static-hero", "animated-particles"
+  // SEO 2026 features
+  seoSchemaTypes: json("seoSchemaTypes"), // ["GamblingService", "FAQ", "Review", "BreadcrumbList"]
+  seoFeatures: json("seoFeatures"), // ["aeo-blocks", "topic-clusters", "rich-snippets", "voice-search"]
+  // Mobile features
+  mobileNavStyle: varchar("mobileNavStyle", { length: 64 }).notNull(), // "bottom-tab", "hamburger", "slide-drawer"
+  mobileFeatures: json("mobileFeatures"), // ["pwa", "touch-gestures", "bottom-nav", "swipe-cards"]
+  // Theme content
+  themeFiles: json("themeFiles"), // { "style.css": "...", "functions.php": "...", "header.php": "...", etc }
+  previewHtml: text("previewHtml"), // Full HTML preview
+  // Metadata
+  version: varchar("version", { length: 16 }).default("1.0.0").notNull(),
+  tags: json("tags"), // ["casino", "slots", "neon", "dark-theme"]
+  isActive: boolean("isActive").default(true).notNull(),
+  deployCount: int("deployCount").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type WpThemeRow = typeof wpThemes.$inferSelect;
+export type InsertWpTheme = typeof wpThemes.$inferInsert;
