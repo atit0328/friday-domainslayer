@@ -1,0 +1,19 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deploy_history' AND COLUMN_NAME IN ('status', 'deployStatus', 'filesDeployed', 'redirectActive')",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deploy_history' AND COLUMN_NAME IN ('status', 'deployStatus', 'filesDeployed', 'redirectActive')",
+  "rows": [
+    {
+      "COLUMN_NAME": "deployStatus"
+    },
+    {
+      "COLUMN_NAME": "filesDeployed"
+    },
+    {
+      "COLUMN_NAME": "redirectActive"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\ndeployStatus\nfilesDeployed\nredirectActive\n",
+  "stderr": "",
+  "execution_time_ms": 1571
+}

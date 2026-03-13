@@ -1,0 +1,13 @@
+{
+  "query": "SELECT GROUP_CONCAT(COLUMN_NAME) as cols FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deploy_history' AND COLUMN_NAME IN ('status', 'deployStatus', 'filesDeployed', 'redirectActive')",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT GROUP_CONCAT(COLUMN_NAME) as cols FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'deploy_history' AND COLUMN_NAME IN ('status', 'deployStatus', 'filesDeployed', 'redirectActive')",
+  "rows": [
+    {
+      "cols": "deployStatus,filesDeployed,redirectActive"
+    }
+  ],
+  "messages": [],
+  "stdout": "cols\ndeployStatus,filesDeployed,redirectActive\n",
+  "stderr": "",
+  "execution_time_ms": 1588
+}

@@ -397,17 +397,24 @@ describe("Telegram AI Chat Agent", () => {
       stopTelegramPolling();
     });
 
-    it("should track polling state", () => {
+     it("should track polling state", async () => {
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
       expect(isTelegramPollingActive()).toBe(false);
-      startTelegramPolling();
+      await startTelegramPolling();
       expect(isTelegramPollingActive()).toBe(true);
       stopTelegramPolling();
       expect(isTelegramPollingActive()).toBe(false);
     });
-
-    it("should not start multiple polling intervals", () => {
-      startTelegramPolling();
-      startTelegramPolling(); // second call should be no-op
+    it("should not start multiple polling intervals", async () => {
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+      await startTelegramPolling();
+      await startTelegramPolling(); // second call should be no-op
       expect(isTelegramPollingActive()).toBe(true);
       stopTelegramPolling();
       expect(isTelegramPollingActive()).toBe(false);
@@ -844,7 +851,7 @@ describe("Telegram AI Chat Agent", () => {
         usedProxy: null,
       });
 
-      await handleTelegramWebhook({
+       await handleTelegramWebhook({
         update_id: 6005,
         callback_query: {
           id: "cbq_004",
@@ -853,13 +860,283 @@ describe("Telegram AI Chat Agent", () => {
           data: "cb_sprint",
         },
       });
-
       // Should NOT send any response to unauthorized user
       // Only the answerCallbackQuery might be called, but sendMessage should not
       const sendMessageCalls = mockFetch.mock.calls.filter(c =>
         typeof c[0] === "string" && c[0].includes("sendMessage")
       );
       expect(sendMessageCalls.length).toBe(0);
+    });
+  });
+
+  // ═══ Deduplication Fix ═══
+
+  describe("Update ID Deduplication", () => {
+    it("should not process the same update_id twice", async () => {
+      mockInvokeLLM.mockResolvedValue({
+        id: "test",
+        created: Date.now(),
+        model: "test",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "ตอบครั้งเดียว" },
+          finish_reason: "stop",
+        }],
+      });
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      const update = {
+        update_id: 99001,
+        message: {
+          message_id: 1,
+          from: { id: 12345, first_name: "Test" },
+          chat: { id: 12345, type: "private" },
+          date: Math.floor(Date.now() / 1000),
+          text: "test dedup",
+        },
+      };
+
+      // Process same update twice
+      await handleTelegramWebhook(update);
+      await handleTelegramWebhook(update);
+
+      // LLM should only be called once (second call is deduped)
+      expect(mockInvokeLLM).toHaveBeenCalledTimes(1);
+    });
+
+    it("should process different update_ids separately", async () => {
+      mockInvokeLLM.mockResolvedValue({
+        id: "test",
+        created: Date.now(),
+        model: "test",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "ตอบ" },
+          finish_reason: "stop",
+        }],
+      });
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99101,
+        message: {
+          message_id: 1,
+          from: { id: 12345, first_name: "Test" },
+          chat: { id: 12345, type: "private" },
+          date: Math.floor(Date.now() / 1000),
+          text: "msg 1",
+        },
+      });
+
+      // Wait for lock to release
+      await new Promise(r => setTimeout(r, 100));
+
+      await handleTelegramWebhook({
+        update_id: 99102,
+        message: {
+          message_id: 2,
+          from: { id: 12345, first_name: "Test" },
+          chat: { id: 12345, type: "private" },
+          date: Math.floor(Date.now() / 1000),
+          text: "msg 2",
+        },
+      });
+
+      // Both should be processed
+      expect(mockInvokeLLM).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ═══ Attack Inline Keyboard Flow ═══
+
+  describe("Attack Inline Keyboard Flow", () => {
+    it("should handle cb_attack_menu callback by sending target keyboard", async () => {
+      // Mock DB to return some projects
+      vi.doMock("./db", () => ({
+        getUserSeoProjects: vi.fn().mockResolvedValue([
+          { domain: "test1.com", name: "Test 1" },
+          { domain: "test2.com", name: "Test 2" },
+        ]),
+        getDb: vi.fn().mockResolvedValue(null),
+      }));
+
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99201,
+        callback_query: {
+          id: "cbq_atk_menu",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "cb_attack_menu",
+        },
+      });
+
+      // Should call answerCallbackQuery and sendMessage (for target keyboard)
+      const sendCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should handle atk_select callback by sending method keyboard", async () => {
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99301,
+        callback_query: {
+          id: "cbq_atk_select",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_select:example.com",
+        },
+      });
+
+      // Should send method selection keyboard
+      const sendCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+
+      // Verify the keyboard contains attack methods
+      const sendBody = sendCalls[0];
+      const bodyStr = typeof sendBody[1]?.body === "string" ? sendBody[1].body : "";
+      if (bodyStr) {
+        const parsed = JSON.parse(bodyStr);
+        expect(parsed.reply_markup).toBeDefined();
+        expect(parsed.text).toContain("example.com");
+      }
+    });
+
+    it("should handle atk_run callback by sending confirmation keyboard", async () => {
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99401,
+        callback_query: {
+          id: "cbq_atk_run",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_run:example.com:scan_only",
+        },
+      });
+
+      // Should send confirmation keyboard
+      const sendCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should handle atk_cancel callback", async () => {
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99501,
+        callback_query: {
+          id: "cbq_atk_cancel",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_cancel",
+        },
+      });
+
+      // Should send cancellation message
+      const sendCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+      const bodyStr = typeof sendCalls[0]?.[1]?.body === "string" ? sendCalls[0][1].body : "";
+      if (bodyStr) {
+        expect(JSON.parse(bodyStr).text).toContain("ยกเลิก");
+      }
+    });
+
+    it("should handle atk_custom callback", async () => {
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99601,
+        callback_query: {
+          id: "cbq_atk_custom",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_custom",
+        },
+      });
+
+      // Should send instruction to type domain
+      const sendCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && c[0].includes("sendMessage")
+      );
+      expect(sendCalls.length).toBeGreaterThanOrEqual(1);
+      const bodyStr = typeof sendCalls[0]?.[1]?.body === "string" ? sendCalls[0][1].body : "";
+      if (bodyStr) {
+        expect(JSON.parse(bodyStr).text).toContain("พิมพ์ชื่อโดเมน");
+      }
+    });
+  });
+
+  // ═══ Real-time Progress ═══
+
+  describe("Attack Confirm with Progress", () => {
+    it("should handle atk_confirm callback and start attack with progress", async () => {
+      // Mock the scan engine
+      vi.doMock("./seo-engine", () => ({
+        analyzeDomain: vi.fn().mockResolvedValue({
+          currentState: {
+            estimatedDA: 30,
+            estimatedDR: 25,
+            estimatedBacklinks: 100,
+            isIndexed: true,
+          },
+        }),
+      }));
+
+      mockFetch.mockResolvedValue({
+        response: new Response(JSON.stringify({ ok: true, result: { message_id: 999 } })),
+        source: "direct" as const,
+      });
+
+      await handleTelegramWebhook({
+        update_id: 99701,
+        callback_query: {
+          id: "cbq_atk_confirm",
+          from: { id: 12345, first_name: "Test" },
+          message: { message_id: 1, chat: { id: 12345, type: "private" } },
+          data: "atk_confirm:example.com:scan_only",
+        },
+      });
+
+      // Wait for async attack execution
+      await new Promise(r => setTimeout(r, 500));
+
+      // Should have called sendMessage (initial progress) and editMessageText (updates)
+      const allCalls = mockFetch.mock.calls.filter(c =>
+        typeof c[0] === "string" && (c[0].includes("sendMessage") || c[0].includes("editMessageText"))
+      );
+      expect(allCalls.length).toBeGreaterThanOrEqual(1);
     });
   });
 });

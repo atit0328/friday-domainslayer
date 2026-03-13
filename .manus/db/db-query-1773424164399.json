@@ -1,0 +1,16 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'deploy_history' AND COLUMN_NAME LIKE '%status%' OR (TABLE_NAME = 'deploy_history' AND COLUMN_NAME LIKE '%deploy%')",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'deploy_history' AND COLUMN_NAME LIKE '%status%' OR (TABLE_NAME = 'deploy_history' AND COLUMN_NAME LIKE '%deploy%')",
+  "rows": [
+    {
+      "COLUMN_NAME": "deployStatus"
+    },
+    {
+      "COLUMN_NAME": "deployedUrls"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\ndeployStatus\ndeployedUrls\n",
+  "stderr": "",
+  "execution_time_ms": 1675
+}

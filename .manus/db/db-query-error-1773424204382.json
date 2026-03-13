@@ -1,0 +1,8 @@
+{
+  "query": "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success FROM deploy_history WHERE createdAt >= CURDATE()",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COUNT(*) as total, SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success FROM deploy_history WHERE createdAt >= CURDATE()",
+  "returncode": 1,
+  "logs": [
+    "ERROR 1054 (42S22) at line 1: Unknown column 'status' in 'where clause'"
+  ]
+}

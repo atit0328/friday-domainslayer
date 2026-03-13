@@ -4166,3 +4166,29 @@
 ## Testing
 - [x] Write vitest tests for conversation flow (38 tests passed)
 - [x] TypeScript compilation: 0 errors
+
+# Telegram Inline Buttons + Attack Progress Notifications
+
+## Inline Keyboard Buttons for Attack
+- [x] Add inline keyboard with target domains from DB when user asks about attacking
+- [x] Handle callback_query for button presses (select target, confirm attack)
+- [x] Add confirmation button before executing attack
+- [x] Show attack type options (full chain, single phase, specific capability)
+
+## Real-time Attack Progress Notifications
+- [x] Send progress update for each step of attack chain (not just final result)
+- [x] Edit message in-place to show live progress bar/status
+- [x] Show timing per step (e.g. "Phase 1: Web Compromise... 3.2s ✅")
+- [x] Final summary with total duration and success/failure count
+
+## Testing
+- [x] Write vitest tests for inline keyboard and callback handling
+- [x] Write vitest tests for progress notification flow
+- [x] TypeScript compilation: 0 errors
+
+# Bug Fix: Telegram Bot Duplicate Replies + Failed Query
+
+- [x] Fix duplicate message replies (bot sends same response 2 times)
+- [x] Fix "Failed query" error when checking attack stats via Telegram
+- [x] Improve dedup mechanism to handle edge cases
+- [x] Test fixes with vitest
