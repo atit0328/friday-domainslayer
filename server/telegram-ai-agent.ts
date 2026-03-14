@@ -115,17 +115,41 @@ function isDuplicate(chatId: number, messageId: number, text: string): boolean {
 
 // Processing lock per chat to prevent concurrent processing
 const chatLocks = new Map<number, boolean>();
+// Message queue for when chat is locked — stores messages to process later
+const messageQueue = new Map<number, Array<{ msg: any; config: any }>>(); 
 
 function acquireLock(chatId: number): boolean {
   if (chatLocks.get(chatId)) return false;
   chatLocks.set(chatId, true);
   // Auto-release lock after 120 seconds to prevent deadlocks
-  setTimeout(() => chatLocks.delete(chatId), 120_000);
+  setTimeout(() => {
+    chatLocks.delete(chatId);
+    console.warn(`[TelegramAI] Auto-released stale lock for chat ${chatId}`);
+  }, 120_000);
   return true;
 }
 
 function releaseLock(chatId: number): void {
   chatLocks.delete(chatId);
+}
+
+function queueMessage(chatId: number, msg: any, config: any): void {
+  const queue = messageQueue.get(chatId) || [];
+  // Keep max 3 queued messages per chat
+  if (queue.length >= 3) {
+    queue.shift(); // Drop oldest
+  }
+  queue.push({ msg, config });
+  messageQueue.set(chatId, queue);
+  console.log(`[TelegramAI] Queued message for chat ${chatId} (queue size: ${queue.length})`);
+}
+
+function dequeueMessage(chatId: number): { msg: any; config: any } | null {
+  const queue = messageQueue.get(chatId);
+  if (!queue || queue.length === 0) return null;
+  const item = queue.shift()!;
+  if (queue.length === 0) messageQueue.delete(chatId);
+  return item;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1917,25 +1941,79 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
         body.reply_to_message_id = replyToMessageId;
       }
       
-      const { response } = await fetchWithPoolProxy(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000),
-      }, { targetDomain: "api.telegram.org", timeout: 10000 });
+      let sent = false;
       
-      const result = await response.json() as any;
-      if (!result.ok) {
-        // Retry without markdown if parsing fails
-        if (result.description?.includes("parse")) {
-          await fetchWithPoolProxy(url, {
+      // Attempt 1: Send with Markdown
+      try {
+        const { response } = await fetchWithPoolProxy(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
+        }, { targetDomain: "api.telegram.org", timeout: 15000 });
+        
+        const result = await response.json() as any;
+        if (result.ok) {
+          sent = true;
+        } else {
+          console.warn(`[TelegramAI] Markdown send failed: ${result.description}`);
+        }
+      } catch (mdErr: any) {
+        console.warn(`[TelegramAI] Markdown send error: ${mdErr.message}`);
+      }
+      
+      // Attempt 2: Retry without parse_mode (plain text) if Markdown failed
+      if (!sent) {
+        try {
+          const plainBody: any = {
+            chat_id: chatId,
+            text: chunks[i],
+          };
+          if (i === 0 && replyToMessageId) {
+            plainBody.reply_to_message_id = replyToMessageId;
+          }
+          const { response: plainResp } = await fetchWithPoolProxy(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ chat_id: chatId, text: chunks[i] }),
-            signal: AbortSignal.timeout(10000),
-          }, { targetDomain: "api.telegram.org", timeout: 10000 });
+            body: JSON.stringify(plainBody),
+            signal: AbortSignal.timeout(15000),
+          }, { targetDomain: "api.telegram.org", timeout: 15000 });
+          
+          const plainResult = await plainResp.json() as any;
+          if (plainResult.ok) {
+            sent = true;
+            console.log(`[TelegramAI] Sent as plain text (Markdown fallback)`);
+          } else {
+            console.error(`[TelegramAI] Plain text send also failed: ${plainResult.description}`);
+          }
+        } catch (plainErr: any) {
+          console.error(`[TelegramAI] Plain text send error: ${plainErr.message}`);
         }
       }
+      
+      // Attempt 3: Last resort — send truncated message without reply_to
+      if (!sent) {
+        try {
+          const truncated = chunks[i].substring(0, 2000) + "\n\n[ข้อความถูกตัดเนื่องจากยาวเกินไป]";
+          const { response: lastResp } = await fetchWithPoolProxy(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: chatId, text: truncated }),
+            signal: AbortSignal.timeout(15000),
+          }, { targetDomain: "api.telegram.org", timeout: 15000 });
+          const lastResult = await lastResp.json() as any;
+          if (lastResult.ok) {
+            sent = true;
+            console.log(`[TelegramAI] Sent truncated last-resort message`);
+          } else {
+            console.error(`[TelegramAI] CRITICAL: All 3 send attempts failed for chat ${chatId}: ${lastResult.description}`);
+          }
+        } catch (lastErr: any) {
+          console.error(`[TelegramAI] CRITICAL: All 3 send attempts failed for chat ${chatId}: ${lastErr.message}`);
+        }
+      }
+      
+      if (!sent) return false;
     }
     return true;
   } catch (error: any) {
@@ -1975,6 +2053,7 @@ export function resetDedupState(): void {
   lastProcessedUpdateId = 0;
   processedMessages.clear();
   chatLocks.clear();
+  messageQueue.clear();
   conversationState.clear();
 }
 
@@ -2016,9 +2095,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     return;
   }
   
-  // Skip messages older than 30 seconds (prevents replaying old messages after server restart)
+  // Skip messages older than 120 seconds (prevents replaying old messages after server restart)
+  // Increased from 30s to 120s to avoid dropping messages during tsx watch restarts
   const messageAge = Date.now() / 1000 - msg.date;
-  if (messageAge > 30) {
+  if (messageAge > 120) {
     console.log(`[TelegramAI] Skipping old message (${Math.round(messageAge)}s old): ${msg.message_id}`);
     return;
   }
@@ -2031,13 +2111,9 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   
   // Chat-level lock — prevent concurrent processing for same chat
   if (!acquireLock(msg.chat.id)) {
-    console.log(`[TelegramAI] Chat ${msg.chat.id} is busy, queuing...`);
-    // Wait a bit and retry
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    if (!acquireLock(msg.chat.id)) {
-      console.log(`[TelegramAI] Chat ${msg.chat.id} still busy, skipping`);
-      return;
-    }
+    console.log(`[TelegramAI] Chat ${msg.chat.id} is busy, queuing message...`);
+    queueMessage(msg.chat.id, msg, config);
+    return;
   }
   
   try {
@@ -2113,6 +2189,21 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     await sendTelegramReply(config, msg.chat.id, reply, msg.message_id);
   } finally {
     releaseLock(msg.chat.id);
+    
+    // Process any queued messages for this chat
+    const queued = dequeueMessage(msg.chat.id);
+    if (queued) {
+      console.log(`[TelegramAI] Processing queued message for chat ${msg.chat.id}`);
+      // Process asynchronously to not block
+      setImmediate(() => {
+        handleTelegramWebhook({
+          update_id: Date.now(), // Synthetic update_id
+          message: queued.msg,
+        }).catch(err => {
+          console.error(`[TelegramAI] Error processing queued message: ${err.message}`);
+        });
+      });
+    }
   }
 }
 
@@ -2148,7 +2239,12 @@ async function pollUpdates(): Promise<void> {
 }
 
 export async function startTelegramPolling(): Promise<void> {
-  if (pollingInterval) return;
+  // Stop existing polling first to prevent duplicate instances (tsx watch restarts)
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
+    console.log(`[TelegramAI] Stopped existing polling before restart`);
+  }
   
   const config = getTelegramConfig();
   if (!config) {
@@ -2641,6 +2737,8 @@ async function sendAlternativeAttackSuggestions(
 async function editTelegramMessage(config: TelegramConfig, chatId: number, messageId: number, text: string): Promise<boolean> {
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/editMessageText`;
+    
+    // Attempt 1: With Markdown
     const { response } = await fetchWithPoolProxy(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2653,7 +2751,21 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
       signal: AbortSignal.timeout(10000),
     }, { targetDomain: "api.telegram.org", timeout: 10000 });
     const result = await response.json() as any;
-    return result.ok === true;
+    if (result.ok) return true;
+    
+    // Attempt 2: Without Markdown (plain text fallback)
+    const { response: plainResp } = await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text,
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    const plainResult = await plainResp.json() as any;
+    return plainResult.ok === true;
   } catch {
     return false;
   }
@@ -2662,6 +2774,7 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
 async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text: string): Promise<number | null> {
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    // Try with Markdown first, then plain text fallback
     const { response } = await fetchWithPoolProxy(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

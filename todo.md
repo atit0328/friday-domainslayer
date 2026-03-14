@@ -4462,3 +4462,16 @@
 - [x] 5 vitest tests for content spinner (exports, types, intensity levels)
 - [x] 16 vitest tests for auto-posts generator (topics, generation, structure, links, schema, keywords)
 - [x] Save checkpoint
+
+# Bug Fix: Telegram Bot Not Responding / Going Silent
+- [x] Investigate bot handler — found: Markdown parse_mode causing Telegram API rejection for special chars
+- [x] Fix sendTelegramReply — 3-tier fallback: Markdown → Plain Text → Truncated Last Resort
+- [x] Fix editTelegramMessage — added plain text fallback when Markdown fails
+- [x] Fix duplicate message issue — polling restart prevention (clearInterval before new start)
+- [x] Fix bot going silent — increased message age from 30s → 120s to survive tsx watch restarts
+- [x] Fix message drop during lock — added message queue (max 3) instead of dropping locked messages
+- [x] Added queue processing after lock release (setImmediate → handleTelegramWebhook)
+- [x] Updated resetDedupState to include messageQueue.clear()
+- [x] TypeScript 0 errors
+- [x] 50 vitest tests passing
+- [x] Server restarted and Telegram polling confirmed active
