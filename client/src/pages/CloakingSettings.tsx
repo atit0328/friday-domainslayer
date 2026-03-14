@@ -89,6 +89,16 @@ export default function CloakingSettings() {
   const [seoPreviewHtml, setSeoPreviewHtml] = useState<string | null>(null);
   const [seoPreviewStats, setSeoPreviewStats] = useState<any>(null);
 
+  // Content Spinner state
+  const [spinnerOpen, setSpinnerOpen] = useState<number | null>(null);
+  const [spinIntensity, setSpinIntensity] = useState<"light" | "medium" | "heavy">("medium");
+
+  // Auto Posts state
+  const [autoPostsOpen, setAutoPostsOpen] = useState<number | null>(null);
+  const [autoPostCount, setAutoPostCount] = useState(15);
+  const [autoPostUseLLM, setAutoPostUseLLM] = useState(false);
+  const [autoPostsPreview, setAutoPostsPreview] = useState<any>(null);
+
   // Queries
   const { data: projects, isLoading: loadingProjects } = trpc.seoProjects.list.useQuery();
   
@@ -192,6 +202,40 @@ export default function CloakingSettings() {
       }
     },
     onError: (err) => toast.error(`Deploy ล้มเหลว: ${err.message}`),
+  });
+
+  // Content Spinner mutation
+  const spinContentMut = trpc.contentSpinner.generateAndSpin.useMutation({
+    onSuccess: (data) => {
+      toast.success(`AI Spinner สำเร็จ! Uniqueness: ${data.uniquenessScore}% | ${data.sectionsRewritten} sections rewritten`);
+      // Open preview
+      const w = window.open('', '_blank', 'width=1200,height=800');
+      if (w) {
+        w.document.write(data.spunHtml);
+        w.document.close();
+      }
+    },
+    onError: (err) => toast.error(`Spinner ล้มเหลว: ${err.message}`),
+  });
+
+  // Auto Posts mutations
+  const generatePostsMut = trpc.autoPosts.generate.useMutation({
+    onSuccess: (data) => {
+      setAutoPostsPreview(data);
+      toast.success(`สร้าง ${data.postCount} บทความ SEO สำเร็จ! รวม ${data.totalWordCount} คำ`);
+    },
+    onError: (err) => toast.error(`สร้างบทความล้มเหลว: ${err.message}`),
+  });
+
+  const deployPostsMut = trpc.autoPosts.deploy.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success(`Deploy ${data.deployed} บทความ SEO สำเร็จ!`);
+      } else {
+        toast.warning(`Deploy บางส่วน: ${data.deployed} สำเร็จ, ${data.failed} ล้มเหลว`);
+      }
+    },
+    onError: (err) => toast.error(`Deploy บทความล้มเหลว: ${err.message}`),
   });
 
   const utils = trpc.useUtils();
@@ -1445,6 +1489,267 @@ export default function CloakingSettings() {
                                     เปิดดูตัวอย่าง SEO Homepage
                                   </Button>
                                 )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ═══ AI Content Spinner Button ═══ */}
+                        <div className="px-4 pb-2 pt-1">
+                          <Button
+                            variant={spinnerOpen === i ? "default" : "outline"}
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              if (spinnerOpen === i) {
+                                setSpinnerOpen(null);
+                              } else {
+                                setSpinnerOpen(i);
+                                setAutoPostsOpen(null);
+                              }
+                            }}
+                          >
+                            <RefreshCw className="w-3 h-3 mr-1" />
+                            {spinnerOpen === i ? 'ปิด Content Spinner' : '🤖 AI Content Spinner'}
+                          </Button>
+                        </div>
+
+                        {/* Content Spinner Panel */}
+                        {spinnerOpen === i && (
+                          <div className="px-4 pb-4 space-y-3 border-t border-border/20 pt-3 bg-card/30">
+                            <div className="flex items-center gap-2 mb-2">
+                              <RefreshCw className="w-4 h-4 text-purple-400" />
+                              <span className="text-xs font-semibold text-purple-400">AI Content Spinner — สร้าง Content ไม่ซ้ำใคร</span>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">
+                              ใช้ LLM rewrite content ทั้งหน้า ให้ไม่ซ้ำกับโดเมนอื่น — Google ไม่ตรวจจับ duplicate content
+                            </p>
+
+                            {/* Spin Intensity */}
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">ระดับการ Rewrite</label>
+                              <div className="flex gap-2">
+                                {(["light", "medium", "heavy"] as const).map(level => (
+                                  <Button
+                                    key={level}
+                                    size="sm"
+                                    variant={spinIntensity === level ? "default" : "outline"}
+                                    className="flex-1 text-[10px] h-7"
+                                    onClick={() => setSpinIntensity(level)}
+                                  >
+                                    {level === "light" ? "🟢 เบา" : level === "medium" ? "🟡 ปานกลาง" : "🔴 หนัก"}
+                                  </Button>
+                                ))}
+                              </div>
+                              <p className="text-[9px] text-muted-foreground mt-1">
+                                {spinIntensity === "light" ? "เปลี่ยนแค่คำ synonym — เร็ว, uniqueness ~30-50%" :
+                                 spinIntensity === "medium" ? "Rewrite ทั้ง paragraph — สมดุล, uniqueness ~50-70%" :
+                                 "Rewrite ใหม่ทั้งหมด — ช้า, uniqueness ~70-90%"}
+                              </p>
+                            </div>
+
+                            {/* Generate + Spin Button */}
+                            <Button
+                              size="sm"
+                              className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+                              onClick={() => {
+                                if (!selectedProject) return;
+                                spinContentMut.mutate({
+                                  domain: selectedProject.domain,
+                                  siteName: seoSiteName || selectedProject.domain,
+                                  category: theme.category,
+                                  themeSlug: theme.slug,
+                                  intensity: spinIntensity,
+                                });
+                              }}
+                              disabled={spinContentMut.isPending}
+                            >
+                              {spinContentMut.isPending ? (
+                                <><Loader2 className="w-3 h-3 animate-spin mr-1" /> กำลัง Spin Content (อาจใช้เวลา 30-60 วินาที)...</>
+                              ) : (
+                                <><Sparkles className="w-3 h-3 mr-1" /> Generate + Spin Content</>
+                              )}
+                            </Button>
+
+                            {/* Spin Result Stats */}
+                            {spinContentMut.data && (
+                              <div className="bg-purple-500/5 border border-purple-500/20 rounded-lg p-3 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                                  <span className="text-xs font-semibold text-purple-400">Spin Results</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Uniqueness:</span>
+                                    <span className="ml-1 font-bold text-purple-400">{spinContentMut.data.uniquenessScore}%</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Sections:</span>
+                                    <span className="ml-1 font-bold">{spinContentMut.data.sectionsRewritten} rewritten</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Keywords:</span>
+                                    <span className="ml-1 font-bold">{spinContentMut.data.keywordsPreserved} preserved</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Time:</span>
+                                    <span className="ml-1 font-bold">{Math.round(spinContentMut.data.processingTimeMs / 1000)}s</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ═══ Auto-Generate SEO Posts Button ═══ */}
+                        <div className="px-4 pb-3 pt-1">
+                          <Button
+                            variant={autoPostsOpen === i ? "default" : "outline"}
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              if (autoPostsOpen === i) {
+                                setAutoPostsOpen(null);
+                                setAutoPostsPreview(null);
+                              } else {
+                                setAutoPostsOpen(i);
+                                setSpinnerOpen(null);
+                              }
+                            }}
+                          >
+                            <BarChart3 className="w-3 h-3 mr-1" />
+                            {autoPostsOpen === i ? 'ปิด Auto Posts' : '📚 Auto-Generate SEO Posts'}
+                          </Button>
+                        </div>
+
+                        {/* Auto Posts Panel */}
+                        {autoPostsOpen === i && (
+                          <div className="px-4 pb-4 space-y-3 border-t border-border/20 pt-3 bg-card/30">
+                            <div className="flex items-center gap-2 mb-2">
+                              <BarChart3 className="w-4 h-4 text-cyan-400" />
+                              <span className="text-xs font-semibold text-cyan-400">Auto-Generate SEO Posts (10-20 บทความ)</span>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground">
+                              สร้างบทความ SEO อัตโนมัติ 10-20 posts พร้อม internal links กลับหน้าแรก — เสริม link structure ให้ Google ranking
+                            </p>
+
+                            {/* Post Count Slider */}
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">จำนวนบทความ: <strong className="text-cyan-400">{autoPostCount}</strong></label>
+                              <Slider
+                                value={[autoPostCount]}
+                                onValueChange={([v]) => setAutoPostCount(v)}
+                                min={5}
+                                max={20}
+                                step={1}
+                                className="mt-1"
+                              />
+                              <div className="flex justify-between text-[9px] text-muted-foreground mt-0.5">
+                                <span>5 posts</span>
+                                <span>20 posts</span>
+                              </div>
+                            </div>
+
+                            {/* LLM Rewrite Toggle */}
+                            <div className="flex items-center justify-between bg-background/50 rounded-lg p-2">
+                              <div>
+                                <span className="text-[10px] font-medium">🤖 LLM Rewrite</span>
+                                <p className="text-[9px] text-muted-foreground">ใช้ AI rewrite ทุกบทความให้ไม่ซ้ำ (ช้ากว่า แต่ unique 100%)</p>
+                              </div>
+                              <Switch checked={autoPostUseLLM} onCheckedChange={setAutoPostUseLLM} />
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="flex-1 text-xs"
+                                onClick={() => {
+                                  if (!selectedProject) return;
+                                  generatePostsMut.mutate({
+                                    domain: selectedProject.domain,
+                                    siteName: seoSiteName || selectedProject.domain,
+                                    category: theme.category,
+                                    themeSlug: theme.slug,
+                                    postCount: autoPostCount,
+                                    customKeywords: seoCustomKeywords ? seoCustomKeywords.split(',').map((k: string) => k.trim()).filter(Boolean) : undefined,
+                                  });
+                                }}
+                                disabled={generatePostsMut.isPending}
+                              >
+                                {generatePostsMut.isPending ? (
+                                  <><Loader2 className="w-3 h-3 animate-spin mr-1" /> กำลังสร้าง...</>
+                                ) : (
+                                  <><Search className="w-3 h-3 mr-1" /> Preview Posts</>
+                                )}
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="flex-1 text-xs bg-cyan-600 hover:bg-cyan-700 text-white"
+                                onClick={() => {
+                                  if (!selectedProject) return;
+                                  if (!wpUsername || !wpAppPassword) {
+                                    toast.error("กรุณาใส่ WP credentials ก่อน");
+                                    return;
+                                  }
+                                  deployPostsMut.mutate({
+                                    domain: selectedProject.domain,
+                                    siteName: seoSiteName || selectedProject.domain,
+                                    category: theme.category,
+                                    themeSlug: theme.slug,
+                                    postCount: autoPostCount,
+                                    customKeywords: seoCustomKeywords ? seoCustomKeywords.split(',').map((k: string) => k.trim()).filter(Boolean) : undefined,
+                                    wpUsername,
+                                    wpAppPassword,
+                                    useLLM: autoPostUseLLM,
+                                  });
+                                }}
+                                disabled={deployPostsMut.isPending}
+                              >
+                                {deployPostsMut.isPending ? (
+                                  <><Loader2 className="w-3 h-3 animate-spin mr-1" /> กำลัง Deploy...</>
+                                ) : (
+                                  <><Rocket className="w-3 h-3 mr-1" /> Deploy ทั้งหมดไป WP</>
+                                )}
+                              </Button>
+                            </div>
+
+                            {/* Auto Posts Preview */}
+                            {autoPostsPreview && autoPostsOpen === i && (
+                              <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-lg p-3 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <BarChart3 className="w-3.5 h-3.5 text-cyan-400" />
+                                  <span className="text-xs font-semibold text-cyan-400">Preview: {autoPostsPreview.postCount} บทความ</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">รวมคำ:</span>
+                                    <span className="ml-1 font-bold text-cyan-400">{autoPostsPreview.totalWordCount.toLocaleString()}</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Internal Links:</span>
+                                    <span className="ml-1 font-bold">{autoPostsPreview.totalInternalLinks}</span>
+                                  </div>
+                                </div>
+                                <div className="max-h-40 overflow-y-auto space-y-1">
+                                  {autoPostsPreview.posts.map((p: any, pi: number) => (
+                                    <div key={pi} className="bg-background/50 rounded p-1.5 text-[9px]">
+                                      <div className="font-medium truncate">{pi + 1}. {p.title}</div>
+                                      <div className="text-muted-foreground flex gap-2">
+                                        <span>{p.wordCount} คำ</span>
+                                        <span>🔗 {p.internalLinksCount} links</span>
+                                        <span>🎯 {p.focusKeyword}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="text-[9px] text-muted-foreground">
+                                  <strong>Categories:</strong> {autoPostsPreview.categories.join(', ')}
+                                </div>
+                                <div className="text-[9px] text-muted-foreground">
+                                  <strong>Tags:</strong> {autoPostsPreview.tags.slice(0, 10).join(', ')}{autoPostsPreview.tags.length > 10 ? ` +${autoPostsPreview.tags.length - 10} more` : ''}
+                                </div>
                               </div>
                             )}
                           </div>

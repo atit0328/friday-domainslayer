@@ -63,7 +63,7 @@ import { algorithmMonitorRouter } from "./routers/algorithm-monitor";
 import { competitorGapRouter } from "./routers/competitor-gap";
 import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 import { telegramAiRouter } from "./routers/telegram-ai";
-import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter, seoHomepageRouter } from "./routers/cloaking-seo";
+import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter, seoHomepageRouter, contentSpinnerRouter, autoPostsRouter } from "./routers/cloaking-seo";
 import { wpThemesRouter } from "./routers/wp-themes";
 import { attackDashboardRouter } from "./routers/attack-dashboard";
 
@@ -220,6 +220,12 @@ export const appRouter = router({
   seoTheme: seoThemeRouter,
   seoFullPipeline: seoFullPipelineRouter,
   seoHomepage: seoHomepageRouter,
+
+  // AI Content Spinner (LLM-powered unique content)
+  contentSpinner: contentSpinnerRouter,
+
+  // Auto-Generate SEO Posts (10-20 posts per domain)
+  autoPosts: autoPostsRouter,
 
   // WordPress Casino Theme Templates
   wpThemes: wpThemesRouter,

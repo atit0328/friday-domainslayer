@@ -4405,3 +4405,60 @@
 - [x] TypeScript 0 errors
 - [x] 20 vitest tests passing (getKeywordsForCategory + generateSeoHomepage)
 - [x] Save checkpoint
+
+# Feature: Test Deploy SEO Homepage
+- [x] Test Generate + Preview SEO Homepage via unit tests (20 tests passed)
+- [x] Verify HTML output quality and keyword density (verified via tests)
+- [x] Browser test skipped due to superadmin auth requirement
+
+# Feature: AI Content Spinner — LLM Rewrite for Unique Content
+## Backend (server/seo-content-spinner.ts)
+- [x] Create AI Content Spinner engine using invokeLLM
+- [x] Rewrite homepage content sections (intro, why-choose, how-to, tips, FAQ)
+- [x] Maintain keyword density while making content unique
+- [x] Support spinning individual sections or full page
+- [x] Track spin count per domain to avoid over-spinning
+- [x] 3 intensity levels: light (synonym swap), medium (paragraph rewrite), heavy (full rewrite)
+
+## tRPC Procedures
+- [x] contentSpinner.spin — spin/rewrite existing generated content via LLM
+- [x] contentSpinner.generateAndSpin — generate + auto-spin in one step + Telegram notification
+
+## UI Integration
+- [x] Add "🤖 AI Content Spinner" button in each theme card
+- [x] Intensity selector (light/medium/heavy) with descriptions
+- [x] Spin result stats (uniqueness %, sections rewritten, keywords preserved, time)
+- [x] Auto-open preview in new window after spin
+
+# Feature: Auto-Generate SEO Posts — 10-20 Posts per Domain
+## Backend (server/seo-auto-posts.ts)
+- [x] Create SEO post generator engine (15 post topics per category)
+- [x] Generate 5-20 unique SEO articles per domain
+- [x] Category-specific post topics (slots tips, lottery predictions, baccarat strategies)
+- [x] Each post: 800-1500 words, keyword-rich, schema markup (Article + FAQPage)
+- [x] Internal linking between posts and homepage (3+ links per post)
+- [x] SEO-friendly slugs from Thai titles
+- [x] Auto-generate categories and tags
+- [x] Deploy all posts to WordPress via REST API
+- [x] Optional LLM rewrite for 100% unique content
+- [x] rewritePostWithLLM function for individual post rewriting
+
+## tRPC Procedures
+- [x] autoPosts.generate — generate batch of SEO posts (preview)
+- [x] autoPosts.deploy — deploy all posts to WordPress + Telegram notification
+- [x] autoPosts.getTopics — get available topics per category
+- [x] autoPosts.generateSpinDeploy — full pipeline: generate + spin + deploy
+
+## UI Integration
+- [x] Add "📚 Auto-Generate SEO Posts" button in each theme card
+- [x] Post count slider (5-20)
+- [x] LLM Rewrite toggle (unique content)
+- [x] Preview Posts button + Deploy ทั้งหมดไป WP button
+- [x] Post preview list with title, word count, internal links, focus keyword
+- [x] Categories and tags display
+
+## Testing
+- [x] TypeScript 0 errors
+- [x] 5 vitest tests for content spinner (exports, types, intensity levels)
+- [x] 16 vitest tests for auto-posts generator (topics, generation, structure, links, schema, keywords)
+- [x] Save checkpoint

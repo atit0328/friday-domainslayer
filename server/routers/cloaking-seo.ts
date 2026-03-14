@@ -44,6 +44,20 @@ import {
   type HomepageGeneratorInput,
   type GeneratedHomepage,
 } from "../seo-homepage-generator";
+import {
+  spinContent,
+  generateAndSpin,
+  type SpinRequest,
+  type SpinResult,
+} from "../seo-content-spinner";
+import {
+  generateSeoPosts,
+  deployPostsToWordPress,
+  rewritePostWithLLM,
+  getPostTopicsForCategory,
+  type AutoPostsInput,
+  type GeneratedPost,
+} from "../seo-auto-posts";
 
 // ═══ Theme Mapping: our custom slugs → real WP theme slugs ═══
 const THEME_MAPPING_REVERSE: Record<string, string> = {
@@ -788,6 +802,273 @@ export const seoHomepageRouter = router({
           title: generated.title,
           metaDescription: generated.metaDescription,
         },
+      };
+    }),
+});
+
+// ═══ AI Content Spinner Router ═══
+export const contentSpinnerRouter = router({
+  /** Spin/rewrite existing HTML content using LLM */
+  spin: protectedProcedure
+    .input(z.object({
+      html: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      siteName: z.string(),
+      domain: z.string(),
+      mustIncludeKeywords: z.array(z.string()).optional(),
+      intensity: z.enum(["light", "medium", "heavy"]).default("medium"),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await spinContent({
+        html: input.html,
+        category: input.category,
+        siteName: input.siteName,
+        domain: input.domain,
+        mustIncludeKeywords: input.mustIncludeKeywords,
+        intensity: input.intensity,
+      });
+      return result;
+    }),
+
+  /** Generate SEO homepage + spin it in one step */
+  generateAndSpin: protectedProcedure
+    .input(z.object({
+      domain: z.string(),
+      siteName: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      themeSlug: z.string().optional(),
+      customKeywords: z.array(z.string()).optional(),
+      intensity: z.enum(["light", "medium", "heavy"]).default("medium"),
+    }))
+    .mutation(async ({ input }) => {
+      const result = await generateAndSpin(
+        () => generateSeoHomepage({
+          domain: input.domain,
+          siteName: input.siteName,
+          category: input.category,
+          themeSlug: input.themeSlug,
+          customKeywords: input.customKeywords,
+        }),
+        {
+          category: input.category,
+          siteName: input.siteName,
+          domain: input.domain,
+          intensity: input.intensity,
+        }
+      );
+
+      // Telegram notification
+      try {
+        await sendTelegramNotification({
+          type: "info",
+          targetUrl: input.domain,
+          details: `🔄 AI Content Spinner Complete\n🌐 ${input.domain}\n📝 ${input.siteName}\n🎰 ${input.category}\n📊 Uniqueness: ${result.spun.uniquenessScore}%\n✏️ ${result.spun.sectionsRewritten} sections rewritten\n🔑 ${result.spun.keywordsPreserved} keywords preserved\n⏱️ ${result.spun.processingTimeMs}ms`,
+        });
+      } catch {}
+
+      return {
+        originalWordCount: result.generated.wordCount,
+        spunHtml: result.spun.html,
+        uniquenessScore: result.spun.uniquenessScore,
+        sectionsRewritten: result.spun.sectionsRewritten,
+        keywordsPreserved: result.spun.keywordsPreserved,
+        processingTimeMs: result.spun.processingTimeMs,
+        originalStats: {
+          keywordDensity: result.generated.keywordDensity,
+          schemaTypes: result.generated.schemaTypes,
+          headingCount: result.generated.headingCount,
+        },
+      };
+    }),
+});
+
+// ═══ Auto-Generate SEO Posts Router ═══
+export const autoPostsRouter = router({
+  /** Get available post topics for a category */
+  getTopics: protectedProcedure
+    .input(z.object({
+      category: z.enum(["slots", "lottery", "baccarat"]),
+    }))
+    .query(({ input }) => {
+      const topics = getPostTopicsForCategory(input.category);
+      return topics.map(t => ({
+        slug: t.slug,
+        title: t.title,
+        focusKeyword: t.focusKeyword,
+        secondaryKeywords: t.secondaryKeywords,
+        outlineSections: t.outline.length,
+      }));
+    }),
+
+  /** Generate SEO posts (preview, not deployed) */
+  generate: protectedProcedure
+    .input(z.object({
+      domain: z.string(),
+      siteName: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      themeSlug: z.string().optional(),
+      postCount: z.number().min(1).max(20).default(15),
+      customKeywords: z.array(z.string()).optional(),
+    }))
+    .mutation(({ input }) => {
+      const result = generateSeoPosts({
+        domain: input.domain,
+        siteName: input.siteName,
+        category: input.category,
+        themeSlug: input.themeSlug,
+        postCount: input.postCount,
+        customKeywords: input.customKeywords,
+      });
+      return {
+        postCount: result.posts.length,
+        totalWordCount: result.totalWordCount,
+        totalInternalLinks: result.totalInternalLinks,
+        categories: result.categories,
+        tags: result.tags.slice(0, 20),
+        posts: result.posts.map(p => ({
+          title: p.title,
+          slug: p.slug,
+          focusKeyword: p.focusKeyword,
+          wordCount: p.wordCount,
+          internalLinksCount: p.internalLinks.length,
+          excerpt: p.excerpt,
+        })),
+      };
+    }),
+
+  /** Generate + Deploy all posts to WordPress */
+  deploy: protectedProcedure
+    .input(z.object({
+      domain: z.string(),
+      siteName: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      themeSlug: z.string().optional(),
+      postCount: z.number().min(1).max(20).default(15),
+      customKeywords: z.array(z.string()).optional(),
+      wpUsername: z.string(),
+      wpAppPassword: z.string(),
+      useLLM: z.boolean().default(false),
+    }))
+    .mutation(async ({ input }) => {
+      // Step 1: Generate posts
+      const generated = generateSeoPosts({
+        domain: input.domain,
+        siteName: input.siteName,
+        category: input.category,
+        themeSlug: input.themeSlug,
+        postCount: input.postCount,
+        customKeywords: input.customKeywords,
+      });
+
+      // Step 2: Optionally rewrite with LLM for uniqueness
+      let postsToPublish = generated.posts;
+      if (input.useLLM) {
+        const rewrittenPosts: GeneratedPost[] = [];
+        for (const post of generated.posts) {
+          const rewritten = await rewritePostWithLLM(post, input.siteName, input.category);
+          rewrittenPosts.push(rewritten);
+        }
+        postsToPublish = rewrittenPosts;
+      }
+
+      // Step 3: Deploy to WordPress
+      const deployResult = await deployPostsToWordPress({
+        domain: input.domain,
+        wpUsername: input.wpUsername,
+        wpAppPassword: input.wpAppPassword,
+        posts: postsToPublish,
+        publishInterval: 2000,
+      });
+
+      // Step 4: Telegram notification
+      try {
+        await sendTelegramNotification({
+          type: deployResult.success ? "success" : "failure",
+          targetUrl: input.domain,
+          details: `📚 Auto SEO Posts ${deployResult.success ? "Deployed" : "Partially Failed"}\n🌐 ${input.domain}\n📝 ${input.siteName}\n🎰 ${input.category}\n📊 ${deployResult.deployed}/${generated.posts.length} posts deployed\n${deployResult.failed > 0 ? `❌ ${deployResult.failed} failed` : ""}\n📄 Total: ${generated.totalWordCount} words\n🔗 ${generated.totalInternalLinks} internal links\n${input.useLLM ? "🤖 LLM rewritten for uniqueness" : "📋 Template-based content"}`,
+        });
+      } catch {}
+
+      return {
+        success: deployResult.success,
+        deployed: deployResult.deployed,
+        failed: deployResult.failed,
+        totalWordCount: generated.totalWordCount,
+        totalInternalLinks: generated.totalInternalLinks,
+        usedLLM: input.useLLM,
+        details: deployResult.details.map(d => ({
+          title: d.title,
+          postId: d.postId,
+          error: d.error,
+        })),
+      };
+    }),
+
+  /** Generate + Spin + Deploy (full pipeline with unique content) */
+  generateSpinDeploy: protectedProcedure
+    .input(z.object({
+      domain: z.string(),
+      siteName: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      themeSlug: z.string().optional(),
+      postCount: z.number().min(1).max(20).default(15),
+      wpUsername: z.string(),
+      wpAppPassword: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      // Step 1: Generate posts
+      const generated = generateSeoPosts({
+        domain: input.domain,
+        siteName: input.siteName,
+        category: input.category,
+        themeSlug: input.themeSlug,
+        postCount: input.postCount,
+      });
+
+      // Step 2: Spin each post with LLM
+      const spunPosts: GeneratedPost[] = [];
+      let totalSpinTime = 0;
+      for (const post of generated.posts) {
+        try {
+          const spinResult = await spinContent({
+            html: post.html,
+            category: input.category,
+            siteName: input.siteName,
+            domain: input.domain,
+            intensity: "heavy",
+          });
+          spunPosts.push({ ...post, html: spinResult.html });
+          totalSpinTime += spinResult.processingTimeMs;
+        } catch {
+          spunPosts.push(post); // fallback to original
+        }
+      }
+
+      // Step 3: Deploy
+      const deployResult = await deployPostsToWordPress({
+        domain: input.domain,
+        wpUsername: input.wpUsername,
+        wpAppPassword: input.wpAppPassword,
+        posts: spunPosts,
+        publishInterval: 2000,
+      });
+
+      // Step 4: Telegram
+      try {
+        await sendTelegramNotification({
+          type: deployResult.success ? "success" : "failure",
+          targetUrl: input.domain,
+          details: `🔄📚 Auto Posts + Spin Deployed\n🌐 ${input.domain}\n📊 ${deployResult.deployed}/${generated.posts.length} posts\n⏱️ Spin time: ${Math.round(totalSpinTime / 1000)}s\n📄 ${generated.totalWordCount} words`,
+        });
+      } catch {}
+
+      return {
+        success: deployResult.success,
+        deployed: deployResult.deployed,
+        failed: deployResult.failed,
+        totalWordCount: generated.totalWordCount,
+        spinTimeMs: totalSpinTime,
+        details: deployResult.details,
       };
     }),
 });
