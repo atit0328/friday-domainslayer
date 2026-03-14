@@ -4674,3 +4674,10 @@
 - [x] Add filters: domain search, success-only toggle
 - [x] Add stats cards: total attacks, successful, success rate, top methods
 - [x] Add insights: by platform, by method, by language, by WAF
+
+# Bug Fix: Telegram bot not responding to any messages
+- [x] Check server logs: 409 Conflict — 2 bot instances competing (dev + production)
+- [x] Bot not stuck — messages consumed by production (old code) before dev server sees them
+- [x] Deployed version is OLD code without /status, /cancel, advanced_all handlers
+- [x] Root cause: production server (old code) consuming messages. Need to Publish new version
+- [ ] Verify after Publish: bot responds to /status, /cancel, and text messages
