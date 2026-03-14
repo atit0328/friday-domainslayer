@@ -1614,56 +1614,40 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
       }
 
       case "retry_attack": {
-        const { retryDomain, getRetryPlan } = await import("./auto-retry-engine");
-        const domain = args.domain;
+        const retryDomain = args.domain;
+        if (!retryDomain) return `❌ กรุณาระบุ domain ที่ต้องการ retry`;
         
-        // Show plan first
-        const plan = await getRetryPlan(domain);
-        if (!plan && !args.method) {
-          return `❌ ${domain}: ไม่พบในรายการ failed domains หรือลองทุกวิธีแล้ว`;
-        }
+        // Fire-and-forget: launch narrated retry in background
+        const configRetry = getTelegramConfig();
+        if (!configRetry) return `❌ Telegram ยังไม่ได้ตั้งค่า`;
         
-        const result = await retryDomain(domain, args.method);
-        const duration = Date.now() - startTime;
+        const retryChatId = args._chatId || getAllowedChatIds()[0];
+        if (!retryChatId) return `❌ ไม่พบ chat ID สำหรับส่ง progress`;
         
-        if (result.success) {
-          return `✅ Retry ${domain} สำเร็จ!\n` +
-            `วิธี: ${result.method}\n` +
-            `รายละเอียด: ${result.details || "-"}\n` +
-            `⏱ ${formatDuration(result.durationMs)}`;
-        } else {
-          return `❌ Retry ${domain} ล้มเหลว\n` +
-            `วิธี: ${result.method}\n` +
-            `สาเหตุ: ${result.error || "-"}\n` +
-            `⏱ ${formatDuration(result.durationMs)}`;
-        }
+        executeAttackWithProgress(configRetry, retryChatId, retryDomain, "retry_attack").catch(err => {
+          console.error(`[TelegramAI] Narrated retry error: ${err.message}`);
+        });
+        
+        return `🔄 เริ่ม Retry ${retryDomain} แล้ว!\n` +
+          `📡 ระบบจะวิเคราะห์ประวัติ + เลือกวิธีใหม่อัตโนมัติ\n` +
+          `สถานะ: 🔄 กำลังเริ่มต้น...`;
       }
 
       case "retry_all_failed": {
-        const { retryAllFailed } = await import("./auto-retry-engine");
-        const maxRetries = args.max_retries || 20;
+        // Fire-and-forget: launch narrated batch retry in background
+        const configBatch = getTelegramConfig();
+        if (!configBatch) return `❌ Telegram ยังไม่ได้ตั้งค่า`;
         
-        const batchResult = await retryAllFailed({ maxRetries });
-        const duration = Date.now() - startTime;
+        const batchChatId = args._chatId || getAllowedChatIds()[0];
+        if (!batchChatId) return `❌ ไม่พบ chat ID สำหรับส่ง progress`;
         
-        let response = `🔄 Retry All เสร็จ!\n\n`;
-        response += `ทั้งหมด: ${batchResult.totalDomains} domains\n`;
-        response += `Retry: ${batchResult.retried} | สำเร็จ: ${batchResult.succeeded} | ล้มเหลว: ${batchResult.failed}\n`;
-        response += `ข้าม: ${batchResult.skipped} (หมดวิธีแล้ว)\n`;
-        response += `⏱ ${formatDuration(batchResult.totalDurationMs)}\n\n`;
+        executeAttackWithProgress(configBatch, batchChatId, "batch", "retry_all_failed").catch(err => {
+          console.error(`[TelegramAI] Narrated batch retry error: ${err.message}`);
+        });
         
-        // Show results
-        if (batchResult.results.length > 0) {
-          response += `ผลลัพธ์:\n`;
-          for (const r of batchResult.results.slice(0, 10)) {
-            response += `${r.success ? "✅" : "❌"} ${r.domain} (${r.method}) ${r.success ? r.details || "" : r.error || ""}\n`;
-          }
-          if (batchResult.results.length > 10) {
-            response += `... +${batchResult.results.length - 10} more`;
-          }
-        }
-        
-        return response;
+        return `🔄 เริ่ม Retry All Failed Domains แล้ว!\n` +
+          `📡 ระบบจะแสดงผล retry ทีละ domain แบบ real-time\n` +
+          `สถานะ: 🔄 กำลังวิเคราะห์...`;
       }
 
       case "view_retry_stats": {
@@ -1994,7 +1978,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         
         const args = JSON.parse(toolCall.function.arguments || "{}");
         // Inject chatId for attack tools so they can launch narrated progress
-        if (toolCall.function.name === "attack_website" || toolCall.function.name === "deploy_advanced") {
+        if (["attack_website", "deploy_advanced", "retry_attack", "retry_all_failed"].includes(toolCall.function.name)) {
           args._chatId = chatId;
         }
         console.log(`[TelegramAI] Tool: ${toolCall.function.name}(${JSON.stringify(args).substring(0, 100)})`);
@@ -4314,6 +4298,182 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           });
         }
       }
+
+    } else if (method === "retry_attack") {
+      // ═══ NARRATED RETRY ATTACK ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "Retry Attack",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
+      
+      // Step 1: Analyze failed history
+      await narrator.startPhase("recon", "🔍 วิเคราะห์ประวัติการโจมตี");
+      const stepAnalyze = await narrator.addStep("ดึงประวัติ failed attacks");
+      const s1 = Date.now();
+      
+      const { retryDomain, getRetryPlan } = await import("./auto-retry-engine");
+      const plan = await getRetryPlan(domain);
+      
+      if (!plan) {
+        await narrator.updateStep(stepAnalyze, "failed", "ไม่พบในรายการ failed domains หรือลองทุกวิธีแล้ว", Date.now() - s1);
+        timings.push({ step: "Analyze history", ms: Date.now() - s1, ok: false });
+        stepIndex++;
+        
+        await narrator.complete(false, `${domain}: ไม่มีวิธีใหม่ให้ลอง — ลองทุกวิธีแล้ว`);
+        
+        await saveAttackLog({
+          targetDomain: domain,
+          method: "retry_attack",
+          success: false,
+          durationMs: Date.now() - s1,
+          aiReasoning: "No retry plan available — all methods exhausted",
+        });
+      } else {
+        await narrator.updateStep(stepAnalyze, "done",
+          `เคยลอง ${plan.methodsTried.length} วิธี — จะลอง: ${plan.nextMethod}`,
+          Date.now() - s1
+        );
+        timings.push({ step: `Plan: ${plan.nextMethod}`, ms: Date.now() - s1, ok: true });
+        stepIndex++;
+        
+        // Show tried methods analysis
+        if (plan.methodsTried.length > 0) {
+          await narrator.addAnalysis(
+            `📊 วิธีที่เคยลอง: ${plan.methodsTried.join(", ")}\n` +
+            `💡 AI เลือกวิธีใหม่: ${plan.nextMethod} (${plan.reason})`
+          );
+        }
+        
+        // Step 2: Execute retry
+        await narrator.startPhase("exploit", `⚡ Retry ด้วย ${plan.nextMethod}`);
+        const stepRetry = await narrator.addStep(`กำลัง retry ด้วย ${plan.nextMethod}`);
+        const s2 = Date.now();
+        
+        const result = await retryDomain(domain, plan.nextMethod);
+        
+        const retryMs = Date.now() - s2;
+        await narrator.updateStep(stepRetry, result.success ? "done" : "failed",
+          result.success
+            ? `สำเร็จ! ${result.details || ""}`
+            : `ล้มเหลว: ${result.error || "unknown"}`,
+          retryMs
+        );
+        timings.push({ step: `Retry ${plan.nextMethod}`, ms: retryMs, ok: result.success });
+        stepIndex++;
+        
+        // Step 3: Summary
+        await narrator.complete(result.success,
+          result.success
+            ? `Retry สำเร็จด้วย ${result.method}! ${result.details || ""}`
+            : `Retry ล้มเหลว (${result.method}): ${result.error || "ไม่ทราบสาเหตุ"}`
+        );
+        
+        await saveAttackLog({
+          targetDomain: domain,
+          method: `retry_${result.method}`,
+          success: result.success,
+          durationMs: result.durationMs,
+          aiReasoning: `Retry: ${result.details || result.error || ""}`,
+        });
+        
+        if (!result.success) {
+          await sendAlternativeAttackSuggestions(config, chatId, domain, `retry_${result.method}`, {
+            errorMessage: result.error || "Retry failed",
+          });
+        }
+      }
+
+    } else if (method === "retry_all_failed") {
+      // ═══ NARRATED BATCH RETRY ═══
+      const narrator = new TelegramNarrator({
+        domain: "Batch Retry",
+        method: "retry_all_failed",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
+      
+      // Step 1: Analyze all failed domains
+      await narrator.startPhase("recon", "🔍 วิเคราะห์ failed domains ทั้งหมด");
+      const stepScan = await narrator.addStep("ดึงรายการ failed domains");
+      const s1 = Date.now();
+      
+      const { retryAllFailed, getRetryStats } = await import("./auto-retry-engine");
+      const stats = await getRetryStats();
+      
+      await narrator.updateStep(stepScan, "done",
+        `พบ ${stats.totalFailed} domains ล้มเหลว, retry ได้ ${stats.retriable}, หมดวิธี ${stats.exhausted}`,
+        Date.now() - s1
+      );
+      timings.push({ step: "Scan failed domains", ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      
+      if (stats.retriable === 0) {
+        await narrator.complete(false, "ไม่มี domain ที่ retry ได้ — ทุก domain ลองทุกวิธีแล้ว");
+        
+        await saveAttackLog({
+          targetDomain: "batch_retry",
+          method: "retry_all_failed",
+          success: false,
+          durationMs: Date.now() - s1,
+          aiReasoning: `No retriable domains: ${stats.totalFailed} total, ${stats.exhausted} exhausted`,
+        });
+      } else {
+        // Step 2: Execute batch retry with progress
+        await narrator.startPhase("exploit", `⚡ Retry ${stats.retriable} domains`);
+        
+        let succeeded = 0;
+        let failed = 0;
+        
+        const batchResult = await retryAllFailed({
+          maxRetries: 20,
+          onProgress: async (current, total, result) => {
+            if (result.success) succeeded++;
+            else failed++;
+            
+            const icon = result.success ? "✅" : "❌";
+            const detail = result.success
+              ? (result.details || "สำเร็จ").substring(0, 50)
+              : (result.error || "ล้มเหลว").substring(0, 50);
+            
+            const stepLabel = `${icon} ${result.domain} (${result.method})`;
+            const stepIdx = await narrator.addStep(stepLabel);
+            await narrator.updateStep(stepIdx, result.success ? "done" : "failed",
+              detail,
+              result.durationMs
+            );
+            
+            timings.push({
+              step: `${result.domain} (${result.method})`,
+              ms: result.durationMs,
+              ok: result.success,
+            });
+            stepIndex++;
+          },
+        });
+        
+        // Step 3: Summary
+        const totalMs = Date.now() - s1;
+        const summaryText = `Retry ${batchResult.retried} domains: ` +
+          `${batchResult.succeeded} สำเร็จ, ${batchResult.failed} ล้มเหลว, ` +
+          `${batchResult.skipped} ข้าม (หมดวิธี)`;
+        
+        await narrator.complete(batchResult.succeeded > 0, summaryText);
+        
+        await saveAttackLog({
+          targetDomain: "batch_retry",
+          method: "retry_all_failed",
+          success: batchResult.succeeded > 0,
+          durationMs: totalMs,
+          aiReasoning: summaryText,
+        });
+      }
+
     }
   } catch (error: any) {
     // Skip if already handled by timeout

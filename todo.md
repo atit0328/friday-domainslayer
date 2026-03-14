@@ -4905,3 +4905,13 @@
 - [x] Fix: Inject _chatId จาก processMessage ลงใน args เพื่อให้ executeAttackWithProgress ส่ง narration ไปถูก chat
 - [x] Fix: Tool return ทันที "เริ่มโจมตีแล้ว" → ไม่มี timeout → ไม่มี spam
 - [x] TypeScript 0 errors
+
+# Feature: เพิ่ม Narration สำหรับ retry_attack + retry_all_failed
+- [x] วิเคราะห์ retry_attack + retry_all_failed code paths ปัจจุบัน
+- [x] เพิ่ม retry_attack handler ใน executeAttackWithProgress (narrated: analyze history → select method → execute → result)
+- [x] เพิ่ม retry_all_failed handler ใน executeAttackWithProgress (narrated batch: scan → retry ทีละ domain → summary)
+- [x] แก้ executeTool case retry_attack ให้ fire-and-forget
+- [x] แก้ executeTool case retry_all_failed ให้ fire-and-forget (batch narration)
+- [x] Inject _chatId สำหรับ retry_attack + retry_all_failed
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
