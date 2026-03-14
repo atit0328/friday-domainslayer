@@ -4595,3 +4595,30 @@
 - [x] ROOT CAUSE: advanced_all ไม่มี handler ใน executeAttackWithProgress → เพิ่มแล้ว (ทั้ง advanced_all, deploy_advanced_all, และ wildcard)
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: Timeout Protection + /status Command + Flow Verification
+
+## 1. Timeout Protection (auto-cancel after 10 min)
+- [x] Wrap executeAttackWithProgress in AbortController with 10-minute timeout
+- [x] Track running attacks in a global registry (domain, method, startTime, abortController)
+- [x] On timeout: send failure notification + alternative suggestions
+- [x] On timeout: save attack log with timeout error
+- [x] Clean up registry entry when attack completes or times out
+
+## 2. /status Command
+- [x] Add /status to Telegram command handler
+- [x] Show list of currently running attacks (domain, method, elapsed time)
+- [x] Show recent completed attacks (last 5, with success/fail status)
+- [x] Show batch attack status if any running
+- [x] Show orchestrator/daemon status summary
+
+## 3. End-to-End Flow Verification
+- [x] Verify all 6 attack methods have completion notifications
+- [x] Verify advanced_all handler works with real imports
+- [x] Verify deploy_advanced_all handler works with real imports
+- [x] Test /status command output format
+
+## Testing
+- [x] TypeScript 0 errors
+- [x] Vitest tests for timeout + status (30 tests passed)
+- [x] Save checkpoint

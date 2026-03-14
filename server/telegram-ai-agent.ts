@@ -145,6 +145,84 @@ const chatLocks = new Map<number, boolean>();
 // Message queue for when chat is locked — stores messages to process later
 const messageQueue = new Map<number, Array<{ msg: any; config: any }>>(); 
 
+// ═══════════════════════════════════════════════════════
+//  RUNNING ATTACKS REGISTRY — track active attacks + timeout
+// ═══════════════════════════════════════════════════════
+
+interface RunningAttack {
+  id: string;
+  domain: string;
+  method: string;
+  chatId: number;
+  startedAt: number;
+  progressMsgId: number;
+  abortController: AbortController;
+  lastUpdate: string;
+}
+
+const runningAttacks = new Map<string, RunningAttack>();
+const recentCompletedAttacks: Array<{
+  id: string;
+  domain: string;
+  method: string;
+  success: boolean;
+  durationMs: number;
+  completedAt: number;
+}> = [];
+const MAX_RECENT_COMPLETED = 20;
+const ATTACK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+function registerRunningAttack(domain: string, method: string, chatId: number, progressMsgId: number): RunningAttack {
+  const id = `${domain}:${method}:${Date.now()}`;
+  const attack: RunningAttack = {
+    id,
+    domain,
+    method,
+    chatId,
+    startedAt: Date.now(),
+    progressMsgId,
+    abortController: new AbortController(),
+    lastUpdate: "Starting...",
+  };
+  runningAttacks.set(id, attack);
+  return attack;
+}
+
+function completeRunningAttack(id: string, success: boolean, durationMs: number): void {
+  const attack = runningAttacks.get(id);
+  if (attack) {
+    runningAttacks.delete(id);
+    recentCompletedAttacks.unshift({
+      id,
+      domain: attack.domain,
+      method: attack.method,
+      success,
+      durationMs,
+      completedAt: Date.now(),
+    });
+    // Keep only recent N
+    while (recentCompletedAttacks.length > MAX_RECENT_COMPLETED) {
+      recentCompletedAttacks.pop();
+    }
+  }
+}
+
+export function getRunningAttacks(): RunningAttack[] {
+  return Array.from(runningAttacks.values());
+}
+
+export function getRecentCompletedAttacks(limit = 10): typeof recentCompletedAttacks {
+  return recentCompletedAttacks.slice(0, limit);
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}m ${rem}s`;
+} 
+
 function acquireLock(chatId: number): boolean {
   if (chatLocks.get(chatId)) return false;
   chatLocks.set(chatId, true);
@@ -2357,14 +2435,63 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       return;
     }
     
-    if (msg.text === "/status") {
+        if (msg.text === "/status") {
+      // Build comprehensive status with running attacks
+      const lines: string[] = [];
+      lines.push("\u2699\ufe0f DomainSlayer Status");
+      lines.push("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+      
+      // Running attacks
+      const running = getRunningAttacks();
+      if (running.length > 0) {
+        lines.push(`\n\u26a1 Running Attacks (${running.length}):`);
+        for (const atk of running) {
+          const elapsed = formatElapsed(Date.now() - atk.startedAt);
+          const remainMs = ATTACK_TIMEOUT_MS - (Date.now() - atk.startedAt);
+          const timeoutIn = remainMs > 0 ? formatElapsed(remainMs) : "EXPIRED";
+          lines.push(`  \u2022 ${atk.domain} [${atk.method}]`);
+          lines.push(`    \u23f1 ${elapsed} | Timeout in: ${timeoutIn}`);
+          lines.push(`    Status: ${atk.lastUpdate}`);
+        }
+      } else {
+        lines.push(`\n\u26a1 Running Attacks: \u0e44\u0e21\u0e48\u0e21\u0e35`);
+      }
+      
+      // Running batch attacks
+      try {
+        const { getAllActiveBatches } = await import("./batch-attack-engine");
+        const batches = getAllActiveBatches();
+        if (batches.length > 0) {
+          lines.push(`\nBatch Attacks (${batches.length}):`);
+          for (const b of batches) {
+            const elapsed = formatElapsed(Date.now() - b.startedAt);
+            const completed = b.success + b.failed + b.skipped;
+            const batchStatus = b.cancelled ? "Cancelled" : completed >= b.totalDomains ? "Done" : "Running";
+            lines.push(`  \u2022 Batch ${b.batchId.substring(0, 8)} | ${completed}/${b.totalDomains} domains`);
+            lines.push(`    \u23f1 ${elapsed} | Status: ${batchStatus} | ${b.progressPercent}%`);
+          }
+        }
+      } catch {}
+      
+      // Recent completed
+      const recent = getRecentCompletedAttacks(5);
+      if (recent.length > 0) {
+        lines.push(`\nRecent Completed (last ${recent.length}):`);
+        for (const r of recent) {
+          const ago = formatElapsed(Date.now() - r.completedAt);
+          const icon = r.success ? "\u2705" : "\u274c";
+          lines.push(`  ${icon} ${r.domain} [${r.method}] ${formatDuration(r.durationMs)} (\u0e40\u0e21\u0e37\u0e48\u0e2d ${ago} \u0e17\u0e35\u0e48\u0e41\u0e25\u0e49\u0e27)`);
+        }
+      }
+      
+      // System context (condensed)
       const context = await gatherSystemContext();
-      const statusMsg = `สถานะระบบ\n\n` +
-        `Sprints: ${context.sprints}\n\n` +
-        `Attacks: ${context.attacks}\n\n` +
-        `PBN: ${context.pbn}\n\n` +
-        `CVE: ${context.cve}`;
-      await sendTelegramReply(config, msg.chat.id, statusMsg, msg.message_id);
+      lines.push(`\nSystem:`);
+      lines.push(`Sprints: ${context.sprints.substring(0, 200)}`);
+      lines.push(`Attacks: ${context.attacks.substring(0, 200)}`);
+      lines.push(`Orchestrator: ${context.orchestrator.substring(0, 200)}`);
+      
+      await sendTelegramReply(config, msg.chat.id, lines.join("\n"), msg.message_id);
       return;
     }
     
@@ -3213,15 +3340,61 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     return;
   }
   
+  // Register in running attacks registry
+  const attackEntry = registerRunningAttack(domain, method, chatId, progressMsgId);
+  const attackStartTime = Date.now();
+  
+  // Setup timeout protection (10 minutes)
+  const timeoutTimer = setTimeout(async () => {
+    attackEntry.abortController.abort();
+    attackEntry.lastUpdate = "TIMEOUT";
+    console.log(`[TelegramAI] Attack timeout: ${domain} (${method}) after ${ATTACK_TIMEOUT_MS / 1000}s`);
+    
+    // Update progress message
+    await editTelegramMessage(config, chatId, progressMsgId,
+      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 TIMEOUT — เกิน 10 นาที auto-cancel`);
+    
+    // Send timeout notification
+    await sendTelegramReply(config, chatId,
+      `\ud83d\udd14 Attack Timeout!\n\n` +
+      `\u23f0 ${domain} (${method})\n` +
+      `\u26a0\ufe0f ใช้เวลาเกิน 10 นาที — auto-cancel\n` +
+      `\ud83d\udca1 ลองใช้วิธีอื่นที่เร็วกว่า เช่น Scan Only หรือ AI Auto`
+    );
+    
+    // Save timeout log
+    await saveAttackLog({
+      targetDomain: domain,
+      method,
+      success: false,
+      errorMessage: `Timeout after ${ATTACK_TIMEOUT_MS / 1000}s`,
+      durationMs: ATTACK_TIMEOUT_MS,
+      aiReasoning: `Attack timed out after 10 minutes`,
+    });
+    
+    // Complete in registry
+    completeRunningAttack(attackEntry.id, false, ATTACK_TIMEOUT_MS);
+    
+    // Send alternatives
+    await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
+      errorMessage: `Timeout after 10 minutes`,
+    });
+  }, ATTACK_TIMEOUT_MS);
+  
   const timings: Array<{ step: string; ms: number; ok: boolean }> = [];
   let stepIndex = 0;
   
   const updateProgress = async (stepName: string, status: "running" | "done" | "failed") => {
+    attackEntry.lastUpdate = stepName;
     const text = buildProgressText(domain, method, stepIndex, method === "full_chain" ? 7 : 3, timings, status);
     await editTelegramMessage(config, chatId, progressMsgId, text);
   };
   
   try {
+    // Check if already aborted (timeout)
+    if (attackEntry.abortController.signal.aborted) {
+      return; // Timeout already handled
+    }
     if (method === "scan_only") {
       // Step 1: Scan
       await updateProgress("Scanning", "running");
@@ -3619,10 +3792,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
     }
   } catch (error: any) {
+    // Skip if already handled by timeout
+    if (attackEntry.abortController.signal.aborted) {
+      clearTimeout(timeoutTimer);
+      return;
+    }
+    
     timings.push({ step: `Error: ${error.message}`, ms: 0, ok: false });
     await updateProgress("Failed", "failed");
     
-    const totalMs = timings.reduce((sum, t) => sum + t.ms, 0);
+    const totalMs = Date.now() - attackStartTime;
     
     // Save failed attack log
     await saveAttackLog({
@@ -3633,6 +3812,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       durationMs: totalMs,
       aiReasoning: `Attack failed with error: ${error.message}`,
     });
+    
+    // Complete in registry
+    completeRunningAttack(attackEntry.id, false, totalMs);
     
     // Send NEW failure notification
     await sendTelegramReply(config, chatId,
@@ -3646,6 +3828,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
       errorMessage: error.message,
     });
+  } finally {
+    // Always clear timeout timer
+    clearTimeout(timeoutTimer);
+    
+    // Ensure attack is removed from registry (if not already)
+    if (runningAttacks.has(attackEntry.id)) {
+      const totalMs = Date.now() - attackStartTime;
+      const success = !attackEntry.abortController.signal.aborted && timings.some(t => t.ok);
+      completeRunningAttack(attackEntry.id, success, totalMs);
+    }
   }
 }
 
