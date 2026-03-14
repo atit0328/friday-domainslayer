@@ -4681,3 +4681,12 @@
 - [x] Deployed version is OLD code without /status, /cancel, advanced_all handlers
 - [x] Root cause: production server (old code) consuming messages. Need to Publish new version
 - [ ] Verify after Publish: bot responds to /status, /cancel, and text messages
+
+# Feature: Attack Progress Updates & ETA Estimation
+- [x] Add ETA estimation per attack method (scan ~1-2min, redirect ~3-5min, full_chain ~5-8min, agentic_auto ~5-10min, advanced_all ~3-7min)
+- [x] Add periodic progress polling for agentic_auto (every 30s update with elapsed/remaining time)
+- [x] Add progress bar/percentage updates during long-running attacks
+- [x] Show elapsed time + estimated remaining time in progress messages
+- [x] Ensure completion notification is ALWAYS sent (even if attack fails silently)
+- [x] Add heartbeat mechanism to detect stalled attacks and send timeout warning
+- [x] Write vitest tests for ETA/progress functions (19 tests passed)
