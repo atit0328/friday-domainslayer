@@ -66,6 +66,7 @@ import { telegramAiRouter } from "./routers/telegram-ai";
 import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter, seoHomepageRouter, contentSpinnerRouter, autoPostsRouter } from "./routers/cloaking-seo";
 import { wpThemesRouter } from "./routers/wp-themes";
 import { attackDashboardRouter } from "./routers/attack-dashboard";
+import { batchAttackRouter } from "./routers/batch-attack";
 
 export const appRouter = router({
   system: systemRouter,
@@ -232,6 +233,9 @@ export const appRouter = router({
 
   // Attack Dashboard (unified analytics)
   attackDashboard: attackDashboardRouter,
+
+  // Batch Attack (multi-domain simultaneous attacks)
+  batchAttack: batchAttackRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

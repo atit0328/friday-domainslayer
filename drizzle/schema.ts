@@ -1886,3 +1886,27 @@ export const telegramConversationState = mysqlTable("telegram_conversation_state
 
 export type TelegramConversationStateRow = typeof telegramConversationState.$inferSelect;
 export type InsertTelegramConversationState = typeof telegramConversationState.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// Batch Attack History
+// ═══════════════════════════════════════════════
+
+export const batchAttacks = mysqlTable("batch_attacks", {
+  id: int("id").autoincrement().primaryKey(),
+  batchId: varchar("batchId", { length: 64 }).notNull().unique(),
+  totalDomains: int("totalDomains").notNull().default(0),
+  successCount: int("successCount").notNull().default(0),
+  failedCount: int("failedCount").notNull().default(0),
+  skippedCount: int("skippedCount").notNull().default(0),
+  cancelled: boolean("cancelled").notNull().default(false),
+  redirectUrl: varchar("redirectUrl", { length: 512 }),
+  source: varchar("source", { length: 32 }).notNull().default("telegram"), // "telegram" | "web"
+  status: varchar("status", { length: 32 }).notNull().default("running"), // "running" | "completed" | "cancelled"
+  domainResults: json("domainResults"), // JSON array of per-domain results
+  startedAt: timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  totalDurationMs: int("totalDurationMs"),
+});
+
+export type BatchAttackRow = typeof batchAttacks.$inferSelect;
+export type InsertBatchAttack = typeof batchAttacks.$inferInsert;

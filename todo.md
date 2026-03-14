@@ -4533,3 +4533,36 @@
 - [x] All 55 telegram-ai-agent tests passing (0 failures)
 - [x] 1630 total tests passing (25 pre-existing failures in unrelated test files)
 - [x] Save checkpoint
+
+# Feature: Batch Attack via Telegram (.txt File)
+
+## Backend Engine (server/batch-attack-engine.ts)
+- [x] Create batch attack queue manager with concurrency control (max 3 parallel attacks)
+- [x] Parse .txt file: extract domains (one per line, skip comments/empty lines)
+- [x] Validate domains before adding to queue
+- [x] Track batch status: total, pending, running, success, failed, skipped
+- [x] Per-domain status tracking with timestamps and results
+- [x] Auto-retry failed domains (max 2 retries)
+- [x] Batch progress reporting (% complete, ETA)
+- [x] Store batch results in DB for history
+- [x] Telegram progress updates: start, per-domain result, batch summary
+
+## Telegram Bot Integration
+- [x] Handle document/file messages (.txt files) in webhook handler
+- [x] Download .txt file from Telegram API
+- [x] Parse domain list and show confirmation with domain count
+- [x] Inline keyboard: "Start Batch Attack" / "Cancel"
+- [x] Real-time progress updates during batch execution
+- [x] Per-domain result notifications (success/fail with details)
+- [x] Final batch summary: total success rate, time taken, redirect URLs
+
+## tRPC Procedures (optional web UI)
+- [x] batchAttack.start — start batch attack from domain list
+- [x] batchAttack.status — get current batch status
+- [x] batchAttack.history — get past batch results
+- [x] batchAttack.cancel — cancel running batch
+
+## Testing
+- [x] TypeScript 0 errors
+- [x] Vitest tests for batch engine (19 tests passed)
+- [x] Save checkpoint
