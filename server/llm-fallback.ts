@@ -2,9 +2,9 @@
  * LLM Fallback Provider System
  * 
  * Priority order:
- * 1. Anthropic API (Claude Opus 4 — smartest, primary)
+ * 1. Built-in Manus LLM (claude-opus-4-5-20251101, primary — free)
  * 2. OpenAI API (GPT-4o fallback)
- * 3. Built-in Manus LLM (last resort)
+ * 3. Anthropic API (Claude Opus 4, last resort)
  * 
  * Auto-detects quota exhaustion (412/429) and switches to next provider.
  * Tracks provider health and avoids repeatedly hitting exhausted providers.
@@ -55,6 +55,10 @@ function isQuotaError(error: string): boolean {
     "insufficient_quota",
     "billing_hard_limit_reached",
     "overloaded",
+    "credit balance is too low",
+    "credit balance",
+    "purchase credits",
+    "400 Bad Request",
   ];
   const lower = error.toLowerCase();
   return quotaPatterns.some(p => lower.includes(p.toLowerCase()));
@@ -321,10 +325,10 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
 
 const providers: ProviderConfig[] = [
   {
-    name: "anthropic",
-    label: "Anthropic (Claude Opus 4)",
-    isAvailable: () => !!ENV.anthropicApiKey,
-    invoke: invokeAnthropic,
+    name: "builtin",
+    label: "Built-in Manus LLM",
+    isAvailable: () => !!ENV.forgeApiKey,
+    invoke: invokeBuiltin,
   },
   {
     name: "openai",
@@ -333,10 +337,10 @@ const providers: ProviderConfig[] = [
     invoke: invokeOpenAI,
   },
   {
-    name: "builtin",
-    label: "Built-in Manus LLM",
-    isAvailable: () => !!ENV.forgeApiKey,
-    invoke: invokeBuiltin,
+    name: "anthropic",
+    label: "Anthropic (Claude Opus 4)",
+    isAvailable: () => !!ENV.anthropicApiKey,
+    invoke: invokeAnthropic,
   },
 ];
 

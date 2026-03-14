@@ -24,6 +24,26 @@ vi.mock("./telegram-notifier", () => ({
   })),
 }));
 
+// Mock DB module (conversation memory now uses DB)
+vi.mock("./db", () => ({
+  getDb: vi.fn(() => null), // Return null DB so it falls back to in-memory cache
+}));
+
+// Mock drizzle schema
+vi.mock("../drizzle/schema", () => ({
+  telegramConversations: {},
+  telegramConversationState: {},
+}));
+
+// Mock drizzle-orm
+vi.mock("drizzle-orm", () => ({
+  eq: vi.fn(),
+  desc: vi.fn(),
+  gte: vi.fn(),
+  lt: vi.fn(),
+  sql: vi.fn(),
+}));
+
 // Mock env for multi-chat support
 vi.mock("./_core/env", () => ({
   ENV: {
@@ -55,6 +75,7 @@ import {
   startDailySummaryScheduler,
   stopDailySummaryScheduler,
   isDailySummarySchedulerActive,
+  resetDedupState,
 } from "./telegram-ai-agent";
 import { invokeLLM } from "./_core/llm";
 import { fetchWithPoolProxy } from "./proxy-pool";
@@ -65,6 +86,7 @@ const mockFetch = vi.mocked(fetchWithPoolProxy);
 describe("Telegram AI Chat Agent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDedupState(); // Clear all dedup/lock state between tests
     clearHistory(0);
     clearHistory(12345);
   });

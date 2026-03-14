@@ -123,31 +123,165 @@ function releaseLock(chatId: number): void {
 }
 
 // ═══════════════════════════════════════════════════════
-//  CONVERSATION MEMORY (in-memory, per chat)
+//  CONVERSATION MEMORY (DB-backed, persistent 1 week)
 // ═══════════════════════════════════════════════════════
 
-const conversationHistory = new Map<number, ConversationMessage[]>();
-const MAX_HISTORY = 30; // Keep last 30 messages per chat for better context
+const MAX_HISTORY = 40; // Keep last 40 messages per chat for better context
+const RETENTION_DAYS = 7; // Keep conversation history for 1 week
 
-function addToHistory(chatId: number, role: "user" | "assistant" | "system", content: string, toolCalls?: { name: string; result: string }[]) {
-  if (!conversationHistory.has(chatId)) {
-    conversationHistory.set(chatId, []);
+// In-memory cache to reduce DB reads (refreshed from DB on cold start)
+const historyCache = new Map<number, ConversationMessage[]>();
+let lastCleanup = 0;
+
+async function addToHistory(chatId: number, role: "user" | "assistant" | "system", content: string, toolCalls?: { name: string; result: string }[]) {
+  // Update in-memory cache
+  if (!historyCache.has(chatId)) {
+    historyCache.set(chatId, []);
   }
-  const history = conversationHistory.get(chatId)!;
-  history.push({ role, content, timestamp: new Date(), toolCalls });
-  // Trim to max
-  if (history.length > MAX_HISTORY) {
-    history.splice(0, history.length - MAX_HISTORY);
+  const cache = historyCache.get(chatId)!;
+  cache.push({ role, content, timestamp: new Date(), toolCalls });
+  if (cache.length > MAX_HISTORY) {
+    cache.splice(0, cache.length - MAX_HISTORY);
+  }
+  
+  // Persist to DB (fire-and-forget, don't block)
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { telegramConversations } = await import("../drizzle/schema");
+      await db.insert(telegramConversations).values({
+        chatId,
+        role,
+        content: content || "",
+        toolCalls: toolCalls ? JSON.stringify(toolCalls) : null,
+      });
+      
+      // Track last active domain if message contains a domain
+      const domainMatch = content?.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/i);
+      if (domainMatch && role === "user") {
+        await updateLastActiveDomain(chatId, domainMatch[0]);
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to persist message to DB: ${e.message}`);
+  }
+  
+  // Periodic cleanup (once per hour)
+  if (Date.now() - lastCleanup > 3600_000) {
+    lastCleanup = Date.now();
+    cleanupOldMessages().catch(() => {});
   }
 }
 
-function getHistory(chatId: number): ConversationMessage[] {
-  return conversationHistory.get(chatId) || [];
+async function getHistory(chatId: number): Promise<ConversationMessage[]> {
+  // Try cache first
+  if (historyCache.has(chatId) && historyCache.get(chatId)!.length > 0) {
+    return historyCache.get(chatId)!;
+  }
+  
+  // Load from DB (cold start or cache miss)
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { telegramConversations } = await import("../drizzle/schema");
+      const { eq, desc, gte } = await import("drizzle-orm");
+      
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
+      
+      const rows = await db.select()
+        .from(telegramConversations)
+        .where(eq(telegramConversations.chatId, chatId))
+        .orderBy(desc(telegramConversations.createdAt))
+        .limit(MAX_HISTORY);
+      
+      const messages: ConversationMessage[] = rows.reverse().map(r => ({
+        role: r.role as "user" | "assistant" | "system",
+        content: r.content || "",
+        timestamp: r.createdAt,
+        toolCalls: r.toolCalls ? (typeof r.toolCalls === "string" ? JSON.parse(r.toolCalls) : r.toolCalls) : undefined,
+      }));
+      
+      historyCache.set(chatId, messages);
+      return messages;
+    }
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to load history from DB: ${e.message}`);
+  }
+  
+  return [];
 }
 
-export function clearHistory(chatId: number): void {
-  conversationHistory.delete(chatId);
+export async function clearHistory(chatId: number): Promise<void> {
+  historyCache.delete(chatId);
   conversationState.delete(chatId);
+  
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { telegramConversations, telegramConversationState } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.delete(telegramConversations).where(eq(telegramConversations.chatId, chatId));
+      await db.delete(telegramConversationState).where(eq(telegramConversationState.chatId, chatId));
+    }
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to clear history from DB: ${e.message}`);
+  }
+}
+
+async function cleanupOldMessages(): Promise<void> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { telegramConversations } = await import("../drizzle/schema");
+      const { lt } = await import("drizzle-orm");
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - RETENTION_DAYS);
+      await db.delete(telegramConversations).where(lt(telegramConversations.createdAt, cutoff));
+      console.log(`[TelegramAI] Cleaned up messages older than ${RETENTION_DAYS} days`);
+    }
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Cleanup failed: ${e.message}`);
+  }
+}
+
+async function updateLastActiveDomain(chatId: number, domain: string): Promise<void> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { telegramConversationState: stateTable } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const existing = await db.select().from(stateTable).where(eq(stateTable.chatId, chatId)).limit(1);
+      if (existing.length > 0) {
+        await db.update(stateTable).set({ lastActiveDomain: domain }).where(eq(stateTable.chatId, chatId));
+      } else {
+        await db.insert(stateTable).values({ chatId, state: "idle", lastActiveDomain: domain });
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to update lastActiveDomain: ${e.message}`);
+  }
+}
+
+async function getLastActiveDomain(chatId: number): Promise<string | null> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (db) {
+      const { telegramConversationState: stateTable } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const rows = await db.select().from(stateTable).where(eq(stateTable.chatId, chatId)).limit(1);
+      return rows[0]?.lastActiveDomain || null;
+    }
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to get lastActiveDomain: ${e.message}`);
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -193,28 +327,64 @@ function clearConversationState(chatId: number): void {
  * Returns the response text if handled, or null if it should go to LLM.
  */
 async function handleWithConversationState(chatId: number, text: string): Promise<string | null> {
-  const state = getConversationState(chatId);
-  if (!state || !state.pendingAction) return null;
-  
   const lowerText = text.trim().toLowerCase();
   
-  // Handle "awaiting_domain" — user should type a domain
-  if (state.pendingAction === "awaiting_domain") {
-    // Check if it looks like a domain
-    const domainMatch = text.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/i);
-    if (domainMatch) {
-      const domain = domainMatch[0];
-      // Move to method selection via inline keyboard
+  // First check in-memory state for pending actions
+  const state = getConversationState(chatId);
+  if (state?.pendingAction) {
+    // Handle "awaiting_domain" — user should type a domain
+    if (state.pendingAction === "awaiting_domain") {
+      const domainMatch = text.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/i);
+      if (domainMatch) {
+        const domain = domainMatch[0];
+        const config = getTelegramConfig();
+        if (config) {
+          await sendAttackTypeKeyboard(config, chatId, domain);
+          clearConversationState(chatId);
+          return "__HANDLED_BY_KEYBOARD__";
+        }
+      }
+      // Not a domain — let LLM handle
+      clearConversationState(chatId);
+      return null;
+    }
+  }
+  
+  // Smart follow-up: detect commands that reference a previously discussed domain
+  // e.g., "scan ดูก่อน", "hack เลย", "โจมตีเลย", "redirect เลย"
+  const followUpPatterns = [
+    /^scan\s*(ดู|ได้|เลย|ก่อน|มัน|ไหม|อีก|ต่อ|ที)?/i,
+    /^hack\s*(มัน|เลย|ได้|ไหม|อีก|ต่อ|ที)?/i,
+    /^โจมตี\s*(มัน|เลย|ได้|ไหม|อีก|ต่อ|ที)?/i,
+    /^สแกน\s*(มัน|เลย|ได้|ไหม|อีก|ต่อ|ที)?/i,
+    /^redirect\s*(มัน|เลย|ได้|ไหม|อีก|ต่อ|ที)?/i,
+    /^วาง\s*redirect/i,
+    /^วาง\s*ไฟล์/i,
+  ];
+  
+  // Check if the message is a follow-up command WITHOUT a domain
+  const hasDomain = text.match(/([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}/i);
+  const isFollowUp = !hasDomain && followUpPatterns.some(p => p.test(lowerText));
+  
+  if (isFollowUp) {
+    // Try to get the last active domain from DB
+    const lastDomain = await getLastActiveDomain(chatId);
+    if (lastDomain) {
       const config = getTelegramConfig();
       if (config) {
-        await sendAttackTypeKeyboard(config, chatId, domain);
-        clearConversationState(chatId);
-        return "__HANDLED_BY_KEYBOARD__";
+        // Determine what type of action they want
+        if (/scan|สแกน/.test(lowerText)) {
+          // They want to scan — send attack type keyboard with scan pre-selected context
+          await sendAttackTypeKeyboard(config, chatId, lastDomain);
+          return "__HANDLED_BY_KEYBOARD__";
+        } else {
+          // General attack — show method options
+          await sendAttackTypeKeyboard(config, chatId, lastDomain);
+          return "__HANDLED_BY_KEYBOARD__";
+        }
       }
     }
-    // Not a domain — let LLM handle
-    clearConversationState(chatId);
-    return null;
+    // No last domain found — fall through to LLM (it will ask which domain)
   }
   
   return null;
@@ -1018,7 +1188,7 @@ Content: ${context.content}
 
 export async function processMessage(chatId: number, userMessage: string): Promise<string> {
   // Add to history
-  addToHistory(chatId, "user", userMessage);
+  await addToHistory(chatId, "user", userMessage);
   
   // Gather system context
   const context = await gatherSystemContext();
@@ -1029,7 +1199,13 @@ export async function processMessage(chatId: number, userMessage: string): Promi
   ];
   
   // Add conversation history (last N messages for context)
-  const history = getHistory(chatId);
+  const history = await getHistory(chatId);
+  
+  // Also inject lastActiveDomain into system prompt context
+  const lastDomain = await getLastActiveDomain(chatId);
+  if (lastDomain) {
+    messages[0].content += `\n\n[CONTEXT] โดเมนที่กำลังคุยอยู่: ${lastDomain} — ถ้า user พูดถึง "scan", "hack", "โจมตี" โดยไม่ระบุ domain ให้ใช้ domain นี้`;
+  }
   for (const msg of history.slice(0, -1)) {
     if (msg.role === "user" || msg.role === "assistant") {
       messages.push({ role: msg.role, content: msg.content });
@@ -1051,14 +1227,14 @@ export async function processMessage(chatId: number, userMessage: string): Promi
       });
     } catch (error: any) {
       const fallback = `ขอโทษ ระบบมีปัญหาชั่วคราว: ${error.message}`;
-      addToHistory(chatId, "assistant", fallback);
+      await addToHistory(chatId, "assistant", fallback);
       return fallback;
     }
     
     const choice = response.choices?.[0];
     if (!choice) {
       const fallback = "ไม่ได้รับคำตอบ";
-      addToHistory(chatId, "assistant", fallback);
+      await addToHistory(chatId, "assistant", fallback);
       return fallback;
     }
     
@@ -1099,7 +1275,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
     const content = typeof choice.message.content === "string"
       ? choice.message.content
       : "ได้ครับ";
-    addToHistory(chatId, "assistant", content);
+    await addToHistory(chatId, "assistant", content);
     return content;
   }
   
@@ -1112,11 +1288,11 @@ export async function processMessage(chatId: number, userMessage: string): Promi
     const content = typeof finalResponse.choices?.[0]?.message?.content === "string"
       ? finalResponse.choices[0].message.content
       : "ทำเสร็จแล้วครับ";
-    addToHistory(chatId, "assistant", content);
+    await addToHistory(chatId, "assistant", content);
     return content;
   } catch {
     const fallback = "ทำเสร็จแล้วครับ";
-    addToHistory(chatId, "assistant", fallback);
+    await addToHistory(chatId, "assistant", fallback);
     return fallback;
   }
 }
@@ -1192,6 +1368,15 @@ function splitMessage(text: string, maxLength: number): string[] {
 const processedUpdateIds = new Set<number>(); // Track processed update_ids to prevent duplicates
 let lastProcessedUpdateId = 0;
 
+/** Reset all dedup/lock state — for testing only */
+export function resetDedupState(): void {
+  processedUpdateIds.clear();
+  lastProcessedUpdateId = 0;
+  processedMessages.clear();
+  chatLocks.clear();
+  conversationState.clear();
+}
+
 function isUpdateProcessed(updateId: number): boolean {
   if (updateId <= lastProcessedUpdateId || processedUpdateIds.has(updateId)) return true;
   processedUpdateIds.add(updateId);
@@ -1265,7 +1450,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     }
     
     if (msg.text === "/clear") {
-      clearHistory(msg.chat.id);
+      await clearHistory(msg.chat.id);
       await sendTelegramReply(config, msg.chat.id, "ล้างประวัติแชทแล้วครับ", msg.message_id);
       return;
     }
@@ -1369,7 +1554,7 @@ export async function startTelegramPolling(): Promise<void> {
     await fetchWithPoolProxy(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ drop_pending_updates: false }),
+      body: JSON.stringify({ drop_pending_updates: true }),
       signal: AbortSignal.timeout(10000),
     }, { targetDomain: "api.telegram.org", timeout: 10000 });
     console.log("[TelegramAI] Cleared existing webhook before starting polling");

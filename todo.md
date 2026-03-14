@@ -4213,3 +4213,14 @@
 - [x] Add conversation state machine for follow-up understanding
 - [x] Improve system prompt: remove numbered list instructions
 - [x] Test all changes
+# Fix: Persistent Conversation Memory + Duplicate Replies (Round 3)
+
+- [x] Create DB table for telegram_conversation_history (persistent 1 week)
+- [x] Migrate from in-memory Map to DB-backed conversation history
+- [x] Auto-cleanup messages older than 7 days
+- [x] Fix duplicate replies: graceful shutdown handler + resetDedupState + deleteWebhook with drop_pending_updates
+- [x] Improve context awareness: bot remembers lastActiveDomain from DB
+- [x] Handle follow-up like "Scan ดูก่อน" when domain was mentioned earlier
+- [x] Switch LLM back to Built-in Manus (free) as primary, Anthropic as fallback
+- [x] Add credit_balance error pattern to quota detection for proper fallback
+- [x] Test all changes with vitest (50/50 passed)

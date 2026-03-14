@@ -1855,3 +1855,34 @@ export const wpThemes = mysqlTable("wp_themes", {
 });
 export type WpThemeRow = typeof wpThemes.$inferSelect;
 export type InsertWpTheme = typeof wpThemes.$inferInsert;
+
+// ═══════════════════════════════════════════════
+// Telegram AI: Persistent Conversation History
+// ═══════════════════════════════════════════════
+export const telegramConversations = mysqlTable("telegram_conversations", {
+  id: int("id").autoincrement().primaryKey(),
+  chatId: bigint("chatId", { mode: "number" }).notNull(),
+  role: mysqlEnum("role", ["system", "user", "assistant", "tool"]).notNull(),
+  content: text("content"),                    // Message text content
+  toolCalls: json("toolCalls"),                // For assistant tool_calls
+  toolCallId: varchar("toolCallId", { length: 128 }),  // For tool results
+  name: varchar("name", { length: 128 }),      // Tool name for tool results
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type TelegramConversationRow = typeof telegramConversations.$inferSelect;
+export type InsertTelegramConversation = typeof telegramConversations.$inferInsert;
+
+// Conversation state for tracking pending actions (e.g., awaiting domain input)
+export const telegramConversationState = mysqlTable("telegram_conversation_state", {
+  id: int("id").autoincrement().primaryKey(),
+  chatId: bigint("chatId", { mode: "number" }).notNull().unique(),
+  state: varchar("state", { length: 64 }).notNull(),  // "idle", "awaiting_domain", "awaiting_attack_method"
+  pendingDomain: varchar("pendingDomain", { length: 255 }),
+  pendingMethod: varchar("pendingMethod", { length: 64 }),
+  lastActiveDomain: varchar("lastActiveDomain", { length: 255 }),  // Last domain discussed
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TelegramConversationStateRow = typeof telegramConversationState.$inferSelect;
+export type InsertTelegramConversationState = typeof telegramConversationState.$inferInsert;

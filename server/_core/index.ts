@@ -109,3 +109,21 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
+
+// Graceful shutdown — stop polling on tsx watch restart to prevent duplicate instances
+process.on("SIGTERM", () => {
+  console.log("[Server] SIGTERM received, cleaning up...");
+  import("../telegram-ai-agent").then(m => {
+    m.stopTelegramPolling();
+    m.stopDailySummaryScheduler();
+  }).catch(() => {});
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  console.log("[Server] SIGINT received, cleaning up...");
+  import("../telegram-ai-agent").then(m => {
+    m.stopTelegramPolling();
+    m.stopDailySummaryScheduler();
+  }).catch(() => {});
+  process.exit(0);
+});
