@@ -4705,3 +4705,10 @@
 - [x] Reduce tool call rounds from 3→2
 - [x] Add AbortController timeout to all 3 LLM providers
 - [x] Write vitest tests (21 tests passed)
+
+# Switch to Anthropic Claude API as Primary LLM
+- [x] Update ANTHROPIC_API_KEY with user's API key
+- [x] Change LLM fallback order to prioritize Anthropic Claude directly
+- [x] Use Claude Opus 4.5 for heavy tasks, Sonnet for chat (via Anthropic API)
+- [x] Test bot responses with new API key (API call confirmed working)
+- [x] Write vitest tests (15 tests passed + 2 API key validation tests)

@@ -2,9 +2,9 @@
  * LLM Fallback Provider System
  * 
  * Priority order:
- * 1. Built-in Manus LLM (claude-opus-4-5-20251101, primary — free)
- * 2. OpenAI API (GPT-4o fallback)
- * 3. Anthropic API (Claude Opus 4, last resort)
+ * 1. Anthropic API (Claude Sonnet 4 for chat, Opus 4.5 for heavy tasks — primary)
+ * 2. Built-in Manus LLM (fallback)
+ * 3. OpenAI API (GPT-4o last resort)
  * 
  * Auto-detects quota exhaustion (412/429) and switches to next provider.
  * Tracks provider health and avoids repeatedly hitting exhausted providers.
@@ -276,10 +276,19 @@ function convertToAnthropicMessages(messages: Message[]): { system: string; mess
 async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
   const { system, messages } = convertToAnthropicMessages(params.messages);
 
+  // Smart model selection: Sonnet for chat (fast), Opus for heavy tasks (smart)
+  const isChatMode = (params.maxTokens || params.max_tokens || 32768) <= 2000;
+  const model = isChatMode ? "claude-sonnet-4-20250514" : "claude-opus-4-5-20251101";
+  const maxTokens = isChatMode ? 2000 : 16384;
+  
+  console.log(`[Anthropic] Using ${model} (${isChatMode ? 'chat' : 'heavy'} mode)`);
+
   const payload: Record<string, unknown> = {
-    model: "claude-opus-4-6",
-    max_tokens: 16384,
+    model,
+    max_tokens: maxTokens,
     messages,
+    // Add thinking for heavy tasks with Opus
+    ...(isChatMode ? {} : { thinking: { type: "enabled", budget_tokens: 10240 } }),
   };
 
   if (system) payload.system = system;
@@ -292,9 +301,10 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
     }));
   }
 
-  // Add 30s timeout for Anthropic
+  // Timeout: 30s for chat, 90s for heavy tasks with thinking
+  const timeoutMs = isChatMode ? 30_000 : 90_000;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   
   let response: Response;
   try {
@@ -339,7 +349,7 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
   return {
     id: anthropicResult.id || `anthropic-${Date.now()}`,
     created: Math.floor(Date.now() / 1000),
-    model: anthropicResult.model || "claude-opus-4-6",
+    model: anthropicResult.model || model,
     choices: [{
       index: 0,
       message: {
@@ -357,9 +367,15 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
   };
 }
 
-// ─── Provider Registry ───
+// ─── Provider Registry (Anthropic first!) ───
 
 const providers: ProviderConfig[] = [
+  {
+    name: "anthropic",
+    label: "Anthropic Claude (Direct API)",
+    isAvailable: () => !!ENV.anthropicApiKey,
+    invoke: invokeAnthropic,
+  },
   {
     name: "builtin",
     label: "Built-in Manus LLM",
@@ -371,12 +387,6 @@ const providers: ProviderConfig[] = [
     label: "OpenAI (GPT-4o)",
     isAvailable: () => !!ENV.openaiApiKey,
     invoke: invokeOpenAI,
-  },
-  {
-    name: "anthropic",
-    label: "Anthropic (Claude Opus 4)",
-    isAvailable: () => !!ENV.anthropicApiKey,
-    invoke: invokeAnthropic,
   },
 ];
 
