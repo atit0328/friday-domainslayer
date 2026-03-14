@@ -4566,3 +4566,18 @@
 - [x] TypeScript 0 errors
 - [x] Vitest tests for batch engine (19 tests passed)
 - [x] Save checkpoint
+
+# Fix: Attack Completion Notifications (Telegram)
+
+## Problem
+- ผู้ใช้ไม่รู้ว่า attack เสร็จตอนไหน — ต้องมานั่งดูเอง
+- Single-domain attack: progress update ไม่ชัดเจนว่าเสร็จแล้ว
+- Batch attack: ไม่มี per-domain update และ final summary ที่ชัดเจน
+
+## Fixes
+- [x] Single-domain attack: เพิ่ม clear completion message พร้อม summary (สำเร็จ/ล้มเหลว, เวลาที่ใช้, redirect URL)
+- [x] Batch attack: เพิ่ม per-domain completion notification ทุกโดเมนที่เสร็จ
+- [x] Batch attack: เพิ่ม final summary message เมื่อ batch เสร็จทั้งหมด
+- [x] Batch attack: เพิ่ม progress counter (e.g., "3/10 domains completed")
+- [x] TypeScript 0 errors
+- [x] Save checkpoint

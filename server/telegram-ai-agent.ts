@@ -3239,14 +3239,24 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await updateProgress("Done", "done");
       
       // Save scan log
+      const scanDuration = Date.now() - scanStart;
       await saveAttackLog({
         targetDomain: domain,
         method: "scan_only",
         success: true,
-        durationMs: Date.now() - scanStart,
+        durationMs: scanDuration,
         aiReasoning: `Scan complete: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`,
         preAnalysisData: analysis.currentState,
       });
+      
+      // Send NEW completion notification (edit doesn't trigger push notification)
+      await sendTelegramReply(config, chatId,
+        `🔔 Scan เสร็จแล้ว!\n\n` +
+        `🎯 ${domain}\n` +
+        `📊 DA:${analysis.currentState.estimatedDA} | DR:${analysis.currentState.estimatedDR} | BL:${analysis.currentState.estimatedBacklinks}\n` +
+        `📇 Indexed: ${analysis.currentState.isIndexed ? "Yes ✅" : "No ❌"}\n` +
+        `⏱ ${formatDuration(scanDuration)}`
+      );
       
     } else if (method === "redirect_only") {
       // Step 1: Pick redirect URL
@@ -3289,6 +3299,24 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           ? `Succeeded with: ${succeeded.map(r => r.method).join(", ")}`
           : `Tried ${results.length} methods, all failed`,
       });
+      
+      // Send NEW completion notification
+      if (succeeded.length > 0) {
+        await sendTelegramReply(config, chatId,
+          `🔔 Redirect Takeover เสร็จแล้ว!\n\n` +
+          `✅ ${domain}\n` +
+          `🔗 Redirect: ${redirectUrl.substring(0, 50)}\n` +
+          `💥 Methods: ${succeeded.map(r => r.method).join(", ")}\n` +
+          `⏱ ${formatDuration(redirectDuration)}`
+        );
+      } else {
+        await sendTelegramReply(config, chatId,
+          `🔔 Redirect Takeover เสร็จแล้ว (ล้มเหลว)\n\n` +
+          `❌ ${domain}\n` +
+          `💥 ลองแล้ว ${results.length} วิธี ไม่สำเร็จ\n` +
+          `⏱ ${formatDuration(redirectDuration)}`
+        );
+      }
       
       // Send alternative suggestions on failure
       if (succeeded.length === 0) {
@@ -3374,6 +3402,26 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         errorMessage: !fullChainSuccess ? `Pipeline failed: ${pipelineResult.errors.slice(0, 3).join(", ")}` : undefined,
       });
       
+      // Send NEW completion notification
+      if (fullChainSuccess) {
+        const verifiedUrl = verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url || "N/A";
+        await sendTelegramReply(config, chatId,
+          `🔔 Full Chain Attack เสร็จแล้ว!\n\n` +
+          `✅ ${domain}\n` +
+          `🔗 Redirect: ${redirectUrl.substring(0, 50)}\n` +
+          `🛡 Shells: ${pipelineResult.shellsGenerated} | Uploads: ${pipelineResult.uploadAttempts} | Verified: ${verifiedFiles.length}\n` +
+          `📎 ${verifiedUrl.substring(0, 60)}\n` +
+          `⏱ ${formatDuration(chainMs)}`
+        );
+      } else {
+        await sendTelegramReply(config, chatId,
+          `🔔 Full Chain Attack เสร็จแล้ว (ล้มเหลว)\n\n` +
+          `❌ ${domain}\n` +
+          `🛡 Shells: ${pipelineResult.shellsGenerated} | Uploads: ${pipelineResult.uploadAttempts} | Verified: 0\n` +
+          `⏱ ${formatDuration(chainMs)}`
+        );
+      }
+      
       // Send alternative suggestions on failure
       if (!fullChainSuccess) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "full_chain", {
@@ -3408,19 +3456,31 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await updateProgress("Done", "done");
       
       // Save attack log
+      const agenticDuration = Date.now() - s1;
       await saveAttackLog({
         targetDomain: domain,
         method: "agentic_auto",
         success: true,
-        durationMs: Date.now() - s1,
+        durationMs: agenticDuration,
         redirectUrl,
         sessionId: String(session.sessionId),
         aiReasoning: `Agentic session #${session.sessionId} started in background`,
       });
+      
+      // Send NEW completion notification
+      await sendTelegramReply(config, chatId,
+        `🔔 AI Auto Attack เริ่มทำงานแล้ว!\n\n` +
+        `🤖 ${domain}\n` +
+        `🔗 Redirect: ${redirectUrl.substring(0, 50)}\n` +
+        `🎯 Session #${session.sessionId} กำลังทำงานใน background\n` +
+        `⏱ Setup: ${formatDuration(agenticDuration)}`
+      );
     }
   } catch (error: any) {
     timings.push({ step: `Error: ${error.message}`, ms: 0, ok: false });
     await updateProgress("Failed", "failed");
+    
+    const totalMs = timings.reduce((sum, t) => sum + t.ms, 0);
     
     // Save failed attack log
     await saveAttackLog({
@@ -3428,9 +3488,17 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       method,
       success: false,
       errorMessage: error.message,
-      durationMs: timings.reduce((sum, t) => sum + t.ms, 0),
+      durationMs: totalMs,
       aiReasoning: `Attack failed with error: ${error.message}`,
     });
+    
+    // Send NEW failure notification
+    await sendTelegramReply(config, chatId,
+      `🔔 Attack ล้มเหลว\n\n` +
+      `❌ ${domain} (${method})\n` +
+      `⚠️ ${error.message.substring(0, 100)}\n` +
+      `⏱ ${formatDuration(totalMs)}`
+    );
     
     // Send alternative suggestions on error
     await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
@@ -4338,7 +4406,23 @@ async function executeBatchAttackWithProgress(
       },
     });
 
-    // Send final summary
+    // Send final summary with clear completion notification
+    const totalTime = result.completedAt
+      ? result.completedAt - result.startedAt
+      : Date.now() - result.startedAt;
+    const successRate = result.totalDomains > 0
+      ? Math.round((result.success / result.totalDomains) * 100)
+      : 0;
+    
+    // Send a clear completion ping first (this triggers push notification)
+    await sendTelegramReply(config, chatId,
+      `🔔🔔🔔 Batch Attack เสร็จสมบูรณ์แล้ว!\n\n` +
+      `🎯 ${result.totalDomains} โดเมน | ✅ ${result.success} สำเร็จ | ❌ ${result.failed} ล้มเหลว\n` +
+      `📊 Success Rate: ${successRate}%\n` +
+      `⏱ เวลารวม: ${formatDuration(totalTime)}`
+    );
+    
+    // Then send detailed summary
     const summary = formatBatchSummary(result);
     await sendTelegramReply(config, chatId, summary);
 
