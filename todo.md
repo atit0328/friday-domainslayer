@@ -4712,3 +4712,11 @@
 - [x] Use Claude Opus 4.5 for heavy tasks, Sonnet for chat (via Anthropic API)
 - [x] Test bot responses with new API key (API call confirmed working)
 - [x] Write vitest tests (15 tests passed + 2 API key validation tests)
+
+# Critical Bug: Bot ไม่ตอบเลย (even simple messages)
+- [x] Check dev server logs for message processing errors (deploy_advanced took 2m52s, stale lock every message)
+- [x] Check if 409 conflict is blocking all message processing (yes, production vs dev)
+- [x] Check if chat lock is permanently stuck (yes, 120s lock with no tool timeout)
+- [x] Check if LLM calls are hanging indefinitely (fixed with 30s timeout)
+- [x] Fix root cause: added 25s tool timeout with Promise.race, long-running tools continue in background
+- [x] Write vitest tests (12 tests passed)

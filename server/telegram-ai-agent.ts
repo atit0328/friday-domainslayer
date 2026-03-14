@@ -2177,7 +2177,48 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         console.log(`[TelegramAI] Tool: ${toolCall.function.name}(${JSON.stringify(args).substring(0, 100)})`);
         
         const startTime = Date.now();
-        const result = await executeTool(toolCall.function.name, args);
+        
+        // Long-running tools: fire-and-forget with immediate response
+        const LONG_RUNNING_TOOLS = ["attack_website", "deploy_advanced", "retry_attack", "retry_all_failed"];
+        const TOOL_TIMEOUT_MS = 25_000; // 25s timeout for tools (leaves 15s for LLM response)
+        
+        let result: string;
+        if (LONG_RUNNING_TOOLS.includes(toolCall.function.name)) {
+          // For attack/deploy tools: run with timeout, if it takes too long return immediate status
+          try {
+            result = await Promise.race([
+              executeTool(toolCall.function.name, args),
+              new Promise<string>((_, reject) => 
+                setTimeout(() => reject(new Error("TOOL_TIMEOUT")), TOOL_TIMEOUT_MS)
+              ),
+            ]);
+          } catch (e: any) {
+            if (e.message === "TOOL_TIMEOUT") {
+              result = `⏳ ${toolCall.function.name} กำลังทำงานอยู่ (ใช้เวลานานกว่า ${Math.round(TOOL_TIMEOUT_MS / 1000)}s)\n` +
+                `ระบบจะทำงานต่อใน background — พิมพ์ /status เพื่อเช็คสถานะ`;
+              console.log(`[TelegramAI] Tool ${toolCall.function.name} timed out after ${TOOL_TIMEOUT_MS}ms, continuing in background`);
+            } else {
+              result = `❌ Error: ${e.message}`;
+            }
+          }
+        } else {
+          // Normal tools: run with shorter timeout
+          try {
+            result = await Promise.race([
+              executeTool(toolCall.function.name, args),
+              new Promise<string>((_, reject) => 
+                setTimeout(() => reject(new Error("TOOL_TIMEOUT")), TOOL_TIMEOUT_MS)
+              ),
+            ]);
+          } catch (e: any) {
+            if (e.message === "TOOL_TIMEOUT") {
+              result = `⏳ Tool ใช้เวลานานเกินไป — ลองใหม่อีกทีนะ`;
+            } else {
+              result = `❌ Error: ${e.message}`;
+            }
+          }
+        }
+        
         const duration = Date.now() - startTime;
         console.log(`[TelegramAI] Tool ${toolCall.function.name} took ${formatDuration(duration)}`);
         
