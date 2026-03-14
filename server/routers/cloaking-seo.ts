@@ -580,11 +580,13 @@ export const seoThemeRouter = router({
           }
         } catch { /* ignore */ }
 
-        const themeExists = installedThemes.some((t: any) => 
-          t.stylesheet === input.themeSlug || 
-          t.template === input.themeSlug ||
-          (t.name && t.name.toLowerCase().includes(input.themeSlug.toLowerCase()))
-        );
+        const themeExists = installedThemes.some((t: any) => {
+          if (t.stylesheet === input.themeSlug || t.template === input.themeSlug) return true;
+          // WP API may return name as string, object { rendered: "..." }, or null
+          const themeName = typeof t.name === "string" ? t.name 
+            : (t.name?.rendered ? String(t.name.rendered) : "");
+          return themeName && themeName.toLowerCase().includes(input.themeSlug.toLowerCase());
+        });
 
         // Step 2: If theme not installed, try to install from wordpress.org
         if (!themeExists) {

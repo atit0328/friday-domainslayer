@@ -4720,3 +4720,8 @@
 - [x] Check if LLM calls are hanging indefinitely (fixed with 30s timeout)
 - [x] Fix root cause: added 25s tool timeout with Promise.race, long-running tools continue in background
 - [x] Write vitest tests (12 tests passed)
+
+# Bug: ติดตั้ง Theme ล้มเหลว - t2.name.toLowerCase is not a function
+- [x] Find the code that calls .name.toLowerCase() during theme installation (server/routers/cloaking-seo.ts line 583)
+- [x] Add null/undefined safety check (handle WP API name as string, object { rendered }, null, undefined)
+- [x] Test theme installation works (10 tests passed)
