@@ -226,11 +226,11 @@ function formatElapsed(ms: number): string {
 function acquireLock(chatId: number): boolean {
   if (chatLocks.get(chatId)) return false;
   chatLocks.set(chatId, true);
-  // Auto-release lock after 120 seconds to prevent deadlocks
+  // Auto-release lock after 45 seconds to prevent deadlocks (reduced from 120s)
   setTimeout(() => {
     chatLocks.delete(chatId);
     console.warn(`[TelegramAI] Auto-released stale lock for chat ${chatId}`);
-  }, 120_000);
+  }, 45_000);
   return true;
 }
 
@@ -261,7 +261,7 @@ function dequeueMessage(chatId: number): { msg: any; config: any } | null {
 //  CONVERSATION MEMORY (DB-backed, persistent 1 week)
 // ═══════════════════════════════════════════════════════
 
-const MAX_HISTORY = 40; // Keep last 40 messages per chat for better context
+const MAX_HISTORY = 15; // Keep last 15 messages per chat — balance context vs speed
 const RETENTION_DAYS = 7; // Keep conversation history for 1 week
 
 // In-memory cache to reduce DB reads (refreshed from DB on cold start)
@@ -533,7 +533,17 @@ async function handleWithConversationState(chatId: number, text: string): Promis
 //  SYSTEM CONTEXT GATHERER — pulls real-time data
 // ═══════════════════════════════════════════════════════
 
+// Cache system context for 60 seconds to avoid 9 DB queries per message
+let _cachedContext: SystemContext | null = null;
+let _contextCacheTime = 0;
+const CONTEXT_CACHE_TTL = 60_000; // 60 seconds
+
 async function gatherSystemContext(): Promise<SystemContext> {
+  // Return cached if fresh
+  if (_cachedContext && Date.now() - _contextCacheTime < CONTEXT_CACHE_TTL) {
+    return _cachedContext;
+  }
+  
   const ctx: SystemContext = {
     sprints: "ไม่มีข้อมูล",
     attacks: "ไม่มีข้อมูล",
@@ -741,6 +751,10 @@ async function gatherSystemContext(): Promise<SystemContext> {
     ctx.content = `Error: ${e.message}`;
   }
 
+  // Cache the result
+  _cachedContext = ctx;
+  _contextCacheTime = Date.now();
+  
   return ctx;
 }
 
@@ -2082,10 +2096,16 @@ Content: ${context.content}
 // ═══════════════════════════════════════════════════════
 
 export async function processMessage(chatId: number, userMessage: string): Promise<string> {
+  const processStart = Date.now();
+  const PROCESS_TIMEOUT_MS = 40_000; // 40 second overall timeout
+  
+  // Helper to check if we're running out of time
+  const isTimedOut = () => Date.now() - processStart > PROCESS_TIMEOUT_MS;
+  
   // Add to history
   await addToHistory(chatId, "user", userMessage);
   
-  // Gather system context
+  // Gather system context (cached for 60s)
   const context = await gatherSystemContext();
   
   // Build messages for LLM
@@ -2093,7 +2113,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
     { role: "system", content: buildSystemPrompt(context) },
   ];
   
-  // Add conversation history (last N messages for context)
+  // Add conversation history — only last 10 messages to keep prompt small & fast
   const history = await getHistory(chatId);
   
   // Also inject lastActiveDomain into system prompt context
@@ -2101,7 +2121,9 @@ export async function processMessage(chatId: number, userMessage: string): Promi
   if (lastDomain) {
     messages[0].content += `\n\n[CONTEXT] โดเมนที่กำลังคุยอยู่: ${lastDomain} — ถ้า user พูดถึง "scan", "hack", "โจมตี" โดยไม่ระบุ domain ให้ใช้ domain นี้`;
   }
-  for (const msg of history.slice(0, -1)) {
+  // Only send last 10 history messages to LLM (not all 15 stored)
+  const recentHistory = history.slice(-11, -1); // last 10, excluding current message
+  for (const msg of recentHistory) {
     if (msg.role === "user" || msg.role === "assistant") {
       messages.push({ role: msg.role, content: msg.content });
     }
@@ -2109,10 +2131,17 @@ export async function processMessage(chatId: number, userMessage: string): Promi
   messages.push({ role: "user", content: userMessage });
   
   // Call LLM with tools — support multi-turn tool calling
-  const MAX_TOOL_ROUNDS = 3;
+  const MAX_TOOL_ROUNDS = 2; // Reduced from 3 for faster responses
   let currentMessages = [...messages];
   
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    // Check timeout before each LLM call
+    if (isTimedOut()) {
+      const timeoutMsg = `ระบบใช้เวลานานเกินไป (${Math.round((Date.now() - processStart) / 1000)}s) ขอลองใหม่อีกทีนะ`;
+      await addToHistory(chatId, "assistant", timeoutMsg);
+      return timeoutMsg;
+    }
+    
     let response: InvokeResult;
     try {
       response = await invokeLLM({
@@ -2121,9 +2150,9 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         maxTokens: 2000,
       });
     } catch (error: any) {
-      const fallback = `ขอโทษ ระบบมีปัญหาชั่วคราว: ${error.message}`;
-      await addToHistory(chatId, "assistant", fallback);
-      return fallback;
+      const errMsg = error.name === "AbortError" ? "ระบบตอบช้า ลองใหม่อีกทีนะ" : `ขอโทษ ระบบมีปัญหาชั่วคราว: ${error.message?.substring(0, 100)}`;
+      await addToHistory(chatId, "assistant", errMsg);
+      return errMsg;
     }
     
     const choice = response.choices?.[0];
@@ -2138,12 +2167,19 @@ export async function processMessage(chatId: number, userMessage: string): Promi
       const toolResults: ToolCallResult[] = [];
       
       for (const toolCall of choice.message.tool_calls) {
+        // Check timeout before each tool execution
+        if (isTimedOut()) {
+          console.log(`[TelegramAI] Timeout during tool execution, returning partial results`);
+          break;
+        }
+        
         const args = JSON.parse(toolCall.function.arguments || "{}");
         console.log(`[TelegramAI] Tool: ${toolCall.function.name}(${JSON.stringify(args).substring(0, 100)})`);
         
         const startTime = Date.now();
         const result = await executeTool(toolCall.function.name, args);
         const duration = Date.now() - startTime;
+        console.log(`[TelegramAI] Tool ${toolCall.function.name} took ${formatDuration(duration)}`);
         
         toolResults.push({ name: toolCall.function.name, result, duration });
       }
@@ -2387,6 +2423,15 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   if (!acquireLock(msg.chat.id)) {
     console.log(`[TelegramAI] Chat ${msg.chat.id} is busy, queuing message...`);
     queueMessage(msg.chat.id, msg, config);
+    // Send typing indicator so user knows we received their message
+    try {
+      await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendChatAction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: msg.chat.id, action: "typing" }),
+        signal: AbortSignal.timeout(3000),
+      }, { timeout: 3000 });
+    } catch {}
     return;
   }
   
@@ -2537,7 +2582,10 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       }, { timeout: 5000 });
     } catch {}
     
+    const msgStart = Date.now();
     const reply = await processMessage(msg.chat.id, msg.text);
+    const responseTime = Date.now() - msgStart;
+    console.log(`[TelegramAI] Response time: ${formatDuration(responseTime)} for "${msg.text.substring(0, 40)}"`);
     await sendTelegramReply(config, msg.chat.id, reply, msg.message_id);
   } finally {
     releaseLock(msg.chat.id);

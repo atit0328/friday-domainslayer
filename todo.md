@@ -4690,3 +4690,18 @@
 - [x] Ensure completion notification is ALWAYS sent (even if attack fails silently)
 - [x] Add heartbeat mechanism to detect stalled attacks and send timeout warning
 - [x] Write vitest tests for ETA/progress functions (19 tests passed)
+
+# Bug Fix: Telegram Bot ตอบช้ามาก / ไม่ตอบ
+- [x] Diagnose root cause: check logs for LLM latency, polling errors, message processing time
+- [x] Identify bottleneck: LLM calls, gatherSystemContext, or message queue blocking
+- [x] Add timeout/fallback for LLM calls to prevent hanging (30s per LLM call, 40s overall)
+- [x] Add "typing" indicator immediately when message received (also when queued)
+- [x] Optimize gatherSystemContext to reduce data gathering time (60s cache)
+- [x] Add response time logging to identify slow paths
+- [x] Ensure bot always sends SOME response within 40 seconds (timeout fallback)
+- [x] Switch to faster model (Sonnet) for Telegram chat, keep Opus for heavy tasks
+- [x] Reduce history from 40→15 stored, 10 sent to LLM
+- [x] Reduce chat lock from 120s→45s
+- [x] Reduce tool call rounds from 3→2
+- [x] Add AbortController timeout to all 3 LLM providers
+- [x] Write vitest tests (21 tests passed)

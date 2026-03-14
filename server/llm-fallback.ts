@@ -137,11 +137,16 @@ async function invokeBuiltin(params: InvokeParams): Promise<InvokeResult> {
     ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
     : "https://forge.manus.im/v1/chat/completions";
 
+  // Use faster model for chat (maxTokens <= 2000 = Telegram chat)
+  const isChatMode = (params.maxTokens || params.max_tokens || 32768) <= 2000;
+  const model = isChatMode ? "claude-sonnet-4-20250514" : "claude-opus-4-5-20251101";
+  
   const payload: Record<string, unknown> = {
-    model: "claude-opus-4-5-20251101",
+    model,
     messages: params.messages.map(normalizeMessage),
-    max_tokens: 32768,
-    thinking: { budget_tokens: 10240 },
+    max_tokens: isChatMode ? 2000 : 32768,
+    // Only use thinking for heavy tasks, not chat
+    ...(isChatMode ? {} : { thinking: { budget_tokens: 10240 } }),
   };
 
   if (params.tools?.length) payload.tools = params.tools;
@@ -158,14 +163,25 @@ async function invokeBuiltin(params: InvokeParams): Promise<InvokeResult> {
   const rf = params.responseFormat || params.response_format;
   if (rf) payload.response_format = rf;
 
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  // Add timeout: 30s for chat, 120s for heavy tasks
+  const timeoutMs = isChatMode ? 30_000 : 120_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  
+  let response: Response;
+  try {
+    response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ENV.forgeApiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -198,14 +214,24 @@ async function invokeOpenAI(params: InvokeParams): Promise<InvokeResult> {
   const rf = params.responseFormat || params.response_format;
   if (rf) payload.response_format = rf;
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${ENV.openaiApiKey}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  // Add 30s timeout for OpenAI
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  
+  let response: Response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ENV.openaiApiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -266,15 +292,25 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
     }));
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": ENV.anthropicApiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify(payload),
-  });
+  // Add 30s timeout for Anthropic
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  
+  let response: Response;
+  try {
+    response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": ENV.anthropicApiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
