@@ -385,7 +385,7 @@ export async function retryDomain(domain: string, method?: string): Promise<Retr
       try {
         redirectUrl = await pickRedirectUrl();
       } catch {
-        redirectUrl = "https://gambling-site.example.com";
+        redirectUrl = "https://hkt956.org/";
       }
 
       const technique = method.replace("advanced_", "").replace("deploy_advanced", "all");

