@@ -91,10 +91,14 @@ export function getAllowedChatIds(): number[] {
 // ═══════════════════════════════════════════════════════
 
 const processedMessages = new Map<string, number>(); // messageKey -> timestamp
-const DEDUP_WINDOW_MS = 10_000; // 10 seconds
+const DEDUP_WINDOW_MS = 60_000; // 60 seconds (increased from 10s to prevent tsx watch restart duplicates)
+
+// Track server start time to ignore messages sent before restart
+const SERVER_START_TIME = Date.now();
 
 function isDuplicate(chatId: number, messageId: number, text: string): boolean {
-  const key = `${chatId}:${messageId}:${text}`;
+  // Use message_id as primary key (unique per chat) — don't include text to catch exact same message
+  const key = `${chatId}:${messageId}`;
   const now = Date.now();
   
   // Clean old entries
@@ -115,6 +119,8 @@ const chatLocks = new Map<number, boolean>();
 function acquireLock(chatId: number): boolean {
   if (chatLocks.get(chatId)) return false;
   chatLocks.set(chatId, true);
+  // Auto-release lock after 120 seconds to prevent deadlocks
+  setTimeout(() => chatLocks.delete(chatId), 120_000);
   return true;
 }
 
@@ -1184,6 +1190,12 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
             `Indexed: ${analysis.currentState.isIndexed ? "Yes" : "No"}\n` +
             `⏱ สแกนใช้เวลา ${formatDuration(duration)}\n` +
             `สถานะ: สแกนเสร็จ ยังไม่ได้โจมตี`;
+          await saveAttackLog({
+            targetDomain, method: "scan_only", success: true,
+            durationMs: duration,
+            aiReasoning: `Scan: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`,
+            preAnalysisData: analysis.currentState,
+          });
         } else if (method === "redirect_only") {
           // Redirect takeover only
           const { executeRedirectTakeover } = await import("./redirect-takeover");
@@ -1207,9 +1219,20 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
             result += `\nวิธีที่ได้ผล:\n${succeeded.map(r => `  ✅ ${r.method}: ${r.injectedUrl || "deployed"}`).join("\n")}\n` +
               `\nสถานะ: ✅ สำเร็จ`;
           } else {
+            const failedMethods = results.map(r => `${r.method}: ${r.detail || "failed"}`).join(", ");
             result += `\nสถานะ: ❌ ล้มเหลว — ไม่สามารถวาง redirect ได้`;
+            result += `\n❌ รายละเอียด: ${failedMethods}`;
           }
           result += `\n⏱ ใช้เวลา ${formatDuration(duration)}`;
+          await saveAttackLog({
+            targetDomain, method: "redirect_only",
+            success: succeeded.length > 0,
+            durationMs: duration,
+            redirectUrl,
+            uploadedUrl: succeeded[0]?.injectedUrl,
+            errorMessage: succeeded.length === 0 ? `All ${results.length} redirect methods failed: ${results.map(r => `${r.method}:${r.detail || "fail"}`).join(", ")}` : undefined,
+            aiReasoning: succeeded.length > 0 ? `Succeeded: ${succeeded.map(r => r.method).join(", ")}` : `All ${results.length} methods failed`,
+          });
         } else if (method === "agentic_auto") {
           // AI auto attack
           const { startAgenticSession, pickRedirectUrl } = await import("./agentic-attack-engine");
@@ -1231,6 +1254,12 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
             `Mode: AI Auto — จะหาช่องโหว่และโจมตีอัตโนมัติ\n` +
             `สถานะ: 🔄 กำลังดำเนินการ (ทำงาน background)\n` +
             `⏱ เริ่มต้นใช้เวลา ${formatDuration(duration)}`;
+          await saveAttackLog({
+            targetDomain, method: "agentic_auto", success: true,
+            durationMs: duration, redirectUrl,
+            sessionId: String(session.sessionId),
+            aiReasoning: `Agentic session #${session.sessionId} started`,
+          });
         } else {
           // Full chain attack
           const { runFullChain } = await import("./blackhat-engine");
@@ -1240,13 +1269,25 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
           const duration = Date.now() - startTime;
           
           const successPhases = report.phases.filter((p: any) => p.status === "success" || p.summary?.includes("success"));
+          const fullChainSuccess = successPhases.length > 0 || report.totalPayloads > 0;
           result = `⚔️ Full Attack Chain: ${targetDomain}\n` +
             `Redirect to: ${redirectUrl}\n` +
             `Phases ทั้งหมด: ${report.phases.length}\n` +
             `Payloads: ${report.totalPayloads}\n\n` +
             `ขั้นตอน:\n${report.phases.map((p: any) => `  ${p.phase}. ${p.name} — ${p.summary}`).join("\n")}\n\n` +
-            `สถานะ: ${successPhases.length > 0 ? "✅ สำเร็จบางส่วน" : "❌ ล้มเหลว"}\n` +
+            `สถานะ: ${fullChainSuccess ? "✅ สำเร็จบางส่วน" : "❌ ล้มเหลว"}\n` +
             `⏱ โจมตีใช้เวลา ${formatDuration(duration)}`;
+          if (!fullChainSuccess) {
+            const phaseErrors = report.phases.map((p: any) => `${p.name}: ${p.summary || "no result"}`).join("; ");
+            result += `\n❌ รายละเอียด: ${phaseErrors}`;
+          }
+          await saveAttackLog({
+            targetDomain, method: "full_chain",
+            success: fullChainSuccess,
+            durationMs: duration, redirectUrl,
+            aiReasoning: `${report.phases.length} phases, ${report.totalPayloads} payloads. ${report.phases.map((p: any) => `${p.name}: ${p.summary || p.payloads?.length + " payloads"}`).join("; ")}`,
+            errorMessage: !fullChainSuccess ? `Full chain failed: ${report.phases.map((p: any) => p.summary).join(", ")}` : undefined,
+          });
         }
         
         return result;
@@ -1972,6 +2013,13 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   const allowedChatIds = getAllowedChatIds();
   if (!allowedChatIds.includes(msg.chat.id) && !allowedChatIds.includes(msg.from.id)) {
     console.log(`[TelegramAI] Ignoring message from unauthorized chat: ${msg.chat.id}`);
+    return;
+  }
+  
+  // Skip messages older than 30 seconds (prevents replaying old messages after server restart)
+  const messageAge = Date.now() / 1000 - msg.date;
+  if (messageAge > 30) {
+    console.log(`[TelegramAI] Skipping old message (${Math.round(messageAge)}s old): ${msg.message_id}`);
     return;
   }
   

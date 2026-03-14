@@ -1310,9 +1310,16 @@ export const seoProjectsRouter = router({
         return { resumed: true, fromPhase: 0, totalPhases: 16, restarted: true };
       }
 
-      // Allow resume from any non-running state (failed, idle, paused, completed)
+      // If campaign is "running" but started more than 2 hours ago, it's likely stuck — allow force resume
       if (project.campaignStatus === "running") {
-        throw new Error("Campaign กำลังรันอยู่แล้ว — รอให้เสร็จหรือ reset ก่อน");
+        const startedAt = project.campaignStartedAt ? new Date(project.campaignStartedAt).getTime() : 0;
+        const stuckThreshold = 2 * 60 * 60 * 1000; // 2 hours
+        if (Date.now() - startedAt < stuckThreshold) {
+          throw new Error("Campaign กำลังรันอยู่แล้ว — รอให้เสร็จหรือใช้ Force Reset");
+        }
+        // Stuck campaign — allow resume by resetting status first
+        console.log(`[Campaign] Force-resuming stuck campaign ${input.id} (started ${Math.round((Date.now() - startedAt) / 60000)}min ago)`);
+        await db.updateSeoProject(input.id, { campaignStatus: "failed", campaignLastPhaseResult: `Force-reset from stuck state at ${new Date().toISOString()}` });
       }
 
       // Reset status to running and resume from current phase
@@ -1342,8 +1349,14 @@ export const seoProjectsRouter = router({
       const project = await db.getSeoProjectById(input.id);
       if (!project) throw new Error("Project not found");
 
+      // If campaign is stuck in "running" for >2 hours, force-reset it
       if (project.campaignStatus === "running") {
-        throw new Error("Campaign กำลังรันอยู่ — รอให้เสร็จหรือ reset ก่อน");
+        const startedAt = project.campaignStartedAt ? new Date(project.campaignStartedAt).getTime() : 0;
+        const stuckThreshold = 2 * 60 * 60 * 1000;
+        if (Date.now() - startedAt < stuckThreshold) {
+          throw new Error("Campaign กำลังรันอยู่ — รอให้เสร็จหรือใช้ Force Reset");
+        }
+        console.log(`[Campaign] Force-restarting stuck campaign ${input.id}`);
       }
 
       // Reset everything and start fresh
@@ -1386,8 +1399,9 @@ export const seoProjectsRouter = router({
     .mutation(async ({ input }) => {
       const project = await db.getSeoProjectById(input.id);
       if (!project) throw new Error("Project not found");
+      // Allow force-reset even when running (for stuck campaigns)
       if (project.campaignStatus === "running") {
-        throw new Error("Campaign กำลังรันอยู่ — ไม่สามารถ reset ได้");
+        console.log(`[Campaign] Force-resetting running campaign ${input.id}`);
       }
       await db.updateSeoProject(input.id, {
         campaignPhase: 0,

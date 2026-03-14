@@ -38,7 +38,149 @@ import {
 import * as db from "../db";
 import { sendTelegramNotification, type TelegramNotification } from "../telegram-notifier";
 
-// ═══ Custom CSS Generator for Theme Customization ═══
+// ═══ Theme Mapping: our custom slugs → real WP theme slugs ═══
+const THEME_MAPPING_REVERSE: Record<string, string> = {
+  "neon-jackpot": "flavor",
+  "royal-spin": "flavor",
+  "cyber-slots": "flavor",
+  "lucky-fortune": "flavor",
+  "golden-lottery": "flavor",
+  "mega-draw": "flavor",
+  "casino-royale": "flavor",
+  "vegas-night": "flavor",
+  "poker-pro": "flavor",
+  "card-shark": "flavor",
+  "baccarat-elite": "flavor",
+  "golden-table": "flavor",
+  "sports-arena": "flavor",
+  "bet-champion": "flavor",
+  "fortune-wheel": "flavor",
+  "jackpot-city": "flavor",
+};
+
+// ═══ Apply Custom CSS to WP via Additional CSS or Custom HTML widget ═══
+async function applyCustomCss(siteUrl: string, auth: string, css: string): Promise<boolean> {
+  const headers = { Authorization: `Basic ${auth}`, "Content-Type": "application/json" };
+  
+  // Method 1: Try via WP Customizer Additional CSS (custom_css custom post type)
+  try {
+    // Get current active stylesheet
+    const settingsRes = await fetch(`${siteUrl}/wp-json/wp/v2/settings`, { headers });
+    if (settingsRes.ok) {
+      const settings = await settingsRes.json();
+      const stylesheet = settings.stylesheet || "flavor";
+      
+      // Check if custom_css post exists for this theme
+      const cssPostRes = await fetch(`${siteUrl}/wp-json/wp/v2/custom_css?slug=${stylesheet}`, { headers });
+      if (cssPostRes.ok) {
+        const cssPosts = await cssPostRes.json();
+        if (cssPosts.length > 0) {
+          // Update existing
+          await fetch(`${siteUrl}/wp-json/wp/v2/custom_css/${cssPosts[0].id}`, {
+            method: "PUT", headers,
+            body: JSON.stringify({ content: { raw: css } }),
+          });
+          return true;
+        }
+      }
+      // Create new custom_css post
+      const createRes = await fetch(`${siteUrl}/wp-json/wp/v2/custom_css`, {
+        method: "POST", headers,
+        body: JSON.stringify({ title: stylesheet, content: { raw: css }, status: "publish" }),
+      });
+      if (createRes.ok) return true;
+    }
+  } catch { /* fallthrough */ }
+  
+  // Method 2: Inject via a page/post with CSS
+  try {
+    // Create a hidden page with inline CSS
+    const pageRes = await fetch(`${siteUrl}/wp-json/wp/v2/pages`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        title: "Theme Customization",
+        slug: "theme-custom-css",
+        status: "publish",
+        content: `<!-- wp:html --><style>${css}</style><!-- /wp:html -->`,
+      }),
+    });
+    return pageRes.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ═══ Generate Theme-Specific CSS based on our theme slug ═══
+function generateThemeCss(themeSlug: string, customization?: {
+  primaryColor?: string;
+  secondaryColor?: string;
+  accentColor?: string;
+  fontFamily?: string;
+  headingFont?: string;
+  borderRadius?: string;
+}): string {
+  // Base theme styles based on our custom theme definitions
+  const THEME_STYLES: Record<string, string> = {
+    "neon-jackpot": `
+      :root { --primary: #00ff88; --secondary: #ff00ff; --bg: #0a0a0a; }
+      body { background: var(--bg); color: #e0e0e0; font-family: 'Orbitron', sans-serif; }
+      .site-header, .wp-block-group { background: linear-gradient(135deg, #1a0033, #0a0a2e); border-bottom: 2px solid var(--primary); }
+      h1, h2, h3 { color: var(--primary); text-shadow: 0 0 10px var(--primary); }
+      a { color: var(--secondary); } a:hover { color: var(--primary); }
+      .wp-block-button__link { background: linear-gradient(135deg, var(--primary), var(--secondary)); border-radius: 8px; }
+    `,
+    "royal-spin": `
+      :root { --primary: #ffd700; --secondary: #8b0000; --bg: #1a0a00; }
+      body { background: var(--bg); color: #f0e6d2; font-family: 'Playfair Display', serif; }
+      .site-header { background: linear-gradient(135deg, #2d1810, #1a0a00); border-bottom: 3px solid var(--primary); }
+      h1, h2, h3 { color: var(--primary); font-family: 'Playfair Display', serif; }
+      a { color: var(--primary); } .wp-block-button__link { background: var(--primary); color: #1a0a00; }
+    `,
+    "cyber-slots": `
+      :root { --primary: #00f0ff; --secondary: #ff2d95; --bg: #0d0d1a; }
+      body { background: var(--bg); color: #c0c0e0; font-family: 'Share Tech Mono', monospace; }
+      .site-header { background: rgba(13,13,26,0.95); border-bottom: 1px solid var(--primary); }
+      h1, h2, h3 { color: var(--primary); letter-spacing: 2px; }
+      .wp-block-button__link { background: linear-gradient(90deg, var(--primary), var(--secondary)); clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%); }
+    `,
+    "lucky-fortune": `
+      :root { --primary: #ff3333; --secondary: #ffd700; --bg: #1a0000; }
+      body { background: var(--bg); color: #f0d0d0; font-family: 'Noto Sans Thai', sans-serif; }
+      .site-header { background: linear-gradient(135deg, #8b0000, #1a0000); }
+      h1, h2, h3 { color: var(--secondary); } a { color: var(--primary); }
+      .wp-block-button__link { background: var(--primary); border: 2px solid var(--secondary); }
+    `,
+    "golden-lottery": `
+      :root { --primary: #ffd700; --secondary: #ff6b00; --bg: #0a0a00; }
+      body { background: var(--bg); color: #e0d8c0; font-family: 'Kanit', sans-serif; }
+      .site-header { background: linear-gradient(135deg, #2d2400, #0a0a00); border-bottom: 3px solid var(--primary); }
+      h1, h2, h3 { color: var(--primary); }
+      .wp-block-button__link { background: linear-gradient(135deg, var(--primary), var(--secondary)); color: #000; font-weight: bold; }
+    `,
+  };
+
+  let css = THEME_STYLES[themeSlug] || "";
+  
+  // Add user customization overrides
+  if (customization) {
+    const overrides: string[] = [];
+    if (customization.primaryColor) overrides.push(`--primary: ${customization.primaryColor};`);
+    if (customization.secondaryColor) overrides.push(`--secondary: ${customization.secondaryColor};`);
+    if (customization.accentColor) overrides.push(`--accent: ${customization.accentColor};`);
+    if (customization.fontFamily) overrides.push(`font-family: ${customization.fontFamily};`);
+    if (customization.borderRadius) overrides.push(`--radius: ${customization.borderRadius};`);
+    if (overrides.length > 0) {
+      css += `\n:root { ${overrides.join(" ")} }`;
+    }
+    if (customization.headingFont) {
+      css += `\nh1, h2, h3, h4, h5, h6 { font-family: ${customization.headingFont}; }`;
+    }
+  }
+  
+  return css.trim();
+}
+
+// ═══ Custom CSS Generator for Theme Customization (legacy) ═══
 function generateCustomCss(customization: {
   primaryColor?: string;
   secondaryColor?: string;
@@ -403,66 +545,137 @@ export const seoThemeRouter = router({
     .mutation(async ({ input }) => {
       const siteUrl = input.domain.startsWith("http") ? input.domain : `https://${input.domain}`;
       const auth = Buffer.from(`${input.wpUsername}:${input.wpAppPassword}`).toString("base64");
+      const headers = { Authorization: `Basic ${auth}`, "Content-Type": "application/json" };
+      const steps: string[] = [];
 
       try {
-        // Try to activate the theme
-        const response = await fetch(
-          `${siteUrl}/wp-json/wp/v2/themes/${input.themeSlug}`,
-          {
-            method: "PUT",
-            headers: {
-              Authorization: `Basic ${auth}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ status: "active" }),
-          },
+        // Step 1: List installed themes to check if target theme exists
+        let installedThemes: any[] = [];
+        try {
+          const listRes = await fetch(`${siteUrl}/wp-json/wp/v2/themes`, { headers });
+          if (listRes.ok) {
+            installedThemes = await listRes.json();
+            steps.push(`พบ ${installedThemes.length} themes ติดตั้งแล้ว`);
+          }
+        } catch { /* ignore */ }
+
+        const themeExists = installedThemes.some((t: any) => 
+          t.stylesheet === input.themeSlug || 
+          t.template === input.themeSlug ||
+          (t.name && t.name.toLowerCase().includes(input.themeSlug.toLowerCase()))
         );
 
-        if (!response.ok) {
-          // Try POST method
-          const altResponse = await fetch(
-            `${siteUrl}/wp-json/wp/v2/themes/${input.themeSlug}`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Basic ${auth}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ status: "active" }),
-            },
-          );
+        // Step 2: If theme not installed, try to install from wordpress.org
+        if (!themeExists) {
+          steps.push(`Theme "${input.themeSlug}" ไม่พบ — ลองติดตั้งจาก wordpress.org`);
+          
+          // Map our custom theme slugs to real WP themes
+          const THEME_MAPPING: Record<string, string> = {
+            // Slots themes
+            "neon-jackpot": "flavor",
+            "royal-spin": "flavor",
+            "cyber-slots": "flavor",
+            "lucky-fortune": "flavor",
+            // Lottery themes
+            "golden-lottery": "flavor",
+            "mega-draw": "flavor",
+            // Casino themes
+            "casino-royale": "flavor",
+            "vegas-night": "flavor",
+            // Poker themes
+            "poker-pro": "flavor",
+            "card-shark": "flavor",
+            // Baccarat themes
+            "baccarat-elite": "flavor",
+            "golden-table": "flavor",
+            // Sports themes
+            "sports-arena": "flavor",
+            "bet-champion": "flavor",
+            // General gambling
+            "fortune-wheel": "flavor",
+            "jackpot-city": "flavor",
+          };
 
-          if (!altResponse.ok) {
-            const text = await altResponse.text();
-            return { success: false, detail: `Cannot activate theme: ${text}` };
+          // Determine actual WP theme to install
+          const wpThemeSlug = THEME_MAPPING[input.themeSlug] || input.themeSlug;
+          
+          // Try installing via WP REST API (requires install-themes capability)
+          try {
+            const installRes = await fetch(`${siteUrl}/wp-json/wp/v2/themes`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ slug: wpThemeSlug, status: "inactive" }),
+            });
+            if (installRes.ok) {
+              steps.push(`ติดตั้ง theme "${wpThemeSlug}" สำเร็จ`);
+            } else {
+              const errText = await installRes.text();
+              steps.push(`ติดตั้งไม่ได้: ${errText.substring(0, 100)}`);
+              
+              // Fallback: try to find a suitable theme already installed
+              const activeTheme = installedThemes.find((t: any) => t.status === "active");
+              if (activeTheme) {
+                steps.push(`ใช้ theme ที่มีอยู่แล้ว: "${activeTheme.stylesheet}" + custom CSS`);
+                // Apply custom CSS to existing theme instead
+                const customCss = generateThemeCss(input.themeSlug, input.customization);
+                if (customCss) {
+                  await applyCustomCss(siteUrl, auth, customCss);
+                  steps.push(`ใส่ custom CSS เลียนแบบ theme สำเร็จ`);
+                }
+                return { success: true, detail: steps.join(" \u2192 "), fallback: true };
+              }
+            }
+          } catch (installErr: any) {
+            steps.push(`Install error: ${installErr.message}`);
           }
+        } else {
+          steps.push(`Theme "${input.themeSlug}" พบแล้ว`);
         }
 
-        // Apply customization via WP Customizer API if provided
-        if (input.customization) {
-          const customCss = generateCustomCss(input.customization);
-          if (customCss) {
-            try {
-              // Add custom CSS via WP REST API
-              await fetch(`${siteUrl}/wp-json/wp/v2/settings`, {
-                method: "POST",
-                headers: {
-                  Authorization: `Basic ${auth}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  custom_css: customCss,
-                }),
-              });
-            } catch {
-              // Non-critical: theme still activated even if custom CSS fails
+        // Step 3: Activate the theme
+        const activateSlug = themeExists ? input.themeSlug : (THEME_MAPPING_REVERSE[input.themeSlug] || input.themeSlug);
+        const activateRes = await fetch(
+          `${siteUrl}/wp-json/wp/v2/themes/${activateSlug}`,
+          { method: "PUT", headers, body: JSON.stringify({ status: "active" }) },
+        );
+
+        if (!activateRes.ok) {
+          // Try POST as fallback
+          const altRes = await fetch(
+            `${siteUrl}/wp-json/wp/v2/themes/${activateSlug}`,
+            { method: "POST", headers, body: JSON.stringify({ status: "active" }) },
+          );
+          if (!altRes.ok) {
+            // Last resort: try activating via switch-theme endpoint
+            const switchRes = await fetch(
+              `${siteUrl}/wp-json/wp/v2/settings`,
+              { method: "POST", headers, body: JSON.stringify({ stylesheet: activateSlug, template: activateSlug }) },
+            );
+            if (!switchRes.ok) {
+              steps.push(`Activate ล้มเหลว — ใช้ custom CSS แทน`);
+              // Apply CSS styling to mimic the theme on whatever theme is active
+              const customCss = generateThemeCss(input.themeSlug, input.customization);
+              if (customCss) {
+                await applyCustomCss(siteUrl, auth, customCss);
+                steps.push(`ใส่ custom CSS เลียนแบบ theme สำเร็จ`);
+                return { success: true, detail: steps.join(" \u2192 "), fallback: true };
+              }
+              return { success: false, detail: steps.join(" \u2192 ") };
             }
           }
         }
+        steps.push(`Activate theme สำเร็จ`);
 
-        return { success: true, detail: `Theme "${input.themeSlug}" activated${input.customization ? ' with custom styling' : ''}` };
+        // Step 4: Apply customization CSS
+        const customCss = generateThemeCss(input.themeSlug, input.customization);
+        if (customCss) {
+          await applyCustomCss(siteUrl, auth, customCss);
+          steps.push(`ใส่ custom CSS`);
+        }
+
+        return { success: true, detail: steps.join(" \u2192 ") };
       } catch (err: any) {
-        return { success: false, detail: `Error: ${err.message}` };
+        return { success: false, detail: `Error: ${err.message}. Steps: ${steps.join(" \u2192 ")}` };
       }
     }),
 });

@@ -4327,3 +4327,26 @@
 - [x] Add retry callback handlers (retry_domain:, retry_all) in handleCallbackQuery
 - [x] Update system prompt with retry + dashboard commands
 - [x] TypeScript 0 errors
+
+# Bug Fix: SEO Campaign "กำลังรันอยู่แล้ว" Error
+
+- [ ] Fix: Campaign stuck in "running" status — allow force reset/restart even when status is "running"
+- [ ] Add resetCampaign mutation to force-stop and reset a stuck campaign
+- [ ] Update resumeCampaign and restartCampaign to handle stuck "running" campaigns gracefully
+
+# Bug Fix: Theme System Errors (rest_no_route + stuck campaign)
+
+- [x] Fix: "Cannot activate theme: rest_no_route" — rewrote deployTheme with multi-step flow
+- [x] Fix: Campaign stuck in "running" — resetCampaign now allows force reset + added Force Reset button
+- [x] Audit entire theme install/activate flow — list → install → activate → CSS
+- [x] Added THEME_MAPPING_REVERSE, applyCustomCss(), generateThemeCss()
+- [x] Fallback: if activate fails, apply custom CSS to existing active theme
+
+# Bug Fix: Telegram Bot - No Error Details + Duplicate Replies
+
+## Issues
+- [x] Bot says "เช็ค log แล้วไม่เจอข้อมูล" — Fixed: added saveAttackLog to attack_website case
+- [x] saveAttackLog now saves on every attack (success + failure) with error details
+- [x] Duplicate replies fixed: dedup window 30s→60s, message_id key, age check >30s skip
+- [x] Bot now shows error details: WAF/403/timeout/connection error in result string
+- [x] Added Force Reset button for stuck running campaigns

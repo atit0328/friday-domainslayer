@@ -2049,10 +2049,25 @@ function CampaignTab({ projectId, project }: { projectId: number; project: any }
 
             {/* Running state: show progress only */}
             {campaign.status === "running" && (
-              <Badge variant="outline" className="text-sm py-2 px-4 bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse">
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                กำลังรันเฟส {campaign.phase + 1}/16...
-              </Badge>
+              <>
+                <Badge variant="outline" className="text-sm py-2 px-4 bg-amber-500/10 text-amber-400 border-amber-500/30 animate-pulse">
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  กำลังรันเฟส {campaign.phase + 1}/16...
+                </Badge>
+                <Button
+                  onClick={() => {
+                    if (confirm("หยุด Campaign ที่ค้างอยู่? จะ Force Reset กลับเป็น idle")) {
+                      resetCampaign.mutate({ id: projectId });
+                    }
+                  }}
+                  disabled={resetCampaign.isPending}
+                  variant="outline"
+                  className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                >
+                  {resetCampaign.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <XCircle className="w-4 h-4 mr-1" />}
+                  Force Reset
+                </Button>
+              </>
             )}
 
             {/* Completed state: show Restart from scratch */}
