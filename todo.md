@@ -4475,3 +4475,17 @@
 - [x] TypeScript 0 errors
 - [x] 50 vitest tests passing
 - [x] Server restarted and Telegram polling confirmed active
+
+# Bug Fix: Telegram Bot Completely Unresponsive (Round 2)
+- [x] Bot not replying to ANY messages including simple "สวัสดี"
+- [x] Check if polling is actually running and receiving updates — YES, but routed through proxy pool
+- [x] Root cause: fetchWithPoolProxy tries 3 residential proxies (all fail) before fallback to direct = ~10s delay per poll cycle
+- [x] Also: chat lock queue causes "สวัสดี" to be queued behind long-running attack command
+- [x] Replace ALL fetchWithPoolProxy with direct telegramFetch() in telegram-ai-agent.ts (18 calls)
+- [x] Remove proxy pool import from telegram-ai-agent.ts
+- [x] Created telegramFetch() helper — direct fetch with timeout, no proxy
+- [x] Updated tests to mock globalThis.fetch instead of fetchWithPoolProxy
+- [x] 50 tests passing, TypeScript 0 errors
+- [x] No more "3 proxies failed for api.telegram.org" in logs
+- [x] Polling starts instantly without proxy delay
+- [ ] Save checkpoint

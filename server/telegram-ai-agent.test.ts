@@ -11,10 +11,8 @@ vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(),
 }));
 
-// Mock proxy-pool
-vi.mock("./proxy-pool", () => ({
-  fetchWithPoolProxy: vi.fn(),
-}));
+// Mock proxy-pool (no longer used for Telegram API calls)
+vi.mock("./proxy-pool", () => ({}));
 
 // Mock telegram-notifier
 vi.mock("./telegram-notifier", () => ({
@@ -78,14 +76,17 @@ import {
   resetDedupState,
 } from "./telegram-ai-agent";
 import { invokeLLM } from "./_core/llm";
-import { fetchWithPoolProxy } from "./proxy-pool";
-
 const mockInvokeLLM = vi.mocked(invokeLLM);
-const mockFetch = vi.mocked(fetchWithPoolProxy);
+
+// Mock globalThis.fetch for Telegram API calls (telegramFetch uses native fetch)
+const mockFetch = vi.fn();
+globalThis.fetch = mockFetch as any;
 
 describe("Telegram AI Chat Agent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
     resetDedupState(); // Clear all dedup/lock state between tests
     clearHistory(0);
     clearHistory(12345);
@@ -327,10 +328,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle /start command", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 1002,
@@ -357,10 +355,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle /clear command", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 1003,
@@ -388,10 +383,7 @@ describe("Telegram AI Chat Agent", () => {
         }],
       });
 
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       const update = {
         update_id: 2000,
@@ -420,10 +412,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
      it("should track polling state", async () => {
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
       expect(isTelegramPollingActive()).toBe(false);
       await startTelegramPolling();
       expect(isTelegramPollingActive()).toBe(true);
@@ -431,10 +420,7 @@ describe("Telegram AI Chat Agent", () => {
       expect(isTelegramPollingActive()).toBe(false);
     });
     it("should not start multiple polling intervals", async () => {
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
       await startTelegramPolling();
       await startTelegramPolling(); // second call should be no-op
       expect(isTelegramPollingActive()).toBe(true);
@@ -656,10 +642,7 @@ describe("Telegram AI Chat Agent", () => {
         }],
       });
 
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 5000,
@@ -677,10 +660,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should reject messages from unauthorized chat IDs", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 5001,
@@ -753,10 +733,7 @@ describe("Telegram AI Chat Agent", () => {
 
   describe("Inline Keyboard & Callback Queries", () => {
     it("should handle /menu command and send inline keyboard", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 6000,
@@ -783,10 +760,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle /summary command", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 6001,
@@ -806,10 +780,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle callback_query for sprint status", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 6002,
@@ -828,10 +799,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle callback_query for attack stats", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 6003,
@@ -848,10 +816,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle callback_query for daily summary", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
       await handleTelegramWebhook({
         update_id: 6004,
@@ -868,10 +833,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should reject callback_query from unauthorized users", async () => {
-      mockFetch.mockResolvedValue({
-        response: { json: () => Promise.resolve({ ok: true }) } as any,
-        usedProxy: null,
-      });
+      mockFetch.mockResolvedValue({ json: () => Promise.resolve({ ok: true }) } as any);
 
        await handleTelegramWebhook({
         update_id: 6005,
@@ -905,10 +867,7 @@ describe("Telegram AI Chat Agent", () => {
           finish_reason: "stop",
         }],
       });
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       const update = {
         update_id: 99001,
@@ -940,10 +899,7 @@ describe("Telegram AI Chat Agent", () => {
           finish_reason: "stop",
         }],
       });
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       await handleTelegramWebhook({
         update_id: 99101,
@@ -988,10 +944,7 @@ describe("Telegram AI Chat Agent", () => {
         getDb: vi.fn().mockResolvedValue(null),
       }));
 
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       await handleTelegramWebhook({
         update_id: 99201,
@@ -1011,10 +964,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle atk_select callback by sending method keyboard", async () => {
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       await handleTelegramWebhook({
         update_id: 99301,
@@ -1043,10 +993,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle atk_run callback by sending confirmation keyboard", async () => {
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       await handleTelegramWebhook({
         update_id: 99401,
@@ -1066,10 +1013,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle atk_cancel callback", async () => {
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       await handleTelegramWebhook({
         update_id: 99501,
@@ -1093,10 +1037,7 @@ describe("Telegram AI Chat Agent", () => {
     });
 
     it("should handle atk_custom callback", async () => {
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 
       await handleTelegramWebhook({
         update_id: 99601,
@@ -1136,10 +1077,7 @@ describe("Telegram AI Chat Agent", () => {
         }),
       }));
 
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true, result: { message_id: 999 } })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 999 } })));
 
       await handleTelegramWebhook({
         update_id: 99701,
@@ -1168,10 +1106,7 @@ describe("Telegram AI Chat Agent", () => {
   describe("Conversation State Machine", () => {
     it("should handle custom domain input after atk_custom callback", async () => {
       clearHistory(12345);
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true, result: { message_id: 100 } })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 100 } })));
 
       // Step 1: User clicks atk_custom button
       await handleTelegramWebhook({
@@ -1195,10 +1130,7 @@ describe("Telegram AI Chat Agent", () => {
 
     it("should handle domain input in awaiting_domain state", async () => {
       clearHistory(12345);
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true, result: { message_id: 101 } })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 101 } })));
 
       // Step 1: Trigger atk_custom to set state
       await handleTelegramWebhook({
@@ -1212,10 +1144,7 @@ describe("Telegram AI Chat Agent", () => {
       });
 
       mockFetch.mockClear();
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true, result: { message_id: 102 } })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 102 } })));
 
       // Step 2: User types a domain
       await handleTelegramWebhook({
@@ -1241,10 +1170,7 @@ describe("Telegram AI Chat Agent", () => {
 
     it("should clear state on atk_cancel", async () => {
       clearHistory(12345);
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true, result: { message_id: 103 } })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 103 } })));
 
       // Set state first
       await handleTelegramWebhook({
@@ -1258,10 +1184,7 @@ describe("Telegram AI Chat Agent", () => {
       });
 
       mockFetch.mockClear();
-      mockFetch.mockResolvedValue({
-        response: new Response(JSON.stringify({ ok: true, result: { message_id: 104 } })),
-        source: "direct" as const,
-      });
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true, result: { message_id: 104 } })));
 
       // Cancel
       await handleTelegramWebhook({

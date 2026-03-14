@@ -17,8 +17,27 @@
 
 import { invokeLLM, type Message, type Tool, type InvokeResult } from "./_core/llm";
 import { ENV } from "./_core/env";
-import { fetchWithPoolProxy } from "./proxy-pool";
 import { getTelegramConfig, type TelegramConfig } from "./telegram-notifier";
+
+// ─── Direct fetch for Telegram API (no proxy pool) ───
+async function telegramFetch(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal } = {},
+  options: { timeout?: number } = {},
+): Promise<{ response: Response }> {
+  const timeout = options.timeout || 15000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: init.signal || controller.signal,
+    });
+    return { response };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -1945,12 +1964,12 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
       
       // Attempt 1: Send with Markdown
       try {
-        const { response } = await fetchWithPoolProxy(url, {
+        const { response } = await telegramFetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(15000),
-        }, { targetDomain: "api.telegram.org", timeout: 15000 });
+        }, { timeout: 15000 });
         
         const result = await response.json() as any;
         if (result.ok) {
@@ -1972,12 +1991,12 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
           if (i === 0 && replyToMessageId) {
             plainBody.reply_to_message_id = replyToMessageId;
           }
-          const { response: plainResp } = await fetchWithPoolProxy(url, {
+          const { response: plainResp } = await telegramFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(plainBody),
             signal: AbortSignal.timeout(15000),
-          }, { targetDomain: "api.telegram.org", timeout: 15000 });
+          }, { timeout: 15000 });
           
           const plainResult = await plainResp.json() as any;
           if (plainResult.ok) {
@@ -1995,12 +2014,12 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
       if (!sent) {
         try {
           const truncated = chunks[i].substring(0, 2000) + "\n\n[ข้อความถูกตัดเนื่องจากยาวเกินไป]";
-          const { response: lastResp } = await fetchWithPoolProxy(url, {
+          const { response: lastResp } = await telegramFetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chat_id: chatId, text: truncated }),
             signal: AbortSignal.timeout(15000),
-          }, { targetDomain: "api.telegram.org", timeout: 15000 });
+          }, { timeout: 15000 });
           const lastResult = await lastResp.json() as any;
           if (lastResult.ok) {
             sent = true;
@@ -2177,12 +2196,12 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     
     // Send "typing" indicator
     try {
-      await fetchWithPoolProxy(`https://api.telegram.org/bot${config.botToken}/sendChatAction`, {
+      await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendChatAction`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chat_id: msg.chat.id, action: "typing" }),
         signal: AbortSignal.timeout(5000),
-      }, { targetDomain: "api.telegram.org", timeout: 5000 });
+      }, { timeout: 5000 });
     } catch {}
     
     const reply = await processMessage(msg.chat.id, msg.text);
@@ -2220,9 +2239,9 @@ async function pollUpdates(): Promise<void> {
   
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/getUpdates?offset=${pollingOffset}&timeout=30&allowed_updates=["message","callback_query"]`;
-    const { response } = await fetchWithPoolProxy(url, {
+    const { response } = await telegramFetch(url, {
       signal: AbortSignal.timeout(35000),
-    }, { targetDomain: "api.telegram.org", timeout: 35000 });
+    }, { timeout: 35000 });
     
     const data = await response.json() as any;
     if (data.ok && data.result?.length > 0) {
@@ -2255,12 +2274,12 @@ export async function startTelegramPolling(): Promise<void> {
   // Delete any existing webhook to prevent dual processing (webhook + polling)
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/deleteWebhook`;
-    await fetchWithPoolProxy(url, {
+    await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ drop_pending_updates: true }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
     console.log("[TelegramAI] Cleared existing webhook before starting polling");
   } catch (e: any) {
     console.warn(`[TelegramAI] Failed to clear webhook: ${e.message}`);
@@ -2312,7 +2331,7 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
   
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/setWebhook`;
-    const { response } = await fetchWithPoolProxy(url, {
+    const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2321,7 +2340,7 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
         drop_pending_updates: true,
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
     
     const result = await response.json() as any;
     if (result.ok) {
@@ -2341,7 +2360,7 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
 async function sendInlineKeyboard(config: TelegramConfig, chatId: number): Promise<void> {
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    await fetchWithPoolProxy(url, {
+    await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2372,7 +2391,7 @@ async function sendInlineKeyboard(config: TelegramConfig, chatId: number): Promi
         },
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
   } catch (error: any) {
     console.error(`[TelegramAI] Failed to send inline keyboard: ${error.message}`);
   }
@@ -2433,7 +2452,7 @@ async function sendAttackTargetKeyboard(config: TelegramConfig, chatId: number):
     keyboard.push([{ text: "\u270D\uFE0F พิมพ์โดเมนเอง", callback_data: "atk_custom" }]);
     
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    await fetchWithPoolProxy(url, {
+    await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2442,7 +2461,7 @@ async function sendAttackTargetKeyboard(config: TelegramConfig, chatId: number):
         reply_markup: { inline_keyboard: keyboard },
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
   } catch (error: any) {
     console.error(`[TelegramAI] Failed to send attack target keyboard: ${error.message}`);
     await sendTelegramReply(config, chatId, `\u274C ดึงรายชื่อ target ไม่ได้: ${error.message}`);
@@ -2469,7 +2488,7 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
     ];
     
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    await fetchWithPoolProxy(url, {
+    await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2478,7 +2497,7 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
         reply_markup: { inline_keyboard: keyboard },
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
   } catch (error: any) {
     console.error(`[TelegramAI] Failed to send attack type keyboard: ${error.message}`);
   }
@@ -2503,7 +2522,7 @@ async function sendAttackConfirmKeyboard(config: TelegramConfig, chatId: number,
   ];
   
   const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  await fetchWithPoolProxy(url, {
+  await telegramFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2512,7 +2531,7 @@ async function sendAttackConfirmKeyboard(config: TelegramConfig, chatId: number,
       reply_markup: { inline_keyboard: keyboard },
     }),
     signal: AbortSignal.timeout(10000),
-  }, { targetDomain: "api.telegram.org", timeout: 10000 });
+  }, { timeout: 10000 });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -2715,7 +2734,7 @@ async function sendAlternativeAttackSuggestions(
   
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    await fetchWithPoolProxy(url, {
+    await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2724,7 +2743,7 @@ async function sendAlternativeAttackSuggestions(
         reply_markup: { inline_keyboard: keyboard },
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
   } catch (error: any) {
     console.error(`[TelegramAI] Failed to send alternative suggestions: ${error.message}`);
   }
@@ -2739,7 +2758,7 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
     const url = `https://api.telegram.org/bot${config.botToken}/editMessageText`;
     
     // Attempt 1: With Markdown
-    const { response } = await fetchWithPoolProxy(url, {
+    const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2749,12 +2768,12 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
         parse_mode: "Markdown",
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
     const result = await response.json() as any;
     if (result.ok) return true;
     
     // Attempt 2: Without Markdown (plain text fallback)
-    const { response: plainResp } = await fetchWithPoolProxy(url, {
+    const { response: plainResp } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2763,7 +2782,7 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
         text,
       }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
     const plainResult = await plainResp.json() as any;
     return plainResult.ok === true;
   } catch {
@@ -2775,12 +2794,12 @@ async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text:
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
     // Try with Markdown first, then plain text fallback
-    const { response } = await fetchWithPoolProxy(url, {
+    const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chatId, text }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
     const result = await response.json() as any;
     return result.ok ? result.result.message_id : null;
   } catch {
@@ -3040,12 +3059,12 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
   
   // Answer callback query
   try {
-    await fetchWithPoolProxy(`https://api.telegram.org/bot${config.botToken}/answerCallbackQuery`, {
+    await telegramFetch(`https://api.telegram.org/bot${config.botToken}/answerCallbackQuery`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ callback_query_id: cbq.id }),
       signal: AbortSignal.timeout(5000),
-    }, { targetDomain: "api.telegram.org", timeout: 5000 });
+    }, { timeout: 5000 });
   } catch {}
   
   let responseText = "";
@@ -3201,12 +3220,12 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           const text = `💣 Advanced Attack: ${domain}\n\nเลือกเทคนิค:\n🌐 Parasite SEO — ฝังเนื้อหาพนันบนเว็บ authority สูง\n📱 Play Store — หน้าเลียนแบบ Google Play + Install\n👻 Cloaking — Googlebot เห็นพนัน user เห็นเว็บเดิม\n🚪 Doorway Pages — สร้าง 50+ หน้าสแปม\n📦 APK Distribution — วาง APK + tracking pixel\n💣 รวม 5 เทคนิค — ใช้ทั้งหมดพร้อมกัน`;
           try {
             const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-            await fetchWithPoolProxy(url, {
+            await telegramFetch(url, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ chat_id: chatId, text, reply_markup: { inline_keyboard: keyboard } }),
               signal: AbortSignal.timeout(10000),
-            }, { targetDomain: "api.telegram.org", timeout: 10000 });
+            }, { timeout: 10000 });
           } catch (e: any) {
             console.error(`[TelegramAI] Failed to send advanced keyboard: ${e.message}`);
           }
@@ -3568,12 +3587,12 @@ export async function removeTelegramWebhook(): Promise<{ success: boolean; error
   
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/deleteWebhook`;
-    const { response } = await fetchWithPoolProxy(url, {
+    const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ drop_pending_updates: true }),
       signal: AbortSignal.timeout(10000),
-    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+    }, { timeout: 10000 });
     
     const result = await response.json() as any;
     return result.ok ? { success: true } : { success: false, error: result.description };
