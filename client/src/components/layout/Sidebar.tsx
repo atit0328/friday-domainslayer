@@ -33,6 +33,7 @@ const AI_NAV = [
 ];
 
 const BLACKHAT_NAV = [
+  { href: "/attack-dashboard", icon: BarChart3, label: "Attack Dashboard" },
   { href: "/target-acquisition", icon: Radar, label: "Target Acquisition" },
   { href: "/agentic-attack", icon: Skull, label: "Agentic AI Attack" },
   { href: "/ai-attack", icon: Cpu, label: "AI Attack Engine" },

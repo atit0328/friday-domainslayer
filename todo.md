@@ -4291,3 +4291,39 @@
 - [x] Add deploy_advanced_all to alternative attack suggestions
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Attack Dashboard + Auto-Retry + Telegram Control
+
+## Attack Dashboard (Web UI)
+- [x] Create tRPC routes for attack dashboard data (overview, methodStats, timeline, topDomains, recentAttacks, recentDeploys, wafStats, failedDomains)
+- [x] Build AttackDashboard.tsx page with deployment history table
+- [x] Add payload preview modal (view generated HTML/JS payloads) — Dialog with AI reasoning, error, uploaded URL
+- [x] Add success rate charts (by method, by domain, over time) — progress bars per method
+- [x] Add filter/search by domain, method, status, date range
+- [x] Add sidebar nav link for Attack Dashboard
+- [x] Register route in App.tsx
+- [x] Add retryStats, triggerRetry, triggerRetryAll tRPC routes
+- [x] Retry buttons work directly from web UI (not just Telegram)
+- [x] RetryStats component showing รอ retry / ล้มเหลวทั้งหมด / หมดวิธีแล้ว
+
+## Auto-Retry Engine
+- [x] Create server/auto-retry-engine.ts with smart retry logic
+- [x] Try alternative methods automatically (scan → full_chain → agentic_auto → advanced)
+- [x] Configurable max retries and delay between retries
+- [x] Report each retry attempt to Telegram with progress
+- [x] Stop on first success or after exhausting all methods
+- [x] Save retry chain to attack logs (ai_attack_history)
+- [x] Smart method selection based on failure context (WAF, CMS, server type)
+- [x] retryDomain() — retry single domain with best method
+- [x] retryAllFailed() — retry all failed domains with progress callback
+- [x] getRetryStats() — stats for retry queue
+
+## Telegram Control Commands
+- [x] "dashboard" / "สถิติ" → view_dashboard_summary tool
+- [x] "retry xxx.com" / "ลองใหม่" → retry_attack tool
+- [x] "retry all" / "ลองใหม่ทั้งหมด" → retry_all_failed tool
+- [x] "retry stats" / "สถิติ retry" → view_retry_stats tool
+- [x] Add retry_attack, retry_all_failed, view_retry_stats, view_dashboard_summary tools to AI_TOOLS
+- [x] Add retry callback handlers (retry_domain:, retry_all) in handleCallbackQuery
+- [x] Update system prompt with retry + dashboard commands
+- [x] TypeScript 0 errors

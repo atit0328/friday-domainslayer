@@ -65,6 +65,7 @@ import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 import { telegramAiRouter } from "./routers/telegram-ai";
 import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter } from "./routers/cloaking-seo";
 import { wpThemesRouter } from "./routers/wp-themes";
+import { attackDashboardRouter } from "./routers/attack-dashboard";
 
 export const appRouter = router({
   system: systemRouter,
@@ -221,6 +222,9 @@ export const appRouter = router({
 
   // WordPress Casino Theme Templates
   wpThemes: wpThemesRouter,
+
+  // Attack Dashboard (unified analytics)
+  attackDashboard: attackDashboardRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

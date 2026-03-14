@@ -58,6 +58,7 @@ const AlgorithmMonitorDashboard = lazy(() => import("./pages/AlgorithmMonitorDas
 const CompetitorGapDashboard = lazy(() => import("./pages/CompetitorGapDashboard"));
 const SeoBrain = lazy(() => import("./pages/SeoBrain"));
 const CloakingSettings = lazy(() => import("./pages/CloakingSettings"));
+const AttackDashboard = lazy(() => import("./pages/AttackDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -194,6 +195,9 @@ function ProtectedRouter() {
         <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/blackhat-old">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
         <Route path="/users">{() => <SuperadminGuard><UserManagement /></SuperadminGuard>}</Route>
+
+        {/* Attack Dashboard */}
+        <Route path="/attack-dashboard">{() => <SuperadminGuard><AttackDashboard /></SuperadminGuard>}</Route>
 
         {/* WP Casino Themes */}
         <Route path="/wp-themes" component={WpThemes} />
