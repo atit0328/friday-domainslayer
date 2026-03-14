@@ -4364,3 +4364,44 @@
 - [x] TypeScript 0 errors
 - [x] 12 vitest tests passing
 - [x] Save checkpoint
+
+# Feature: SEO Homepage Content Generator — Bot-Optimized Keyword Spam Pages
+
+## Backend Engine (server/seo-homepage-generator.ts)
+- [x] Create SEO homepage content generator engine
+- [x] Category-specific keyword databases (slots, lottery, baccarat) — Thai + English keywords (15+ primary, 16+ secondary, 20+ LSI, 10+ longTail, 10+ questions, 10+ brands per category)
+- [x] Generate full HTML homepage with heavy keyword density (3-5%)
+- [x] Schema markup: GamblingService, FAQPage, BreadcrumbList, Article, WebSite, Organization
+- [x] H1-H6 heading hierarchy with keywords in every heading
+- [x] FAQ section with 10-15 keyword-rich Q&A pairs
+- [x] Long-form SEO article (2000-3000 words) embedded in homepage
+- [x] Internal linking structure with keyword-rich anchor texts
+- [x] Meta tags: title, description, robots, canonical, og:*, twitter:*
+- [x] Breadcrumb navigation with schema
+- [x] Category-specific content templates (slots/lottery/baccarat)
+- [x] Keyword variations and LSI keywords auto-generation
+- [x] Table of contents with jump links
+- [x] "Related articles" sidebar with keyword links
+- [x] Footer with sitemap-style keyword links
+- [x] deployHomepageToWordPress — deploy to WP REST API as front page
+
+## tRPC Procedures
+- [x] seoHomepage.generate — generate SEO homepage HTML for a domain+category+keywords
+- [x] seoHomepage.deploy — deploy generated content to WordPress via REST API + Telegram notification
+- [x] seoHomepage.getKeywords — get keyword database for category
+
+## UI Integration (CloakingSettings.tsx)
+- [x] Add "สร้าง SEO Homepage Content" button in each theme card
+- [x] Inline SEO Content panel with site name input + custom keywords input
+- [x] Category auto-detected from theme
+- [x] Generate + Preview button (opens in new window)
+- [x] Deploy หน้าแรก WP button
+- [x] SEO Stats display (word count, keyword density, headings, schema types)
+
+## Telegram Bot Integration
+- [x] Telegram notification on deploy (success/failure) — built into deploy procedure
+
+## Testing
+- [x] TypeScript 0 errors
+- [x] 20 vitest tests passing (getKeywordsForCategory + generateSeoHomepage)
+- [x] Save checkpoint

@@ -28,7 +28,8 @@ import {
   Eye, EyeOff, Globe, Shield, Code, Bot, Rocket, Settings2,
   Loader2, Copy, Check, AlertTriangle, Zap, RefreshCw,
   ArrowRight, Plus, Trash2, Search, Palette, Download,
-  ChevronDown, ChevronUp, ExternalLink, Sparkles, MonitorPlay
+  ChevronDown, ChevronUp, ExternalLink, Sparkles, MonitorPlay,
+  FileText, BarChart3, X
 } from "lucide-react";
 
 // Country options for targeting
@@ -80,6 +81,13 @@ export default function CloakingSettings() {
   const [customColors, setCustomColors] = useState<Record<number, { primary: string; secondary: string; accent: string; font: string; headingFont: string; radius: string }>>({});
   const [previewTheme, setPreviewTheme] = useState<any>(null);
   const [previewThemeIndex, setPreviewThemeIndex] = useState<number | null>(null);
+
+  // SEO Homepage Content Generator state
+  const [seoHomepageOpen, setSeoHomepageOpen] = useState<number | null>(null);
+  const [seoSiteName, setSeoSiteName] = useState("");
+  const [seoCustomKeywords, setSeoCustomKeywords] = useState("");
+  const [seoPreviewHtml, setSeoPreviewHtml] = useState<string | null>(null);
+  const [seoPreviewStats, setSeoPreviewStats] = useState<any>(null);
 
   // Queries
   const { data: projects, isLoading: loadingProjects } = trpc.seoProjects.list.useQuery();
@@ -155,6 +163,35 @@ export default function CloakingSettings() {
       }
     },
     onError: (err) => toast.error(err.message),
+  });
+
+  // SEO Homepage Content Generator mutations
+  const generateSeoHomepageMut = trpc.seoHomepage.generate.useMutation({
+    onSuccess: (data) => {
+      setSeoPreviewHtml(data.html);
+      setSeoPreviewStats({
+        wordCount: data.wordCount,
+        keywordDensity: data.keywordDensity,
+        schemaTypes: data.schemaTypes,
+        headingCount: data.headingCount,
+        title: data.title,
+        metaDescription: data.metaDescription,
+        keywords: data.keywords,
+      });
+      toast.success(`SEO Homepage สร้างสำเร็จ! ${data.wordCount} คำ, KD: ${data.keywordDensity}%`);
+    },
+    onError: (err) => toast.error(`สร้าง SEO Homepage ล้มเหลว: ${err.message}`),
+  });
+
+  const deploySeoHomepageMut = trpc.seoHomepage.deploy.useMutation({
+    onSuccess: (data) => {
+      if (data.success) {
+        toast.success(`Deploy SEO Homepage สำเร็จ! Page ID: ${data.pageId}`);
+      } else {
+        toast.error(`Deploy ล้มเหลว: ${data.detail}`);
+      }
+    },
+    onError: (err) => toast.error(`Deploy ล้มเหลว: ${err.message}`),
   });
 
   const utils = trpc.useUtils();
@@ -1174,8 +1211,8 @@ export default function CloakingSettings() {
                           )}
                         </div>
 
-                        {/* Live Preview + Install Buttons */}
-                        <div className="px-4 pb-3 pt-1 flex gap-2">
+                        {/* Live Preview + SEO Content + Install Buttons */}
+                        <div className="px-4 pb-1 pt-1 flex gap-2">
                           <Button
                             variant="outline"
                             size="sm"
@@ -1225,6 +1262,193 @@ export default function CloakingSettings() {
                             {customColors[i] && customizerOpen === i ? 'Install with Custom Style' : 'Install Theme'}
                           </Button>
                         </div>
+
+                        {/* SEO Homepage Content Button */}
+                        <div className="px-4 pb-3 pt-1">
+                          <Button
+                            variant={seoHomepageOpen === i ? "default" : "outline"}
+                            size="sm"
+                            className="w-full"
+                            onClick={() => {
+                              if (seoHomepageOpen === i) {
+                                setSeoHomepageOpen(null);
+                                setSeoPreviewHtml(null);
+                                setSeoPreviewStats(null);
+                              } else {
+                                setSeoHomepageOpen(i);
+                                // Auto-fill site name from project
+                                if (!seoSiteName && selectedProject?.domain) {
+                                  setSeoSiteName(selectedProject.domain.replace(/^https?:\/\//, '').replace(/\..+$/, '').replace(/-/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()));
+                                }
+                              }
+                            }}
+                          >
+                            <FileText className="w-3 h-3 mr-1" />
+                            {seoHomepageOpen === i ? 'ปิด SEO Content Panel' : 'สร้าง SEO Homepage Content'}
+                          </Button>
+                        </div>
+
+                        {/* SEO Homepage Content Panel (inline) */}
+                        {seoHomepageOpen === i && (
+                          <div className="px-4 pb-4 space-y-3 border-t border-border/20 pt-3 bg-card/30">
+                            <div className="flex items-center gap-2 mb-2">
+                              <FileText className="w-4 h-4 text-amber-400" />
+                              <span className="text-xs font-semibold text-amber-400">สร้าง SEO Homepage สำหรับ Bot Google</span>
+                              <Badge variant="outline" className="text-[9px] py-0 px-1.5 text-amber-400 border-amber-500/30">{theme.category}</Badge>
+                            </div>
+
+                            {/* Site Name */}
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">ชื่อเว็บ (Site Name)</label>
+                              <Input
+                                value={seoSiteName}
+                                onChange={(e) => setSeoSiteName(e.target.value)}
+                                placeholder="เช่น Lucky888, สล็อตเว็บตรง"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+
+                            {/* Custom Keywords */}
+                            <div>
+                              <label className="text-[10px] text-muted-foreground block mb-1">คีย์เวิร์ดเพิ่มเติม (คั่นด้วยจุลภาค, ไม่บังคับ)</label>
+                              <Input
+                                value={seoCustomKeywords}
+                                onChange={(e) => setSeoCustomKeywords(e.target.value)}
+                                placeholder="สล็อตเว็บตรง, สล็อตแตกง่าย, สล็อต PG"
+                                className="h-8 text-xs"
+                              />
+                            </div>
+
+                            {/* Auto-detected info */}
+                            <div className="bg-muted/30 rounded-lg p-2 space-y-1">
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-muted-foreground">โดเมน:</span>
+                                <span className="font-mono text-xs">{selectedProject?.domain || '-'}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-muted-foreground">หมวดหมู่:</span>
+                                <span className="font-mono text-xs">{theme.category === 'slots' ? 'สล็อต' : theme.category === 'lottery' ? 'หวย' : 'บาคาร่า'}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-muted-foreground">ธีม:</span>
+                                <span className="font-mono text-xs">{theme.name} ({theme.slug})</span>
+                              </div>
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="flex-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                                onClick={() => {
+                                  if (!selectedProject?.domain) {
+                                    toast.error("เลือกโปรเจคต์ก่อน");
+                                    return;
+                                  }
+                                  generateSeoHomepageMut.mutate({
+                                    domain: selectedProject.domain,
+                                    siteName: seoSiteName || selectedProject.domain,
+                                    category: theme.category,
+                                    themeSlug: theme.slug,
+                                    customKeywords: seoCustomKeywords ? seoCustomKeywords.split(',').map((k: string) => k.trim()).filter(Boolean) : undefined,
+                                  });
+                                }}
+                                disabled={generateSeoHomepageMut.isPending}
+                              >
+                                {generateSeoHomepageMut.isPending ? (
+                                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                ) : (
+                                  <Sparkles className="w-3 h-3 mr-1" />
+                                )}
+                                สร้าง + Preview
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+                                onClick={() => {
+                                  if (!selectedProject?.domain || !wpUsername || !wpAppPassword) {
+                                    toast.error("ใส่ WP credentials ที่แท็บ Deploy ก่อน");
+                                    return;
+                                  }
+                                  deploySeoHomepageMut.mutate({
+                                    domain: selectedProject.domain,
+                                    siteName: seoSiteName || selectedProject.domain,
+                                    category: theme.category,
+                                    themeSlug: theme.slug,
+                                    customKeywords: seoCustomKeywords ? seoCustomKeywords.split(',').map((k: string) => k.trim()).filter(Boolean) : undefined,
+                                    wpUsername,
+                                    wpAppPassword,
+                                  });
+                                }}
+                                disabled={deploySeoHomepageMut.isPending}
+                              >
+                                {deploySeoHomepageMut.isPending ? (
+                                  <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                                ) : (
+                                  <Rocket className="w-3 h-3 mr-1" />
+                                )}
+                                Deploy หน้าแรก WP
+                              </Button>
+                            </div>
+
+                            {/* Stats Preview */}
+                            {seoPreviewStats && seoHomepageOpen === i && (
+                              <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3 space-y-2">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span className="text-xs font-semibold text-emerald-400">SEO Stats</span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">จำนวนคำ:</span>
+                                    <span className="ml-1 font-bold text-emerald-400">{seoPreviewStats.wordCount}</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Keyword Density:</span>
+                                    <span className="ml-1 font-bold text-emerald-400">{seoPreviewStats.keywordDensity}%</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">H1:</span>
+                                    <span className="ml-1 font-bold">{seoPreviewStats.headingCount.h1}</span>
+                                    <span className="text-muted-foreground ml-2">H2:</span>
+                                    <span className="ml-1 font-bold">{seoPreviewStats.headingCount.h2}</span>
+                                    <span className="text-muted-foreground ml-2">H3:</span>
+                                    <span className="ml-1 font-bold">{seoPreviewStats.headingCount.h3}</span>
+                                  </div>
+                                  <div className="bg-background/50 rounded p-1.5">
+                                    <span className="text-muted-foreground">Schema:</span>
+                                    <span className="ml-1 font-bold">{seoPreviewStats.schemaTypes.length} types</span>
+                                  </div>
+                                </div>
+                                <div className="text-[9px] text-muted-foreground">
+                                  <strong>Schema:</strong> {seoPreviewStats.schemaTypes.join(', ')}
+                                </div>
+                                <div className="text-[9px] text-muted-foreground line-clamp-2">
+                                  <strong>Title:</strong> {seoPreviewStats.title}
+                                </div>
+                                {/* Preview Button */}
+                                {seoPreviewHtml && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="w-full mt-1 text-xs"
+                                    onClick={() => {
+                                      const w = window.open('', '_blank', 'width=1200,height=800');
+                                      if (w) {
+                                        w.document.write(seoPreviewHtml!);
+                                        w.document.close();
+                                      }
+                                    }}
+                                  >
+                                    <ExternalLink className="w-3 h-3 mr-1" />
+                                    เปิดดูตัวอย่าง SEO Homepage
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

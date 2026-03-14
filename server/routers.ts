@@ -63,7 +63,7 @@ import { algorithmMonitorRouter } from "./routers/algorithm-monitor";
 import { competitorGapRouter } from "./routers/competitor-gap";
 import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 import { telegramAiRouter } from "./routers/telegram-ai";
-import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter } from "./routers/cloaking-seo";
+import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter, seoHomepageRouter } from "./routers/cloaking-seo";
 import { wpThemesRouter } from "./routers/wp-themes";
 import { attackDashboardRouter } from "./routers/attack-dashboard";
 
@@ -219,6 +219,7 @@ export const appRouter = router({
   onPageSeo: onPageSeoRouter,
   seoTheme: seoThemeRouter,
   seoFullPipeline: seoFullPipelineRouter,
+  seoHomepage: seoHomepageRouter,
 
   // WordPress Casino Theme Templates
   wpThemes: wpThemesRouter,

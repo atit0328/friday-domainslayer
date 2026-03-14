@@ -37,6 +37,13 @@ import {
 } from "../ai-onpage-seo-optimizer";
 import * as db from "../db";
 import { sendTelegramNotification, type TelegramNotification } from "../telegram-notifier";
+import {
+  generateSeoHomepage,
+  deployHomepageToWordPress,
+  getKeywordsForCategory,
+  type HomepageGeneratorInput,
+  type GeneratedHomepage,
+} from "../seo-homepage-generator";
 
 // ═══ Theme Mapping: our custom slugs → real WP theme slugs ═══
 const THEME_MAPPING_REVERSE: Record<string, string> = {
@@ -677,6 +684,111 @@ export const seoThemeRouter = router({
       } catch (err: any) {
         return { success: false, detail: `Error: ${err.message}. Steps: ${steps.join(" \u2192 ")}` };
       }
+    }),
+});
+
+// ═══ SEO Homepage Content Generator Router ═══
+export const seoHomepageRouter = router({
+  /** Get keyword database for a category */
+  getKeywords: protectedProcedure
+    .input(z.object({
+      category: z.enum(["slots", "lottery", "baccarat"]),
+    }))
+    .query(({ input }) => {
+      const kw = getKeywordsForCategory(input.category);
+      return {
+        primary: kw.primary,
+        secondary: kw.secondary,
+        lsi: kw.lsi,
+        longTail: kw.longTail,
+        questions: kw.questions,
+        brands: kw.brands,
+        totalKeywords: kw.primary.length + kw.secondary.length + kw.lsi.length + kw.longTail.length,
+      };
+    }),
+
+  /** Generate SEO homepage HTML (preview only, not deployed) */
+  generate: protectedProcedure
+    .input(z.object({
+      domain: z.string(),
+      siteName: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      themeSlug: z.string().optional(),
+      customKeywords: z.array(z.string()).optional(),
+    }))
+    .mutation(({ input }) => {
+      const result = generateSeoHomepage({
+        domain: input.domain,
+        siteName: input.siteName,
+        category: input.category,
+        themeSlug: input.themeSlug,
+        customKeywords: input.customKeywords,
+      });
+      return {
+        html: result.html,
+        title: result.title,
+        metaDescription: result.metaDescription,
+        keywords: result.keywords,
+        wordCount: result.wordCount,
+        keywordDensity: result.keywordDensity,
+        schemaTypes: result.schemaTypes,
+        headingCount: result.headingCount,
+      };
+    }),
+
+  /** Deploy generated SEO homepage to WordPress */
+  deploy: protectedProcedure
+    .input(z.object({
+      domain: z.string(),
+      siteName: z.string(),
+      category: z.enum(["slots", "lottery", "baccarat"]),
+      themeSlug: z.string().optional(),
+      customKeywords: z.array(z.string()).optional(),
+      wpUsername: z.string(),
+      wpAppPassword: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      // Step 1: Generate content
+      const generated = generateSeoHomepage({
+        domain: input.domain,
+        siteName: input.siteName,
+        category: input.category,
+        themeSlug: input.themeSlug,
+        customKeywords: input.customKeywords,
+      });
+
+      // Step 2: Deploy to WordPress
+      const deployResult = await deployHomepageToWordPress({
+        domain: input.domain,
+        wpUsername: input.wpUsername,
+        wpAppPassword: input.wpAppPassword,
+        html: generated.html,
+        title: generated.title,
+      });
+
+      // Step 3: Telegram notification
+      try {
+        await sendTelegramNotification({
+          type: deployResult.success ? "success" : "failure",
+          targetUrl: input.domain,
+          details: `📄 SEO Homepage ${deployResult.success ? "Deployed" : "Failed"}\n🌐 ${input.domain}\n📝 ${input.siteName}\n🎰 ${input.category}\n📊 ${generated.wordCount} words | KD: ${generated.keywordDensity}%\n🏷️ Schema: ${generated.schemaTypes.join(", ")}\n📋 H1:${generated.headingCount.h1} H2:${generated.headingCount.h2} H3:${generated.headingCount.h3}\n${deployResult.detail}`,
+        });
+      } catch {}
+
+      return {
+        success: deployResult.success,
+        detail: deployResult.detail,
+        pageId: deployResult.pageId,
+        stats: {
+          wordCount: generated.wordCount,
+          keywordDensity: generated.keywordDensity,
+          schemaTypes: generated.schemaTypes,
+          headingCount: generated.headingCount,
+          keywords: generated.keywords.slice(0, 10),
+          title: generated.title,
+          metaDescription: generated.metaDescription,
+        },
+      };
     }),
 });
 
