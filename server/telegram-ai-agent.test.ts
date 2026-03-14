@@ -68,6 +68,8 @@ import {
   startTelegramPolling,
   stopTelegramPolling,
   isTelegramPollingActive,
+  getPollingHealth,
+  resetPollingHealth,
   getAllowedChatIds,
   generateExecutiveSummary,
   startDailySummaryScheduler,
@@ -426,6 +428,66 @@ describe("Telegram AI Chat Agent", () => {
       expect(isTelegramPollingActive()).toBe(true);
       stopTelegramPolling();
       expect(isTelegramPollingActive()).toBe(false);
+    });
+  });
+
+  // ═══ Auto-Reconnect & Health Stats ═══
+
+  describe("Auto-Reconnect & Health Stats", () => {
+    afterEach(() => {
+      stopTelegramPolling();
+      resetPollingHealth();
+    });
+
+    it("should initialize health stats on start", async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+      await startTelegramPolling();
+      const health = getPollingHealth();
+      expect(health.startedAt).toBeTypeOf("number");
+      expect(health.status).toBe("connected");
+      expect(health.consecutiveFailures).toBe(0);
+      expect(health.totalReconnects).toBe(0);
+      expect(health.uptimeMs).toBeTypeOf("number");
+      stopTelegramPolling();
+    });
+
+    it("should reset health stats on resetPollingHealth", () => {
+      resetPollingHealth();
+      const health = getPollingHealth();
+      expect(health.startedAt).toBeNull();
+      expect(health.status).toBe("stopped");
+      expect(health.consecutiveFailures).toBe(0);
+      expect(health.totalPollCycles).toBe(0);
+      expect(health.totalMessagesReceived).toBe(0);
+      expect(health.uptimeMs).toBeNull();
+    });
+
+    it("should set status to stopped after stopTelegramPolling", async () => {
+      mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+      await startTelegramPolling();
+      expect(getPollingHealth().status).toBe("connected");
+      stopTelegramPolling();
+      expect(getPollingHealth().status).toBe("stopped");
+      expect(isTelegramPollingActive()).toBe(false);
+    });
+
+    it("should export getPollingHealth with correct shape", () => {
+      const health = getPollingHealth();
+      expect(health).toHaveProperty("startedAt");
+      expect(health).toHaveProperty("lastSuccessfulPoll");
+      expect(health).toHaveProperty("lastError");
+      expect(health).toHaveProperty("lastErrorAt");
+      expect(health).toHaveProperty("consecutiveFailures");
+      expect(health).toHaveProperty("totalReconnects");
+      expect(health).toHaveProperty("totalPollCycles");
+      expect(health).toHaveProperty("totalMessagesReceived");
+      expect(health).toHaveProperty("currentBackoffMs");
+      expect(health).toHaveProperty("status");
+      expect(health).toHaveProperty("uptimeMs");
+    });
+
+    it("should export resetPollingHealth function", () => {
+      expect(typeof resetPollingHealth).toBe("function");
     });
   });
 

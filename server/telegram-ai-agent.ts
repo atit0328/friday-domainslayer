@@ -2227,11 +2227,53 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
 }
 
 // ═══════════════════════════════════════════════════════
-//  POLLING MODE — for development/fallback
+//  POLLING MODE — Auto-Reconnect with Exponential Backoff
 // ═══════════════════════════════════════════════════════
 
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 let pollingOffset = 0;
+let pollingActive = false; // true when polling loop is running
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ─── Auto-Reconnect State ───
+interface PollingHealthStats {
+  startedAt: number | null;
+  lastSuccessfulPoll: number | null;
+  lastError: string | null;
+  lastErrorAt: number | null;
+  consecutiveFailures: number;
+  totalReconnects: number;
+  totalPollCycles: number;
+  totalMessagesReceived: number;
+  currentBackoffMs: number;
+  status: "connected" | "reconnecting" | "disconnected" | "stopped";
+}
+
+const healthStats: PollingHealthStats = {
+  startedAt: null,
+  lastSuccessfulPoll: null,
+  lastError: null,
+  lastErrorAt: null,
+  consecutiveFailures: 0,
+  totalReconnects: 0,
+  totalPollCycles: 0,
+  totalMessagesReceived: 0,
+  currentBackoffMs: 0,
+  status: "stopped",
+};
+
+// Backoff config
+const BACKOFF_INITIAL_MS = 1000;    // 1 second
+const BACKOFF_MAX_MS = 60000;       // 60 seconds max
+const BACKOFF_MULTIPLIER = 2;
+const MAX_CONSECUTIVE_FAILURES = 20; // Alert after 20 consecutive failures
+const NORMAL_POLL_INTERVAL_MS = 2000; // 2 seconds between polls
+
+function calculateBackoff(failures: number): number {
+  if (failures <= 0) return 0;
+  const backoff = BACKOFF_INITIAL_MS * Math.pow(BACKOFF_MULTIPLIER, Math.min(failures - 1, 10));
+  return Math.min(backoff, BACKOFF_MAX_MS);
+}
 
 async function pollUpdates(): Promise<void> {
   const config = getTelegramConfig();
@@ -2244,24 +2286,95 @@ async function pollUpdates(): Promise<void> {
     }, { timeout: 35000 });
     
     const data = await response.json() as any;
-    if (data.ok && data.result?.length > 0) {
+    
+    if (!data.ok) {
+      throw new Error(`Telegram API error: ${data.description || "Unknown error"} (code: ${data.error_code || "?"})`);
+    }
+    
+    // ✅ Successful poll — reset backoff
+    healthStats.totalPollCycles++;
+    healthStats.lastSuccessfulPoll = Date.now();
+    healthStats.status = "connected";
+    
+    if (healthStats.consecutiveFailures > 0) {
+      console.log(`[TelegramAI] ✅ Reconnected after ${healthStats.consecutiveFailures} failures (backoff was ${healthStats.currentBackoffMs}ms)`);
+      healthStats.consecutiveFailures = 0;
+      healthStats.currentBackoffMs = 0;
+    }
+    
+    if (data.result?.length > 0) {
+      healthStats.totalMessagesReceived += data.result.length;
       for (const update of data.result) {
         pollingOffset = update.update_id + 1;
         await handleTelegramWebhook(update);
       }
     }
   } catch (error: any) {
-    if (!error.message?.includes("abort")) {
-      console.error(`[TelegramAI] Polling error: ${error.message}`);
+    if (error.message?.includes("abort") && !pollingActive) {
+      return; // Graceful shutdown
     }
+    
+    healthStats.consecutiveFailures++;
+    healthStats.lastError = error.message || "Unknown error";
+    healthStats.lastErrorAt = Date.now();
+    healthStats.currentBackoffMs = calculateBackoff(healthStats.consecutiveFailures);
+    healthStats.status = "reconnecting";
+    
+    console.error(
+      `[TelegramAI] ⚠️ Polling error #${healthStats.consecutiveFailures}: ${error.message} ` +
+      `(next retry in ${Math.round(healthStats.currentBackoffMs / 1000)}s)`
+    );
+    
+    // Alert via Telegram (using a separate direct API call) after MAX_CONSECUTIVE_FAILURES
+    if (healthStats.consecutiveFailures === MAX_CONSECUTIVE_FAILURES) {
+      console.error(
+        `[TelegramAI] 🚨 CRITICAL: ${MAX_CONSECUTIVE_FAILURES} consecutive polling failures! ` +
+        `Last error: ${error.message}. Will keep retrying...`
+      );
+      // Try to send alert via direct API call (might fail too if network is down)
+      try {
+        const alertUrl = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+        await telegramFetch(alertUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: config.chatId,
+            text: `🚨 *Telegram Bot Alert*\n\n` +
+              `Bot polling มีปัญหาต่อเนื่อง ${MAX_CONSECUTIVE_FAILURES} ครั้ง\n` +
+              `Error: ${error.message}\n` +
+              `กำลัง retry อัตโนมัติ (backoff: ${Math.round(healthStats.currentBackoffMs / 1000)}s)`,
+            parse_mode: "Markdown",
+          }),
+        }, { timeout: 5000 });
+      } catch {
+        // Alert send failed too — network is likely completely down
+      }
+    }
+  }
+}
+
+async function pollingLoop(): Promise<void> {
+  while (pollingActive) {
+    await pollUpdates();
+    
+    if (!pollingActive) break;
+    
+    // Wait: normal interval if connected, backoff delay if reconnecting
+    const waitMs = healthStats.consecutiveFailures > 0
+      ? healthStats.currentBackoffMs
+      : NORMAL_POLL_INTERVAL_MS;
+    
+    await new Promise<void>((resolve) => {
+      reconnectTimer = setTimeout(resolve, waitMs);
+    });
+    reconnectTimer = null;
   }
 }
 
 export async function startTelegramPolling(): Promise<void> {
   // Stop existing polling first to prevent duplicate instances (tsx watch restarts)
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
+  if (pollingActive || pollingInterval) {
+    await stopTelegramPolling();
     console.log(`[TelegramAI] Stopped existing polling before restart`);
   }
   
@@ -2285,22 +2398,70 @@ export async function startTelegramPolling(): Promise<void> {
     console.warn(`[TelegramAI] Failed to clear webhook: ${e.message}`);
   }
   
-  console.log("[TelegramAI] Starting Telegram AI Chat Agent (polling mode)");
+  // Reset health stats for new session
+  healthStats.startedAt = Date.now();
+  healthStats.lastSuccessfulPoll = null;
+  healthStats.lastError = null;
+  healthStats.lastErrorAt = null;
+  healthStats.consecutiveFailures = 0;
+  healthStats.totalReconnects = 0;
+  healthStats.totalPollCycles = 0;
+  healthStats.totalMessagesReceived = 0;
+  healthStats.currentBackoffMs = 0;
+  healthStats.status = "connected";
   
-  pollUpdates();
-  pollingInterval = setInterval(pollUpdates, 2000);
+  pollingActive = true;
+  // Also set pollingInterval to a dummy value so isTelegramPollingActive() returns true
+  pollingInterval = setInterval(() => {}, 999999) as any;
+  
+  console.log("[TelegramAI] Starting Telegram AI Chat Agent (polling mode with auto-reconnect)");
+  
+  // Start the async polling loop (non-blocking)
+  pollingLoop().catch((err) => {
+    console.error(`[TelegramAI] Polling loop crashed: ${err.message}`);
+    healthStats.status = "disconnected";
+  });
 }
 
 export function stopTelegramPolling(): void {
+  pollingActive = false;
+  
   if (pollingInterval) {
     clearInterval(pollingInterval);
     pollingInterval = null;
-    console.log("[TelegramAI] Stopped polling");
   }
+  
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  
+  healthStats.status = "stopped";
+  console.log("[TelegramAI] Stopped polling");
 }
 
 export function isTelegramPollingActive(): boolean {
-  return pollingInterval !== null;
+  return pollingActive;
+}
+
+export function getPollingHealth(): PollingHealthStats & { uptimeMs: number | null } {
+  return {
+    ...healthStats,
+    uptimeMs: healthStats.startedAt ? Date.now() - healthStats.startedAt : null,
+  };
+}
+
+export function resetPollingHealth(): void {
+  healthStats.startedAt = null;
+  healthStats.lastSuccessfulPoll = null;
+  healthStats.lastError = null;
+  healthStats.lastErrorAt = null;
+  healthStats.consecutiveFailures = 0;
+  healthStats.totalReconnects = 0;
+  healthStats.totalPollCycles = 0;
+  healthStats.totalMessagesReceived = 0;
+  healthStats.currentBackoffMs = 0;
+  healthStats.status = "stopped";
 }
 
 // ═══════════════════════════════════════════════════════

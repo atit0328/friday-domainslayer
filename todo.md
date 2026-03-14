@@ -4489,3 +4489,17 @@
 - [x] No more "3 proxies failed for api.telegram.org" in logs
 - [x] Polling starts instantly without proxy delay
 - [ ] Save checkpoint
+
+# Feature: Telegram Bot Auto-Reconnect
+- [x] Implement exponential backoff reconnect (1s → 2s → 4s → 8s → 16s → 32s → max 60s)
+- [x] Detect polling failures (network error, timeout, API error, Telegram API error codes)
+- [x] Auto-restart polling after failure with backoff delay (async pollingLoop)
+- [x] Reset backoff on successful poll cycle (consecutiveFailures → 0)
+- [x] Add connection health stats (startedAt, uptimeMs, lastSuccessfulPoll, lastError, consecutiveFailures, totalPollCycles, totalMessagesReceived, currentBackoffMs, status)
+- [x] Log reconnect attempts with timestamps and backoff duration
+- [x] Alert via Telegram after 20 consecutive failures (MAX_CONSECUTIVE_FAILURES)
+- [x] Export getPollingHealth() and resetPollingHealth() for monitoring
+- [x] TypeScript 0 errors
+- [x] 55 vitest tests passing (5 new auto-reconnect tests)
+- [x] Verified exponential backoff working in live logs (1s → 2s → 4s → 8s → 16s)
+- [ ] Save checkpoint
