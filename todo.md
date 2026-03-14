@@ -4350,3 +4350,17 @@
 - [x] Duplicate replies fixed: dedup window 30s→60s, message_id key, age check >30s skip
 - [x] Bot now shows error details: WAF/403/timeout/connection error in result string
 - [x] Added Force Reset button for stuck running campaigns
+
+# Feature: Theme Live Preview
+
+- [x] Create ThemeLivePreview component — full-page modal showing theme preview
+- [x] Generate realistic casino/gambling page HTML for each theme style (5 themes: neon-jackpot, royal-spin, cyber-slots, lucky-fortune, golden-lottery)
+- [x] Add "Live Preview" button to each theme card in CloakingSettings (side-by-side with Install button)
+- [x] Preview shows: header, hero section, features grid, games showcase, promo banner, footer with theme colors/fonts
+- [x] Viewport switcher: desktop/tablet/mobile with responsive iframe
+- [x] Customize Theme options reflect in preview via customColors prop passthrough
+- [x] Fullscreen toggle + Open in new tab button
+- [x] Category-specific game lists (slots/lottery/baccarat)
+- [x] TypeScript 0 errors
+- [x] 12 vitest tests passing
+- [x] Save checkpoint

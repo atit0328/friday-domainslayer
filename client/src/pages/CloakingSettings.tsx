@@ -11,6 +11,7 @@
  * - SEO theme selection & deploy
  */
 import { useState, useMemo } from "react";
+import ThemeLivePreview from "@/components/ThemeLivePreview";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -27,7 +28,7 @@ import {
   Eye, EyeOff, Globe, Shield, Code, Bot, Rocket, Settings2,
   Loader2, Copy, Check, AlertTriangle, Zap, RefreshCw,
   ArrowRight, Plus, Trash2, Search, Palette, Download,
-  ChevronDown, ChevronUp, ExternalLink, Sparkles
+  ChevronDown, ChevronUp, ExternalLink, Sparkles, MonitorPlay
 } from "lucide-react";
 
 // Country options for targeting
@@ -77,6 +78,8 @@ export default function CloakingSettings() {
   const [expandedTheme, setExpandedTheme] = useState<number | null>(null);
   const [customizerOpen, setCustomizerOpen] = useState<number | null>(null);
   const [customColors, setCustomColors] = useState<Record<number, { primary: string; secondary: string; accent: string; font: string; headingFont: string; radius: string }>>({});
+  const [previewTheme, setPreviewTheme] = useState<any>(null);
+  const [previewThemeIndex, setPreviewThemeIndex] = useState<number | null>(null);
 
   // Queries
   const { data: projects, isLoading: loadingProjects } = trpc.seoProjects.list.useQuery();
@@ -1171,12 +1174,24 @@ export default function CloakingSettings() {
                           )}
                         </div>
 
-                        {/* Install Button */}
-                        <div className="px-4 pb-3 pt-1">
+                        {/* Live Preview + Install Buttons */}
+                        <div className="px-4 pb-3 pt-1 flex gap-2">
                           <Button
                             variant="outline"
                             size="sm"
-                            className="w-full"
+                            className="flex-1"
+                            onClick={() => {
+                              setPreviewTheme(theme);
+                              setPreviewThemeIndex(i);
+                            }}
+                          >
+                            <MonitorPlay className="w-3 h-3 mr-1" />
+                            Live Preview
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
                             onClick={() => {
                               if (!wpUsername || !wpAppPassword) {
                                 toast.error("ใส่ WP credentials ที่แท็บ Deploy ก่อน");
@@ -1218,6 +1233,23 @@ export default function CloakingSettings() {
             </Card>
           </TabsContent>
         </Tabs>
+      )}
+
+      {/* Theme Live Preview Modal */}
+      {previewTheme && (
+        <ThemeLivePreview
+          open={!!previewTheme}
+          onClose={() => {
+            setPreviewTheme(null);
+            setPreviewThemeIndex(null);
+          }}
+          themeName={previewTheme.name}
+          themeSlug={previewTheme.slug}
+          designStyle={previewTheme.designStyle}
+          category={previewTheme.category}
+          defaultColors={previewTheme.defaultColors}
+          customColors={previewThemeIndex !== null ? customColors[previewThemeIndex] : undefined}
+        />
       )}
     </div>
   );
