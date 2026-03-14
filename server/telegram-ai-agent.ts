@@ -3332,6 +3332,7 @@ function buildProgressText(domain: string, method: string, currentStep: number, 
 }
 
 async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
+  console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}`);
   const progressMsgId = await sendAndGetMessageId(config, chatId,
     `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\n\n\u23F3 กำลังเตรียมพร้อม...`);
   
@@ -3651,6 +3652,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
     } else if (method === "advanced_all" || method === "deploy_advanced_all" || method.startsWith("advanced_") || method.startsWith("deploy_advanced_")) {
       // Advanced attack — generate payloads + deploy
+      console.log(`[TelegramAI] Entering advanced handler: method=${method}, isDeployMode=${method.startsWith("deploy_")}`);
       const isDeployMode = method.startsWith("deploy_");
       const technique = method.replace("deploy_advanced_", "").replace("advanced_", "") || "all";
       const techLabel = technique === "all" ? "รวม 5 เทคนิค" : technique;

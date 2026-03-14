@@ -992,6 +992,8 @@ export const seoAgentTasks = mysqlTable("seo_agent_tasks", {
     "report_generate",        // Generate progress report
     "wp_error_scan",          // Scan for WP errors (plugin conflicts, PHP errors, broken pages)
     "wp_error_fix",           // Auto-fix WP errors when user grants permission
+    "wp_setup",               // Full WordPress setup (theme, settings, homepage, schema, images)
+    "backlink_verify",        // Verify existing backlinks are still live
   ]).notNull(),
   title: varchar("seoTaskTitle", { length: 500 }).notNull(),
   description: text("seoTaskDescription"),

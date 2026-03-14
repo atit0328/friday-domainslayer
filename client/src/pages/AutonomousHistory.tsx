@@ -16,7 +16,7 @@ import {
   Clock, Rocket, CheckCircle2, XCircle, AlertTriangle, Loader2,
   Lock, Trash2, Eye, Globe, Skull, ChevronLeft, ChevronRight,
   BarChart3, Layers, Target, Brain, Sparkles, Activity,
-  Package, ArrowUpRight,
+  Package, ArrowUpRight, Server, Shield,
 } from "lucide-react";
 
 // ─── Status helpers ───
@@ -481,6 +481,10 @@ export default function AutonomousHistory() {
             <Package className="w-3.5 h-3.5" />
             Batches
           </TabsTrigger>
+          <TabsTrigger value="insights" className="gap-1.5">
+            <Brain className="w-3.5 h-3.5" />
+            Attack Insights
+          </TabsTrigger>
         </TabsList>
 
         {/* Deploys Tab */}
@@ -650,7 +654,305 @@ export default function AutonomousHistory() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Attack Insights Tab */}
+        <TabsContent value="insights" className="space-y-4">
+          <AttackInsightsTab />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ─── Attack Insights Tab Component ───
+function AttackInsightsTab() {
+  const [attackPage, setAttackPage] = useState(1);
+  const [domainFilter, setDomainFilter] = useState("");
+  const [successOnly, setSuccessOnly] = useState(false);
+
+  const attackStats = trpc.attackHistory.stats.useQuery();
+  const attackRecent = trpc.attackHistory.recent.useQuery({
+    page: attackPage,
+    limit: 20,
+    targetDomain: domainFilter || undefined,
+    successOnly: successOnly || undefined,
+  });
+  const insights = trpc.attackHistory.insights.useQuery();
+
+  const stats = attackStats.data;
+  const attacks = attackRecent.data?.items || [];
+  const totalAttacks = attackRecent.data?.total || 0;
+  const totalAttackPages = Math.ceil(totalAttacks / 20);
+  const insightsData = insights.data;
+
+  return (
+    <div className="space-y-4">
+      {/* Stats Cards */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Card className="border-border/30 bg-card/50">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Target className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-[10px] text-muted-foreground">Total Attacks</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-cyan-400">{stats.totalAttempts}</div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/30 bg-card/50">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                <span className="text-[10px] text-muted-foreground">Successful</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-green-400">{stats.totalSuccess}</div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/30 bg-card/50">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Activity className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-[10px] text-muted-foreground">Success Rate</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-amber-400">
+                {stats.successRate.toFixed(1)}%
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border/30 bg-card/50">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Globe className="w-3.5 h-3.5 text-violet-400" />
+                <span className="text-[10px] text-muted-foreground">Top Methods</span>
+              </div>
+              <div className="text-2xl font-bold font-mono text-violet-400">{stats.topMethods.length}</div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Insights: Method & Platform breakdown */}
+      {insightsData && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* By Method */}
+          <Card className="border-border/30 bg-card/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Skull className="w-4 h-4 text-red-400" />
+                Top Successful Methods
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {insightsData.byMethod.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No data yet</p>
+              ) : (
+                insightsData.byMethod.slice(0, 8).map((m: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="font-mono text-xs truncate max-w-[200px]">{m.method || "unknown"}</span>
+                    <Badge variant="outline" className="text-green-400 border-green-500/30 text-[10px]">
+                      {m.total} wins
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* By Platform */}
+          <Card className="border-border/30 bg-card/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Server className="w-4 h-4 text-blue-400" />
+                Attacks by Platform
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {insightsData.byPlatform.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No data yet</p>
+              ) : (
+                insightsData.byPlatform.slice(0, 8).map((p: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="font-mono text-xs">{p.platform || "unknown"}</span>
+                    <span className="text-xs text-muted-foreground">{p.total} attacks</span>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* By WAF */}
+          <Card className="border-border/30 bg-card/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Shield className="w-4 h-4 text-amber-400" />
+                Success by WAF
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {insightsData.byWaf.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No data yet</p>
+              ) : (
+                insightsData.byWaf.slice(0, 8).map((w: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="font-mono text-xs">{w.waf || "none"}</span>
+                    <Badge variant="outline" className="text-amber-400 border-amber-500/30 text-[10px]">
+                      {w.total} bypassed
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {/* By Language */}
+          <Card className="border-border/30 bg-card/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Layers className="w-4 h-4 text-violet-400" />
+                Success by Language
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-1.5">
+              {insightsData.byLanguage.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No data yet</p>
+              ) : (
+                insightsData.byLanguage.slice(0, 8).map((l: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between text-sm">
+                    <span className="font-mono text-xs">{l.language || "unknown"}</span>
+                    <Badge variant="outline" className="text-violet-400 border-violet-500/30 text-[10px]">
+                      {l.total} wins
+                    </Badge>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Attack History Table */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            type="text"
+            placeholder="Filter by domain..."
+            value={domainFilter}
+            onChange={(e) => { setDomainFilter(e.target.value); setAttackPage(1); }}
+            className="px-3 py-1.5 text-sm rounded-md border border-border/30 bg-background/50 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 w-full sm:w-[220px]"
+          />
+          <Button
+            variant={successOnly ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setSuccessOnly(!successOnly); setAttackPage(1); }}
+            className="gap-1.5"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {successOnly ? "Success Only" : "All Results"}
+          </Button>
+          <span className="text-xs text-muted-foreground">{totalAttacks} records</span>
+        </div>
+
+        <Card className="border-border/30 bg-card/50">
+          <CardContent className="p-0">
+            {attackRecent.isLoading ? (
+              <div className="flex items-center justify-center h-40">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : attacks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                <Skull className="w-10 h-10 mb-2 opacity-20" />
+                <p className="text-sm">No attack records found</p>
+              </div>
+            ) : (
+              <ScrollArea className="max-h-[500px]">
+                <div className="divide-y divide-border/20">
+                  {attacks.map((a: any) => (
+                    <div key={a.id} className="flex items-center justify-between p-3 hover:bg-muted/10 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                          a.success
+                            ? "border-green-500/30 bg-green-500/10"
+                            : "border-red-500/30 bg-red-500/10"
+                        }`}>
+                          {a.success
+                            ? <CheckCircle2 className="w-4 h-4 text-green-400" />
+                            : <XCircle className="w-4 h-4 text-red-400" />
+                          }
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm font-semibold">{a.targetDomain}</span>
+                            {a.success && a.redirectUrl && (
+                              <a
+                                href={a.redirectUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-emerald-400 hover:text-emerald-300"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ArrowUpRight className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
+                            <span className="font-mono">{a.method}</span>
+                            {a.serverType && <><span>\u2022</span><span>{a.serverType}</span></>}
+                            {a.cms && <><span>\u2022</span><span>{a.cms}</span></>}
+                            {a.waf && <><span>\u2022</span><Badge variant="outline" className="text-[9px] text-amber-400 border-amber-500/30">{a.waf}</Badge></>}
+                            <span>\u2022</span>
+                            <span>{formatDate(a.createdAt)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {a.statusCode && (
+                          <Badge variant="outline" className={`text-[10px] ${
+                            a.statusCode >= 200 && a.statusCode < 300 ? "text-green-400 border-green-500/30" :
+                            a.statusCode >= 400 ? "text-red-400 border-red-500/30" :
+                            "text-amber-400 border-amber-500/30"
+                          }`}>
+                            {a.statusCode}
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className={`text-[10px] ${
+                          a.success ? "text-green-400 border-green-500/30" : "text-red-400 border-red-500/30"
+                        }`}>
+                          {a.success ? "Success" : "Failed"}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Pagination */}
+        {totalAttackPages > 1 && (
+          <div className="flex items-center justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAttackPage((p) => Math.max(1, p - 1))}
+              disabled={attackPage === 1}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              {attackPage} / {totalAttackPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAttackPage((p) => Math.min(totalAttackPages, p + 1))}
+              disabled={attackPage === totalAttackPages}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -20,6 +20,8 @@ import * as serpTracker from "./serp-tracker";
 import { createWPClient } from "./wp-api";
 import { sendTelegramNotification } from "./telegram-notifier";
 import { runExternalBuildSession, buildTelegraphLink, buildTier2Links } from "./external-backlink-builder";
+import { runWPSetup, type WPSetupConfig } from "./wp-setup-engine";
+import { verifyBacklinks, type BacklinkToVerify, formatVerificationForTelegram } from "./backlink-verifier";
 
 // ═══ Types ═══
 
@@ -604,9 +606,6 @@ What should we do next? Be specific.` },
       case "content_plan":
       case "keyword_gap_analysis":
       case "backlink_plan":
-      case "wp_optimize":
-      case "wp_fix_issues":
-      case "schema_markup":
       case "internal_linking":
       case "risk_assessment":
       case "report_generate": {
@@ -626,6 +625,168 @@ Provide specific, actionable results.` },
          detail = `${task.title} — completed`;
         break;
       }
+      case "wp_setup": {
+        // Real WordPress setup via API
+        if (!project.wpUsername || !project.wpAppPassword) {
+          return { status: "skipped", detail: "No WordPress connection — cannot run WP setup" };
+        }
+        const setupConfig: WPSetupConfig = {
+          siteUrl: `https://${project.domain}`,
+          username: project.wpUsername,
+          appPassword: project.wpAppPassword,
+          siteName: project.domain,
+          siteDescription: `${project.niche || "gambling"} - ${(project.targetKeywords as string[])?.[0] || project.domain}`,
+          niche: project.niche || "gambling",
+          targetKeywords: (project.targetKeywords as string[]) || [project.domain],
+          language: "th",
+        };
+        const setupResult = await runWPSetup(setupConfig);
+        result = {
+          totalTasks: setupResult.totalTasks,
+          completedTasks: setupResult.completedTasks,
+          failedTasks: setupResult.failedTasks,
+          skippedTasks: setupResult.skippedTasks,
+          tasks: setupResult.tasks,
+        };
+        detail = setupResult.summary;
+        
+        // Notify via Telegram
+        try {
+          await sendTelegramNotification({
+            type: setupResult.success ? "success" : "failure",
+            targetUrl: `https://${project.domain}`,
+            details: `🔧 WP Setup: ${setupResult.summary}\n${setupResult.tasks.map(t => `${t.status === "completed" ? "✅" : t.status === "failed" ? "❌" : "⏭"} ${t.task}: ${t.detail}`).join("\n")}`,
+          });
+        } catch {}
+        break;
+      }
+
+      case "wp_optimize":
+      case "wp_fix_issues": {
+        // Real WP optimization: run setup engine for optimization tasks
+        if (!project.wpUsername || !project.wpAppPassword) {
+          return { status: "skipped", detail: "No WordPress connection" };
+        }
+        const optConfig: WPSetupConfig = {
+          siteUrl: `https://${project.domain}`,
+          username: project.wpUsername,
+          appPassword: project.wpAppPassword,
+          siteName: project.domain,
+          siteDescription: `${project.niche || "gambling"}`,
+          niche: project.niche || "gambling",
+          targetKeywords: (project.targetKeywords as string[]) || [project.domain],
+          language: "th",
+        };
+        const optResult = await runWPSetup(optConfig);
+        result = { tasks: optResult.tasks, summary: optResult.summary };
+        detail = optResult.summary;
+        break;
+      }
+
+      case "schema_markup": {
+        // Real schema markup injection via WP API
+        if (!project.wpUsername || !project.wpAppPassword) {
+          // Fallback to LLM recommendations if no WP connection
+          const schemaResponse = await invokeLLM({
+            messages: [
+              { role: "system", content: "Generate JSON-LD schema markup for a gambling/casino website. Return the actual JSON-LD code." },
+              { role: "user", content: `Generate schema markup for ${project.domain} (${project.niche || "gambling"}).` },
+            ],
+          });
+          result = { output: typeof schemaResponse.choices[0]?.message?.content === "string" ? schemaResponse.choices[0].message.content.slice(0, 2000) : "" };
+          detail = "Schema markup generated (manual installation required — no WP connection)";
+        } else {
+          const schemaConfig: WPSetupConfig = {
+            siteUrl: `https://${project.domain}`,
+            username: project.wpUsername,
+            appPassword: project.wpAppPassword,
+            siteName: project.domain,
+            siteDescription: `${project.niche || "gambling"}`,
+            niche: project.niche || "gambling",
+            targetKeywords: (project.targetKeywords as string[]) || [project.domain],
+          };
+          // Run just the schema task from wp-setup-engine
+          const wp = createWPClient({
+            siteUrl: schemaConfig.siteUrl,
+            username: schemaConfig.username,
+            appPassword: schemaConfig.appPassword,
+          });
+          const posts = await wp.getPosts({ per_page: 20, status: "publish" });
+          let updated = 0;
+          for (const post of posts.slice(0, 10)) {
+            try {
+              const content = post.content?.raw || post.content?.rendered || "";
+              if (content.includes("application/ld+json")) continue;
+              const schema = {
+                "@context": "https://schema.org",
+                "@type": "Article",
+                headline: post.title.rendered,
+                url: post.link,
+                datePublished: post.date,
+                dateModified: post.modified,
+                publisher: { "@type": "Organization", name: project.domain },
+              };
+              const schemaHtml = `<script type="application/ld+json">${JSON.stringify(schema)}</script>\n\n`;
+              await wp.updatePost(post.id, { content: schemaHtml + content });
+              updated++;
+            } catch {}
+          }
+          result = { postsUpdated: updated, totalPosts: posts.length };
+          detail = `Schema markup: ${updated} posts updated with Article JSON-LD`;
+        }
+        break;
+      }
+
+      case "backlink_verify": {
+        // Verify existing backlinks are still live
+        const existingBLs = await db.getProjectBacklinks(project.id, 50);
+        const toVerify: BacklinkToVerify[] = existingBLs
+          .filter((bl: any) => bl.sourceUrl && bl.status === "active")
+          .map((bl: any) => ({
+            sourceUrl: bl.sourceUrl,
+            targetDomain: project.domain,
+            platform: bl.sourceDomain || bl.sourceType || "unknown",
+          }));
+        
+        if (toVerify.length === 0) {
+          result = { message: "No active backlinks to verify" };
+          detail = "Backlink verification: no active backlinks found";
+        } else {
+          const verifyResult = await verifyBacklinks(toVerify, 3);
+          
+          // Update backlink status in DB based on verification
+          for (const r of verifyResult.results) {
+            if (r.status === "broken" || r.status === "missing_link") {
+              const bl = existingBLs.find((b: any) => b.sourceUrl === r.sourceUrl);
+              if (bl) {
+                try {
+                  await db.updateBacklink(bl.id, { status: "broken" });
+                } catch {}
+              }
+            }
+          }
+          
+          result = {
+            total: verifyResult.total,
+            verified: verifyResult.verified,
+            broken: verifyResult.broken,
+            nofollow: verifyResult.nofollow,
+            missingLink: verifyResult.missingLink,
+          };
+          detail = verifyResult.summary;
+          
+          // Notify via Telegram
+          try {
+            await sendTelegramNotification({
+              type: verifyResult.verified === verifyResult.total ? "success" : "info",
+              targetUrl: `https://${project.domain}`,
+              details: formatVerificationForTelegram(verifyResult),
+            });
+          } catch {}
+        }
+        break;
+      }
+
       case "wp_error_scan": {
         // Scan WordPress site for errors (plugin conflicts, PHP errors, broken pages)
         if (!project.wpUsername || !project.wpAppPassword) {
