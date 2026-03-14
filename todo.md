@@ -4581,3 +4581,17 @@
 - [x] Batch attack: เพิ่ม progress counter (e.g., "3/10 domains completed")
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Bug Fix: Advanced_all Attack Hangs Silently
+
+## Problem
+- Advanced_all attack ค้างเงียบ ไม่มี progress update ใดๆ (จากภาพ: เริ่ม 15:20 ค้างไป 27+ นาที)
+- ไม่มี completion notification เมื่อเสร็จหรือล้มเหลว
+
+## Fixes
+- [x] ตรวจสอบ advanced_all execution flow ใน executeAttackWithProgress
+- [x] เพิ่ม progress update ระหว่างทำงาน (per-technique progress)
+- [x] เพิ่ม timeout protection สำหรับ advanced_all (max 10 นาที)
+- [x] ROOT CAUSE: advanced_all ไม่มี handler ใน executeAttackWithProgress → เพิ่มแล้ว (ทั้ง advanced_all, deploy_advanced_all, และ wildcard)
+- [x] TypeScript 0 errors
+- [x] Save checkpoint

