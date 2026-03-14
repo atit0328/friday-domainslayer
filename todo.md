@@ -4895,3 +4895,13 @@
 ## 3. Testing
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Bug Fix: Telegram Narration ไม่ทำงาน + Timeout Retry Spam
+
+## ปัญหาที่พบจาก screenshot
+- [x] Narration ไม่แสดง step-by-step — Root cause: executeTool case "attack_website" ทำ inline (blocking) ไม่ได้เรียก executeAttackWithProgress
+- [x] Timeout retry ส่งข้อความ "ระบบใช้เวลานานเกินไป" ซ้ำ — Root cause: tool ทำงานนาน → TOOL_TIMEOUT 25s → PROCESS_TIMEOUT 40s → retry loop
+- [x] Fix: เปลี่ยน executeTool case "attack_website" + "deploy_advanced" ให้ fire-and-forget executeAttackWithProgress แทน
+- [x] Fix: Inject _chatId จาก processMessage ลงใน args เพื่อให้ executeAttackWithProgress ส่ง narration ไปถูก chat
+- [x] Fix: Tool return ทันที "เริ่มโจมตีแล้ว" → ไม่มี timeout → ไม่มี spam
+- [x] TypeScript 0 errors

