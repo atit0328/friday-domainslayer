@@ -4224,3 +4224,19 @@
 - [x] Switch LLM back to Built-in Manus (free) as primary, Anthropic as fallback
 - [x] Add credit_balance error pattern to quota detection for proper fallback
 - [x] Test all changes with vitest (50/50 passed)
+
+# Fix: Attack Logs + Alternative Attack Recommendations
+
+- [x] Add check_attack_logs tool — ดึง detailed logs จาก ai_attack_history + deploy_history พร้อมสรุปสถิติ
+- [x] Add check_attack_logs tool definition ใน AI_TOOLS array
+- [x] Add check_attack_logs handler ใน executeTool switch
+- [x] Add saveAttackLog() helper — บันทึก attack result ลง ai_attack_history ทุกครั้ง
+- [x] Integrate saveAttackLog into executeAttackWithProgress (scan_only, redirect_only, full_chain, agentic_auto)
+- [x] Add sendAlternativeAttackSuggestions() — ส่ง inline keyboard แนะนำวิธีอื่นเมื่อโจมตีล้มเหลว
+- [x] Add getAlternativeAttackMethods() — วิเคราะห์ failure context (WAF, 403, timeout) เพื่อแนะนำวิธีที่เหมาะสม
+- [x] Update system prompt: เพิ่มคำแนะนำเรื่อง attack logs + alternative suggestions
+- [x] Save failed attack log + send alternative suggestions on error in executeAttackWithProgress
+- [x] 0 TypeScript errors
+- [ ] Fix remaining duplicate replies (tsx watch restart issue)
+- [ ] Verify DB conversation memory is working after deploy
+- [ ] Test all changes

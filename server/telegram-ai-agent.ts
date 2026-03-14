@@ -641,6 +641,21 @@ const AI_TOOLS: Tool[] = [
   {
     type: "function",
     function: {
+      name: "check_attack_logs",
+      description: "ดู log การโจมตีของเว็บเป้าหมายเฉพาะ — ดูว่าเคยโจมตีกี่ครั้ง สำเร็จ/ล้มเหลว error อะไร ใช้วิธีไหน และแนะนำวิธีที่น่าจะได้ผล",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนเป้าหมายที่ต้องการดู log" },
+          limit: { type: "number", description: "จำนวน log ที่ต้องการดู (default: 10)" },
+        },
+        required: ["domain"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "start_sprint",
       description: "เริ่ม SEO Sprint ใหม่สำหรับโดเมน",
       parameters: {
@@ -861,6 +876,158 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         
         const duration = Date.now() - startTime;
         result += `\n\n⏱ ดึงข้อมูลใช้เวลา ${formatDuration(duration)}`;
+        return result;
+      }
+
+      case "check_attack_logs": {
+        const { getDb } = await import("./db");
+        const db = await getDb();
+        if (!db) return "Database ไม่พร้อมใช้งาน";
+        
+        const targetDomain = args.domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        const limit = args.limit || 10;
+        
+        // Query from both ai_attack_history and deploy_history for comprehensive logs
+        const { aiAttackHistory, deployHistory } = await import("../drizzle/schema");
+        const { desc, like, or, eq, sql } = await import("drizzle-orm");
+        
+        // 1. Get detailed attack attempts from ai_attack_history
+        const attackLogs = await db.select({
+          id: aiAttackHistory.id,
+          method: aiAttackHistory.method,
+          success: aiAttackHistory.success,
+          statusCode: aiAttackHistory.statusCode,
+          errorMessage: aiAttackHistory.errorMessage,
+          aiReasoning: aiAttackHistory.aiReasoning,
+          aiConfidence: aiAttackHistory.aiConfidence,
+          cms: aiAttackHistory.cms,
+          waf: aiAttackHistory.waf,
+          serverType: aiAttackHistory.serverType,
+          uploadedUrl: aiAttackHistory.uploadedUrl,
+          durationMs: aiAttackHistory.durationMs,
+          pipelineType: aiAttackHistory.pipelineType,
+          createdAt: aiAttackHistory.createdAt,
+        }).from(aiAttackHistory)
+          .where(like(aiAttackHistory.targetDomain, `%${targetDomain}%`))
+          .orderBy(desc(aiAttackHistory.createdAt))
+          .limit(limit);
+        
+        // 2. Get deploy history for this domain
+        const deployLogs = await db.select({
+          id: deployHistory.id,
+          status: deployHistory.status,
+          filesDeployed: deployHistory.filesDeployed,
+          filesAttempted: deployHistory.filesAttempted,
+          redirectActive: deployHistory.redirectActive,
+          shellUploaded: deployHistory.shellUploaded,
+          errorBreakdown: deployHistory.errorBreakdown,
+          techniqueUsed: deployHistory.techniqueUsed,
+          bypassMethod: deployHistory.bypassMethod,
+          cms: deployHistory.cms,
+          wafDetected: deployHistory.wafDetected,
+          serverType: deployHistory.serverType,
+          altMethodUsed: deployHistory.altMethodUsed,
+          duration: deployHistory.duration,
+          report: deployHistory.report,
+          createdAt: deployHistory.createdAt,
+        }).from(deployHistory)
+          .where(like(deployHistory.targetDomain, `%${targetDomain}%`))
+          .orderBy(desc(deployHistory.createdAt))
+          .limit(limit);
+        
+        const duration = Date.now() - startTime;
+        
+        if (attackLogs.length === 0 && deployLogs.length === 0) {
+          return `ไม่พบ log การโจมตีสำหรับ ${targetDomain}\n⏱ ค้นหาใช้เวลา ${formatDuration(duration)}`;
+        }
+        
+        let result = `📋 Attack Logs: ${targetDomain}\n`;
+        result += `═══════════════════════\n`;
+        
+        // Summarize attack history
+        if (attackLogs.length > 0) {
+          const totalAttempts = attackLogs.length;
+          const successCount = attackLogs.filter(l => l.success).length;
+          const failCount = totalAttempts - successCount;
+          const methods = Array.from(new Set(attackLogs.map(l => l.method)));
+          const successMethods = Array.from(new Set(attackLogs.filter(l => l.success).map(l => l.method)));
+          const failedMethods = Array.from(new Set(attackLogs.filter(l => !l.success).map(l => l.method)));
+          
+          result += `\n🎯 Attack Attempts: ${totalAttempts}\n`;
+          result += `  ✅ สำเร็จ: ${successCount}\n`;
+          result += `  ❌ ล้มเหลว: ${failCount}\n`;
+          
+          if (successMethods.length > 0) {
+            result += `  วิธีที่ได้ผล: ${successMethods.join(", ")}\n`;
+          }
+          if (failedMethods.length > 0) {
+            result += `  วิธีที่ไม่ได้ผล: ${failedMethods.join(", ")}\n`;
+          }
+          
+          // Show WAF/Server info from latest
+          const latest = attackLogs[0];
+          if (latest.waf) result += `  WAF: ${latest.waf}\n`;
+          if (latest.serverType) result += `  Server: ${latest.serverType}\n`;
+          if (latest.cms) result += `  CMS: ${latest.cms}\n`;
+          
+          // Show recent logs with details
+          result += `\n📝 Recent Attempts:\n`;
+          for (const log of attackLogs.slice(0, 5)) {
+            const icon = log.success ? "✅" : "❌";
+            const time = log.createdAt ? new Date(log.createdAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }) : "?";
+            result += `  ${icon} ${log.method} [${log.statusCode || "?"}] — ${time}\n`;
+            if (log.errorMessage) result += `     Error: ${log.errorMessage.substring(0, 100)}\n`;
+            if (log.aiReasoning) result += `     AI: ${log.aiReasoning.substring(0, 80)}\n`;
+            if (log.uploadedUrl) result += `     URL: ${log.uploadedUrl}\n`;
+          }
+        }
+        
+        // Summarize deploy history
+        if (deployLogs.length > 0) {
+          result += `\n🚀 Deploy History: ${deployLogs.length} records\n`;
+          for (const log of deployLogs.slice(0, 5)) {
+            const icon = log.status === "success" ? "✅" : log.status === "partial" ? "⚠️" : "❌";
+            const time = log.createdAt ? new Date(log.createdAt).toLocaleString("th-TH", { timeZone: "Asia/Bangkok" }) : "?";
+            result += `  ${icon} [${log.status}] files:${log.filesDeployed}/${log.filesAttempted} redirect:${log.redirectActive ? "✅" : "❌"} — ${time}\n`;
+            if (log.techniqueUsed) result += `     Technique: ${log.techniqueUsed}\n`;
+            if (log.wafDetected) result += `     WAF: ${log.wafDetected}\n`;
+            if (log.altMethodUsed) result += `     Alt Method: ${log.altMethodUsed}\n`;
+            if (log.errorBreakdown) {
+              const errors = typeof log.errorBreakdown === "string" ? JSON.parse(log.errorBreakdown) : log.errorBreakdown;
+              const errorSummary = Object.entries(errors).map(([k, v]) => `${k}:${v}`).join(", ");
+              if (errorSummary) result += `     Errors: ${errorSummary}\n`;
+            }
+          }
+        }
+        
+        // AI recommendation based on logs
+        const allSuccessMethods = Array.from(new Set([
+          ...attackLogs.filter(l => l.success).map(l => l.method),
+          ...deployLogs.filter(l => l.status === "success").map(l => l.techniqueUsed || "unknown"),
+        ]));
+        const allFailedMethods = Array.from(new Set([
+          ...attackLogs.filter(l => !l.success).map(l => l.method),
+          ...deployLogs.filter(l => l.status === "failed").map(l => l.techniqueUsed || "unknown"),
+        ]));
+        const latestWaf = attackLogs[0]?.waf || deployLogs[0]?.wafDetected;
+        const latestCms = attackLogs[0]?.cms || deployLogs[0]?.cms;
+        
+        result += `\n💡 แนะนำ:\n`;
+        if (allSuccessMethods.length > 0) {
+          result += `  วิธีที่เคยสำเร็จ: ${allSuccessMethods.join(", ")} — ลองใช้วิธีเดิมอีกครั้ง\n`;
+        }
+        if (latestWaf && latestWaf !== "none") {
+          result += `  ⚠️ ตรวจพบ WAF: ${latestWaf} — ลอง agentic_auto ที่จะ bypass WAF อัตโนมัติ\n`;
+        }
+        if (allFailedMethods.length > 0 && allSuccessMethods.length === 0) {
+          const triedMethods = allFailedMethods;
+          const untried = ["redirect_only", "agentic_auto", "full_chain", "scan_only"].filter(m => !triedMethods.includes(m));
+          if (untried.length > 0) {
+            result += `  ยังไม่เคยลอง: ${untried.join(", ")} — แนะนำลองวิธีเหล่านี้\n`;
+          }
+        }
+        
+        result += `\n⏱ ค้นหาใช้เวลา ${formatDuration(duration)}`;
         return result;
       }
 
@@ -1138,6 +1305,7 @@ function buildSystemPrompt(context: SystemContext): string {
 - "สถานะ" / "ตอนนี้เป็นไง" / "อัพเดท" → ถามสถานะรวม ให้ตอบจาก context
 - "rank เท่าไหร่" / "อันดับ" → เช็ค keyword rank
 - "PBN" / "เว็บเครือข่าย" → เช็ค PBN status
+- "log" / "ดู log" / "ประวัติการโจมตี" / "เคยโจมตียังไง" / "ทำไมล้มเหลว" → ดู attack logs ให้เรียก check_attack_logs
 
 ═══ เมื่อ user สั่งโจมตี ═══
 ถ้า user สั่งโจมตีเว็บ ให้เรียก attack_website tool ทันที โดยใช้ method ที่เหมาะสม:
@@ -1153,6 +1321,19 @@ function buildSystemPrompt(context: SystemContext): string {
 - สถานะ: สำเร็จ/ล้มเหลว/กำลังทำ
 - ระยะเวลาที่ใช้
 - รายละเอียดสิ่งที่ทำ
+
+═══ เมื่อโจมตีล้มเหลว ═══
+ถ้าโจมตีล้มเหลว ให้ทำสิ่งนี้:
+1. บอกสาเหตุที่ล้มเหลว (เช่น WAF block, timeout, 403) อย่างกระชับ
+2. เรียก check_attack_logs เพื่อดูว่าเคยลองวิธีไหนไปแล้วบ้าง
+3. แนะนำวิธีอื่นที่น่าจะได้ผล พร้อมเหตุผลว่าทำไม
+
+ตัวอย่างการแนะนำ:
+- full_chain ล้มเหลว → แนะนำ agentic_auto (ใช้ AI หาช่องโหว่อัตโนมัติ) หรือ redirect_only
+- redirect_only ล้มเหลว → แนะนำ agentic_auto หรือ full_chain
+- ถ้ามี WAF → แนะนำ agentic_auto เป็นอันดับ 1 (มี WAF bypass อัตโนมัติ)
+- ถ้าโดน 403 → แนะนำ agentic_auto ที่จะลองหลายวิธี bypass
+- ถ้า timeout → แนะนำลองใหม่ทีหลัง หรือ scan_only ก่อนเพื่อดูข้อมูลเพิ่มเติม
 
 ═══ การเข้าใจ follow-up ═══
 - ถ้า user พิมพ์ตัวเลข ("1", "2", "3", "4") หรือ "ข้อ X" → ดูจากบริบทก่อนหน้าว่ากำลังคุยเรื่องอะไร
@@ -1809,6 +1990,201 @@ async function sendAttackConfirmKeyboard(config: TelegramConfig, chatId: number,
 }
 
 // ═══════════════════════════════════════════════════════
+//  SAVE ATTACK LOG — persist attack results to ai_attack_history
+// ═══════════════════════════════════════════════════════
+
+interface AttackLogEntry {
+  targetDomain: string;
+  method: string;
+  success: boolean;
+  statusCode?: number;
+  errorMessage?: string;
+  aiReasoning?: string;
+  aiConfidence?: number;
+  cms?: string;
+  waf?: string;
+  serverType?: string;
+  uploadedUrl?: string;
+  durationMs?: number;
+  pipelineType?: string;
+  sessionId?: string;
+  redirectUrl?: string;
+  preAnalysisData?: any;
+}
+
+async function saveAttackLog(entry: AttackLogEntry): Promise<void> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return;
+    
+    const { aiAttackHistory } = await import("../drizzle/schema");
+    await db.insert(aiAttackHistory).values({
+      userId: 1,
+      targetDomain: entry.targetDomain,
+      method: entry.method,
+      success: entry.success,
+      statusCode: entry.statusCode,
+      errorMessage: entry.errorMessage,
+      aiReasoning: entry.aiReasoning,
+      aiConfidence: entry.aiConfidence,
+      cms: entry.cms,
+      waf: entry.waf,
+      serverType: entry.serverType,
+      uploadedUrl: entry.uploadedUrl,
+      durationMs: entry.durationMs,
+      pipelineType: entry.pipelineType || "telegram",
+      sessionId: entry.sessionId,
+      redirectUrl: entry.redirectUrl,
+      preAnalysisData: entry.preAnalysisData,
+    });
+    console.log(`[TelegramAI] Saved attack log: ${entry.targetDomain} [${entry.method}] ${entry.success ? "success" : "failed"}`);
+  } catch (e: any) {
+    console.warn(`[TelegramAI] Failed to save attack log: ${e.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  ALTERNATIVE ATTACK SUGGESTIONS — smart recommendations on failure
+// ═══════════════════════════════════════════════════════
+
+interface AlternativeMethod {
+  method: string;
+  label: string;
+  reason: string;
+  confidence: string; // high, medium, low
+}
+
+function getAlternativeAttackMethods(failedMethod: string, errorInfo?: { waf?: string; serverType?: string; cms?: string; errorMessage?: string }): AlternativeMethod[] {
+  const alternatives: AlternativeMethod[] = [];
+  
+  // Analyze failure context to suggest smart alternatives
+  const hasWaf = errorInfo?.waf && errorInfo.waf !== "none";
+  const isWordPress = errorInfo?.cms?.toLowerCase()?.includes("wordpress");
+  const isTimeout = errorInfo?.errorMessage?.includes("timeout") || errorInfo?.errorMessage?.includes("ETIMEDOUT");
+  const is403 = errorInfo?.errorMessage?.includes("403") || errorInfo?.errorMessage?.includes("Forbidden");
+  const isConnectionRefused = errorInfo?.errorMessage?.includes("ECONNREFUSED") || errorInfo?.errorMessage?.includes("ECONNRESET");
+  
+  if (failedMethod !== "agentic_auto") {
+    let reason = "ใช้ AI หาช่องโหว่และโจมตีอัตโนมัติ";
+    let confidence = "medium";
+    if (hasWaf) {
+      reason = `ตรวจพบ WAF (${errorInfo!.waf}) — AI จะ bypass อัตโนมัติ`;
+      confidence = "high";
+    }
+    if (is403) {
+      reason = "โดนบล็อก 403 — AI จะลองหลายวิธี bypass";
+      confidence = "high";
+    }
+    alternatives.push({
+      method: "agentic_auto",
+      label: "🤖 AI Auto Attack",
+      reason,
+      confidence,
+    });
+  }
+  
+  if (failedMethod !== "redirect_only") {
+    let reason = "วาง redirect โดยตรง ไม่ต้อง exploit ช่องโหว่";
+    let confidence = "medium";
+    if (isWordPress) {
+      reason = "WordPress มีช่องทาง redirect หลายวิธี (REST API, xmlrpc, plugin vulns)";
+      confidence = "high";
+    }
+    alternatives.push({
+      method: "redirect_only",
+      label: "🎯 Redirect Takeover",
+      reason,
+      confidence,
+    });
+  }
+  
+  if (failedMethod !== "full_chain") {
+    let reason = "โจมตีเต็มรูปแบบ ทุกขั้นตอน";
+    let confidence = "medium";
+    if (failedMethod === "scan_only") {
+      reason = "สแกนเสร็จแล้ว ลองโจมตีจริง";
+      confidence = "high";
+    }
+    alternatives.push({
+      method: "full_chain",
+      label: "⚔️ Full Attack Chain",
+      reason,
+      confidence,
+    });
+  }
+  
+  if (failedMethod !== "scan_only") {
+    alternatives.push({
+      method: "scan_only",
+      label: "🔍 Scan Only",
+      reason: "สแกนดูช่องโหว่ก่อน เพื่อวางแผนโจมตีใหม่",
+      confidence: "high",
+    });
+  }
+  
+  // Sort by confidence
+  const confidenceOrder: Record<string, number> = { high: 3, medium: 2, low: 1 };
+  alternatives.sort((a, b) => (confidenceOrder[b.confidence] || 0) - (confidenceOrder[a.confidence] || 0));
+  
+  return alternatives;
+}
+
+async function sendAlternativeAttackSuggestions(
+  config: TelegramConfig,
+  chatId: number,
+  domain: string,
+  failedMethod: string,
+  errorInfo?: { waf?: string; serverType?: string; cms?: string; errorMessage?: string }
+): Promise<void> {
+  const alternatives = getAlternativeAttackMethods(failedMethod, errorInfo);
+  if (alternatives.length === 0) return;
+  
+  const confidenceEmoji: Record<string, string> = { high: "🟢", medium: "🟡", low: "🔴" };
+  
+  let text = `❌ โจมตี ${domain} ด้วย ${failedMethod} ล้มเหลว\n\n`;
+  text += `💡 วิธีอื่นที่น่าจะได้ผล:\n`;
+  for (const alt of alternatives) {
+    text += `${confidenceEmoji[alt.confidence] || "⚪"} ${alt.label} — ${alt.reason}\n`;
+  }
+  text += `\nกดเลือกวิธีที่ต้องการลอง:`;
+  
+  // Build inline keyboard
+  const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < alternatives.length; i += 2) {
+    const row: Array<{ text: string; callback_data: string }> = [];
+    row.push({
+      text: `${confidenceEmoji[alternatives[i].confidence]} ${alternatives[i].label}`,
+      callback_data: `atk_confirm:${domain}:${alternatives[i].method}`,
+    });
+    if (alternatives[i + 1]) {
+      row.push({
+        text: `${confidenceEmoji[alternatives[i + 1].confidence]} ${alternatives[i + 1].label}`,
+        callback_data: `atk_confirm:${domain}:${alternatives[i + 1].method}`,
+      });
+    }
+    keyboard.push(row);
+  }
+  keyboard.push([{ text: "❌ ไม่ลองแล้ว", callback_data: "atk_cancel" }]);
+  
+  try {
+    const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    await fetchWithPoolProxy(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        reply_markup: { inline_keyboard: keyboard },
+      }),
+      signal: AbortSignal.timeout(10000),
+    }, { targetDomain: "api.telegram.org", timeout: 10000 });
+  } catch (error: any) {
+    console.error(`[TelegramAI] Failed to send alternative suggestions: ${error.message}`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
 //  REAL-TIME PROGRESS — edit message in-place during attack
 // ═══════════════════════════════════════════════════════
 
@@ -1919,6 +2295,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       stepIndex++;
       await updateProgress("Done", "done");
       
+      // Save scan log
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "scan_only",
+        success: true,
+        durationMs: Date.now() - scanStart,
+        aiReasoning: `Scan complete: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`,
+        preAnalysisData: analysis.currentState,
+      });
+      
     } else if (method === "redirect_only") {
       // Step 1: Pick redirect URL
       await updateProgress("Picking redirect URL", "running");
@@ -1945,6 +2331,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       stepIndex++;
       await updateProgress("Done", succeeded.length > 0 ? "done" : "failed");
+      
+      // Save attack log
+      const redirectDuration = Date.now() - s1;
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "redirect_only",
+        success: succeeded.length > 0,
+        durationMs: redirectDuration,
+        redirectUrl,
+        uploadedUrl: succeeded[0]?.injectedUrl,
+        errorMessage: succeeded.length === 0 ? `All ${results.length} redirect methods failed` : undefined,
+        aiReasoning: succeeded.length > 0
+          ? `Succeeded with: ${succeeded.map(r => r.method).join(", ")}`
+          : `Tried ${results.length} methods, all failed`,
+      });
+      
+      // Send alternative suggestions on failure
+      if (succeeded.length === 0) {
+        await sendAlternativeAttackSuggestions(config, chatId, domain, "redirect_only", {
+          errorMessage: `All ${results.length} redirect methods failed`,
+        });
+      }
       
     } else if (method === "full_chain") {
       // Full chain with per-phase progress
@@ -1974,9 +2382,30 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       
       // Final summary
-      timings.push({ step: `Total: ${report.totalPayloads} payloads`, ms: 0, ok: true });
+      const successPhases = report.phases.filter((p: any) => p.status === "success" || p.summary?.includes("success"));
+      const fullChainSuccess = successPhases.length > 0 || report.totalPayloads > 0;
+      timings.push({ step: `Total: ${report.totalPayloads} payloads`, ms: 0, ok: fullChainSuccess });
       stepIndex++;
-      await updateProgress("Done", "done");
+      await updateProgress("Done", fullChainSuccess ? "done" : "failed");
+      
+      // Save attack log
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "full_chain",
+        success: fullChainSuccess,
+        durationMs: chainMs,
+        redirectUrl,
+        aiReasoning: `${report.phases.length} phases, ${report.totalPayloads} payloads. ` +
+          report.phases.map((p: any) => `${p.name}: ${p.summary || p.payloads.length + " payloads"}`).join("; "),
+        errorMessage: !fullChainSuccess ? `Full chain failed: ${report.phases.map((p: any) => p.summary).join(", ")}` : undefined,
+      });
+      
+      // Send alternative suggestions on failure
+      if (!fullChainSuccess) {
+        await sendAlternativeAttackSuggestions(config, chatId, domain, "full_chain", {
+          errorMessage: `Full chain: ${report.totalPayloads} payloads, no success`,
+        });
+      }
       
     } else if (method === "agentic_auto") {
       // AI auto — starts background session
@@ -2003,10 +2432,36 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: "Running in background", ms: 0, ok: true });
       stepIndex++;
       await updateProgress("Done", "done");
+      
+      // Save attack log
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "agentic_auto",
+        success: true,
+        durationMs: Date.now() - s1,
+        redirectUrl,
+        sessionId: String(session.sessionId),
+        aiReasoning: `Agentic session #${session.sessionId} started in background`,
+      });
     }
   } catch (error: any) {
     timings.push({ step: `Error: ${error.message}`, ms: 0, ok: false });
     await updateProgress("Failed", "failed");
+    
+    // Save failed attack log
+    await saveAttackLog({
+      targetDomain: domain,
+      method,
+      success: false,
+      errorMessage: error.message,
+      durationMs: timings.reduce((sum, t) => sum + t.ms, 0),
+      aiReasoning: `Attack failed with error: ${error.message}`,
+    });
+    
+    // Send alternative suggestions on error
+    await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
+      errorMessage: error.message,
+    });
   }
 }
 

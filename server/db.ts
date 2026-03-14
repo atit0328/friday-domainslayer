@@ -822,6 +822,100 @@ export async function getAttackStats(): Promise<{
 }
 
 
+// ═══ Attack History by Domain ═══
+
+export async function getAttackHistoryForDomain(domain: string, limit = 20): Promise<Array<{
+  id: number;
+  method: string;
+  success: boolean;
+  errorMessage: string | null;
+  statusCode: number | null;
+  durationMs: number | null;
+  aiReasoning: string | null;
+  bypassTechnique: string | null;
+  payloadType: string | null;
+  serverType: string | null;
+  cms: string | null;
+  waf: string | null;
+  wafStrength: string | null;
+  createdAt: Date;
+}>> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const { eq, desc, like, or } = await import("drizzle-orm");
+    const rows = await db
+      .select({
+        id: aiAttackHistory.id,
+        method: aiAttackHistory.method,
+        success: aiAttackHistory.success,
+        errorMessage: aiAttackHistory.errorMessage,
+        statusCode: aiAttackHistory.statusCode,
+        durationMs: aiAttackHistory.durationMs,
+        aiReasoning: aiAttackHistory.aiReasoning,
+        bypassTechnique: aiAttackHistory.bypassTechnique,
+        payloadType: aiAttackHistory.payloadType,
+        serverType: aiAttackHistory.serverType,
+        cms: aiAttackHistory.cms,
+        waf: aiAttackHistory.waf,
+        wafStrength: aiAttackHistory.wafStrength,
+        createdAt: aiAttackHistory.createdAt,
+      })
+      .from(aiAttackHistory)
+      .where(
+        or(
+          eq(aiAttackHistory.targetDomain, domain),
+          like(aiAttackHistory.targetDomain, `%${domain}%`)
+        )
+      )
+      .orderBy(desc(aiAttackHistory.createdAt))
+      .limit(limit);
+    return rows;
+  } catch (error) {
+    console.warn(`[AI Attack History] Failed to get history for ${domain}:`, error);
+    return [];
+  }
+}
+
+export async function getSuccessfulMethodsForSimilarSites(opts: {
+  serverType?: string | null;
+  cms?: string | null;
+  waf?: string | null;
+}): Promise<Array<{ method: string; bypassTechnique: string | null; payloadType: string | null; count: number }>> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const { eq, and, count, desc } = await import("drizzle-orm");
+    const conditions = [eq(aiAttackHistory.success, true)];
+    if (opts.serverType) conditions.push(eq(aiAttackHistory.serverType, opts.serverType));
+    if (opts.cms) conditions.push(eq(aiAttackHistory.cms, opts.cms));
+    if (opts.waf) conditions.push(eq(aiAttackHistory.waf, opts.waf));
+
+    const rows = await db
+      .select({
+        method: aiAttackHistory.method,
+        bypassTechnique: aiAttackHistory.bypassTechnique,
+        payloadType: aiAttackHistory.payloadType,
+        cnt: count(aiAttackHistory.id),
+      })
+      .from(aiAttackHistory)
+      .where(and(...conditions))
+      .groupBy(aiAttackHistory.method, aiAttackHistory.bypassTechnique, aiAttackHistory.payloadType)
+      .orderBy(desc(count(aiAttackHistory.id)))
+      .limit(10);
+
+    return rows.map(r => ({
+      method: r.method,
+      bypassTechnique: r.bypassTechnique,
+      payloadType: r.payloadType,
+      count: r.cnt,
+    }));
+  } catch (error) {
+    console.warn("[AI Attack History] Failed to get successful methods:", error);
+    return [];
+  }
+}
+
 // ═══ SEO Agent Tasks ═══
 
 export async function createAgentTask(
