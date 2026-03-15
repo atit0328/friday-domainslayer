@@ -2742,13 +2742,87 @@ const BACKOFF_INITIAL_MS = 1000;    // 1 second
 const BACKOFF_MAX_MS = 15000;       // 15 seconds max (was 60s — too slow)
 const BACKOFF_MULTIPLIER = 2;
 const CONFLICT_RETRY_MS = 5000;     // Fixed 5s wait on 409 conflict (no exponential)
+const CONFLICT_AUTO_RESTART_THRESHOLD = 3; // After 3 consecutive conflicts, auto-restart
+const CONFLICT_WEBHOOK_COOLDOWN_MS = 60000; // Max 1 deleteWebhook per 60 seconds
 const MAX_CONSECUTIVE_FAILURES = 20; // Alert after 20 consecutive failures
 const NORMAL_POLL_INTERVAL_MS = 2000; // 2 seconds between polls
+
+// Conflict auto-restart state
+let consecutiveConflicts = 0;
+let lastWebhookDeleteAt = 0;
+let conflictAutoRestartCount = 0;
 
 function calculateBackoff(failures: number): number {
   if (failures <= 0) return 0;
   const backoff = BACKOFF_INITIAL_MS * Math.pow(BACKOFF_MULTIPLIER, Math.min(failures - 1, 10));
   return Math.min(backoff, BACKOFF_MAX_MS);
+}
+
+/**
+ * Auto-restart polling when conflict persists.
+ * Clears webhook, resets state, and resumes clean polling.
+ */
+async function autoRestartOnConflict(): Promise<void> {
+  const config = getTelegramConfig();
+  if (!config) return;
+  
+  const now = Date.now();
+  if (now - lastWebhookDeleteAt < CONFLICT_WEBHOOK_COOLDOWN_MS) {
+    console.log(`[TelegramAI] ⏳ Conflict auto-restart cooldown (${Math.round((CONFLICT_WEBHOOK_COOLDOWN_MS - (now - lastWebhookDeleteAt)) / 1000)}s remaining)`);
+    return;
+  }
+  
+  conflictAutoRestartCount++;
+  lastWebhookDeleteAt = now;
+  
+  console.log(`[TelegramAI] 🔄 Auto-restart #${conflictAutoRestartCount}: Clearing webhook + resetting polling state...`);
+  
+  // Step 1: Delete any existing webhook to stop the other instance
+  try {
+    const deleteUrl = `https://api.telegram.org/bot${config.botToken}/deleteWebhook`;
+    await telegramFetch(deleteUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ drop_pending_updates: false }), // Keep pending messages
+      signal: AbortSignal.timeout(10000),
+    }, { timeout: 10000 });
+    console.log(`[TelegramAI] ✅ Webhook deleted successfully`);
+  } catch (e: any) {
+    console.warn(`[TelegramAI] ⚠️ Failed to delete webhook: ${e.message}`);
+  }
+  
+  // Step 2: Short pause to let the other instance's getUpdates fail
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  // Step 3: Reset polling state
+  const conflictsBeforeReset = consecutiveConflicts;
+  healthStats.consecutiveFailures = 0;
+  healthStats.currentBackoffMs = 0;
+  healthStats.status = "connected";
+  consecutiveConflicts = 0;
+  
+  console.log(`[TelegramAI] \u2705 Auto-restart complete \u2014 polling state reset, resuming clean polling`);
+  
+  // Step 4: Notify via Telegram that bot recovered
+  try {
+    const notifyUrl = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    await telegramFetch(notifyUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: config.chatId,
+        text: `\ud83d\udd04 *Bot Auto-Restart*\n\n` +
+          `\u0e15\u0e23\u0e27\u0e08\u0e1e\u0e1a conflict (bot instance \u0e0a\u0e19\u0e01\u0e31\u0e19) ${conflictsBeforeReset} \u0e04\u0e23\u0e31\u0e49\u0e07\n` +
+          `\u0e17\u0e33 auto-restart \u0e04\u0e23\u0e31\u0e49\u0e07\u0e17\u0e35\u0e48 #${conflictAutoRestartCount}:\n` +
+          `\u2022 \u0e25\u0e1a webhook \u0e40\u0e01\u0e48\u0e32\n` +
+          `\u2022 reset polling state\n` +
+          `\u2022 \u0e01\u0e25\u0e31\u0e1a\u0e21\u0e32\u0e17\u0e33\u0e07\u0e32\u0e19\u0e1b\u0e01\u0e15\u0e34\u0e41\u0e25\u0e49\u0e27 \u2705`,
+        parse_mode: "Markdown",
+      }),
+    }, { timeout: 5000 });
+  } catch {
+    // Notification failed \u2014 not critical
+  }
 }
 
 async function pollUpdates(): Promise<void> {
@@ -2771,6 +2845,12 @@ async function pollUpdates(): Promise<void> {
     healthStats.totalPollCycles++;
     healthStats.lastSuccessfulPoll = Date.now();
     healthStats.status = "connected";
+    
+    // Recovery from conflict — log it
+    if (consecutiveConflicts > 0) {
+      console.log(`[TelegramAI] ✅ Conflict resolved! Recovered after ${consecutiveConflicts} consecutive conflicts`);
+      consecutiveConflicts = 0;
+    }
     
     if (healthStats.consecutiveFailures > 0) {
       console.log(`[TelegramAI] ✅ Reconnected after ${healthStats.consecutiveFailures} failures (backoff was ${healthStats.currentBackoffMs}ms)`);
@@ -2800,9 +2880,19 @@ async function pollUpdates(): Promise<void> {
     // 409 Conflict: another bot instance is running — use fixed short wait, not exponential
     // Timeout: network issue — use shorter backoff
     if (isConflict) {
+      consecutiveConflicts++;
       healthStats.currentBackoffMs = CONFLICT_RETRY_MS;
       healthStats.status = "conflict";
+      
+      // Auto-restart after threshold consecutive conflicts
+      if (consecutiveConflicts >= CONFLICT_AUTO_RESTART_THRESHOLD) {
+        console.log(`[TelegramAI] 🚨 ${consecutiveConflicts} consecutive conflicts — triggering auto-restart...`);
+        await autoRestartOnConflict();
+        return; // Skip normal backoff wait, pollUpdates will be called again by pollingLoop
+      }
     } else if (isTimeout) {
+      // Non-conflict error — reset conflict counter
+      consecutiveConflicts = 0;
       // Timeout errors: use moderate backoff (cap at 10s)
       healthStats.currentBackoffMs = Math.min(calculateBackoff(healthStats.consecutiveFailures), 10000);
       healthStats.status = "reconnecting";
@@ -2900,6 +2990,11 @@ export async function startTelegramPolling(): Promise<void> {
   healthStats.totalMessagesReceived = 0;
   healthStats.currentBackoffMs = 0;
   healthStats.status = "connected";
+  
+  // Reset conflict state
+  consecutiveConflicts = 0;
+  lastWebhookDeleteAt = 0;
+  conflictAutoRestartCount = 0;
   
   pollingActive = true;
   // Also set pollingInterval to a dummy value so isTelegramPollingActive() returns true

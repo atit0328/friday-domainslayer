@@ -5286,3 +5286,14 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 12/12 passed
 - [x] Save checkpoint
+
+# Feature: Auto-restart polling เมื่อ conflict หายไป
+- [x] เพิ่ม conflict counter tracking (consecutiveConflicts)
+- [x] เมื่อ conflict ต่อเนื่อง 3+ ครั้ง → autoRestartOnConflict() อัตโนมัติ
+- [x] autoRestartOnConflict: deleteWebhook → 2s pause → reset polling state → Telegram notify
+- [x] เมื่อ conflict หาย (poll สำเร็จหลังจาก conflict) → log recovery
+- [x] ป้องกัน deleteWebhook spam — cooldown 60 วินาที
+- [x] reset conflict state ใน startTelegramPolling
+- [x] TypeScript 0 errors
+- [x] Vitest 12/12 passed
+- [x] Save checkpoint
