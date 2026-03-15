@@ -5365,7 +5365,7 @@
 - [x] จำกัด max 3 auto-restarts ต่อชั่วโมง
 - [x] suppress duplicate notifications (ส่งแค่ 1 ครั้งต่อ 10 นาที)
 - [x] TypeScript 0 errors
-- [ ] Save checkpoint
+- [x] Save checkpoint
 
 # Feature: ปุ่ม Restart All ใน Telegram + แก้ Auto-Restart spam
 
@@ -5374,5 +5374,13 @@
 - [x] ปุ่มกดแล้ว: ลบ webhook+pending, reset polling/conflict state, clear running attacks, clear conversation
 - [x] เพิ่ม /restart command พิมพ์ได้ด้วย
 - [x] แก้ Auto-Restart spam: webhook cooldown 5นาที, notification cooldown 10นาที, max 3 restarts/ชั่วโมง
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
+
+# BUG FIX: Restart ทั้งหมด ยังมี conflict หลัง restart
+- [x] แก้ performFullBotRestart: stopTelegramPolling() ก่อนทำอะไร
+- [x] เพิ่ม flush getUpdates offset=-1 เพื่อ skip ข้อความเก่าทั้งหมด
+- [x] เพิ่ม pause 5 วินาทีให้ instance อื่นหยุด
+- [x] startTelegramPolling() เริ่มใหม่หลัง restart
 - [x] TypeScript 0 errors
 - [ ] Save checkpoint

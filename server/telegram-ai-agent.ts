@@ -2892,11 +2892,15 @@ async function autoRestartOnConflict(): Promise<void> {
  * reset all polling/conflict state, clear running attacks, and resume.
  */
 async function performFullBotRestart(config: TelegramConfig, chatId: number): Promise<string> {
-  console.log(`[TelegramAI] 🚨 Manual FULL RESTART triggered by user`);
+  console.log(`[TelegramAI] \ud83d\udea8 Manual FULL RESTART triggered by user`);
   
   const steps: string[] = [];
   
-  // Step 1: Delete webhook + drop pending updates
+  // Step 1: STOP polling loop completely first
+  stopTelegramPolling();
+  steps.push("\u2705 \u0e2b\u0e22\u0e38\u0e14 polling loop");
+  
+  // Step 2: Delete webhook + drop ALL pending updates
   try {
     const deleteUrl = `https://api.telegram.org/bot${config.botToken}/deleteWebhook`;
     await telegramFetch(deleteUrl, {
@@ -2905,12 +2909,32 @@ async function performFullBotRestart(config: TelegramConfig, chatId: number): Pr
       body: JSON.stringify({ drop_pending_updates: true }),
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
-    steps.push("✅ ลบ webhook + pending updates");
+    steps.push("\u2705 \u0e25\u0e1a webhook + pending updates");
   } catch (e: any) {
-    steps.push(`⚠️ ลบ webhook ล้มเหลว: ${e.message}`);
+    steps.push(`\u26a0\ufe0f \u0e25\u0e1a webhook: ${e.message}`);
   }
   
-  // Step 2: Reset all polling state
+  // Step 3: Flush getUpdates offset to skip all old messages
+  // Call getUpdates with offset=-1 to get the latest update_id, then set offset to skip everything
+  try {
+    const flushUrl = `https://api.telegram.org/bot${config.botToken}/getUpdates?offset=-1&limit=1&timeout=1`;
+    const { response: flushResp } = await telegramFetch(flushUrl, {
+      signal: AbortSignal.timeout(5000),
+    }, { timeout: 5000 });
+    const flushData = await flushResp.json() as any;
+    if (flushData.ok && flushData.result?.length > 0) {
+      pollingOffset = flushData.result[0].update_id + 1;
+      steps.push(`\u2705 Skip \u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21\u0e40\u0e01\u0e48\u0e32\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14 (offset: ${pollingOffset})`);
+    } else {
+      pollingOffset = 0;
+      steps.push("\u2705 \u0e44\u0e21\u0e48\u0e21\u0e35\u0e02\u0e49\u0e2d\u0e04\u0e27\u0e32\u0e21\u0e04\u0e49\u0e32\u0e07");
+    }
+  } catch {
+    pollingOffset = 0;
+    steps.push("\u2705 Reset offset");
+  }
+  
+  // Step 4: Reset all conflict/health state
   consecutiveConflicts = 0;
   conflictAutoRestartCount = 0;
   lastWebhookDeleteAt = 0;
@@ -2918,35 +2942,38 @@ async function performFullBotRestart(config: TelegramConfig, chatId: number): Pr
   restartTimestamps = [];
   healthStats.consecutiveFailures = 0;
   healthStats.currentBackoffMs = 0;
-  healthStats.status = "connected";
   healthStats.lastError = null;
-  pollingOffset = 0;
-  steps.push("✅ Reset polling state ทั้งหมด");
+  healthStats.lastErrorAt = null;
+  steps.push("\u2705 Reset conflict/health state");
   
-  // Step 3: Clear running attacks
+  // Step 5: Clear running attacks
   const running = getRunningAttacks();
   if (running.length > 0) {
     for (const a of running) {
       completeRunningAttack(a.id, false, 0);
     }
-    steps.push(`✅ หยุด running attacks ${running.length} รายการ`);
+    steps.push(`\u2705 \u0e2b\u0e22\u0e38\u0e14 running attacks ${running.length} \u0e23\u0e32\u0e22\u0e01\u0e32\u0e23`);
   } else {
-    steps.push("✅ ไม่มี running attacks");
+    steps.push("\u2705 \u0e44\u0e21\u0e48\u0e21\u0e35 running attacks");
   }
   
-  // Step 4: Clear conversation states
+  // Step 6: Clear conversation state
   clearConversationState(chatId);
-  steps.push("✅ Clear conversation state");
+  steps.push("\u2705 Clear conversation state");
   
-  // Step 5: Short pause
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  steps.push("✅ รอ 2 วินาทีให้ instance เก่าหยุด");
+  // Step 7: Wait 5 seconds for other instances to release
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  steps.push("\u2705 \u0e23\u0e2d 5 \u0e27\u0e34\u0e19\u0e32\u0e17\u0e35\u0e43\u0e2b\u0e49 instance \u0e2d\u0e37\u0e48\u0e19\u0e2b\u0e22\u0e38\u0e14");
   
-  console.log(`[TelegramAI] ✅ Full restart complete: ${steps.length} steps done`);
+  // Step 8: Restart polling fresh
+  await startTelegramPolling();
+  steps.push("\u2705 \u0e40\u0e23\u0e34\u0e48\u0e21 polling \u0e43\u0e2b\u0e21\u0e48\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08");
   
-  return `🔄 *Full Bot Restart สำเร็จ!*\n\n` +
-    steps.map(s => `• ${s}`).join("\n") +
-    `\n\n🟢 Bot กลับมาทำงานปกติแล้ว!`;
+  console.log(`[TelegramAI] \u2705 Full restart complete: ${steps.length} steps done`);
+  
+  return `\ud83d\udd04 *Full Bot Restart \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08!*\n\n` +
+    steps.map(s => `\u2022 ${s}`).join("\n") +
+    `\n\n\ud83d\udfe2 Bot \u0e01\u0e25\u0e31\u0e1a\u0e21\u0e32\u0e17\u0e33\u0e07\u0e32\u0e19\u0e1b\u0e01\u0e15\u0e34\u0e41\u0e25\u0e49\u0e27!`;
 }
 
 async function pollUpdates(): Promise<void> {
