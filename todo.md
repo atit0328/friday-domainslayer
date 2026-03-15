@@ -5098,3 +5098,10 @@
 - [x] ส่ง progress updates เรื่อยๆ แทนที่จะ timeout + retry
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Bug Fix: full_chain ลองแค่ 9 วิธีจาก 20 + แนะนำวิธีซ้ำหลัง fail
+- [x] ตรวจสอบว่า full_chain ข้าม method ไหนบ้าง (ปัญหา: CMS filter ข้าม WP methods ถ้า detect ไม่ใช่ WP)
+- [x] แก้ให้ full_chain รันครบ 20 methods ทุกตัว (ลอง WP methods เสมอแม้ CMS ไม่ใช่ WP)
+- [x] ลบ/แก้ suggestion menu หลัง full_chain fail (ไม่แนะนำวิธีซ้ำ แค่สรุปผล+แนะนำ scan/AI Auto)
+- [x] TypeScript 0 errors
+- [x] Save checkpoint

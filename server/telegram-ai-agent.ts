@@ -3972,10 +3972,17 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       })();
       
       // Filter methods by CMS compatibility
+      // full_chain = ลองทุกวิธี! ถ้า CMS unknown ให้ลองทั้งหมดเลย (เผื่อ detect ผิด)
       const compatibleMethods = ALL_METHODS.filter(m => {
         if (m.cms.includes("*")) return true; // universal method
         if (m.cms.includes(detectedCms)) return true; // exact CMS match
-        if (detectedCms === "unknown" && (m.cms.includes("custom") || m.cms.includes("unknown"))) return true;
+        // ถ้า CMS unknown → ลองทุกวิธีรวม WP ด้วย (full_chain = ลองทุกอย่าง)
+        if (detectedCms === "unknown") return true;
+        // ถ้า detect เป็น CMS อื่น → ยังลอง WP methods ด้วย (เผื่อ detect ผิด)
+        // เฉพาะ CMS-specific ที่ไม่ใช่ WP และไม่ตรง CMS เท่านั้นที่ข้าม
+        // เช่น ถ้า detect เป็น joomla → ข้าม drupal-specific แต่ยังลอง WP
+        if (m.cms.includes("wordpress")) return true; // WP methods ลองเสมอ
+        if (m.cms.includes("custom") || m.cms.includes("unknown")) return true;
         return false;
       });
       
@@ -4879,11 +4886,38 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         preAnalysisData: vulnScanResult ? { attackVectors: vulnScanResult.attackVectors.slice(0, 3).map(v => v.name), writablePaths: vulnScanResult.writablePaths.length, exploitable: vulnScanResult.misconfigurations.filter(m => m.exploitable).length } : undefined,
       });
       
-      // Send alternative suggestions on failure
+      // full_chain ลองทุกวิธีแล้ว — ไม่ต้องแนะนำวิธีซ้ำ
+      // แค่สรุปผลและแนะนำ scan ใหม่หรือเปลี่ยน domain
       if (!fullChainSuccess) {
-        await sendAlternativeAttackSuggestions(config, chatId, domain, "full_chain", {
-          errorMessage: `All ${failedMethods.length} methods failed: ${failedMethods.join(", ")}`,
-        });
+        const totalTried = failedMethods.length + (fullChainSuccess ? 1 : 0);
+        const summaryText = `\u274C \u0e42\u0e08\u0e21\u0e15\u0e35 ${domain} \u0e14\u0e49\u0e27\u0e22 full_chain \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\n\n` +
+          `\uD83D\uDCCA \u0e25\u0e2d\u0e07\u0e41\u0e25\u0e49\u0e27 ${totalTried} \u0e27\u0e34\u0e18\u0e35 \u0e44\u0e21\u0e48\u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08\n` +
+          `\u23F1 \u0e43\u0e0a\u0e49\u0e40\u0e27\u0e25\u0e32: ${((Date.now() - attackStartTime) / 1000 / 60).toFixed(1)} \u0e19\u0e32\u0e17\u0e35\n\n` +
+          `\uD83D\uDCA1 \u0e41\u0e19\u0e30\u0e19\u0e33:\n` +
+          `\u2022 \u0e40\u0e27\u0e47\u0e1a\u0e19\u0e35\u0e49\u0e2d\u0e32\u0e08\u0e21\u0e35\u0e01\u0e32\u0e23\u0e1b\u0e49\u0e2d\u0e07\u0e01\u0e31\u0e19\u0e17\u0e35\u0e48\u0e41\u0e02\u0e47\u0e07\u0e41\u0e01\u0e23\u0e48\u0e07\n` +
+          `\u2022 \u0e25\u0e2d\u0e07\u0e2a\u0e48\u0e07 domain \u0e2d\u0e37\u0e48\u0e19\u0e17\u0e35\u0e48\u0e2d\u0e48\u0e2d\u0e19\u0e41\u0e2d\u0e01\u0e27\u0e48\u0e32\n` +
+          `\u2022 \u0e2a\u0e48\u0e07 /scan ${domain} \u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e27\u0e34\u0e40\u0e04\u0e23\u0e32\u0e30\u0e2b\u0e4c\u0e43\u0e2b\u0e21\u0e48`;
+        
+        const keyboard = [
+          [{ text: "\uD83D\uDD0D Scan \u0e43\u0e2b\u0e21\u0e48", callback_data: `atk_run:${domain}:scan_only` }],
+          [{ text: "\uD83E\uDD16 AI Auto Attack", callback_data: `atk_confirm:${domain}:agentic_auto` }],
+          [{ text: "\u274C \u0e44\u0e21\u0e48\u0e25\u0e2d\u0e07\u0e41\u0e25\u0e49\u0e27", callback_data: "atk_cancel" }],
+        ];
+        
+        try {
+          await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: summaryText,
+              reply_markup: { inline_keyboard: keyboard },
+            }),
+            signal: AbortSignal.timeout(10000),
+          }, { timeout: 10000 });
+        } catch (e: any) {
+          console.error(`[TelegramAI] Failed to send full_chain summary: ${e.message}`);
+        }
       }
       
     } else if (method === "agentic_auto") {
