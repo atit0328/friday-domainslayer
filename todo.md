@@ -4938,3 +4938,17 @@
 ## 3. Testing
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: Dynamic Attack Ordering + Scan Only Upgrade
+## 1. Dynamic Attack Ordering (full_chain)
+- [x] ใช้ attackVectors จาก fullVulnScan เพื่อจัดลำดับ fallback methods แบบ dynamic
+- [x] Map attackVector names → method functions (keyword matching: upload/put/post → pipeline, php/inject → cloaking, credential/brute → hijack, etc.)
+- [x] ถ้า scan ล้มเหลว → fallback ไปใช้ fixed order เดิม
+- [x] แสดง AI-recommended order ใน narration (score-based ranking)
+## 2. Scan Only Upgrade
+- [x] อัปเกรด scan_only ให้ใช้ fullVulnScan แทน analyzeTarget
+- [x] เพิ่ม narration step-by-step สำหรับ scan_only (3 phases: SEO metrics → Deep Vuln Scan → Summary)
+- [x] แสดงผล scan ละเอียด: Server, CMS, WAF, Vulns, Attack Vectors, Misconfigurations + คำแนะนำวิธีโจมตี
+## 3. Testing
+- [x] TypeScript 0 errors
+- [ ] Save checkpoint
