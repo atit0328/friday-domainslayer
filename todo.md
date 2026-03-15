@@ -4972,7 +4972,13 @@
 - [x] full_chain ค้างที่ Deep Vuln Scan 17% แล้ว timeout หลัง 124s (gladstone64.com behind Cloudflare)
 - [x] ตรวจสอบ log หาสาเหตุ — root cause: LLM round 2 หลัง tool call ใช้เวลานานเกิน 40s processMessage timeout
 - [x] แก้ไข timeout/hang issue — skip LLM round 2 สำหรับ attack tools, return ทันที
-- [ ] Save checkpoint
+- [x] Save checkpoint
 - [x] แก้ processMessage timeout — attack_website เป็น fire-and-forget อยู่แล้ว แต่ LLM round 2 timeout ก่อน
 - [x] ปรับ: attack tools ไม่ต้องรอ LLM round 2 — return ทันทีหลัง fire-and-forget (skip LLM summarization)
 - [x] ปรับ TOOL_TIMEOUT_MS 25s → 15s สำหรับ normal tools, attack tools ใช้ 5s race timeout
+
+# Bug: full_chain still timeout 198s + false positive success
+- [x] ยังมี "ระบบใช้เวลานานเกินไป (198s)" — เพิ่ม duplicate attack guard + skip LLM round 2
+- [x] "สำเร็จด้วย Unified Pipeline หลังลอง 1 วิธี" แต่ไม่มี redirect จริง — แก้ false positive แล้ว
+- [x] ตรวจสอบ log เพื่อหาสาเหตุ — fileDeployed นับเป็น success ทั้งที่ redirect ไม่ทำงาน
+- [x] แก้ไข verification ให้ตรวจ redirect จริงก่อนรายงานสำเร็จ (3 จุด: Pipeline condition, real fetch verify, duplicate guard)
