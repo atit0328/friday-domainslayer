@@ -36,6 +36,8 @@ export interface NarratorConfig {
   messageId?: number;
   /** Max message length before splitting (Telegram limit ~4096) */
   maxLength?: number;
+  /** Optional: total methods count for full_chain progress display */
+  totalMethods?: number;
 }
 
 export type NarratorPhase = 
@@ -369,6 +371,9 @@ export class TelegramNarrator {
   private lastEditTime: number = 0;
   private editQueue: Promise<void> = Promise.resolve();
   private phaseAnalysis: Map<string, string> = new Map();
+  private currentMethodIndex: number = 0;
+  private currentMethodName: string = "";
+  private methodResults: Array<{ name: string; icon: string; success: boolean }> = [];
   
   /** Minimum interval between edits (ms) to avoid Telegram rate limits */
   private static MIN_EDIT_INTERVAL = 1500;
@@ -485,12 +490,35 @@ export class TelegramNarrator {
     return Date.now() - this.startTime;
   }
 
+  /** Set current method progress for full_chain display */
+  setMethodProgress(index: number, name: string, icon: string): void {
+    this.currentMethodIndex = index;
+    this.currentMethodName = `${icon} ${name}`;
+  }
+
+  /** Record method result for summary display */
+  recordMethodResult(name: string, icon: string, success: boolean): void {
+    this.methodResults.push({ name, icon, success });
+  }
+
+  /** Get method results */
+  getMethodResults(): Array<{ name: string; icon: string; success: boolean }> {
+    return this.methodResults;
+  }
+
   // ─── Message Building ───
 
   private buildHeader(): string {
     const phaseInfo = PHASE_LABELS[this.currentPhase];
     const elapsed = Date.now() - this.startTime;
-    return `⚔️ โจมตี: ${this.config.domain}\n${phaseInfo.emoji} ${phaseInfo.thai} | ⏱ ${formatDurationThai(elapsed)}`;
+    let header = `⚔️ โจมตี: ${this.config.domain}\n${phaseInfo.emoji} ${phaseInfo.thai} | ⏱ ${formatDurationThai(elapsed)}`;
+    
+    // Show method counter for full_chain
+    if (this.config.totalMethods && this.currentMethodIndex > 0) {
+      header += `\n🎯 ${this.currentMethodName} (${this.currentMethodIndex}/${this.config.totalMethods})`;
+    }
+    
+    return header;
   }
 
   private buildStepsText(): string {
@@ -518,8 +546,30 @@ export class TelegramNarrator {
     
     return text;
   }
-
   private buildProgressBar(): string {
+    // For full_chain: use method-level progress instead of step-level
+    if (this.config.totalMethods && this.methodResults.length > 0) {
+      const totalM = this.config.totalMethods;
+      const tried = this.methodResults.length;
+      const succeeded = this.methodResults.filter(r => r.success).length;
+      const pct = Math.round((tried / Math.max(totalM, 1)) * 100);
+      const barLen = 12;
+      const filled = Math.round((pct / 100) * barLen);
+      const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+      
+      const spinner = buildSpinner(Date.now() - this.startTime);
+      let statusText = this.currentMethodIndex <= totalM
+        ? `${spinner} กำลังโจมตี...`
+        : (succeeded > 0 ? `✅ สำเร็จ ${succeeded} วิธี` : `❌ ล้มเหลวทั้งหมด`);
+      
+      // Mini summary of recent results
+      const recent = this.methodResults.slice(-3);
+      const recentText = recent.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ");
+      
+      return `\n[█${bar}] ${pct}% | ลองแล้ว ${tried}/${totalM} ${statusText}\nล่าสุด: ${recentText}`;
+    }
+    
+    // Default: step-level progress
     const total = this.steps.length;
     const done = this.steps.filter(s => s.status === "done" || s.status === "skipped").length;
     const failed = this.steps.filter(s => s.status === "failed").length;
@@ -542,7 +592,7 @@ export class TelegramNarrator {
       statusText = `✅ ${done}/${total} สำเร็จ`;
     }
     
-    return `\n[${bar}] ${pct}% ${statusText}`;
+    return `\n[█${bar}] ${pct}% ${statusText}`;
   }
 
   private buildCurrentMessage(): string {

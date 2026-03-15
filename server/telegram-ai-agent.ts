@@ -4034,6 +4034,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         await narrator.addAnalysis(`\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 scan \u2014 \u0E43\u0E0A\u0E49\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (${compatibleMethods.length} \u0E27\u0E34\u0E18\u0E35\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A ${detectedCms.toUpperCase()})`);
       }
       
+      // Set totalMethods for progress counter display
+      (narrator as any).config.totalMethods = methodOrder.length;
+      
       // Execute methods in AI-determined order
       for (let mi = 0; mi < methodOrder.length && !fullChainSuccess; mi++) {
         // Check if user pressed stop button
@@ -4044,7 +4047,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         
         const methodId = methodOrder[mi];
         const methodDef = ALL_METHODS.find(m => m.id === methodId)!;
-        await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}: ${methodDef.name}`);
+        
+        // Update method progress counter
+        narrator.setMethodProgress(mi + 1, methodDef.name, methodDef.icon);
+        await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}/${methodOrder.length}: ${methodDef.name}`);
         const methodStart = Date.now();
         
         try {
@@ -4768,6 +4774,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           failedMethods.push(`${methodDef.name} (${methodErr.message?.substring(0, 40) || "error"})`);
           await narrator.addAnalysis(`❌ ${methodDef.name} error: ${methodErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป...`);
         }
+        
+        // Record method result for progress counter
+        const methodSuccess = fullChainSuccess && successMethod === methodId;
+        narrator.recordMethodResult(methodDef.name, methodDef.icon, methodSuccess);
+        
         timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: Date.now() - methodStart, ok: fullChainSuccess });
       } // end for loop
       
@@ -4853,17 +4864,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // ===== SUMMARY =====
       const totalMs = Date.now() - s1;
+      const methodResults = narrator.getMethodResults();
+      const resultsLine = methodResults.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ");
+      
       if (fullChainSuccess) {
         await narrator.addAnalysis(
-          `โจมตีสำเร็จด้วยวิธี ${successMethod}!\n` +
-          `ลองทั้งหมด ${failedMethods.length + 1} วิธี (ล้มเหลว: ${failedMethods.length})\n` +
-          (failedMethods.length > 0 ? `วิธีที่ล้มเหลว: ${failedMethods.join(", ")}` : "")
+          `🏆 โจมตีสำเร็จด้วยวิธี ${successMethod}!\n` +
+          `📊 ลองทั้งหมด ${failedMethods.length + 1} วิธี (ล้มเหลว: ${failedMethods.length})\n` +
+          `📈 ผล: ${resultsLine}`
         );
       } else {
         await narrator.addAnalysis(
-          `ลองแล้วทั้งหมด ${failedMethods.length} วิธี ไม่สำเร็จ\n` +
-          `วิธีที่ลอง: ${failedMethods.join("\n• ")}\n` +
-          `แนะนำ: ลองใช้ AI Auto Attack หรือ Agentic Mode เพื่อให้ AI วิเคราะห์และลองเพิ่มเติม`
+          `📊 ลองแล้วทั้งหมด ${failedMethods.length} วิธี ไม่สำเร็จ\n` +
+          `📈 ผล: ${resultsLine}\n` +
+          `แนะนำ: ลองส่ง domain อื่น หรือ /scan ${domain} เพื่อวิเคราะห์ใหม่`
         );
       }
       

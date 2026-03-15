@@ -5105,3 +5105,11 @@
 - [x] ลบ/แก้ suggestion menu หลัง full_chain fail (ไม่แนะนำวิธีซ้ำ แค่สรุปผล+แนะนำ scan/AI Auto)
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: Method progress counter ใน full_chain
+- [x] เพิ่ม "วิธีที่ X/Y" ใน progress message ระหว่างโจมตี
+- [x] แสดง method name + icon ปัจจุบัน
+- [x] แสดง progress bar visual (█░░░) + method-level counter
+- [x] แสดงสรุปผล ✅/❌ ของแต่ละ method ใน summary
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
