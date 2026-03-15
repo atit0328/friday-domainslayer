@@ -2771,14 +2771,18 @@ const BACKOFF_MAX_MS = 15000;       // 15 seconds max (was 60s — too slow)
 const BACKOFF_MULTIPLIER = 2;
 const CONFLICT_RETRY_MS = 5000;     // Fixed 5s wait on 409 conflict (no exponential)
 const CONFLICT_AUTO_RESTART_THRESHOLD = 3; // After 3 consecutive conflicts, auto-restart
-const CONFLICT_WEBHOOK_COOLDOWN_MS = 60000; // Max 1 deleteWebhook per 60 seconds
+const CONFLICT_WEBHOOK_COOLDOWN_MS = 300000; // Max 1 deleteWebhook per 5 minutes (was 60s)
 const MAX_CONSECUTIVE_FAILURES = 20; // Alert after 20 consecutive failures
 const NORMAL_POLL_INTERVAL_MS = 2000; // 2 seconds between polls
+const MAX_AUTO_RESTARTS_PER_HOUR = 3; // Max 3 auto-restarts per hour to prevent spam
+const RESTART_NOTIFICATION_COOLDOWN_MS = 600000; // Only send notification once per 10 minutes
 
 // Conflict auto-restart state
 let consecutiveConflicts = 0;
 let lastWebhookDeleteAt = 0;
 let conflictAutoRestartCount = 0;
+let lastRestartNotificationAt = 0;
+let restartTimestamps: number[] = []; // Track restart timestamps for rate limiting
 
 function calculateBackoff(failures: number): number {
   if (failures <= 0) return 0;
@@ -2795,13 +2799,26 @@ async function autoRestartOnConflict(): Promise<void> {
   if (!config) return;
   
   const now = Date.now();
+  
+  // Cooldown: don't restart too frequently
   if (now - lastWebhookDeleteAt < CONFLICT_WEBHOOK_COOLDOWN_MS) {
     console.log(`[TelegramAI] ⏳ Conflict auto-restart cooldown (${Math.round((CONFLICT_WEBHOOK_COOLDOWN_MS - (now - lastWebhookDeleteAt)) / 1000)}s remaining)`);
     return;
   }
   
+  // Rate limit: max N restarts per hour
+  restartTimestamps = restartTimestamps.filter(t => now - t < 3600000);
+  if (restartTimestamps.length >= MAX_AUTO_RESTARTS_PER_HOUR) {
+    console.log(`[TelegramAI] 🚫 Max ${MAX_AUTO_RESTARTS_PER_HOUR} auto-restarts per hour reached — suppressing further restarts. Will retry after cooldown.`);
+    // Just reset conflict counter and wait — don't spam restart
+    consecutiveConflicts = 0;
+    healthStats.currentBackoffMs = 30000; // Wait 30s before next poll
+    return;
+  }
+  
   conflictAutoRestartCount++;
   lastWebhookDeleteAt = now;
+  restartTimestamps.push(now);
   
   console.log(`[TelegramAI] 🔄 Auto-restart #${conflictAutoRestartCount}: Clearing webhook + resetting polling state...`);
   
@@ -2831,25 +2848,32 @@ async function autoRestartOnConflict(): Promise<void> {
   
   console.log(`[TelegramAI] \u2705 Auto-restart complete \u2014 polling state reset, resuming clean polling`);
   
-  // Step 4: Notify via Telegram that bot recovered
-  try {
-    const notifyUrl = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    await telegramFetch(notifyUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: config.chatId,
-        text: `\ud83d\udd04 *Bot Auto-Restart*\n\n` +
-          `\u0e15\u0e23\u0e27\u0e08\u0e1e\u0e1a conflict (bot instance \u0e0a\u0e19\u0e01\u0e31\u0e19) ${conflictsBeforeReset} \u0e04\u0e23\u0e31\u0e49\u0e07\n` +
-          `\u0e17\u0e33 auto-restart \u0e04\u0e23\u0e31\u0e49\u0e07\u0e17\u0e35\u0e48 #${conflictAutoRestartCount}:\n` +
-          `\u2022 \u0e25\u0e1a webhook \u0e40\u0e01\u0e48\u0e32\n` +
-          `\u2022 reset polling state\n` +
-          `\u2022 \u0e01\u0e25\u0e31\u0e1a\u0e21\u0e32\u0e17\u0e33\u0e07\u0e32\u0e19\u0e1b\u0e01\u0e15\u0e34\u0e41\u0e25\u0e49\u0e27 \u2705`,
-        parse_mode: "Markdown",
-      }),
-    }, { timeout: 5000 });
-  } catch {
-    // Notification failed \u2014 not critical
+  // Step 4: Notify via Telegram that bot recovered (with cooldown to prevent spam)
+  const shouldNotify = now - lastRestartNotificationAt >= RESTART_NOTIFICATION_COOLDOWN_MS;
+  if (shouldNotify) {
+    lastRestartNotificationAt = now;
+    try {
+      const notifyUrl = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+      await telegramFetch(notifyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: config.chatId,
+          text: `🔄 *Bot Auto-Restart*\n\n` +
+            `ตรวจพบ conflict (bot instance ชนกัน) ${conflictsBeforeReset} ครั้ง\n` +
+            `ทำ auto-restart ครั้งที่ #${conflictAutoRestartCount}:\n` +
+            `• ลบ webhook เก่า\n` +
+            `• reset polling state\n` +
+            `• กลับมาทำงานปกติแล้ว ✅`,
+          parse_mode: "Markdown",
+          disable_web_page_preview: true,
+        }),
+      }, { timeout: 5000 });
+    } catch {
+      // Notification failed — not critical
+    }
+  } else {
+    console.log(`[TelegramAI] 🔇 Suppressed restart notification (cooldown: ${Math.round((RESTART_NOTIFICATION_COOLDOWN_MS - (now - lastRestartNotificationAt)) / 1000)}s remaining)`);
   }
 }
 

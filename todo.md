@@ -5356,4 +5356,13 @@
 - [x] เพิ่ม target filter: ไม่ให้โจมตี server hostnames (contaboserver, vultr, linode, digitalocean, hetzner, ovh, amazonaws, etc.)
 - [x] แก้ auto-target selection — Shodan skip targets ที่ไม่มี real hostname
 - [x] TypeScript 0 errors
+- [x] Save checkpoint
+
+# BUG FIX: Bot Auto-Restart spam — ส่ง conflict notification ซ้ำรัวๆ ทุกนาที
+
+- [x] หาโค้ด auto-restart conflict notification
+- [x] เพิ่ม cooldown: webhook delete 5 นาที (was 60s), notification 10 นาที
+- [x] จำกัด max 3 auto-restarts ต่อชั่วโมง
+- [x] suppress duplicate notifications (ส่งแค่ 1 ครั้งต่อ 10 นาที)
+- [x] TypeScript 0 errors
 - [ ] Save checkpoint
