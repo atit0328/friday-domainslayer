@@ -5383,4 +5383,53 @@
 - [x] เพิ่ม pause 5 วินาทีให้ instance อื่นหยุด
 - [x] startTelegramPolling() เริ่มใหม่หลัง restart
 - [x] TypeScript 0 errors
+- [x] Save checkpoint
+
+# FIX: ปิด auto-attack agent ป้องกัน instance ชนกัน
+- [ ] ปิด attack agent autoStart: false (ไม่ให้โจมตีอัตโนมัติตอน boot)
+- [ ] เพิ่ม /daemon command ใน Telegram (on/off/status)
+- [ ] เพิ่มปุ่ม inline keyboard สำหรับเปิด/ปิด attack agent
+- [ ] TypeScript 0 errors
 - [ ] Save checkpoint
+
+# Daemon Control & AI Learning Commands — Prevent Bot Conflicts
+
+## Disable Auto-Attack Agent
+- [x] Set attack agent `enabled: false` and `autoStart: false` in DEFAULT_AGENTS (agentic-auto-orchestrator.ts)
+- [x] Confirm DB schema has `attackEnabled: false` default in aiOrchestratorState
+- [x] Add comment in server/_core/index.ts clarifying attack agent is disabled by default
+
+## /daemon Command — Manual Agent Control via Telegram
+- [x] Add `/daemon status` — show all agent statuses (enabled/disabled, runs, successes, health)
+- [x] Add `/daemon on <agent>` — enable specific agent
+- [x] Add `/daemon off <agent>` — disable specific agent
+- [x] Add `/daemon trigger <agent>` — run agent immediately
+- [x] Add `/daemon stop` — stop entire orchestrator
+- [x] Add `/daemon start` — start entire orchestrator
+- [x] Add Daemon Control inline button in /menu keyboard (🤖 Daemon Control)
+- [x] Add cb_daemon callback handler with Start All / Stop All / Attack ON / Attack OFF buttons
+- [x] Add daemon_start, daemon_stop, daemon_attack_on, daemon_attack_off callback handlers
+
+## /learn Command — AI Failure Learning Report
+- [x] Add `/learn` command showing full failure learning report
+- [x] Display: total failures, retries, retry success rate, strategies generated/succeeded
+- [x] Display: top failure patterns with domains
+- [x] Display: mode effectiveness with color-coded success rates
+- [x] Display: AI insights from pattern analysis
+- [x] Add AI Learning inline button in /menu keyboard (🧠 AI Learning)
+- [x] Add cb_learn callback handler
+
+## /suggest Command — AI Mode Recommendation
+- [x] Add `/suggest <domain>` command for instant mode recommendation
+- [x] Display: recommended mode, confidence, est. success rate, reasoning, server profile
+- [x] Display: alternative modes and modes to avoid
+- [x] Add quick attack buttons (atk_mode callback) to launch attack with recommended mode
+- [x] Add atk_mode callback handler in dynamic callback section
+
+## Testing
+- [x] Write vitest tests for daemon control (18 tests)
+- [x] Test attack agent disabled by default
+- [x] Test orchestrator function exports
+- [x] Test updateAgentConfig enable/disable
+- [x] Test failure learning engine exports and report structure
+- [x] All 18/18 tests passed, TypeScript 0 errors

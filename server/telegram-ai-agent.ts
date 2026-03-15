@@ -2471,6 +2471,155 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       return;
     }
     
+    if (msg.text?.startsWith("/daemon")) {
+      const parts = msg.text.split(" ");
+      const subCmd = parts[1]?.toLowerCase() || "status";
+      
+      const { getOrchestratorStatus, updateAgentConfig, triggerAgentNow, stopOrchestrator, startOrchestrator } = await import("./agentic-auto-orchestrator");
+      const status = getOrchestratorStatus();
+      
+      if (subCmd === "status") {
+        const agentLines = status.agentDetails.map(a => {
+          const icon = a.enabled ? (a.healthStatus === "healthy" ? "✅" : a.healthStatus === "degraded" ? "⚠️" : "❌") : "⏸";
+          return `${icon} *${a.name}*: ${a.enabled ? "ON" : "OFF"} | runs: ${a.totalRuns} | success: ${a.totalSuccesses} | next: ${a.nextRunAt || "-"}`;
+        });
+        const msg2 = `🤖 *Daemon Status*\n\n` +
+          `• Running: ${status.isRunning ? "✅ Yes" : "❌ No"}\n` +
+          `• Uptime: ${status.isRunning && status.startedAt ? Math.round((Date.now() - new Date(status.startedAt).getTime()) / 60000) + " min" : "-"}\n\n` +
+          `*Agents:*\n${agentLines.join("\n")}\n\n` +
+          `📝 Commands:\n` +
+          `• /daemon on <agent> — เปิด agent\n` +
+          `• /daemon off <agent> — ปิด agent\n` +
+          `• /daemon trigger <agent> — รันทันที\n` +
+          `• /daemon stop — หยุดทั้งหมด\n` +
+          `• /daemon start — เริ่มทั้งหมด`;
+        await sendTelegramReply(config, msg.chat.id, msg2, msg.message_id);
+      } else if (subCmd === "on" && parts[2]) {
+        const agentName = parts[2].toLowerCase();
+        try {
+          updateAgentConfig(agentName, { enabled: true, autoStart: true });
+          await sendTelegramReply(config, msg.chat.id, `✅ Agent *${agentName}* เปิดแล้ว`, msg.message_id);
+        } catch (e: any) {
+          await sendTelegramReply(config, msg.chat.id, `❌ ${e.message}`, msg.message_id);
+        }
+      } else if (subCmd === "off" && parts[2]) {
+        const agentName = parts[2].toLowerCase();
+        try {
+          updateAgentConfig(agentName, { enabled: false, autoStart: false });
+          await sendTelegramReply(config, msg.chat.id, `⏸ Agent *${agentName}* ปิดแล้ว`, msg.message_id);
+        } catch (e: any) {
+          await sendTelegramReply(config, msg.chat.id, `❌ ${e.message}`, msg.message_id);
+        }
+      } else if (subCmd === "trigger" && parts[2]) {
+        const agentName = parts[2].toLowerCase();
+        try {
+          triggerAgentNow(agentName);
+          await sendTelegramReply(config, msg.chat.id, `⚡ Agent *${agentName}* จะรันทันที`, msg.message_id);
+        } catch (e: any) {
+          await sendTelegramReply(config, msg.chat.id, `❌ ${e.message}`, msg.message_id);
+        }
+      } else if (subCmd === "stop") {
+        stopOrchestrator();
+        await sendTelegramReply(config, msg.chat.id, `⏹ Orchestrator หยุดทั้งหมดแล้ว (ทุก agent หยุด)`, msg.message_id);
+      } else if (subCmd === "start") {
+        startOrchestrator();
+        await sendTelegramReply(config, msg.chat.id, `▶️ Orchestrator เริ่มทำงานแล้ว`, msg.message_id);
+      } else {
+        await sendTelegramReply(config, msg.chat.id, `❓ ใช้: /daemon [status|on|off|trigger|start|stop] [agent_name]`, msg.message_id);
+      }
+      return;
+    }
+
+    if (msg.text === "/learn") {
+      try {
+        const { getFailureLearningReport } = await import("./failure-learning-engine");
+        const report = await getFailureLearningReport();
+        let text = `\ud83e\udde0 *AI Failure Learning Report*\n\n`;
+        text += `\ud83d\udcca *\u0e2a\u0e16\u0e34\u0e15\u0e34\u0e20\u0e32\u0e1e\u0e23\u0e27\u0e21:*\n`;
+        text += `\u2022 Total Failures: ${report.totalFailures}\n`;
+        text += `\u2022 Total Retries: ${report.totalRetries}\n`;
+        text += `\u2022 Retry Success Rate: ${report.retrySuccessRate}%\n`;
+        text += `\u2022 Strategies Generated: ${report.strategiesGenerated}\n`;
+        text += `\u2022 Strategies Succeeded: ${report.strategiesSucceeded}\n\n`;
+        if (report.topFailurePatterns.length > 0) {
+          text += `\ud83d\udd0d *Top Failure Patterns:*\n`;
+          for (const p of report.topFailurePatterns.slice(0, 8)) {
+            text += `\u2022 ${p.pattern}: ${p.count}x\n  \u2514 domains: ${p.domains.slice(0, 3).join(", ")}\n`;
+          }
+        }
+        if (report.modeEffectiveness.length > 0) {
+          text += `\n\u2694\ufe0f *Mode Effectiveness:*\n`;
+          for (const m of report.modeEffectiveness.slice(0, 8)) {
+            const bar = m.successRate >= 50 ? "\ud83d\udfe2" : m.successRate >= 20 ? "\ud83d\udfe1" : "\ud83d\udd34";
+            text += `${bar} ${m.mode}: ${m.successRate}% (${m.attempts} attempts)\n`;
+          }
+        }
+        if (report.aiInsights.length > 0) {
+          text += `\n\ud83d\udca1 *AI Insights:*\n`;
+          for (const insight of report.aiInsights.slice(0, 5)) {
+            text += `\u2022 ${insight}\n`;
+          }
+        }
+        await sendTelegramReply(config, msg.chat.id, text, msg.message_id);
+      } catch (err: any) {
+        await sendTelegramReply(config, msg.chat.id, `\u274c Error: ${err.message}`, msg.message_id);
+      }
+      return;
+    }
+
+    if (msg.text?.startsWith("/suggest")) {
+      const domain = msg.text.split(" ")[1]?.trim();
+      if (!domain) {
+        await sendTelegramReply(config, msg.chat.id, "\u2753 \u0e43\u0e0a\u0e49: /suggest <domain>\n\u0e15\u0e31\u0e27\u0e2d\u0e22\u0e48\u0e32\u0e07: /suggest example.com", msg.message_id);
+        return;
+      }
+      try {
+        await sendTelegramReply(config, msg.chat.id, `\ud83e\udde0 \u0e01\u0e33\u0e25\u0e31\u0e07\u0e27\u0e34\u0e40\u0e04\u0e23\u0e32\u0e30\u0e2b\u0e4c ${domain} ...`, msg.message_id);
+        const { suggestBestMode } = await import("./failure-learning-engine");
+        const suggestion = await suggestBestMode(domain);
+        let text = `\ud83c\udfaf *Mode Suggestion: ${domain}*\n\n`;
+        text += `\u2705 *\u0e41\u0e19\u0e30\u0e19\u0e33:* ${suggestion.recommendedMode}\n`;
+        text += `\ud83d\udcca *Confidence:* ${suggestion.confidence}%\n`;
+        text += `\ud83c\udfb2 *Est. Success Rate:* ${suggestion.estimatedSuccessRate}%\n`;
+        text += `\ud83d\udcdd *\u0e40\u0e2b\u0e15\u0e38\u0e1c\u0e25:* ${suggestion.reasoning}\n`;
+        text += `\ud83d\udda5 *Server Profile:* ${suggestion.serverProfile}\n`;
+        text += `\ud83d\udcc0 *Based on:* ${suggestion.basedOnSamples} samples\n\n`;
+        if (suggestion.alternativeModes.length > 0) {
+          text += `*\u0e17\u0e32\u0e07\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e2d\u0e37\u0e48\u0e19:*\n`;
+          for (const alt of suggestion.alternativeModes) {
+            text += `\u2022 ${alt.mode}: ${alt.successRate}% \u2014 ${alt.reason}\n`;
+          }
+        }
+        if (suggestion.avoidModes.length > 0) {
+          text += `\n*\u0e2b\u0e25\u0e35\u0e01\u0e40\u0e25\u0e35\u0e48\u0e22\u0e07:*\n`;
+          for (const av of suggestion.avoidModes) {
+            text += `\u274c ${av.mode}: ${av.reason}\n`;
+          }
+        }
+        // Add quick attack buttons
+        const keyboard = [
+          [{ text: `\u2694\ufe0f \u0e42\u0e08\u0e21\u0e15\u0e35 ${suggestion.recommendedMode}`, callback_data: `atk_mode:${domain}:${suggestion.recommendedMode}` }],
+        ];
+        if (suggestion.alternativeModes.length > 0) {
+          keyboard.push([{ text: `\ud83d\udd04 \u0e25\u0e2d\u0e07 ${suggestion.alternativeModes[0].mode}`, callback_data: `atk_mode:${domain}:${suggestion.alternativeModes[0].mode}` }]);
+        }
+        await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: msg.chat.id,
+            text,
+            parse_mode: "Markdown",
+            reply_markup: { inline_keyboard: keyboard },
+          }),
+          signal: AbortSignal.timeout(10000),
+        }, { timeout: 10000 });
+      } catch (err: any) {
+        await sendTelegramReply(config, msg.chat.id, `\u274c Error: ${err.message}`, msg.message_id);
+      }
+      return;
+    }
+
     if (msg.text === "/summary") {
       const summary = await generateExecutiveSummary();
       await sendTelegramReply(config, msg.chat.id, summary, msg.message_id);
@@ -3284,6 +3433,10 @@ async function sendInlineKeyboard(config: TelegramConfig, chatId: number): Promi
             ],
             [
               { text: "\u2694\uFE0F Attack Target", callback_data: "cb_attack_menu" },
+            ],
+            [
+              { text: "\uD83E\uDD16 Daemon Control", callback_data: "cb_daemon" },
+              { text: "\uD83E\uDDE0 AI Learning", callback_data: "cb_learn" },
             ],
           ],
         },
@@ -7071,6 +7224,112 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
         responseText = await performFullBotRestart(config, chatId);
         break;
       }
+      case "cb_daemon": {
+        // Show daemon status inline
+        try {
+          const { getOrchestratorStatus } = await import("./agentic-auto-orchestrator");
+          const status = getOrchestratorStatus();
+          const agentLines = status.agentDetails.map(a => {
+            const icon = a.enabled ? (a.healthStatus === "healthy" ? "\u2705" : a.healthStatus === "degraded" ? "\u26a0\ufe0f" : "\u274c") : "\u23f8";
+            return `${icon} ${a.name}: ${a.enabled ? "ON" : "OFF"} | runs: ${a.totalRuns} | ok: ${a.totalSuccesses}`;
+          });
+          const keyboard = [
+            [{ text: "\u25b6\ufe0f Start All", callback_data: "daemon_start" }, { text: "\u23f9 Stop All", callback_data: "daemon_stop" }],
+            [{ text: "\u2694\ufe0f Attack ON", callback_data: "daemon_attack_on" }, { text: "\u23f8 Attack OFF", callback_data: "daemon_attack_off" }],
+            [{ text: "\ud83d\udd04 Refresh", callback_data: "cb_daemon" }],
+          ];
+          const msg = `\ud83e\udd16 *Daemon Status*\n\n` +
+            `Running: ${status.isRunning ? "\u2705 Yes" : "\u274c No"}\n` +
+            `Uptime: ${status.isRunning && status.startedAt ? Math.round((Date.now() - new Date(status.startedAt).getTime()) / 60000) + " min" : "-"}\n\n` +
+            `*Agents:*\n${agentLines.join("\n")}\n\n` +
+            `\ud83d\udcdd /daemon [on|off|trigger] <agent>`;
+          await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: msg,
+              parse_mode: "Markdown",
+              reply_markup: { inline_keyboard: keyboard },
+            }),
+            signal: AbortSignal.timeout(10000),
+          }, { timeout: 10000 });
+        } catch (err: any) {
+          responseText = `\u274c Error: ${err.message}`;
+        }
+        return;
+      }
+      case "daemon_start": {
+        const { startOrchestrator } = await import("./agentic-auto-orchestrator");
+        startOrchestrator();
+        responseText = "\u25b6\ufe0f Orchestrator \u0e40\u0e23\u0e34\u0e48\u0e21\u0e17\u0e33\u0e07\u0e32\u0e19\u0e41\u0e25\u0e49\u0e27";
+        break;
+      }
+      case "daemon_stop": {
+        const { stopOrchestrator } = await import("./agentic-auto-orchestrator");
+        stopOrchestrator();
+        responseText = "\u23f9 Orchestrator \u0e2b\u0e22\u0e38\u0e14\u0e17\u0e31\u0e49\u0e07\u0e2b\u0e21\u0e14\u0e41\u0e25\u0e49\u0e27";
+        break;
+      }
+      case "daemon_attack_on": {
+        const { updateAgentConfig } = await import("./agentic-auto-orchestrator");
+        try {
+          updateAgentConfig("attack", { enabled: true, autoStart: true });
+          responseText = "\u2705 Attack Agent \u0e40\u0e1b\u0e34\u0e14\u0e41\u0e25\u0e49\u0e27 (\u0e08\u0e30\u0e23\u0e31\u0e19\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\u0e17\u0e38\u0e01 30 \u0e19\u0e32\u0e17\u0e35)";
+        } catch (e: any) {
+          responseText = `\u274c ${e.message}`;
+        }
+        break;
+      }
+      case "daemon_attack_off": {
+        const { updateAgentConfig } = await import("./agentic-auto-orchestrator");
+        try {
+          updateAgentConfig("attack", { enabled: false, autoStart: false });
+          responseText = "\u23f8 Attack Agent \u0e1b\u0e34\u0e14\u0e41\u0e25\u0e49\u0e27";
+        } catch (e: any) {
+          responseText = `\u274c ${e.message}`;
+        }
+        break;
+      }
+      case "cb_learn": {
+        // Show AI failure learning summary
+        try {
+          const { getFailureLearningReport } = await import("./failure-learning-engine");
+          const report = await getFailureLearningReport();
+          let msg = `\ud83e\udde0 *AI Failure Learning*\n\n`;
+          msg += `\u2022 Total Failures: ${report.totalFailures}\n`;
+          msg += `\u2022 Total Retries: ${report.totalRetries}\n`;
+          msg += `\u2022 Retry Success Rate: ${report.retrySuccessRate}%\n`;
+          msg += `\u2022 Strategies Generated: ${report.strategiesGenerated}\n`;
+          msg += `\u2022 Strategies Succeeded: ${report.strategiesSucceeded}\n\n`;
+          if (report.topFailurePatterns.length > 0) {
+            msg += `*Top Failure Patterns:*\n`;
+            for (const p of report.topFailurePatterns.slice(0, 5)) {
+              msg += `\u2022 ${p.pattern}: ${p.count}x (${p.domains.slice(0, 2).join(", ")})\n`;
+            }
+          } else {
+            msg += `_\u0e22\u0e31\u0e07\u0e44\u0e21\u0e48\u0e21\u0e35 pattern \u0e17\u0e35\u0e48\u0e40\u0e23\u0e35\u0e22\u0e19\u0e23\u0e39\u0e49_`;
+          }
+          if (report.modeEffectiveness.length > 0) {
+            msg += `\n\n*Mode Effectiveness:*\n`;
+            for (const m of report.modeEffectiveness.slice(0, 5)) {
+              msg += `\u2022 ${m.mode}: ${m.successRate}% (${m.attempts} attempts)\n`;
+            }
+          }
+          if (report.aiInsights.length > 0) {
+            msg += `\n\n*AI Insights:*\n`;
+            for (const insight of report.aiInsights.slice(0, 3)) {
+              msg += `\u2022 ${insight}\n`;
+            }
+          }
+          msg += `\n\n\ud83d\udcdd /learn \u2014 \u0e14\u0e39\u0e23\u0e32\u0e22\u0e25\u0e30\u0e40\u0e2d\u0e35\u0e22\u0e14\u0e40\u0e1e\u0e34\u0e48\u0e21\u0e40\u0e15\u0e34\u0e21`;
+          msg += `\n/suggest <domain> \u2014 \u0e41\u0e19\u0e30\u0e19\u0e33\u0e42\u0e2b\u0e21\u0e14\u0e42\u0e08\u0e21\u0e15\u0e35`;
+          responseText = msg;
+        } catch (err: any) {
+          responseText = `\u274c Error loading learning data: ${err.message}`;
+        }
+        break;
+      }
       default: {
         // Handle dynamic callback data patterns
         const data = cbq.data || "";
@@ -7408,6 +7667,20 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           return;
         }
         
+
+        // atk_mode:<domain>:<mode> — quick attack from /suggest recommendation
+        if (data.startsWith("atk_mode:")) {
+          const parts = data.split(":");
+          const domain = parts[1];
+          const mode = parts[2];
+          // Launch attack directly with recommended mode
+          await sendTelegramReply(config, chatId,
+            `\u2694\ufe0f \u0e40\u0e23\u0e34\u0e48\u0e21\u0e42\u0e08\u0e21\u0e15\u0e35 ${domain} \u0e14\u0e49\u0e27\u0e22\u0e42\u0e2b\u0e21\u0e14 ${mode}...`);
+          executeAttackWithProgress(config, chatId, domain, mode).catch(err => {
+            console.error(`[TelegramAI] atk_mode attack error: ${err.message}`);
+          });
+          return;
+        }
 
         // proxy_health:<count> — run health check on proxies
         if (data.startsWith("proxy_health:")) {

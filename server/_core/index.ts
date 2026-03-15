@@ -91,7 +91,7 @@ async function startServer() {
     startLearningScheduler();
     // Start background daemon (persistent task queue)
     startDaemon();
-    // Start agentic auto orchestrator (all agents run continuously)
+    // Start agentic auto orchestrator (attack agent is DISABLED by default — use /daemon on attack to enable)
     setTimeout(() => {
       startOrchestrator();
       console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");

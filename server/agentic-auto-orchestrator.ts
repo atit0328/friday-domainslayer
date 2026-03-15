@@ -78,7 +78,7 @@ type AgentName = "attack" | "seo" | "scan" | "research" | "learning" | "cve" | "
 
 const DEFAULT_AGENTS: Record<AgentName, AgentConfig> = {
   attack: {
-    enabled: true, intervalMs: 30 * 60 * 1000, maxConcurrent: 2, autoStart: true,
+    enabled: false, intervalMs: 30 * 60 * 1000, maxConcurrent: 2, autoStart: false, // DISABLED by default: only start via /daemon on attack to prevent instance conflicts
     consecutiveFailures: 0, totalRuns: 0, totalSuccesses: 0, recoveryAttempts: 0, isRecovering: false,
   },
   seo: {
