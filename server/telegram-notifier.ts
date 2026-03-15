@@ -662,3 +662,139 @@ export async function sendAttackSuccessAlert(data: AttackSuccessData): Promise<b
 
   return anySent;
 }
+
+
+// ═══ FAILURE SUMMARY ALERT ═══
+
+export interface MethodAttempt {
+  name: string;           // method name e.g. "wp_plugin_upload", "ftp_access"
+  status: "failed" | "timeout" | "skipped" | "error";
+  reason?: string;        // why it failed e.g. "403 Forbidden", "Connection timeout"
+  durationMs?: number;    // how long this method took
+}
+
+export interface FailureSummaryData {
+  domain: string;
+  mode: string;                    // e.g. "full_chain", "redirect_only", "cloaking_inject", "hijack_redirect", "agentic_auto", "pipeline"
+  totalDurationMs?: number;        // total attack duration
+  methods: MethodAttempt[];        // all methods attempted
+  serverInfo?: string;             // e.g. "nginx/1.18 (Cloudflare)"
+  cms?: string;                    // e.g. "WordPress 6.4"
+  vulnCount?: number;              // number of vulns found
+  recommendations?: string[];      // AI-generated next steps
+}
+
+/**
+ * Send failure summary alert to all configured Telegram chat IDs.
+ * Called when ALL attack methods fail — provides a detailed breakdown.
+ */
+export async function sendFailureSummaryAlert(data: FailureSummaryData): Promise<boolean> {
+  const config = getTelegramConfig();
+  if (!config) return false;
+
+  const durationStr = data.totalDurationMs
+    ? `${(data.totalDurationMs / 1000 / 60).toFixed(1)} นาที`
+    : "N/A";
+
+  // Count by status
+  const failed = data.methods.filter(m => m.status === "failed");
+  const timedOut = data.methods.filter(m => m.status === "timeout");
+  const errored = data.methods.filter(m => m.status === "error");
+  const skipped = data.methods.filter(m => m.status === "skipped");
+
+  const alertLines: string[] = [
+    `❌ <b>โจมตีล้มเหลว — ทุกวิธีไม่สำเร็จ</b>`,
+    ``,
+    `🎯 Domain: <code>${escapeHtml(data.domain)}</code>`,
+    `⚔️ Mode: <b>${escapeHtml(data.mode)}</b>`,
+    `⏱ ใช้เวลาทั้งหมด: ${escapeHtml(durationStr)}`,
+    `📊 ลองแล้ว: <b>${data.methods.length} วิธี</b>`,
+    ``,
+  ];
+
+  // Server/CMS info
+  if (data.serverInfo || data.cms) {
+    alertLines.push(`🖥️ Server: ${escapeHtml(data.serverInfo || "Unknown")} | CMS: ${escapeHtml(data.cms || "Unknown")}`);
+  }
+  if (data.vulnCount !== undefined) {
+    alertLines.push(`🔍 ช่องโหว่ที่พบ: ${data.vulnCount}`);
+  }
+  alertLines.push(``);
+
+  // Status summary
+  const statusParts: string[] = [];
+  if (failed.length > 0) statusParts.push(`❌ ล้มเหลว: ${failed.length}`);
+  if (timedOut.length > 0) statusParts.push(`⏰ หมดเวลา: ${timedOut.length}`);
+  if (errored.length > 0) statusParts.push(`💥 Error: ${errored.length}`);
+  if (skipped.length > 0) statusParts.push(`⏭ ข้าม: ${skipped.length}`);
+  if (statusParts.length > 0) {
+    alertLines.push(statusParts.join(" | "));
+    alertLines.push(``);
+  }
+
+  // Method details (max 8 to avoid message too long)
+  alertLines.push(`<b>📋 รายละเอียดแต่ละวิธี:</b>`);
+  const displayMethods = data.methods.slice(0, 8);
+  for (const m of displayMethods) {
+    const statusIcon = m.status === "timeout" ? "⏰" : m.status === "skipped" ? "⏭" : m.status === "error" ? "💥" : "❌";
+    const dur = m.durationMs ? ` (${(m.durationMs / 1000).toFixed(0)}s)` : "";
+    const reason = m.reason ? ` — ${m.reason.substring(0, 60)}` : "";
+    alertLines.push(`${statusIcon} <code>${escapeHtml(m.name)}</code>${dur}${escapeHtml(reason)}`);
+  }
+  if (data.methods.length > 8) {
+    alertLines.push(`... และอีก ${data.methods.length - 8} วิธี`);
+  }
+
+  // Recommendations
+  if (data.recommendations && data.recommendations.length > 0) {
+    alertLines.push(``);
+    alertLines.push(`<b>💡 แนะนำ:</b>`);
+    for (const rec of data.recommendations.slice(0, 4)) {
+      alertLines.push(`• ${escapeHtml(rec.substring(0, 100))}`);
+    }
+  } else {
+    // Default recommendations
+    alertLines.push(``);
+    alertLines.push(`<b>💡 แนะนำ:</b>`);
+    alertLines.push(`• ลอง /scan ${escapeHtml(data.domain)} เพื่อวิเคราะห์ใหม่`);
+    alertLines.push(`• ลองส่ง domain อื่นที่อ่อนแอกว่า`);
+    if (data.mode !== "agentic_auto") {
+      alertLines.push(`• ลอง AI Auto Attack เพื่อให้ AI หาวิธีเอง`);
+    }
+  }
+
+  const message = alertLines.join("\n");
+
+  // Send to all configured chat IDs
+  const chatIds: string[] = [config.chatId];
+  if (ENV.telegramChatId2) chatIds.push(ENV.telegramChatId2);
+  if (ENV.telegramChatId3) chatIds.push(ENV.telegramChatId3);
+
+  let anySent = false;
+  for (const chatId of chatIds) {
+    try {
+      const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+      const { response } = await fetchWithPoolProxy(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(10000),
+      }, { targetDomain: "api.telegram.org", timeout: 10000 });
+      const result = await response.json() as any;
+      if (result.ok) anySent = true;
+    } catch (err) {
+      console.warn(`[Telegram] Failed to send failure summary alert to chat ${chatId}: ${err}`);
+    }
+  }
+
+  if (anySent) {
+    console.log(`[Telegram] ❌ Failure summary alert sent for ${data.domain} (${data.mode}, ${data.methods.length} methods tried)`);
+  }
+
+  return anySent;
+}

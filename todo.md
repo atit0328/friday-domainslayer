@@ -5297,3 +5297,21 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 12/12 passed
 - [x] Save checkpoint
+
+# Feature: Failure Summary Alert เมื่อทุกวิธีล้มเหลว
+## Shared function
+- [x] สร้าง sendFailureSummaryAlert() ใน telegram-notifier.ts
+- [x] แสดง: domain, mode, จำนวนวิธีที่ลอง, รายละเอียดแต่ละวิธี (ชื่อ, สาเหตุ, duration)
+- [x] แสดง: timeout methods, error methods, skipped methods
+- [x] แนะนำ next action (retry, manual, change mode)
+## Integration
+- [x] full_chain: เพิ่ม alert เมื่อทุก method ล้มเหลว (รวม auto-retry)
+- [x] redirect_only: เพิ่ม alert เมื่อล้มเหลว
+- [x] cloaking_inject: เพิ่ม alert เมื่อล้มเหลว
+- [x] hijack_redirect: เพิ่ม alert เมื่อล้มเหลว
+- [x] agentic_auto: เพิ่ม alert เมื่อล้มเหลว
+- [x] unified-attack-pipeline: เพิ่ม alert เมื่อ pipeline ล้มเหลว
+## Verification
+- [x] TypeScript 0 errors
+- [x] Vitest 19/19 passed (5 vuln + 7 success + 7 failure)
+- [ ] Save checkpoint

