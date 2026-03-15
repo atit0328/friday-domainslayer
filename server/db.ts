@@ -776,6 +776,46 @@ export async function getSuccessfulMethods(opts: {
   }
 }
 
+// ═══ Method Success Rates for /methods command ═══
+
+export async function getMethodSuccessRates(): Promise<Array<{
+  method: string;
+  totalAttempts: number;
+  totalSuccess: number;
+  successRate: number;
+  avgDurationMs: number;
+  lastUsed: Date | null;
+}>> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const { count, eq, desc, sql, avg } = await import("drizzle-orm");
+    const rows = await db
+      .select({
+        method: aiAttackHistory.method,
+        totalAttempts: count(),
+        totalSuccess: sql<number>`SUM(CASE WHEN ${aiAttackHistory.success} = true THEN 1 ELSE 0 END)`,
+        avgDurationMs: avg(aiAttackHistory.durationMs),
+        lastUsed: sql<Date>`MAX(${aiAttackHistory.createdAt})`,
+      })
+      .from(aiAttackHistory)
+      .groupBy(aiAttackHistory.method)
+      .orderBy(desc(count()));
+    
+    return rows.map(r => ({
+      method: r.method,
+      totalAttempts: r.totalAttempts,
+      totalSuccess: Number(r.totalSuccess) || 0,
+      successRate: r.totalAttempts > 0 ? Math.round((Number(r.totalSuccess) / r.totalAttempts) * 100) : 0,
+      avgDurationMs: Number(r.avgDurationMs) || 0,
+      lastUsed: r.lastUsed || null,
+    }));
+  } catch (error) {
+    console.warn("[DB] Failed to get method success rates:", error);
+    return [];
+  }
+}
+
 export async function getAttackStats(): Promise<{
   totalAttempts: number;
   totalSuccess: number;

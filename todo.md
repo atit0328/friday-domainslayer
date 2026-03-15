@@ -5073,3 +5073,21 @@
 - [x] Thai narration สำหรับ AI Auto Attack
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: /methods command + ปุ่มหยุดการโจมตี
+
+## /methods command
+- [x] สร้าง /methods command handler
+- [x] ดึง success rate จาก attack_logs DB
+- [x] แสดงรายการ 20 methods พร้อม success rate, จำนวนครั้งที่ใช้
+- [x] จัดรูปแบบข้อความ Telegram ให้สวยงาม
+
+## ปุ่มหยุดการโจมตี (Inline Keyboard)
+- [x] เพิ่ม inline keyboard ⏹ Stop ระหว่างโจมตี
+- [x] Handle callback_query สำหรับ stop button
+- [x] Abort attack เมื่อกดปุ่ม Stop
+- [x] แสดงข้อความยืนยันว่าหยุดแล้ว
+
+## Testing
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
