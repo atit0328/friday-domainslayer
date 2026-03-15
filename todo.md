@@ -5259,3 +5259,20 @@
 - [x] timeout จะแสดง "⏰ หมดเวลา — skip ไปวิธีถัดไป" แทนที่จะเงียบ
 - [x] TypeScript 0 errors
 - [x] Vitest 12/12 passed
+
+# Feature: Per-step timeout ทุก mode + Auto-retry on timeout
+## Per-step timeout
+- [x] redirect_only: เพิ่ม runStepWithTimeout สำหรับ vulnscan (3min), redirect_takeover (3min)
+- [x] cloaking_inject: เพิ่ม runStepWithTimeout สำหรับ vulnscan (3min), cloaking_inject (4min)
+- [x] hijack_redirect: เพิ่ม runStepWithTimeout สำหรับ vulnscan (3min), credential_hunt (5min), hijack_engine (5min)
+- [x] เพิ่ม heartbeat ทุก 30s ในทุก mode (ผ่าน shared runStepWithTimeout)
+## Auto-retry on timeout
+- [x] full_chain: เมื่อ method timeout ให้ skip ไป method ถัดไปทันที + track timedOutMethods
+- [x] Auto-retry สูงสุด 2 method ที่ timeout ด้วย timeout 1.5x
+- [x] แสดง retry status ใน narrator + heartbeat ระหว่าง retry
+- [x] pipeline retry: ใช้ PipelineResult.uploadedFiles ตรวจสอบ redirect จริง
+- [x] agentic_auto retry: fallback เป็น pipeline re-run
+## Verification
+- [x] TypeScript 0 errors
+- [x] Vitest 12/12 passed
+- [x] Save checkpoint
