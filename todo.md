@@ -5276,3 +5276,13 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 12/12 passed
 - [x] Save checkpoint
+
+# Bug Fix: Telegram bot นิ่ง 10 นาทีหลังส่งคำสั่งโจมตี youthworkresource.com
+- [x] ตรวจ server logs หา error/crash
+- [x] พบสาเหตุ: Conflict 409 (bot instance ชนกัน) + exponential backoff ช้าเกิน (60s)
+- [x] เพิ่ม conflict detection — 409 ใช้ fixed 5s wait ไม่ใช้ exponential backoff
+- [x] ลด max backoff จาก 60s เหลือ 15s
+- [x] Timeout errors cap ที่ 10s
+- [x] TypeScript 0 errors
+- [x] Vitest 12/12 passed
+- [x] Save checkpoint

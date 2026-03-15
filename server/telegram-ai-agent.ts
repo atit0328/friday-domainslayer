@@ -2721,7 +2721,7 @@ interface PollingHealthStats {
   totalPollCycles: number;
   totalMessagesReceived: number;
   currentBackoffMs: number;
-  status: "connected" | "reconnecting" | "disconnected" | "stopped";
+  status: "connected" | "reconnecting" | "disconnected" | "stopped" | "conflict";
 }
 
 const healthStats: PollingHealthStats = {
@@ -2739,8 +2739,9 @@ const healthStats: PollingHealthStats = {
 
 // Backoff config
 const BACKOFF_INITIAL_MS = 1000;    // 1 second
-const BACKOFF_MAX_MS = 60000;       // 60 seconds max
+const BACKOFF_MAX_MS = 15000;       // 15 seconds max (was 60s — too slow)
 const BACKOFF_MULTIPLIER = 2;
+const CONFLICT_RETRY_MS = 5000;     // Fixed 5s wait on 409 conflict (no exponential)
 const MAX_CONSECUTIVE_FAILURES = 20; // Alert after 20 consecutive failures
 const NORMAL_POLL_INTERVAL_MS = 2000; // 2 seconds between polls
 
@@ -2789,15 +2790,30 @@ async function pollUpdates(): Promise<void> {
       return; // Graceful shutdown
     }
     
+    const isConflict = error.message?.includes("409") || error.message?.includes("Conflict");
+    const isTimeout = error.message?.includes("timeout") || error.message?.includes("abort");
+    
     healthStats.consecutiveFailures++;
     healthStats.lastError = error.message || "Unknown error";
     healthStats.lastErrorAt = Date.now();
-    healthStats.currentBackoffMs = calculateBackoff(healthStats.consecutiveFailures);
-    healthStats.status = "reconnecting";
+    
+    // 409 Conflict: another bot instance is running — use fixed short wait, not exponential
+    // Timeout: network issue — use shorter backoff
+    if (isConflict) {
+      healthStats.currentBackoffMs = CONFLICT_RETRY_MS;
+      healthStats.status = "conflict";
+    } else if (isTimeout) {
+      // Timeout errors: use moderate backoff (cap at 10s)
+      healthStats.currentBackoffMs = Math.min(calculateBackoff(healthStats.consecutiveFailures), 10000);
+      healthStats.status = "reconnecting";
+    } else {
+      healthStats.currentBackoffMs = calculateBackoff(healthStats.consecutiveFailures);
+      healthStats.status = "reconnecting";
+    }
     
     console.error(
       `[TelegramAI] ⚠️ Polling error #${healthStats.consecutiveFailures}: ${error.message} ` +
-      `(next retry in ${Math.round(healthStats.currentBackoffMs / 1000)}s)`
+      `(${isConflict ? 'conflict' : isTimeout ? 'timeout' : 'error'}, next retry in ${Math.round(healthStats.currentBackoffMs / 1000)}s)`
     );
     
     // Alert via Telegram (using a separate direct API call) after MAX_CONSECUTIVE_FAILURES
