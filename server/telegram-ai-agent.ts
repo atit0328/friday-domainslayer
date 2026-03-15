@@ -2536,6 +2536,119 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       return;
     }
     
+    if (msg.text === "/proxy") {
+      // Show proxy pool status
+      const { proxyPool, getDomainIntelStats, getPoolStats } = await import("./proxy-pool");
+      
+      const stats = proxyPool.getStats();
+      const allProxies = proxyPool.getAllProxies();
+      const domainIntel = getDomainIntelStats();
+      
+      const lines: string[] = [];
+      lines.push("🌐 Thai Proxy Pool Status");
+      lines.push("═══════════════════════════");
+      lines.push("");
+      
+      // Overview
+      const healthPct = stats.total > 0 ? Math.round((stats.healthy / stats.total) * 100) : 0;
+      const healthBar = "█".repeat(Math.round(healthPct / 10)) + "░".repeat(10 - Math.round(healthPct / 10));
+      lines.push(`📊 Overview`);
+      lines.push(`  Total: ${stats.total} proxies`);
+      lines.push(`  [${healthBar}] ${healthPct}%`);
+      lines.push(`  ✅ Healthy: ${stats.healthy} | ❌ Dead: ${stats.unhealthy}`);
+      lines.push(`  ⚡ Avg Latency: ${stats.avgLatencyMs}ms`);
+      lines.push(`  📈 Success Rate: ${stats.successRate}%`);
+      lines.push(`  🔄 Total Requests: ${stats.totalRequests}`);
+      lines.push("");
+      
+      // Top 5 fastest healthy proxies
+      const healthyProxies = allProxies
+        .filter(p => p.healthy && p.avgLatencyMs > 0)
+        .sort((a, b) => (a.avgLatencyMs || 9999) - (b.avgLatencyMs || 9999));
+      
+      if (healthyProxies.length > 0) {
+        lines.push("⚡ Top 5 Fastest:");
+        for (const p of healthyProxies.slice(0, 5)) {
+          const successRate = (p.successCount + p.failCount) > 0 
+            ? Math.round((p.successCount / (p.successCount + p.failCount)) * 100) 
+            : 100;
+          lines.push(`  🟢 ${p.ip}:${p.port} — ${p.avgLatencyMs}ms (${successRate}%)`);
+        }
+        lines.push("");
+      }
+      
+      // Top 5 most successful
+      const mostSuccessful = allProxies
+        .filter(p => p.successCount > 0)
+        .sort((a, b) => b.successCount - a.successCount);
+      
+      if (mostSuccessful.length > 0) {
+        lines.push("🏆 Top 5 Most Used:");
+        for (const p of mostSuccessful.slice(0, 5)) {
+          const total = p.successCount + p.failCount;
+          const rate = total > 0 ? Math.round((p.successCount / total) * 100) : 0;
+          lines.push(`  ${p.healthy ? "🟢" : "🔴"} ${p.ip}:${p.port} — ${p.successCount}/${total} (${rate}%)`);
+        }
+        lines.push("");
+      }
+      
+      // Dead proxies
+      const deadProxies = allProxies.filter(p => !p.healthy);
+      if (deadProxies.length > 0) {
+        lines.push(`💀 Dead Proxies: ${deadProxies.length}`);
+        for (const p of deadProxies.slice(0, 5)) {
+          lines.push(`  🔴 ${p.ip}:${p.port} (fail: ${p.failCount})`);
+        }
+        if (deadProxies.length > 5) {
+          lines.push(`  ... +${deadProxies.length - 5} more`);
+        }
+        lines.push("");
+      }
+      
+      // Domain Intelligence
+      if (domainIntel.total > 0) {
+        lines.push(`🧠 Domain Intelligence: ${domainIntel.total} domains cached`);
+        lines.push(`  🚫 Direct-only: ${domainIntel.directOnly} domains`);
+        for (const d of domainIntel.domains.slice(0, 5)) {
+          lines.push(`  ${d.directOnly ? "🚫" : "⚠️"} ${d.domain} — ${d.reason} (${d.failCount} fails)`);
+        }
+        if (domainIntel.total > 5) {
+          lines.push(`  ... +${domainIntel.total - 5} more`);
+        }
+        lines.push("");
+      }
+      
+      lines.push("💡 กด 🔄 Health Check เพื่อทดสอบ proxy ทั้งหมด");
+      
+      // Send with inline keyboard for health check
+      const keyboard = [
+        [
+          { text: "🔄 Health Check (5 ตัว)", callback_data: "proxy_health:5" },
+          { text: "🔄 Health Check (ทั้งหมด)", callback_data: "proxy_health:all" },
+        ],
+        [
+          { text: "🗑️ Reset Stats", callback_data: "proxy_reset" },
+        ],
+      ];
+      
+      try {
+        const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+        await telegramFetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: msg.chat.id,
+            text: lines.join("\n"),
+            reply_markup: { inline_keyboard: keyboard },
+          }),
+          signal: AbortSignal.timeout(10000),
+        }, { timeout: 10000 });
+      } catch (err) {
+        await sendTelegramReply(config, msg.chat.id, lines.join("\n"), msg.message_id);
+      }
+      return;
+    }
+
     // Process with AI (text messages only at this point — documents handled above)
     if (!msg.text) return;
     console.log(`[TelegramAI] ${msg.from.first_name}: "${msg.text.substring(0, 80)}"`);
@@ -6315,6 +6428,56 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           executeAttackWithProgress(config, chatId, domain, method).catch(err => {
             console.error(`[TelegramAI] Attack execution error: ${err.message}`);
           });
+          return;
+        }
+        
+
+        // proxy_health:<count> — run health check on proxies
+        if (data.startsWith("proxy_health:")) {
+          const countStr = data.replace("proxy_health:", "");
+          const { proxyPool } = await import("./proxy-pool");
+          
+          await sendTelegramReply(config, chatId, "🔄 กำลังทดสอบ proxy... รอสักครู่");
+          
+          try {
+            const sampleSize = countStr === "all" ? undefined : parseInt(countStr) || 5;
+            const result = await proxyPool.healthCheckAll(sampleSize);
+            
+            const lines: string[] = [];
+            lines.push("🔄 Health Check Complete!");
+            lines.push(`  ✅ Healthy: ${result.healthy}/${result.checked}`);
+            lines.push(`  ❌ Unhealthy: ${result.unhealthy}/${result.checked}`);
+            lines.push("");
+            
+            for (const r of result.results.slice(0, 15)) {
+              const icon = r.ok ? "✅" : "❌";
+              const latency = r.ok ? `${r.latencyMs}ms` : "timeout";
+              const ip = r.ip ? ` → ${r.ip}` : "";
+              lines.push(`${icon} ${r.label} — ${latency}${ip}`);
+            }
+            if (result.results.length > 15) {
+              lines.push(`... +${result.results.length - 15} more`);
+            }
+            
+            lines.push("");
+            lines.push(`💡 พิมพ์ /proxy เพื่อดูสถานะเต็ม`);
+            
+            await sendTelegramReply(config, chatId, lines.join("\n"));
+          } catch (err: any) {
+            await sendTelegramReply(config, chatId, `❌ Health check failed: ${err.message}`);
+          }
+          return;
+        }
+        
+        // proxy_reset — reset all proxy stats
+        if (data === "proxy_reset") {
+          const { proxyPool } = await import("./proxy-pool");
+          proxyPool.resetStats();
+          await sendTelegramReply(config, chatId, 
+            "🗑️ Reset proxy stats เรียบร้อย!\n\n" +
+            "ทุก proxy ถูก reset เป็น healthy + stats เป็น 0\n" +
+            "💡 พิมพ์ /proxy เพื่อดูสถานะใหม่"
+          );
           return;
         }
         
