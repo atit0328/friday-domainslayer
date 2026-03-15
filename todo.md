@@ -4915,3 +4915,12 @@
 - [x] Inject _chatId สำหรับ retry_attack + retry_all_failed
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Bug Fix: Narration แสดง raw pipeline events แทนภาษาไทย
+- [x] "▶ 🟨 error" ซ้ำหลายบรรทัด — แก้แล้ว: เพิ่ม phase labels สำหรับ error/failed/complete/success/world_update/ai_retry/learning/discovery/attacking/stopped/ai_skip
+- [x] "▶ 🟨 world_update" / "▶ 🟨 complete" — แก้แล้ว: ทุก phase มี Thai label
+- [x] แก้ full_chain handler: เพิ่ม 14 phase labels ใหม่ + completeLastStep ตาม status (error → failed)
+- [x] แก้ agentic_auto handler: filter events สั้นๆ + map phase → status + เพิ่ม emoji ที่ถูกต้อง
+- [x] แก้ icon mapping ให้ถูกต้อง (error → ❌, complete → 🏁, success → ✅, failed → ❌)
+- [x] TypeScript 0 errors
+- [x] Save checkpoint

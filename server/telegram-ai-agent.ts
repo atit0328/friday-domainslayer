@@ -3640,14 +3640,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               smart_fallback: "🧠 Smart Fallback",
               cf_bypass: "☁️ Cloudflare Bypass",
               shellless: "🚫 Shellless Attack",
+              error: "❌ เกิดข้อผิดพลาด",
+              failed: "❌ ล้มเหลว",
+              complete: "🏁 เสร็จสิ้น",
+              success: "✅ สำเร็จ",
+              world_update: "📡 อัปเดตสถานะ",
+              ai_retry: "🧠 AI วิเคราะห์ + ลองใหม่",
+              learning: "📚 AI เรียนรู้",
+              learned: "📚 AI อัปเดทความรู้",
+              discovery: "🔍 ค้นหาเป้าหมาย",
+              attacking: "⚔️ กำลังโจมตี",
+              stopped: "⏹️ หยุดทำงาน",
+              ai_skip: "⏭️ AI ข้ามเป้าหมาย",
             };
             const thaiLabel = phaseLabels[event.phase] || `📋 ${event.phase}`;
+            const isErrorPhase = event.phase === "error" || (event.phase as string) === "failed" || event.detail.includes("❌");
             await narrator.addStep(thaiLabel);
+            await narrator.completeLastStep(isErrorPhase ? "failed" : "done");
             
             timings.push({
               step: `${event.phase}: ${event.detail.substring(0, 60)}`,
               ms: Date.now() - s2,
-              ok: !event.detail.includes("❌"),
+              ok: !isErrorPhase,
             });
             stepIndex++;
           }
@@ -3790,11 +3804,40 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           const events = status.events || [];
           const latestEvent = events.length > 0 ? events[events.length - 1] : null;
           
-          // Add new events as narrator steps
+          // Add new events as narrator steps (filtered + translated)
           const newEvents = events.slice(lastEventCount);
           for (const ev of newEvents.slice(-3)) {
-            await narrator.addStep(ev.detail.substring(0, 60));
-            await narrator.completeLastStep("done");
+            // Skip empty/trivial events
+            if (!ev.detail || ev.detail.length < 5) continue;
+            
+            // Map phase to narrator step status
+            const stepStatus: "done" | "failed" = 
+              (ev.phase === "error" || ev.phase === "failed") ? "failed" : "done";
+            
+            // Clean up detail — remove redundant emoji if already short
+            let label = ev.detail.substring(0, 80);
+            
+            // Translate common phase-only events
+            if (ev.phase === "complete" && !ev.detail.includes("✅") && !ev.detail.includes("❌")) {
+              label = `🏁 ${label}`;
+            } else if (ev.phase === "error" && !ev.detail.includes("❌")) {
+              label = `❌ ${label}`;
+            } else if (ev.phase === "discovery" && !ev.detail.includes("🔍")) {
+              label = `🔍 ${label}`;
+            } else if (ev.phase === "attacking" && !ev.detail.includes("⚔️")) {
+              label = `⚔️ ${label}`;
+            } else if (ev.phase === "success" && !ev.detail.includes("✅")) {
+              label = `✅ ${label}`;
+            } else if (ev.phase === "failed" && !ev.detail.includes("❌")) {
+              label = `❌ ${label}`;
+            } else if (ev.phase === "ai_retry" && !ev.detail.includes("🧠") && !ev.detail.includes("🤖")) {
+              label = `🧠 ${label}`;
+            } else if (ev.phase === "learning" || ev.phase === "learned") {
+              label = `📚 ${label}`;
+            }
+            
+            const stepIdx = await narrator.addStep(label);
+            await narrator.updateStep(stepIdx, stepStatus);
           }
           
           // Show stats
