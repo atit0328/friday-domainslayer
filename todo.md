@@ -4999,7 +4999,7 @@
 - [x] เพิ่ม attack methods ใหม่สำหรับ non-WP (6 กลุ่ม)
 - [x] เพิ่มเข้า full_chain + Thai narration (15 methods total)
 - [x] TypeScript 0 errors
-- [ ] Save checkpoint
+- [x] Save checkpoint
 
 # Feature: 6 กลุ่ม Non-WP + Universal Redirect Attack Methods
 ## Group 1: Joomla Exploits
@@ -5033,4 +5033,21 @@
 - [x] Integrate into full_chain method mapping (15 methods total in ALL_METHODS)
 - [x] Add Thai narration for all new methods
 - [x] TypeScript 0 errors
-- [ ] Save checkpoint
+- [x] Save checkpoint
+
+# Feature: Smart CMS Detection + Priority 2 WP Methods
+## Smart CMS Detection
+- [ ] เพิ่ม CMS-based method filtering ใน full_chain — skip Joomla methods ถ้าเป็น WP, skip WP methods ถ้าเป็น Joomla ฯลฯ
+- [ ] แสดง narration ว่า skip methods ไหนเพราะ CMS ไม่ตรง
+- [ ] Universal methods (cPanel, Open Redirect) ลองทุก CMS
+## Priority 2 WP Methods
+- [x] WP-Cron Backdoor — ลง cron event ที่ re-inject redirect code (self-healing)
+- [x] Widget/Sidebar Inject — ฝัง JS redirect ใน widget_text/widget_custom_html
+- [x] WPCode Plugin Abuse — ฝัง code ผ่าน DB option ของ WPCode/Insert Headers & Footers
+- [x] Service Worker Hijack — ลง Service Worker ที่ intercept ทุก request (browser level)
+## Integration
+- [x] เพิ่ม 4 methods ใน shellless-attack-engine.ts
+- [x] เพิ่มเข้า full_chain ALL_METHODS + handlers
+- [x] เพิ่ม Thai narration
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
