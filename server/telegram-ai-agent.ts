@@ -108,8 +108,10 @@ export function getAllowedChatIds(): number[] {
   const ids: number[] = [];
   const id1 = ENV.telegramChatId;
   const id2 = ENV.telegramChatId2;
+  const id3 = ENV.telegramChatId3;
   if (id1) ids.push(parseInt(id1));
   if (id2) ids.push(parseInt(id2));
+  if (id3) ids.push(parseInt(id3));
   return ids.filter(id => !isNaN(id));
 }
 

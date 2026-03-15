@@ -5150,3 +5150,9 @@
 - [x] Log the auto-switch with 🇹🇭 emoji for debugging
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: เพิ่ม Telegram chat ID 6091112509
+- [x] เพิ่ม chat ID 6091112509 เข้าระบบ authorized users (TELEGRAM_CHAT_ID_3)
+- [x] เพิ่ม env.ts + getAllowedChatIds()
+- [x] Vitest 3/3 passed
+- [x] Save checkpoint
