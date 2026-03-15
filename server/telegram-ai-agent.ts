@@ -2465,6 +2465,12 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
       return;
     }
     
+    if (msg.text === "/restart") {
+      const result = await performFullBotRestart(config, msg.chat.id);
+      await sendTelegramReply(config, msg.chat.id, result, msg.message_id);
+      return;
+    }
+    
     if (msg.text === "/summary") {
       const summary = await generateExecutiveSummary();
       await sendTelegramReply(config, msg.chat.id, summary, msg.message_id);
@@ -2859,14 +2865,17 @@ async function autoRestartOnConflict(): Promise<void> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chat_id: config.chatId,
-          text: `🔄 *Bot Auto-Restart*\n\n` +
-            `ตรวจพบ conflict (bot instance ชนกัน) ${conflictsBeforeReset} ครั้ง\n` +
-            `ทำ auto-restart ครั้งที่ #${conflictAutoRestartCount}:\n` +
-            `• ลบ webhook เก่า\n` +
-            `• reset polling state\n` +
-            `• กลับมาทำงานปกติแล้ว ✅`,
+          text: `⚠️ *Bot Conflict ตรวจพบ*\n\n` +
+            `พบ instance ชนกัน ${conflictsBeforeReset} ครั้ง\n` +
+            `Auto-restart #${conflictAutoRestartCount} สำเร็จ ✅\n\n` +
+            `ถ้ายังมีปัญหา กดปุ่มด้านล่างเพื่อ Restart ทั้งหมด:`,
           parse_mode: "Markdown",
           disable_web_page_preview: true,
+          reply_markup: JSON.stringify({
+            inline_keyboard: [
+              [{ text: "🔄 Restart ทั้งหมด", callback_data: "restart_all_bot" }],
+            ],
+          }),
         }),
       }, { timeout: 5000 });
     } catch {
@@ -2875,6 +2884,69 @@ async function autoRestartOnConflict(): Promise<void> {
   } else {
     console.log(`[TelegramAI] 🔇 Suppressed restart notification (cooldown: ${Math.round((RESTART_NOTIFICATION_COOLDOWN_MS - (now - lastRestartNotificationAt)) / 1000)}s remaining)`);
   }
+}
+
+/**
+ * Full bot restart triggered by user button press.
+ * Performs complete cleanup: delete webhook, drop pending updates,
+ * reset all polling/conflict state, clear running attacks, and resume.
+ */
+async function performFullBotRestart(config: TelegramConfig, chatId: number): Promise<string> {
+  console.log(`[TelegramAI] 🚨 Manual FULL RESTART triggered by user`);
+  
+  const steps: string[] = [];
+  
+  // Step 1: Delete webhook + drop pending updates
+  try {
+    const deleteUrl = `https://api.telegram.org/bot${config.botToken}/deleteWebhook`;
+    await telegramFetch(deleteUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ drop_pending_updates: true }),
+      signal: AbortSignal.timeout(10000),
+    }, { timeout: 10000 });
+    steps.push("✅ ลบ webhook + pending updates");
+  } catch (e: any) {
+    steps.push(`⚠️ ลบ webhook ล้มเหลว: ${e.message}`);
+  }
+  
+  // Step 2: Reset all polling state
+  consecutiveConflicts = 0;
+  conflictAutoRestartCount = 0;
+  lastWebhookDeleteAt = 0;
+  lastRestartNotificationAt = 0;
+  restartTimestamps = [];
+  healthStats.consecutiveFailures = 0;
+  healthStats.currentBackoffMs = 0;
+  healthStats.status = "connected";
+  healthStats.lastError = null;
+  pollingOffset = 0;
+  steps.push("✅ Reset polling state ทั้งหมด");
+  
+  // Step 3: Clear running attacks
+  const running = getRunningAttacks();
+  if (running.length > 0) {
+    for (const a of running) {
+      completeRunningAttack(a.id, false, 0);
+    }
+    steps.push(`✅ หยุด running attacks ${running.length} รายการ`);
+  } else {
+    steps.push("✅ ไม่มี running attacks");
+  }
+  
+  // Step 4: Clear conversation states
+  clearConversationState(chatId);
+  steps.push("✅ Clear conversation state");
+  
+  // Step 5: Short pause
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  steps.push("✅ รอ 2 วินาทีให้ instance เก่าหยุด");
+  
+  console.log(`[TelegramAI] ✅ Full restart complete: ${steps.length} steps done`);
+  
+  return `🔄 *Full Bot Restart สำเร็จ!*\n\n` +
+    steps.map(s => `• ${s}`).join("\n") +
+    `\n\n🟢 Bot กลับมาทำงานปกติแล้ว!`;
 }
 
 async function pollUpdates(): Promise<void> {
@@ -6965,6 +7037,11 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
         // Set state so next message with a domain will be handled as attack target
         setConversationState(chatId, { pendingAction: "awaiting_domain" });
         responseText = "\u270D\uFE0F พิมพ์ชื่อโดเมนที่ต้องการโจมตีมาเลยครับ\n\nเช่น example.com หรือ domainslayer.ai";
+        break;
+      }
+      case "restart_all_bot": {
+        // Full restart: delete webhook, reset all state, restart polling
+        responseText = await performFullBotRestart(config, chatId);
         break;
       }
       default: {

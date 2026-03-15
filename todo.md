@@ -5366,3 +5366,13 @@
 - [x] suppress duplicate notifications (ส่งแค่ 1 ครั้งต่อ 10 นาที)
 - [x] TypeScript 0 errors
 - [ ] Save checkpoint
+
+# Feature: ปุ่ม Restart All ใน Telegram + แก้ Auto-Restart spam
+
+- [x] เพิ่มปุ่ม 🔄 Restart ทั้งหมด ใน conflict notification message
+- [x] สร้าง callback handler restart_all_bot + performFullBotRestart()
+- [x] ปุ่มกดแล้ว: ลบ webhook+pending, reset polling/conflict state, clear running attacks, clear conversation
+- [x] เพิ่ม /restart command พิมพ์ได้ด้วย
+- [x] แก้ Auto-Restart spam: webhook cooldown 5นาที, notification cooldown 10นาที, max 3 restarts/ชั่วโมง
+- [x] TypeScript 0 errors
+- [ ] Save checkpoint
