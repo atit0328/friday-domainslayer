@@ -5182,3 +5182,69 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 12/12 passed (vuln-alert.test.ts)
 - [x] Save checkpoint
+
+# Feature: SEO-First Transformation Pipeline (Googlebot-First Website Generation)
+## Phase 1: Post-Install Theme Analysis Engine
+- [x] สร้าง seo-theme-analyzer.ts — วิเคราะห์ DOM/content block structure หลัง install theme
+- [x] วิเคราะห์ heading hierarchy, section ordering, CTA clutter
+- [x] วิเคราะห์ navigation clarity, footer structure, mobile layout
+- [x] ตรวจจับ hidden/weak content areas, decorative sections ที่ลด SEO clarity
+- [x] ให้คะแนน crawlability score ก่อน optimization
+
+## Phase 2: Layout Rebuild Engine for SEO Clarity
+- [x] สร้าง seo-layout-rebuilder.ts — rebuild homepage structure เพื่อ Googlebot readability
+- [x] simplify content hierarchy, reduce noisy sections
+- [x] สร้าง clear semantic sections (Hero, Benefits, Services, FAQ, CTA, Footer)
+- [x] ปรับ headings ให้สะท้อน page intent
+- [x] จัดลำดับ sections ตาม search intent
+
+## Phase 3: SEO Content Generation Engine
+- [x] สร้าง seo-content-engine.ts — AI content generation + content cluster planning
+- [x] content align กับ primary/secondary keywords
+- [x] satisfy search intent, readable, natural
+- [x] avoid keyword stuffing, ใช้ keywords ใน important positions
+- [x] support entity and topical relevance
+- [x] content quality checker (keyword density, readability, word count)
+
+## Phase 4: Full On-Page SEO Optimization Engine
+- [x] สร้าง seo-onpage-optimizer.ts — full on-page SEO optimization wrapper
+- [x] title tag, meta description, H1 validation, H2/H3 structure
+- [x] keyword placement optimization (title, meta, H1, intro, body, CTA)
+- [x] semantic keyword expansion, natural bolding
+- [x] image alt generation, internal link planning
+- [x] indexability checks, readability improvements
+- [x] duplicate heading/content detection, keyword cannibalization prevention
+
+## Phase 5: Internal Linking + FAQ + Schema Engine
+- [x] สร้าง seo-linking-schema-engine.ts — internal linking, FAQ, schema markup
+- [x] homepage to support-page links
+- [x] support-page backlinks to homepage/hub pages
+- [x] FAQ section generation based on intent (8 questions)
+- [x] comprehensive schema markup (Organization, WebSite, WebPage, FAQPage, BreadcrumbList, SiteNavigationElement)
+- [x] breadcrumb-ready architecture
+- [x] silo structure analysis + orphan page detection
+
+## Phase 6: SEO Validation Scoring System
+- [x] สร้าง seo-validation-scorer.ts — 50+ SEO checks with weighted scoring
+- [x] score: title quality, meta quality, heading hierarchy
+- [x] score: keyword coverage, topical clarity, internal links
+- [x] score: schema, FAQ, readability, crawlability
+- [x] score: mobile readability, indexability
+- [x] minimum SEO quality threshold check
+- [x] before/after comparison with improvement tracking
+
+## Phase 7: Before/After Preview + Approval Flow
+- [x] สร้าง seo-preview-approval.ts — before/after snapshot + preview
+- [x] captureBeforeSnapshot, createAfterSnapshot
+- [x] generatePreview with comparison data
+- [x] formatPreviewForTelegram
+- [x] publishOptimizedContent with revision tracking
+- [x] rollbackToOriginal with original content restore
+
+## Phase 8: Integration
+- [x] สร้าง seo-transform-pipeline.ts — master orchestrator (10-step pipeline)
+- [x] สร้าง seo-transform router (runPipeline, analyzeTheme, validatePage)
+- [x] ลงทะเบียน seoTransform router ใน routers.ts
+- [x] TypeScript 0 errors
+- [x] Vitest 13/13 passed (seo-transform-pipeline.test.ts) + 12/12 (vuln-alert.test.ts)
+- [x] Save checkpoint

@@ -64,6 +64,7 @@ import { competitorGapRouter } from "./routers/competitor-gap";
 import { seoOrchestratorRouter } from "./routers/seo-orchestrator";
 import { telegramAiRouter } from "./routers/telegram-ai";
 import { cloakingRouter, onPageSeoRouter, seoThemeRouter, seoFullPipelineRouter, seoHomepageRouter, contentSpinnerRouter, autoPostsRouter } from "./routers/cloaking-seo";
+import { seoTransformRouter } from "./routers/seo-transform";
 import { wpThemesRouter } from "./routers/wp-themes";
 import { attackDashboardRouter } from "./routers/attack-dashboard";
 import { batchAttackRouter } from "./routers/batch-attack";
@@ -222,6 +223,8 @@ export const appRouter = router({
   seoTheme: seoThemeRouter,
   seoFullPipeline: seoFullPipelineRouter,
   seoHomepage: seoHomepageRouter,
+  // SEO-First Transformation Pipeline (post-install SEO optimization)
+  seoTransform: seoTransformRouter,
 
   // AI Content Spinner (LLM-powered unique content)
   contentSpinner: contentSpinnerRouter,
