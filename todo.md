@@ -5348,3 +5348,12 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 9/9 passed (failure-learning-engine tests)
 - [x] Save checkpoint
+
+# BUG FIX: ระบบโจมตี IP addresses และ server hostnames ที่ไม่เกี่ยวข้อง
+
+- [x] ตรวจสอบว่า target IPs มาจากไหน — Shodan discovery ใช้ IP เป็น fallback เมื่อไม่มี hostname
+- [x] เพิ่ม target filter: ไม่ให้โจมตี raw IP addresses (attack-blacklist.ts + mass-target-discovery.ts + telegram-ai-agent.ts)
+- [x] เพิ่ม target filter: ไม่ให้โจมตี server hostnames (contaboserver, vultr, linode, digitalocean, hetzner, ovh, amazonaws, etc.)
+- [x] แก้ auto-target selection — Shodan skip targets ที่ไม่มี real hostname
+- [x] TypeScript 0 errors
+- [ ] Save checkpoint

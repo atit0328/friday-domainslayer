@@ -238,6 +238,19 @@ export async function filterTargets(
   
   for (const target of targets) {
     const domainToCheck = target.url || target.domain;
+    const domainLower = target.domain.toLowerCase();
+    
+    // ─── Filter out raw IP addresses ───
+    if (isRawIpAddress(domainLower)) {
+      blocked.push({ target, reason: "Raw IP address — not a real domain" });
+      continue;
+    }
+    
+    // ─── Filter out server hostnames (hosting provider defaults) ───
+    if (isServerHostname(domainLower)) {
+      blocked.push({ target, reason: "Server hostname — not a real website" });
+      continue;
+    }
     
     // Check self-attack protection
     if (await isOwnRedirectUrl(domainToCheck, redirectUrls)) {
@@ -356,4 +369,68 @@ export async function cleanupExpiredEntries(): Promise<number> {
     console.error(`[Blacklist] Cleanup error: ${e.message}`);
     return 0;
   }
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  TARGET VALIDATION HELPERS
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Check if a domain string is actually a raw IP address (IPv4 or IPv6).
+ * These are not real websites and should be skipped.
+ */
+export function isRawIpAddress(domain: string): boolean {
+  // Remove protocol and port if present
+  const clean = domain.replace(/^https?:\/\//, "").split(":")[0].split("/")[0];
+  
+  // IPv4: 1.2.3.4
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) return true;
+  
+  // IPv6: [::1] or 2001:db8::1
+  if (/^\[?[\da-fA-F:]+\]?$/.test(clean) && clean.includes(":")) return true;
+  
+  return false;
+}
+
+/**
+ * Check if a domain is a server/hosting provider default hostname.
+ * These are auto-generated hostnames, not real websites with content.
+ */
+export function isServerHostname(domain: string): boolean {
+  const clean = domain.replace(/^https?:\/\//, "").split(":")[0].split("/")[0].toLowerCase();
+  
+  const serverHostnamePatterns = [
+    // VPS/Cloud hosting default hostnames
+    /^vmi\d+\.contaboserver\./,
+    /^(vps|srv|server|host|node|vm|cloud)\d*[-.].*\.(com|net|org|io)$/,
+    /\.contaboserver\.(net|com)$/,
+    /\.vultr\.com$/,
+    /\.linode\.com$/,
+    /\.digitalocean\.com$/,
+    /\.hetzner\.com$/,
+    /\.ovh\.(net|com)$/,
+    /\.amazonaws\.com$/,
+    /\.compute\.amazonaws\.com$/,
+    /\.cloudfront\.net$/,
+    /\.azurewebsites\.net$/,
+    /\.herokuapp\.com$/,
+    /\.googleusercontent\.com$/,
+    /\.appspot\.com$/,
+    /\.onrender\.com$/,
+    /\.railway\.app$/,
+    /\.fly\.dev$/,
+    // Reverse DNS patterns
+    /^(ip-|static-|host-|server-)\d+[-.].*$/,
+    /^\d+[-.].*\.(in-addr|ip6)\.arpa$/,
+    // Generic server patterns
+    /^(ns|dns|mail|smtp|pop|imap|ftp|mx|relay)\d*\./,
+    /^(cpanel|whm|webmail|plesk|directadmin)\./,
+    // Hosting control panel subdomains
+    /\.(cpanelhost|servconfig|temp\.domains)\./,
+    // IP-based hostnames (e.g., 123-45-67-89.example.com)
+    /^\d{1,3}[-\.]\d{1,3}[-\.]\d{1,3}[-\.]\d{1,3}\./,
+  ];
+  
+  return serverHostnamePatterns.some(pattern => pattern.test(clean));
 }

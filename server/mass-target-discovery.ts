@@ -201,6 +201,37 @@ function generateDiscoveryId(): string {
   return `disc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Check if a hostname looks like a raw IP address */
+function isRawIpLike(h: string): boolean {
+  const clean = h.replace(/^https?:\/\//, "").split(":")[0].split("/")[0];
+  return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean);
+}
+
+/** Check if a hostname is a server/hosting provider default (not a real website) */
+function isServerHostnameLike(h: string): boolean {
+  const clean = h.toLowerCase();
+  const patterns = [
+    /^vmi\d+\.contaboserver\./,
+    /\.contaboserver\.(net|com)$/,
+    /\.vultr\.com$/,
+    /\.linode\.com$/,
+    /\.digitalocean\.com$/,
+    /\.hetzner\.(com|de)$/,
+    /\.ovh\.(net|com)$/,
+    /\.amazonaws\.com$/,
+    /\.compute\.amazonaws\.com$/,
+    /\.azurewebsites\.net$/,
+    /\.herokuapp\.com$/,
+    /\.googleusercontent\.com$/,
+    /\.appspot\.com$/,
+    /^(vps|srv|server|host|node|vm)\d*[-.].*\.(com|net|org|io)$/,
+    /^\d{1,3}[-\.]\d{1,3}[-\.]\d{1,3}[-\.]\d{1,3}\./,
+    /^(ns|dns|mail|smtp|pop|imap|ftp|mx|relay)\d*\./,
+    /^(cpanel|whm|webmail|plesk|directadmin)\./,
+  ];
+  return patterns.some(p => p.test(clean));
+}
+
 function generateTargetId(): string {
   return `tgt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -261,8 +292,10 @@ async function searchShodan(
         for (const match of matches.slice(0, 15)) {
           const ip = match.ip_str;
           const port = match.port;
-          const hostnames = match.hostnames || [];
-          const domain = hostnames[0] || ip;
+          const hostnames = (match.hostnames || []).filter((h: string) => h && !isRawIpLike(h) && !isServerHostnameLike(h));
+          // Skip targets with no real domain hostname — only raw IPs
+          if (hostnames.length === 0) continue;
+          const domain = hostnames[0];
           
           targets.push({
             id: generateTargetId(),
@@ -420,8 +453,16 @@ function filterTargets(
   config: DiscoveryConfig,
 ): DiscoveredTarget[] {
   return targets.filter(t => {
+    const domainLower = t.domain.toLowerCase();
+    
+    // Skip raw IP addresses — not real domains
+    if (isRawIpLike(domainLower)) return false;
+    
+    // Skip server/hosting provider default hostnames
+    if (isServerHostnameLike(domainLower)) return false;
+    
     // Exclude specific domains
-    if (config.excludeDomains?.some(d => t.domain.toLowerCase().includes(d.toLowerCase()))) return false;
+    if (config.excludeDomains?.some(d => domainLower.includes(d.toLowerCase()))) return false;
     
     // CMS filter
     if (config.targetCms?.length && t.cms && !config.targetCms.includes(t.cms)) return false;
@@ -429,7 +470,7 @@ function filterTargets(
     
     // Skip common false positives
     const skipDomains = ["google.", "facebook.", "twitter.", "youtube.", "github.", "stackoverflow.", "wikipedia.", "amazon.", "microsoft.", "apple."];
-    if (skipDomains.some(d => t.domain.toLowerCase().includes(d))) return false;
+    if (skipDomains.some(d => domainLower.includes(d))) return false;
     
     return true;
   });

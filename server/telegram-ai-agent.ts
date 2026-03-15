@@ -1361,6 +1361,17 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         const targetDomain = args.targetDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
         const methodEta = getMethodEta(method);
         
+        // Guard: reject raw IP addresses — not real domains
+        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(targetDomain)) {
+          return `⛔ ${targetDomain} เป็น IP address ไม่ใช่ domain จริง — ระบบโจมตีเฉพาะ domain ที่มีเว็บไซต์จริง (เช่น example.com)\nลองส่ง domain name แทนครับ`;
+        }
+        
+        // Guard: reject server hostnames (hosting provider defaults)
+        const serverHostPatterns = [/\.contaboserver\./i, /\.vultr\.com$/i, /\.linode\.com$/i, /\.digitalocean\.com$/i, /\.hetzner\./i, /\.amazonaws\.com$/i, /\.herokuapp\.com$/i, /^vmi\d+\./i, /^(vps|srv|server|host|node|vm)\d*[-\.]/i];
+        if (serverHostPatterns.some(p => p.test(targetDomain))) {
+          return `⛔ ${targetDomain} เป็น server hostname (ชื่อเครื่อง hosting) ไม่ใช่เว็บไซต์จริง\nลองส่ง domain name ที่มีเว็บไซต์จริงแทนครับ`;
+        }
+        
         // Guard: check if there's already a running attack for this domain
         const running = getRunningAttacks();
         const existingAttack = running.find(a => a.domain === targetDomain);
