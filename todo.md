@@ -5433,3 +5433,10 @@
 - [x] Test updateAgentConfig enable/disable
 - [x] Test failure learning engine exports and report structure
 - [x] All 18/18 tests passed, TypeScript 0 errors
+
+# Fix Bot Conflict — Dev Server Telegram Polling Clashes with Production
+
+- [x] Investigate where Telegram bot polling auto-starts on server boot
+- [x] Add NODE_ENV/environment guard to skip Telegram bot in dev mode
+- [x] Ensure only production server runs Telegram polling
+- [x] Test and save checkpoint

@@ -91,20 +91,30 @@ async function startServer() {
     startLearningScheduler();
     // Start background daemon (persistent task queue)
     startDaemon();
-    // Start agentic auto orchestrator (attack agent is DISABLED by default — use /daemon on attack to enable)
-    setTimeout(() => {
-      startOrchestrator();
-      console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
-      // Start SEO Orchestrator brain (autonomous 7-day sprint engine)
-      startSeoOrchestrator();
-      console.log("[Server] 🧠 SEO Orchestrator brain initialized");
-      // Start Telegram AI Chat Agent (polling mode)
-      startTelegramPolling();
-      console.log("[Server] 💬 Telegram AI Chat Agent initialized");
-      // Start Daily Summary Scheduler (8:00 AM Bangkok time)
-      startDailySummaryScheduler();
-      console.log("[Server] 📅 Daily Summary Scheduler initialized");
-    }, 10_000); // 10s delay to let other services stabilize
+    // ═══════════════════════════════════════════════════════
+    // PRODUCTION-ONLY services — skip in dev to prevent bot conflicts
+    // Dev server (sandbox) must NOT start Telegram polling or autonomous agents
+    // because production is already running them → causes 409 Conflict errors
+    // ═══════════════════════════════════════════════════════
+    const isDev = process.env.NODE_ENV === "development";
+    if (isDev) {
+      console.log("[Server] ⚠️ DEV MODE — Skipping Telegram bot, orchestrators, and autonomous agents to prevent bot conflicts");
+    } else {
+      setTimeout(() => {
+        // Start agentic auto orchestrator (attack agent is DISABLED by default — use /daemon on attack to enable)
+        startOrchestrator();
+        console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
+        // Start SEO Orchestrator brain (autonomous 7-day sprint engine)
+        startSeoOrchestrator();
+        console.log("[Server] 🧠 SEO Orchestrator brain initialized");
+        // Start Telegram AI Chat Agent (polling mode)
+        startTelegramPolling();
+        console.log("[Server] 💬 Telegram AI Chat Agent initialized");
+        // Start Daily Summary Scheduler (8:00 AM Bangkok time)
+        startDailySummaryScheduler();
+        console.log("[Server] 📅 Daily Summary Scheduler initialized");
+      }, 10_000); // 10s delay to let other services stabilize
+    }
   });
 }
 
