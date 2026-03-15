@@ -543,6 +543,27 @@ export function getPoolStats(): { total: number; healthy: number; dead: number; 
 }
 
 // ═══════════════════════════════════════════════
+//  THAI DOMAIN DETECTION
+// ═══════════════════════════════════════════════
+
+const THAI_TLDS = [".th", ".ac.th", ".go.th", ".co.th", ".or.th", ".in.th", ".mi.th", ".net.th"];
+
+/**
+ * Check if a domain is Thai (ends with .th TLD)
+ */
+function isThaiDomain(domain: string): boolean {
+  const d = domain.toLowerCase();
+  return THAI_TLDS.some(tld => d.endsWith(tld));
+}
+
+/**
+ * Check if a response indicates the request was blocked (403, 406, 451, etc.)
+ */
+function isBlockedResponse(status: number): boolean {
+  return status === 403 || status === 406 || status === 451 || status === 429;
+}
+
+// ═══════════════════════════════════════════════
 //  HELPER: Fetch with proxy from pool (REAL proxy via undici)
 // ═══════════════════════════════════════════════
 
@@ -579,6 +600,7 @@ export async function fetchWithPoolProxy(
 
   // ─── Domain Intelligence: skip proxy if domain is known to block them ───
   const domain = options.targetDomain || new URL(url).hostname;
+  const thaiDomain = isThaiDomain(domain);
   const intelCheck = shouldSkipProxy(domain);
   if (intelCheck.skip) {
     // Domain is known to block proxies — go direct immediately
@@ -586,13 +608,29 @@ export async function fetchWithPoolProxy(
     const t = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
-      return { response, proxyUsed: null, method: "direct" as const };
+      
+      // ─── AUTO-SWITCH: Direct returned 403/blocked for Thai domain → retry via proxy ───
+      if (thaiDomain && isBlockedResponse(response.status)) {
+        console.log(`[ProxyPool] 🇹🇭 Thai domain ${domain} returned ${response.status} on direct → auto-switching to proxy`);
+        // Clear the direct-only intel so proxy is tried
+        domainIntelCache.delete(domain);
+        // Fall through to proxy logic below (don't return)
+      } else {
+        return { response, proxyUsed: null, method: "direct" as const };
+      }
     } catch (directErr) {
       clearTimeout(t);
-      throw new Error(
-        `Direct fetch failed for ${url} (domain intel: ${intelCheck.reason}). ` +
-        `Error: ${directErr instanceof Error ? directErr.message : String(directErr)}`
-      );
+      // ─── AUTO-SWITCH: Direct fetch timeout/error for Thai domain → retry via proxy ───
+      if (thaiDomain) {
+        console.log(`[ProxyPool] 🇹🇭 Thai domain ${domain} direct fetch failed → auto-switching to proxy. Error: ${directErr instanceof Error ? directErr.message : String(directErr)}`);
+        domainIntelCache.delete(domain);
+        // Fall through to proxy logic below
+      } else {
+        throw new Error(
+          `Direct fetch failed for ${url} (domain intel: ${intelCheck.reason}). ` +
+          `Error: ${directErr instanceof Error ? directErr.message : String(directErr)}`
+        );
+      }
     } finally {
       clearTimeout(t);
     }
@@ -644,10 +682,43 @@ export async function fetchWithPoolProxy(
     const t = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
+      
+      // ─── AUTO-SWITCH: Direct fallback returned 403 for Thai domain → try MORE proxies ───
+      if (thaiDomain && isBlockedResponse(response.status)) {
+        console.log(`[ProxyPool] 🇹🇭 Thai domain ${domain} returned ${response.status} on direct fallback — trying remaining proxies`);
+        // Try additional proxies that haven't been tried yet
+        const untried = proxyPool.getAllProxies().filter(p => p.healthy && !triedProxyIds.has(p.id));
+        for (const extraProxy of untried.slice(0, 3)) {
+          triedProxyIds.add(extraProxy.id);
+          const extraResult = await _tryProxyFetch(url, init, extraProxy, timeout);
+          if (extraResult.success && extraResult.response && !isBlockedResponse(extraResult.response.status)) {
+            console.log(`[ProxyPool] 🇹🇭 ✅ Thai domain ${domain} succeeded via proxy ${extraProxy.label}`);
+            return { response: extraResult.response, proxyUsed: extraProxy, method: "proxy" };
+          }
+        }
+        // All extra proxies also failed — return the direct 403 response
+        console.log(`[ProxyPool] 🇹🇭 All proxy+direct attempts returned blocked for ${domain}`);
+      }
+      
       return { response, proxyUsed: null, method: "direct" };
     } catch (directErr) {
-      // Even direct fetch failed — this means the TARGET is unreachable
       clearTimeout(t);
+      
+      // ─── AUTO-SWITCH: Direct fallback timeout for Thai domain → try MORE proxies ───
+      if (thaiDomain) {
+        console.log(`[ProxyPool] 🇹🇭 Thai domain ${domain} direct fallback timed out — trying remaining proxies`);
+        const untried = proxyPool.getAllProxies().filter(p => p.healthy && !triedProxyIds.has(p.id));
+        for (const extraProxy of untried.slice(0, 3)) {
+          triedProxyIds.add(extraProxy.id);
+          const extraResult = await _tryProxyFetch(url, init, extraProxy, timeout);
+          if (extraResult.success) {
+            console.log(`[ProxyPool] 🇹🇭 ✅ Thai domain ${domain} succeeded via proxy ${extraProxy.label} after direct timeout`);
+            return { response: extraResult.response!, proxyUsed: extraProxy, method: "proxy" };
+          }
+        }
+      }
+      
+      // Even direct fetch failed — this means the TARGET is unreachable
       const allErrors = errors.map(e => `${e.proxyLabel}: ${e.error} (${e.latencyMs}ms)`).join("; ");
       throw new Error(
         `All fetch attempts failed for ${url}. ` +

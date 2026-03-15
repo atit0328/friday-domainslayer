@@ -5141,3 +5141,12 @@
 - [x] proxy_health + proxy_reset callback handlers
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: Auto-switch direct→proxy on 403/timeout
+- [x] Detect Thai domains (.th, .ac.th, .go.th, .co.th, .or.th, .in.th, .mi.th, .net.th)
+- [x] When direct fetch returns 403/406/429/451 or timeout → auto-retry via proxy pool
+- [x] When proxy fetch fails + direct fallback returns 403 for Thai domain → try 3 more untried proxies
+- [x] When direct fetch timeout for Thai domain → auto-switch to proxy (both intel-skip and fallback paths)
+- [x] Log the auto-switch with 🇹🇭 emoji for debugging
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
