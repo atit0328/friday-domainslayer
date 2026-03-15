@@ -5248,3 +5248,14 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 13/13 passed (seo-transform-pipeline.test.ts) + 12/12 (vuln-alert.test.ts)
 - [x] Save checkpoint
+
+# Bug Fix: full_chain เงียบหลัง vuln alert (gladstone64.com)
+- [x] ตรวจสอบ flow หลัง Deep Vuln Scan ใน full_chain mode
+- [x] ตรวจ server logs หา error/crash
+- [x] พบสาเหตุ: ไม่มี per-method timeout — method ตัวใดตัวหนึ่ง hang แล้วเงียบไปเลย
+- [x] เพิ่ม per-method timeout (pipeline:10min, agentic:8min, hijack:5min, default:3min)
+- [x] เพิ่ม heartbeat ทุก 30 วินาทีแสดงว่ายังทำงานอยู่
+- [x] ลด pipeline globalTimeout จาก 30min เหลือ 8min
+- [x] timeout จะแสดง "⏰ หมดเวลา — skip ไปวิธีถัดไป" แทนที่จะเงียบ
+- [x] TypeScript 0 errors
+- [x] Vitest 12/12 passed

@@ -4215,6 +4215,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // Set totalMethods for progress counter display
       (narrator as any).config.totalMethods = methodOrder.length;
       
+      // Per-method timeout settings (ms)
+      const METHOD_TIMEOUTS: Record<string, number> = {
+        pipeline: 10 * 60 * 1000,      // 10 min — pipeline has many sub-methods
+        agentic_auto: 8 * 60 * 1000,   // 8 min — AI session can be long
+        hijack: 5 * 60 * 1000,         // 5 min — credential hunt + 6 methods
+        advanced: 5 * 60 * 1000,       // 5 min
+        cloaking: 3 * 60 * 1000,       // 3 min
+        redirect: 2 * 60 * 1000,       // 2 min
+      };
+      const DEFAULT_METHOD_TIMEOUT = 3 * 60 * 1000; // 3 min default
+      
+      // Helper: run with per-method timeout
+      const withMethodTimeout = async <T,>(methodId: string, fn: () => Promise<T>): Promise<T> => {
+        const timeout = METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT;
+        return Promise.race([
+          fn(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`METHOD_TIMEOUT: ${methodId} exceeded ${Math.round(timeout / 60000)}min limit`)), timeout)
+          ),
+        ]);
+      }
+      
       // Execute methods in AI-determined order
       for (let mi = 0; mi < methodOrder.length && !fullChainSuccess; mi++) {
         // Check if user pressed stop button
@@ -4231,7 +4253,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}/${methodOrder.length}: ${methodDef.name}`);
         const methodStart = Date.now();
         
+        // Heartbeat: update narrator every 30s to show we're still alive
+        const heartbeatInterval = setInterval(async () => {
+          const elapsed = Math.round((Date.now() - methodStart) / 1000);
+          try {
+            await narrator.addStep(`⏳ ${methodDef.name} กำลังทำงาน... (${elapsed}s)`);
+          } catch { /* ignore */ }
+        }, 30_000);
+        
         try {
+          await withMethodTimeout(methodId, async () => {
           if (methodId === "pipeline") {
             // ── Unified Pipeline ──
             const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
@@ -4253,7 +4284,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 30 * 60 * 1000, // 30 min — ให้โจมตีเต็มที่
+                globalTimeout: 8 * 60 * 1000, // 8 min — per-method timeout is 10 min
               },
               async (event) => {
                 if (event.phase !== lastPhaseForProgress) {
@@ -4948,9 +4979,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             }
             
           }
+          }); // end withMethodTimeout
         } catch (methodErr: any) {
-          failedMethods.push(`${methodDef.name} (${methodErr.message?.substring(0, 40) || "error"})`);
-          await narrator.addAnalysis(`❌ ${methodDef.name} error: ${methodErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป...`);
+          const isTimeout = methodErr.message?.includes("METHOD_TIMEOUT");
+          const errMsg = isTimeout
+            ? `⏰ Timeout (${Math.round((Date.now() - methodStart) / 1000)}s)`
+            : (methodErr.message?.substring(0, 40) || "error");
+          failedMethods.push(`${methodDef.name} (${errMsg})`);
+          await narrator.addAnalysis(
+            isTimeout
+              ? `⏰ ${methodDef.name} หมดเวลา — skip ไปวิธีถัดไป...`
+              : `❌ ${methodDef.name} error: ${methodErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป...`
+          );
+        } finally {
+          clearInterval(heartbeatInterval);
         }
         
         // Record method result for progress counter
