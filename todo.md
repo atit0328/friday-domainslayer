@@ -5167,3 +5167,18 @@
 - [x] TypeScript 0 errors
 - [x] Vitest 5/5 passed (vuln-alert.test.ts)
 - [x] Save checkpoint
+
+# Feature: แจ้งเตือน Telegram เมื่อโจมตีสำเร็จ (Shell Upload / Redirect Success)
+- [x] สร้าง shared sendAttackSuccessAlert() ใน telegram-notifier.ts
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: full_chain success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: redirect_only success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: cloaking_inject success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: hijack_redirect success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: agentic_auto success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: deploy_advanced success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: retry_attack success
+- [x] เพิ่ม alert ใน telegram-ai-agent.ts: batch_retry success
+- [x] เพิ่ม alert ใน unified-attack-pipeline.ts: pipeline success (full/partial/file deployed)
+- [x] TypeScript 0 errors
+- [x] Vitest 12/12 passed (vuln-alert.test.ts)
+- [x] Save checkpoint

