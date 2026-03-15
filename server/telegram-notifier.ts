@@ -475,3 +475,103 @@ export async function verifyTelegramBot(botToken: string): Promise<{ valid: bool
     return { valid: false, error: error.message };
   }
 }
+
+
+// ═══════════════════════════════════════════════════════
+//  VULNERABILITY ALERT — Send alerts when High/Exploitable vulns found
+// ═══════════════════════════════════════════════════════
+
+export interface VulnAlertData {
+  domain: string;
+  serverInfo?: string;
+  cms?: string;
+  highVulns: Array<{ name?: string; check?: string; severity: string; detail?: string }>;
+  exploitableVulns: Array<{ name?: string; check?: string; detail?: string }>;
+  writablePaths?: number;
+  attackVectors?: Array<{ name: string; successProbability?: number }>;
+  context?: string; // e.g. "กำลังโจมตีอัตโนมัติ..." or "Scan Only"
+}
+
+/**
+ * Send vulnerability alert to all configured Telegram chat IDs.
+ * Called from both full_chain (telegram-ai-agent) and unified-attack-pipeline.
+ */
+export async function sendVulnAlert(data: VulnAlertData): Promise<boolean> {
+  const config = getTelegramConfig();
+  if (!config) return false;
+
+  const alertLines: string[] = [
+    `🚨 <b>แจ้งเตือนช่องโหว่ร้ายแรง!</b>`,
+    ``,
+    `🎯 Domain: <code>${escapeHtml(data.domain)}</code>`,
+    `🖥️ Server: ${escapeHtml(data.serverInfo || "unknown")}`,
+    `📝 CMS: ${escapeHtml(data.cms || "unknown")}`,
+    ``,
+  ];
+
+  if (data.highVulns.length > 0) {
+    alertLines.push(`🔴 <b>High/Critical: ${data.highVulns.length} ช่องโหว่</b>`);
+    data.highVulns.slice(0, 5).forEach((v, i) => {
+      alertLines.push(`  ${i + 1}. ${escapeHtml(v.name || v.check || "Unknown")} (${escapeHtml(v.severity)})`);
+    });
+    if (data.highVulns.length > 5) alertLines.push(`  ... และอีก ${data.highVulns.length - 5} รายการ`);
+    alertLines.push(``);
+  }
+
+  if (data.exploitableVulns.length > 0) {
+    alertLines.push(`💥 <b>Exploitable: ${data.exploitableVulns.length} ช่องโหว่</b>`);
+    data.exploitableVulns.slice(0, 5).forEach((v, i) => {
+      alertLines.push(`  ${i + 1}. ${escapeHtml(v.name || v.check || "Unknown")} — ${escapeHtml((v.detail || "").substring(0, 60))}`);
+    });
+    if (data.exploitableVulns.length > 5) alertLines.push(`  ... และอีก ${data.exploitableVulns.length - 5} รายการ`);
+    alertLines.push(``);
+  }
+
+  if (data.writablePaths && data.writablePaths > 0) {
+    alertLines.push(`📂 Writable paths: ${data.writablePaths}`);
+  }
+  if (data.attackVectors && data.attackVectors.length > 0) {
+    alertLines.push(`🎯 Attack vectors: ${data.attackVectors.length}`);
+    alertLines.push(``);
+    alertLines.push(`Top vectors:`);
+    data.attackVectors.slice(0, 3).forEach((v, i) => {
+      alertLines.push(`  ${i + 1}. ${escapeHtml(v.name)} (${Math.round((v.successProbability || 0) * 100)}%)`);
+    });
+  }
+
+  if (data.context) {
+    alertLines.push(``);
+    alertLines.push(`⚔️ ${escapeHtml(data.context)}`);
+  }
+
+  const message = alertLines.join("\n");
+
+  // Send to all configured chat IDs
+  const chatIds: string[] = [config.chatId];
+  if (ENV.telegramChatId2) chatIds.push(ENV.telegramChatId2);
+  if (ENV.telegramChatId3) chatIds.push(ENV.telegramChatId3);
+
+  let anySent = false;
+  for (const chatId of chatIds) {
+    try {
+      const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+      const { response } = await fetchWithPoolProxy(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "HTML",
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(10000),
+      }, { targetDomain: "api.telegram.org", timeout: 10000 });
+      const result = await response.json() as any;
+      if (result.ok) anySent = true;
+    } catch (err) {
+      console.warn(`[Telegram] Failed to send vuln alert to chat ${chatId}: ${err}`);
+    }
+  }
+
+  return anySent;
+}

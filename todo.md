@@ -5156,3 +5156,14 @@
 - [x] เพิ่ม env.ts + getAllowedChatIds()
 - [x] Vitest 3/3 passed
 - [x] Save checkpoint
+
+# Feature: แจ้งเตือน Telegram เมื่อพบช่องโหว่ High/Exploitable
+- [x] หาจุดที่ scan พบ High/Exploitable vulns ในโค้ด
+- [x] เพิ่ม Telegram alert แยกข้อความเมื่อพบ High/Exploitable
+- [x] แสดงรายละเอียด: domain, vuln name, severity, exploitable status
+- [x] ส่ง alert ทันทีไม่ต้องรอ scan จบ
+- [x] สร้าง shared sendVulnAlert() ใน telegram-notifier.ts (ใช้ร่วมกันทุก mode)
+- [x] เพิ่ม alert ใน scan_only, full_chain, redirect_only, Pipeline (Deep Vuln + WP + CMS)
+- [x] TypeScript 0 errors
+- [x] Vitest 5/5 passed (vuln-alert.test.ts)
+- [x] Save checkpoint

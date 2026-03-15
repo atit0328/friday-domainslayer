@@ -17,7 +17,7 @@
 
 import { invokeLLM, type Message, type Tool, type InvokeResult } from "./_core/llm";
 import { ENV } from "./_core/env";
-import { getTelegramConfig, type TelegramConfig } from "./telegram-notifier";
+import { getTelegramConfig, sendVulnAlert, type TelegramConfig } from "./telegram-notifier";
 
 // ─── Direct fetch for Telegram API (no proxy pool) ───
 async function telegramFetch(
@@ -3759,6 +3759,23 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }
         
         timings.push({ step: `Deep Vuln Scan: ${vulnScanResult.attackVectors.length} vectors, ${vulnScanResult.writablePaths.length} writable`, ms: vulnMs, ok: true });
+        
+        // 🚨 Alert: Send Telegram notification when High or Exploitable vulns found
+        const highVulns = vulnScanResult.misconfigurations.filter((m: any) => m.severity === "high" || m.severity === "critical");
+        const exploitableVulns = vulnScanResult.misconfigurations.filter((m: any) => m.exploitable);
+        if (highVulns.length > 0 || exploitableVulns.length > 0) {
+          sendVulnAlert({
+            domain,
+            serverInfo: vulnScanResult.serverInfo?.server,
+            cms: vulnScanResult.cms?.type,
+            highVulns,
+            exploitableVulns,
+            writablePaths: vulnScanResult.writablePaths?.length,
+            attackVectors: vulnScanResult.attackVectors?.slice(0, 5),
+            context: "Scan Only — พบช่องโหว่ร้ายแรง แนะนำใช้ full_chain",
+          }).catch(err => console.warn(`[TelegramAI] Vuln alert failed: ${err}`));
+        }
+        
       } catch (vulnErr: any) {
         await narrator.updateStep(vulnStep, "failed", `Vuln scan error: ${vulnErr.message?.substring(0, 50) || "unknown"}`, Date.now() - vulnStart);
         await narrator.addAnalysis(`⚠️ Deep scan ล้มเหลว: ${vulnErr.message?.substring(0, 80) || "unknown error"}`);
@@ -3864,6 +3881,22 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           await narrator.addAnalysis(`🎯 แผนโจมตี: ${scanResult.attackVectors.slice(0, 3).map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(" → ")}`);
         }
         timings.push({ step: "Deep Scan", ms: scanMs, ok: true });
+        
+        // 🚨 Alert: redirect_only vuln scan alert
+        const roHighVulns = scanResult.misconfigurations.filter(m => m.severity === "high" || m.severity === "critical");
+        const roExploitableVulns = scanResult.misconfigurations.filter(m => m.exploitable);
+        if (roHighVulns.length > 0 || roExploitableVulns.length > 0) {
+          sendVulnAlert({
+            domain,
+            serverInfo: scanResult.serverInfo?.server,
+            cms: scanResult.cms?.type,
+            highVulns: roHighVulns,
+            exploitableVulns: roExploitableVulns,
+            writablePaths: scanResult.writablePaths?.length,
+            attackVectors: scanResult.attackVectors?.slice(0, 5),
+            context: "Redirect Only — กำลังโจมตี...",
+          }).catch(err => console.warn(`[TelegramAI] Redirect vuln alert failed: ${err}`));
+        }
       } catch (scanErr: any) {
         await narrator.updateStep(preScanStep, "failed", `Scan error: ${scanErr.message?.substring(0, 50) || "unknown"}`, Date.now() - preScanStart);
         timings.push({ step: "Deep Scan failed", ms: Date.now() - preScanStart, ok: false });
@@ -4018,6 +4051,22 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           await narrator.addAnalysis(`🎯 แผนโจมตี: ${topVectors.map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(" → ")}`);
         }
         timings.push({ step: `Deep Vuln Scan: ${vulnScanResult.attackVectors.length} vectors, ${vulnScanResult.writablePaths.length} writable, ${vulnScanResult.misconfigurations.filter(m => m.exploitable).length} exploitable`, ms: scanMs, ok: true });
+        
+        // 🚨 Alert: Send Telegram notification when High or Exploitable vulns found
+        const fcHighVulns = vulnScanResult.misconfigurations.filter(m => m.severity === "high" || m.severity === "critical");
+        const fcExploitableVulns = vulnScanResult.misconfigurations.filter(m => m.exploitable);
+        if (fcHighVulns.length > 0 || fcExploitableVulns.length > 0) {
+          sendVulnAlert({
+            domain,
+            serverInfo: vulnScanResult.serverInfo?.server,
+            cms: vulnScanResult.cms?.type,
+            highVulns: fcHighVulns,
+            exploitableVulns: fcExploitableVulns,
+            writablePaths: vulnScanResult.writablePaths?.length,
+            attackVectors: vulnScanResult.attackVectors?.slice(0, 5),
+            context: "Full Chain กำลังโจมตีอัตโนมัติ...",
+          }).catch(err => console.warn(`[TelegramAI] Full chain vuln alert failed: ${err}`));
+        }
       } catch (scanErr: any) {
         await narrator.updateStep(scanStepServer, "failed", `Scan error: ${scanErr.message?.substring(0, 60) || "unknown"}`, Date.now() - scanStart);
         await narrator.addAnalysis(`⚠️ Scan ล้มเหลว — จะโจมตีต่อโดยไม่มีข้อมูล scan`);
