@@ -4966,4 +4966,13 @@
 - [ ] เพิ่ม methods ใน unified-attack-pipeline.ts METHOD_REGISTRY (optional — shellless engine ถูกเรียกผ่าน runShelllessAttacks แล้ว)
 ## Testing
 - [x] TypeScript 0 errors
+- [x] Save checkpoint
+
+# Bug: full_chain timeout at Deep Vulnerability Scan
+- [x] full_chain ค้างที่ Deep Vuln Scan 17% แล้ว timeout หลัง 124s (gladstone64.com behind Cloudflare)
+- [x] ตรวจสอบ log หาสาเหตุ — root cause: LLM round 2 หลัง tool call ใช้เวลานานเกิน 40s processMessage timeout
+- [x] แก้ไข timeout/hang issue — skip LLM round 2 สำหรับ attack tools, return ทันที
 - [ ] Save checkpoint
+- [x] แก้ processMessage timeout — attack_website เป็น fire-and-forget อยู่แล้ว แต่ LLM round 2 timeout ก่อน
+- [x] ปรับ: attack tools ไม่ต้องรอ LLM round 2 — return ทันทีหลัง fire-and-forget (skip LLM summarization)
+- [x] ปรับ TOOL_TIMEOUT_MS 25s → 15s สำหรับ normal tools, attack tools ใช้ 5s race timeout

@@ -1968,6 +1968,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
     // If LLM wants to call tools
     if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
       const toolResults: ToolCallResult[] = [];
+      let hasLongRunningTool = false;
       
       for (const toolCall of choice.message.tool_calls) {
         // Check timeout before each tool execution
@@ -1985,31 +1986,30 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         
         const startTime = Date.now();
         
-        // Long-running tools: fire-and-forget with immediate response
+        // Long-running tools: fire-and-forget — skip LLM round 2 entirely
         const LONG_RUNNING_TOOLS = ["attack_website", "deploy_advanced", "retry_attack", "retry_all_failed"];
-        const TOOL_TIMEOUT_MS = 25_000; // 25s timeout for tools (leaves 15s for LLM response)
+        const TOOL_TIMEOUT_MS = 15_000; // 15s timeout for non-long-running tools
         
         let result: string;
         if (LONG_RUNNING_TOOLS.includes(toolCall.function.name)) {
-          // For attack/deploy tools: run with timeout, if it takes too long return immediate status
+          hasLongRunningTool = true;
+          // Fire-and-forget: executeTool returns immediately for attack tools
+          // (attack_website already does executeAttackWithProgress in background)
           try {
             result = await Promise.race([
               executeTool(toolCall.function.name, args),
-              new Promise<string>((_, reject) => 
-                setTimeout(() => reject(new Error("TOOL_TIMEOUT")), TOOL_TIMEOUT_MS)
+              new Promise<string>((resolve) => 
+                setTimeout(() => resolve(
+                  `⚔️ ${args.targetDomain || "target"} — ${args.method || "full_chain"} เริ่มแล้ว!\n` +
+                  `📡 ระบบจะอัพเดทสถานะแบบ real-time ใน chat นี้`
+                ), 5_000)
               ),
             ]);
           } catch (e: any) {
-            if (e.message === "TOOL_TIMEOUT") {
-              result = `⏳ ${toolCall.function.name} กำลังทำงานอยู่ (ใช้เวลานานกว่า ${Math.round(TOOL_TIMEOUT_MS / 1000)}s)\n` +
-                `ระบบจะทำงานต่อใน background — พิมพ์ /status เพื่อเช็คสถานะ`;
-              console.log(`[TelegramAI] Tool ${toolCall.function.name} timed out after ${TOOL_TIMEOUT_MS}ms, continuing in background`);
-            } else {
-              result = `❌ Error: ${e.message}`;
-            }
+            result = `❌ Error: ${e.message}`;
           }
         } else {
-          // Normal tools: run with shorter timeout
+          // Normal tools: run with timeout
           try {
             result = await Promise.race([
               executeTool(toolCall.function.name, args),
@@ -2032,7 +2032,34 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         toolResults.push({ name: toolCall.function.name, result, duration });
       }
       
-      // Add tool call + results to messages for next round
+      // If a long-running tool was called (attack/deploy), return immediately
+      // without calling LLM round 2 — the narration system handles all updates
+      if (hasLongRunningTool) {
+        const attackResults = toolResults.filter(tr => 
+          ["attack_website", "deploy_advanced", "retry_attack", "retry_all_failed"].includes(tr.name)
+        );
+        const otherResults = toolResults.filter(tr => 
+          !["attack_website", "deploy_advanced", "retry_attack", "retry_all_failed"].includes(tr.name)
+        );
+        
+        let immediateResponse = "";
+        for (const tr of attackResults) {
+          immediateResponse += tr.result + "\n\n";
+        }
+        if (otherResults.length > 0) {
+          immediateResponse += otherResults.map(tr => `${tr.name}: ${tr.result}`).join("\n");
+        }
+        immediateResponse = immediateResponse.trim();
+        if (!immediateResponse) immediateResponse = "เริ่มโจมตีแล้วนะ! 🚀 รอดูผลกันครับ";
+        
+        // Add note about real-time updates
+        immediateResponse += "\n\nรอดูผลกันครับ ระบบจะวิเคราะห์ช่องโหว่และลองหลายวิธีอัตโนมัติ";
+        
+        await addToHistory(chatId, "assistant", immediateResponse);
+        return immediateResponse;
+      }
+      
+      // For normal tools: continue to LLM round 2 for summarization
       currentMessages.push({
         role: "assistant",
         content: choice.message.tool_calls.map(tc =>
