@@ -5091,3 +5091,10 @@
 ## Testing
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Bug Fix: full_chain timeout ตัดการโจมตีที่ ~127s แล้ว retry ซ้ำ
+- [x] หา timeout logic ที่ตัด attack ก่อนเวลา
+- [x] แก้ให้ full_chain รันเต็มที่ไม่มี timeout ต่อ method
+- [x] ส่ง progress updates เรื่อยๆ แทนที่จะ timeout + retry
+- [x] TypeScript 0 errors
+- [x] Save checkpoint

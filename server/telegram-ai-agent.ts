@@ -170,7 +170,7 @@ const recentCompletedAttacks: Array<{
   completedAt: number;
 }> = [];
 const MAX_RECENT_COMPLETED = 20;
-const ATTACK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const ATTACK_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes — ให้โจมตีเต็มที่ user กดปุ่ม Stop ได้เอง
 
 function registerRunningAttack(domain: string, method: string, chatId: number, progressMsgId: number): RunningAttack {
   const id = `${domain}:${method}:${Date.now()}`;
@@ -1909,7 +1909,7 @@ Content: ${context.content}
 
 export async function processMessage(chatId: number, userMessage: string): Promise<string> {
   const processStart = Date.now();
-  const PROCESS_TIMEOUT_MS = 40_000; // 40 second overall timeout
+  const PROCESS_TIMEOUT_MS = 180_000; // 3 minute overall timeout for LLM processing
   
   // Helper to check if we're running out of time
   const isTimedOut = () => Date.now() - processStart > PROCESS_TIMEOUT_MS;
@@ -1949,7 +1949,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // Check timeout before each LLM call
     if (isTimedOut()) {
-      const timeoutMsg = `ระบบใช้เวลานานเกินไป (${Math.round((Date.now() - processStart) / 1000)}s) ขอลองใหม่อีกทีนะ`;
+      const timeoutMsg = `⏳ กำลังประมวลผลอยู่ครับ... รอสักครู่นะ ระบบยังทำงานอยู่ พิมพ์ /status เพื่อเช็คสถานะ`;
       await addToHistory(chatId, "assistant", timeoutMsg);
       return timeoutMsg;
     }
@@ -1962,7 +1962,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         maxTokens: 2000,
       });
     } catch (error: any) {
-      const errMsg = error.name === "AbortError" ? "ระบบตอบช้า ลองใหม่อีกทีนะ" : `ขอโทษ ระบบมีปัญหาชั่วคราว: ${error.message?.substring(0, 100)}`;
+      const errMsg = error.name === "AbortError" ? "⏳ ระบบกำลังประมวลผลอยู่ รอสักครู่ครับ" : `ขอโทษ ระบบมีปัญหาชั่วคราว: ${error.message?.substring(0, 100)}`;
       await addToHistory(chatId, "assistant", errMsg);
       return errMsg;
     }
@@ -1997,7 +1997,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
         
         // Long-running tools: fire-and-forget — skip LLM round 2 entirely
         const LONG_RUNNING_TOOLS = ["attack_website", "deploy_advanced", "retry_attack", "retry_all_failed"];
-        const TOOL_TIMEOUT_MS = 15_000; // 15s timeout for non-long-running tools
+        const TOOL_TIMEOUT_MS = 60_000; // 60s timeout for non-long-running tools
         
         let result: string;
         if (LONG_RUNNING_TOOLS.includes(toolCall.function.name)) {
@@ -2028,7 +2028,7 @@ export async function processMessage(chatId: number, userMessage: string): Promi
             ]);
           } catch (e: any) {
             if (e.message === "TOOL_TIMEOUT") {
-              result = `⏳ Tool ใช้เวลานานเกินไป — ลองใหม่อีกทีนะ`;
+              result = `⏳ กำลังประมวลผลอยู่ รอสักครู่ครับ`;
             } else {
               result = `❌ Error: ${e.message}`;
             }
@@ -3513,14 +3513,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     
     // Update progress message
     await editTelegramMessage(config, chatId, progressMsgId,
-      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 TIMEOUT — เกิน 10 นาที auto-cancel`);
+      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32 (60 \u0e19\u0e32\u0e17\u0e35) \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34`);
     
     // Send timeout notification
     await sendTelegramReply(config, chatId,
-      `\ud83d\udd14 Attack Timeout!\n\n` +
+      `\ud83d\udd14 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32\u0e42\u0e08\u0e21\u0e15\u0e35\n\n` +
       `\u23f0 ${domain} (${method})\n` +
-      `\u26a0\ufe0f ใช้เวลาเกิน 10 นาที — auto-cancel\n` +
-      `\ud83d\udca1 ลองใช้วิธีอื่นที่เร็วกว่า เช่น Scan Only หรือ AI Auto`
+      `\u26a0\ufe0f \u0e43\u0e0a\u0e49\u0e40\u0e27\u0e25\u0e32\u0e40\u0e01\u0e34\u0e19 60 \u0e19\u0e32\u0e17\u0e35 \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\n` +
+      `\ud83d\udca1 \u0e25\u0e2d\u0e07\u0e43\u0e0a\u0e49\u0e27\u0e34\u0e18\u0e35\u0e2d\u0e37\u0e48\u0e19 \u0e2b\u0e23\u0e37\u0e2d\u0e2a\u0e48\u0e07 domain \u0e43\u0e2b\u0e21\u0e48\u0e44\u0e14\u0e49\u0e40\u0e25\u0e22`
     );
     
     // Save timeout log
@@ -3530,7 +3530,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       success: false,
       errorMessage: `Timeout after ${ATTACK_TIMEOUT_MS / 1000}s`,
       durationMs: ATTACK_TIMEOUT_MS,
-      aiReasoning: `Attack timed out after 10 minutes`,
+      aiReasoning: `Attack timed out after ${Math.round(ATTACK_TIMEOUT_MS / 60000)} minutes`,
     });
     
     // Complete in registry
@@ -4062,7 +4062,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 8 * 60 * 1000,
+                globalTimeout: 30 * 60 * 1000, // 30 min — ให้โจมตีเต็มที่
               },
               async (event) => {
                 if (event.phase !== lastPhaseForProgress) {
@@ -6687,7 +6687,7 @@ async function executeBatchAttackWithProgress(
       maxConcurrent,
       maxRetries: 2,
       seoKeywords: ["casino", "gambling", "slots"],
-      globalTimeoutPerDomain: 10 * 60 * 1000,
+      globalTimeoutPerDomain: 30 * 60 * 1000, // 30 min per domain
 
       onProgress: async (status) => {
         // Throttle progress updates
