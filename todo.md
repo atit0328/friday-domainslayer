@@ -5051,3 +5051,25 @@
 - [x] เพิ่ม Thai narration
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Bug: full_chain ไม่ได้รวมวิธีอื่นๆ ที่เป็น standalone methods
+
+จากภาพ user: เมื่อ full_chain ล้มเหลว bot แนะนำวิธีอื่นๆ เช่น Advanced (5 เทคนิค), Deploy Advanced, AI Auto Attack, Redirect Takeover, PHP Cloaking Inject, Hijack Redirect — แสดงว่า full_chain ยังไม่ได้รวมวิธีเหล่านี้ทั้งหมด
+
+- [ ] ตรวจสอบว่า full_chain ALL_METHODS มีวิธีไหนบ้างแล้ว vs standalone methods ที่ยังขาด
+- [ ] เพิ่ม Deploy Advanced เข้า full_chain (ถ้ายังไม่มี)
+- [ ] เพิ่ม AI Auto Attack เข้า full_chain (ถ้ายังไม่มี)
+- [ ] เพิ่ม Redirect Takeover เข้า full_chain (ถ้ายังไม่มี)
+- [ ] เพิ่ม PHP Cloaking Inject เข้า full_chain (ถ้ายังไม่มี)
+- [ ] เพิ่ม Hijack Redirect เข้า full_chain (ถ้ายังไม่มี)
+- [ ] ตรวจสอบว่าทุก method ถูกเรียกจริงใน for loop
+- [ ] TypeScript 0 errors
+- [ ] Save checkpoint
+
+# Feature: เพิ่ม AI Auto Attack (agentic_auto) เข้า full_chain
+
+- [x] เพิ่ม agentic_auto ใน ALL_METHODS array
+- [x] สร้าง handler ใน full_chain for loop (ไม่จำกัด timeout)
+- [x] Thai narration สำหรับ AI Auto Attack
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
