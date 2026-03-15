@@ -2925,12 +2925,12 @@ const BACKOFF_INITIAL_MS = 1000;    // 1 second
 const BACKOFF_MAX_MS = 15000;       // 15 seconds max (was 60s — too slow)
 const BACKOFF_MULTIPLIER = 2;
 const CONFLICT_RETRY_MS = 5000;     // Fixed 5s wait on 409 conflict (no exponential)
-const CONFLICT_AUTO_RESTART_THRESHOLD = 3; // After 3 consecutive conflicts, auto-restart
-const CONFLICT_WEBHOOK_COOLDOWN_MS = 300000; // Max 1 deleteWebhook per 5 minutes (was 60s)
+const CONFLICT_AUTO_RESTART_THRESHOLD = 5; // After 5 consecutive conflicts, auto-restart (was 3 — less aggressive)
+const CONFLICT_WEBHOOK_COOLDOWN_MS = 600000; // Max 1 deleteWebhook per 10 minutes (was 5min — less aggressive)
 const MAX_CONSECUTIVE_FAILURES = 20; // Alert after 20 consecutive failures
 const NORMAL_POLL_INTERVAL_MS = 2000; // 2 seconds between polls
-const MAX_AUTO_RESTARTS_PER_HOUR = 3; // Max 3 auto-restarts per hour to prevent spam
-const RESTART_NOTIFICATION_COOLDOWN_MS = 600000; // Only send notification once per 10 minutes
+const MAX_AUTO_RESTARTS_PER_HOUR = 2; // Max 2 auto-restarts per hour to prevent spam (was 3)
+const RESTART_NOTIFICATION_COOLDOWN_MS = 1800000; // Only send notification once per 30 minutes (was 10min — less spam)
 
 // Conflict auto-restart state
 let consecutiveConflicts = 0;
@@ -3271,13 +3271,18 @@ export async function startTelegramPolling(): Promise<void> {
     await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ drop_pending_updates: true }),
+      body: JSON.stringify({ drop_pending_updates: false }), // Keep pending messages
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
     console.log("[TelegramAI] Cleared existing webhook before starting polling");
   } catch (e: any) {
     console.warn(`[TelegramAI] Failed to clear webhook: ${e.message}`);
   }
+  
+  // Grace period: wait 5s after webhook delete to let old instance's getUpdates timeout
+  // This prevents the new instance from immediately conflicting with the old one
+  console.log("[TelegramAI] ⏳ Waiting 5s grace period for old instance to release...");
+  await new Promise(resolve => setTimeout(resolve, 5000));
   
   // Reset health stats for new session
   healthStats.startedAt = Date.now();

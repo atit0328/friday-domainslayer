@@ -5440,3 +5440,10 @@
 - [x] Add NODE_ENV/environment guard to skip Telegram bot in dev mode
 - [x] Ensure only production server runs Telegram polling
 - [x] Test and save checkpoint
+
+# Fix Persistent Bot Conflict — Still 409 After Publish
+
+- [x] Investigate conflict detection and auto-restart loop in telegram-ai-agent
+- [x] Find root cause of persistent conflict even after NODE_ENV guard
+- [x] Fix the conflict loop and ensure single bot instance
+- [x] Test and save checkpoint

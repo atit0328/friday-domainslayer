@@ -100,6 +100,9 @@ async function startServer() {
     if (isDev) {
       console.log("[Server] ⚠️ DEV MODE — Skipping Telegram bot, orchestrators, and autonomous agents to prevent bot conflicts");
     } else {
+      // PRODUCTION: Wait 30s before starting Telegram bot to let old instance die during deploy
+      const TELEGRAM_STARTUP_DELAY = 30_000;
+      console.log(`[Server] ⏳ PRODUCTION — Waiting ${TELEGRAM_STARTUP_DELAY / 1000}s before starting Telegram bot and autonomous agents...`);
       setTimeout(() => {
         // Start agentic auto orchestrator (attack agent is DISABLED by default — use /daemon on attack to enable)
         startOrchestrator();
@@ -113,7 +116,7 @@ async function startServer() {
         // Start Daily Summary Scheduler (8:00 AM Bangkok time)
         startDailySummaryScheduler();
         console.log("[Server] 📅 Daily Summary Scheduler initialized");
-      }, 10_000); // 10s delay to let other services stabilize
+      }, TELEGRAM_STARTUP_DELAY);
     }
   });
 }
