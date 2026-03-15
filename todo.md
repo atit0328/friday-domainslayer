@@ -5314,4 +5314,37 @@
 ## Verification
 - [x] TypeScript 0 errors
 - [x] Vitest 19/19 passed (5 vuln + 7 success + 7 failure)
-- [ ] Save checkpoint
+- [x] Save checkpoint
+
+# Feature: AI Failure Learning Engine + Auto-suggest Best Mode
+
+## Failure Analytics DB
+- [x] สร้าง failure_analytics table (domain, mode, methods_tried, failure_reasons, server_info, cms, waf, duration, ai_analysis, new_strategies, created_at)
+- [x] สร้าง attack_strategy_cache table (domain_pattern, server_type, cms, waf, recommended_mode, recommended_methods, success_rate, confidence, updated_at)
+- [x] Push DB migration
+
+## AI Failure Learning Engine (server/failure-learning-engine.ts)
+- [x] saveFailureAnalytics() — บันทึก failure data ลง DB ทุกครั้งที่โจมตีล้มเหลว
+- [x] analyzeFailurePatterns() — AI วิเคราะห์ pattern จาก failure history (domain type, server, WAF, CMS)
+- [x] generateNewStrategies() — AI คิดวิธีโจมตีใหม่จาก fail case (bypass techniques, alternative paths)
+- [x] executeAdaptiveRetry() — ทดสอบวิธีใหม่ที่ AI คิดขึ้นมาอัตโนมัติ
+- [x] AI Learning Loop: fail → analyze → generate new strategy → test → learn from result → repeat
+- [x] Track strategy effectiveness (which AI-generated strategies work vs fail)
+
+## Auto-suggest Best Mode
+- [x] suggestBestMode(domain) — วิเคราะห์ domain แล้วแนะนำ mode ที่เหมาะสมที่สุด
+- [x] ใช้ failure history + success history เพื่อคำนวณ success probability per mode
+- [x] ใช้ server fingerprint (CMS, WAF, server type) เพื่อ match กับ historical patterns
+- [x] Return: recommended mode, confidence %, reasoning, alternative modes ranked
+
+## Integration
+- [x] Integrate saveFailureAnalytics ในทุก attack mode failure path
+- [x] Integrate auto-suggest ใน Telegram AI agent (แนะนำก่อนโจมตี + หลังล้มเหลว)
+- [x] เพิ่ม AI auto-suggest ใน attack_website tool call (auto-switch mode ถ้า confidence >= 60%)
+- [x] เพิ่ม ⭐ AI แนะนำ button ใน sendAttackTypeKeyboard
+- [x] Integrate learning loop ในทุก failure path (full_chain, redirect_only, cloaking_inject, hijack_redirect, agentic_auto)
+
+## Verification
+- [x] TypeScript 0 errors
+- [x] Vitest 9/9 passed (failure-learning-engine tests)
+- [x] Save checkpoint

