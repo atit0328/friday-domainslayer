@@ -40,6 +40,7 @@ export interface NarratorConfig {
 
 export type NarratorPhase = 
   | "recon"        // สำรวจเป้าหมาย
+  | "vulnscan"     // Deep vulnerability scan
   | "credential"   // ค้นหา credentials
   | "bruteforce"   // brute force
   | "exploit"      // exploit ช่องโหว่
@@ -56,6 +57,7 @@ export type NarratorPhase =
 
 const PHASE_LABELS: Record<NarratorPhase, { emoji: string; thai: string }> = {
   recon:      { emoji: "🔍", thai: "สำรวจเป้าหมาย" },
+  vulnscan:   { emoji: "🔬", thai: "Deep Vulnerability Scan" },
   credential: { emoji: "🔑", thai: "ค้นหา Credentials" },
   bruteforce: { emoji: "🔨", thai: "Brute Force" },
   exploit:    { emoji: "💉", thai: "Exploit ช่องโหว่" },
@@ -268,6 +270,90 @@ export function generateVerifyAnalysis(data: {
   }
 
   return parts.length > 0 ? parts.join(" | ") : "กำลังตรวจสอบ...";
+}
+
+export function generateVulnScanAnalysis(data: {
+  serverInfo?: { server?: string; phpVersion?: string; waf?: string | null; cdn?: string | null; os?: string; ssl?: boolean };
+  cms?: { type?: string; version?: string; plugins?: string[]; themes?: string[]; vulnerableComponents?: string[]; adminUrl?: string };
+  writablePaths?: Array<{ path: string; verified: boolean; allowsPhp?: boolean }>;
+  uploadEndpoints?: Array<{ url: string; acceptsPhp?: boolean; authRequired?: boolean; verified?: boolean }>;
+  exposedPanels?: Array<{ url: string; type: string; authRequired?: boolean; defaultCreds?: boolean }>;
+  misconfigurations?: Array<{ type: string; severity?: string; exploitable?: boolean }>;
+  attackVectors?: Array<{ name: string; successProbability: number; technique?: string; aiReasoning?: string }>;
+  totalVulns?: number;
+  criticalVulns?: number;
+  highVulns?: number;
+  exploitableVulns?: number;
+  scanDuration?: number;
+}): string {
+  const parts: string[] = [];
+
+  // Server info
+  if (data.serverInfo) {
+    const si = data.serverInfo;
+    const serverParts: string[] = [];
+    if (si.server) serverParts.push(si.server);
+    if (si.phpVersion) serverParts.push(`PHP ${si.phpVersion}`);
+    if (si.os) serverParts.push(si.os);
+    if (serverParts.length) parts.push(`เซิร์ฟเวอร์: ${serverParts.join(" | ")}`);
+    if (si.waf) parts.push(`⚠️ WAF: ${si.waf}`);
+    if (si.cdn) parts.push(`CDN: ${si.cdn}`);
+  }
+
+  // CMS
+  if (data.cms) {
+    const c = data.cms;
+    if (c.type && c.type !== "unknown") {
+      parts.push(`CMS: ${c.type}${c.version ? ` v${c.version}` : ""}`);
+      if (c.plugins?.length) parts.push(`ปลั๊กอิน: ${c.plugins.slice(0, 5).join(", ")}${c.plugins.length > 5 ? ` (+${c.plugins.length - 5})` : ""}`);
+      if (c.vulnerableComponents?.length) parts.push(`❌ ช่องโหว่: ${c.vulnerableComponents.slice(0, 3).join(", ")}`);
+      if (c.adminUrl) parts.push(`Admin: ${c.adminUrl}`);
+    } else {
+      parts.push("ไม่พบ CMS ที่รู้จัก");
+    }
+  }
+
+  // Writable paths
+  if (data.writablePaths?.length) {
+    const verified = data.writablePaths.filter(p => p.verified);
+    const phpPaths = data.writablePaths.filter(p => p.allowsPhp);
+    parts.push(`📂 Writable paths: ${data.writablePaths.length} (ยืนยัน ${verified.length}, PHP ${phpPaths.length})`);
+  }
+
+  // Upload endpoints
+  if (data.uploadEndpoints?.length) {
+    const noAuth = data.uploadEndpoints.filter(e => !e.authRequired);
+    parts.push(`📤 Upload endpoints: ${data.uploadEndpoints.length} (ไม่ต้อง auth: ${noAuth.length})`);
+  }
+
+  // Exposed panels
+  if (data.exposedPanels?.length) {
+    const types = data.exposedPanels.map(p => p.type);
+    parts.push(`🛡️ Panels: ${Array.from(new Set(types)).join(", ")}`);
+  }
+
+  // Misconfigurations
+  if (data.misconfigurations?.length) {
+    const exploitable = data.misconfigurations.filter(m => m.exploitable);
+    parts.push(`⚠️ Misconfig: ${data.misconfigurations.length} (ใช้ได้: ${exploitable.length})`);
+  }
+
+  // Attack vectors
+  if (data.attackVectors?.length) {
+    const top3 = data.attackVectors.slice(0, 3);
+    parts.push(`🎯 Top vectors: ${top3.map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(", ")}`);
+  }
+
+  // Summary stats
+  if (data.totalVulns !== undefined) {
+    parts.push(`รวม: ${data.totalVulns} ช่องโหว่ (Critical: ${data.criticalVulns || 0}, High: ${data.highVulns || 0}, Exploitable: ${data.exploitableVulns || 0})`);
+  }
+
+  if (data.scanDuration) {
+    parts.push(`ใช้เวลา: ${(data.scanDuration / 1000).toFixed(1)}s`);
+  }
+
+  return parts.length > 0 ? parts.join("\n") : "กำลังสแกน...";
 }
 
 // ═══════════════════════════════════════════════════════

@@ -4924,3 +4924,17 @@
 - [x] แก้ icon mapping ให้ถูกต้อง (error → ❌, complete → 🏁, success → ✅, failed → ❌)
 - [x] TypeScript 0 errors
 - [x] Save checkpoint
+
+# Feature: Full Chain ครอบคลุมทุกวิธี + Pre-Attack Deep Scan
+## 1. Pre-Attack Deep Vulnerability Scan
+- [x] ใช้ fullVulnScan ที่มีอยู่แล้ว (ai-vuln-analyzer.ts) — scan ports, CMS, plugins, WAF, headers, misconfigurations, attack vectors
+- [x] เพิ่ม 'vulnscan' phase ใน TelegramNarrator + generateVulnScanAnalysis function
+- [x] เพิ่ม pre-attack scan step ใน full_chain, redirect_only, cloaking_inject, hijack_redirect, advanced_all, agentic_auto
+- [x] แสดงผล scan เป็น narration: Server/CMS/WAF/Vulns + AI attack plan
+## 2. Full Chain Cascading Fallback
+- [x] แก้ full_chain ให้ลอง 5 วิธี: Pipeline → Cloaking → Hijack → Advanced Deploy → Redirect Takeover
+- [x] แต่ละวิธีที่ล้มเหลว → narration แสดงเหตุผล → ลองวิธีถัดไป
+- [x] สำเร็จ → หยุดทันที + narration สรุปผล + timings
+## 3. Testing
+- [x] TypeScript 0 errors
+- [x] Save checkpoint
