@@ -4098,16 +4098,19 @@ async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text:
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
     const payload: any = { chat_id: chatId, text };
     if (replyMarkup) payload.reply_markup = replyMarkup;
-    // Try with Markdown first, then plain text fallback
     const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
-    }, { timeout: 10000 });
+      signal: AbortSignal.timeout(15000),
+    }, { timeout: 15000 });
     const result = await response.json() as any;
+    if (!result.ok) {
+      console.error(`[TelegramAI] sendAndGetMessageId FAILED: status=${response.status}, error_code=${result.error_code}, description=${result.description}, chatId=${chatId}`);
+    }
     return result.ok ? result.result.message_id : null;
-  } catch {
+  } catch (err: any) {
+    console.error(`[TelegramAI] sendAndGetMessageId EXCEPTION: ${err.name}: ${err.message}, chatId=${chatId}`);
     return null;
   }
 }
@@ -4244,11 +4247,25 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       { text: "📊 สถานะ", callback_data: `attack_status:${domain}` },
     ]],
   };
-  const progressMsgId = await sendAndGetMessageId(config, chatId,
-    `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`, stopKeyboard);
+  const progressText = `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`;
+  let progressMsgId = await sendAndGetMessageId(config, chatId, progressText, stopKeyboard);
+  
+  // Retry up to 2 more times if first attempt fails
+  if (!progressMsgId) {
+    console.warn(`[TelegramAI] Progress message failed, retrying (1/2)...`);
+    await new Promise(r => setTimeout(r, 1500));
+    progressMsgId = await sendAndGetMessageId(config, chatId, progressText, stopKeyboard);
+  }
+  if (!progressMsgId) {
+    console.warn(`[TelegramAI] Progress message failed, retrying (2/2) without keyboard...`);
+    await new Promise(r => setTimeout(r, 2000));
+    // Try without keyboard as fallback
+    progressMsgId = await sendAndGetMessageId(config, chatId, progressText);
+  }
   
   if (!progressMsgId) {
-    await sendTelegramReply(config, chatId, "\u274C ส่งข้อความ progress ไม่ได้");
+    console.error(`[TelegramAI] Progress message failed after 3 attempts for ${domain}`);
+    await sendTelegramReply(config, chatId, "\u274C ส่งข้อความ progress ไม่ได้ (3 attempts failed) — ลอง /reset แล้วสั่งใหม่");
     return;
   }
   

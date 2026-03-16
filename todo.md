@@ -5639,3 +5639,6 @@
 - [x] Fix successMethod === methodId comparison bug (added METHOD_ID_MAP for correct matching)
 - [x] Add auto-priority reorder using getMethodEffectiveness()
 - [x] Enhance attack methods: new parasite-seo-injector.ts with Thai SEO content + conditional JS redirect + schema markup + FAQ + comparison tables
+
+# Telegram Progress Message Bug
+- [x] Fix "ส่งข้อความ progress ไม่ได้" error: added detailed error logging + retry 3x + timeout 10s→15s + fallback without keyboard
