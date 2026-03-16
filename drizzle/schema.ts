@@ -1989,3 +1989,32 @@ export const attackStrategyCache = mysqlTable("attack_strategy_cache", {
 });
 export type AttackStrategyCacheRow = typeof attackStrategyCache.$inferSelect;
 export type InsertAttackStrategyCache = typeof attackStrategyCache.$inferInsert;
+
+// ═══════════════════════════════════════════════
+//  ATTACK METHOD STATS — Aggregated per-method success tracking
+// ═══════════════════════════════════════════════
+export const attackMethodStats = mysqlTable("attack_method_stats", {
+  id: int("id").autoincrement().primaryKey(),
+  methodId: varchar("amsMethodId", { length: 128 }).notNull(),
+  cmsType: varchar("amsCmsType", { length: 64 }).default("unknown").notNull(),
+  wafType: varchar("amsWafType", { length: 64 }).default("none").notNull(),
+  // Counters
+  totalAttempts: int("amsTotalAttempts").default(0).notNull(),
+  successes: int("amsSuccesses").default(0).notNull(),
+  failures: int("amsFailures").default(0).notNull(),
+  timeouts: int("amsTimeouts").default(0).notNull(),
+  // Performance
+  avgDurationMs: int("amsAvgDurationMs").default(0).notNull(),
+  minDurationMs: int("amsMinDurationMs"),
+  maxDurationMs: int("amsMaxDurationMs"),
+  successRate: decimal("amsSuccessRate", { precision: 5, scale: 2 }).default("0").notNull(),
+  // Last activity
+  lastSuccessAt: timestamp("amsLastSuccessAt"),
+  lastFailureAt: timestamp("amsLastFailureAt"),
+  lastErrorMessage: text("amsLastErrorMessage"),
+  // Metadata
+  createdAt: timestamp("amsCreatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("amsUpdatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AttackMethodStatsRow = typeof attackMethodStats.$inferSelect;
+export type InsertAttackMethodStats = typeof attackMethodStats.$inferInsert;

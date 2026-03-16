@@ -1,0 +1,20 @@
+CREATE TABLE `attack_method_stats` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`amsMethodId` varchar(128) NOT NULL,
+	`amsCmsType` varchar(64) NOT NULL DEFAULT 'unknown',
+	`amsWafType` varchar(64) NOT NULL DEFAULT 'none',
+	`amsTotalAttempts` int NOT NULL DEFAULT 0,
+	`amsSuccesses` int NOT NULL DEFAULT 0,
+	`amsFailures` int NOT NULL DEFAULT 0,
+	`amsTimeouts` int NOT NULL DEFAULT 0,
+	`amsAvgDurationMs` int NOT NULL DEFAULT 0,
+	`amsMinDurationMs` int,
+	`amsMaxDurationMs` int,
+	`amsSuccessRate` decimal(5,2) NOT NULL DEFAULT '0',
+	`amsLastSuccessAt` timestamp,
+	`amsLastFailureAt` timestamp,
+	`amsLastErrorMessage` text,
+	`amsCreatedAt` timestamp NOT NULL DEFAULT (now()),
+	`amsUpdatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `attack_method_stats_id` PRIMARY KEY(`id`)
+);

@@ -316,6 +316,13 @@
       "when": 1773585032493,
       "tag": "0044_past_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "5",
+      "when": 1773675536917,
+      "tag": "0045_whole_maddog",
+      "breakpoints": true
     }
   ]
 }

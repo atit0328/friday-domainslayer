@@ -965,9 +965,14 @@ export async function fullVulnScan(
   targetDomain: string,
   onProgress: ScanProgressCallback = () => {},
   abortSignal?: AbortSignal,
+  originIp?: string,
 ): Promise<VulnScanResult> {
   const start = Date.now();
   const baseUrl = ensureUrl(targetDomain);
+  // When origin IP is available, create a bypass URL for scanning behind WAF
+  const domain = baseUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const originBaseUrl = originIp ? `http://${originIp}` : baseUrl;
+  const originHeaders: Record<string, string> = originIp ? { "Host": domain, "X-Forwarded-For": "1.1.1.1", "X-Real-IP": "1.1.1.1" } : {};
 
   onProgress("start", `🔍 เริ่มสแกน ${baseUrl}...`, 0);
 
@@ -1020,10 +1025,13 @@ export async function fullVulnScan(
   }, 12_000);
   checkTimeout();
 
-  // ═══ CLOUDFLARE EARLY EXIT: If strong WAF detected, skip expensive stages ═══
+  // ═══ CLOUDFLARE EARLY EXIT: If strong WAF detected, skip expensive stages (unless we have origin IP) ═══
   const hasStrongWaf = !!(serverInfo.waf && ["cloudflare", "sucuri", "akamai", "incapsula", "aws_waf"].includes(serverInfo.waf.toLowerCase()));
-  if (hasStrongWaf) {
+  const canBypassWaf = !!originIp; // We have origin IP → can scan directly
+  if (hasStrongWaf && !canBypassWaf) {
     onProgress("waf_detected" as any, `🛡️ ${serverInfo.waf} WAF detected — skipping writable path scan (will be blocked)`, 40);
+  } else if (hasStrongWaf && canBypassWaf) {
+    onProgress("waf_detected" as any, `🛡️ ${serverInfo.waf} WAF detected — but origin IP ${originIp} available, scanning via direct connection`, 40);
   }
 
   // Stage 2: CMS detection (15s max — multiple requests, some parallel)
@@ -1033,17 +1041,18 @@ export async function fullVulnScan(
   }, 15_000);
   checkTimeout();
 
-  // Stage 3: Writable path discovery (15s max — SKIP if strong WAF detected)
-  const writablePaths = hasStrongWaf
+  // Stage 3: Writable path discovery (15s max — SKIP if strong WAF detected, UNLESS we have origin IP)
+  const scanUrl = canBypassWaf ? originBaseUrl : baseUrl;
+  const writablePaths = (hasStrongWaf && !canBypassWaf)
     ? [] // WAF will block all PUT/POST attempts — don't waste time
-    : await runStage("writable_paths", () => discoverWritablePaths(baseUrl, cms, serverInfo, onProgress), [], 15_000);
-  if (!hasStrongWaf) checkTimeout();
+    : await runStage("writable_paths", () => discoverWritablePaths(scanUrl, cms, serverInfo, onProgress), [], 15_000);
+  if (!(hasStrongWaf && !canBypassWaf)) checkTimeout();
 
-  // Stage 4: Upload endpoint discovery (10s max — SKIP if strong WAF)
-  const uploadEndpoints = hasStrongWaf
+  // Stage 4: Upload endpoint discovery (10s max — SKIP if strong WAF, UNLESS we have origin IP)
+  const uploadEndpoints = (hasStrongWaf && !canBypassWaf)
     ? []
-    : await runStage("upload_endpoints", () => discoverUploadEndpoints(baseUrl, cms, onProgress), [], 10_000);
-  if (!hasStrongWaf) checkTimeout();
+    : await runStage("upload_endpoints", () => discoverUploadEndpoints(scanUrl, cms, onProgress), [], 10_000);
+  if (!(hasStrongWaf && !canBypassWaf)) checkTimeout();
 
   // Stage 5: Exposed panels & misconfigurations (10s max each — parallel requests)
   const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 10_000);

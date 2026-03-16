@@ -6,6 +6,13 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { aiAttackHistory, deployHistory } from "../../drizzle/schema";
+import {
+  getMethodStats,
+  getMethodSuccessRates,
+  getMethodStatsOverview,
+  resetMethodStats,
+  getBestMethodsForTarget,
+} from "../attack-method-tracker";
 import { desc, eq, and, like, gte, lte, sql, count } from "drizzle-orm";
 
 export const attackDashboardRouter = router({
@@ -358,5 +365,51 @@ export const attackDashboardRouter = router({
         lastError: f.lastError,
         waf: f.waf,
       }));
+    }),
+
+  // ═══ Attack Method Stats (aggregated) ═══
+  methodStatsAggregated: protectedProcedure
+    .input(z.object({
+      methodId: z.string().optional(),
+      cmsType: z.string().optional(),
+      wafType: z.string().optional(),
+    }).optional())
+    .query(async ({ input }) => {
+      return await getMethodStats(input || {});
+    }),
+
+  // ═══ Method Success Rate Rankings ═══
+  methodRankings: protectedProcedure.query(async () => {
+    return await getMethodSuccessRates();
+  }),
+
+  // ═══ Method Stats Overview ═══
+  methodStatsOverview: protectedProcedure.query(async () => {
+    return await getMethodStatsOverview();
+  }),
+
+  // ═══ Best Methods for Target ═══
+  bestMethodsForTarget: protectedProcedure
+    .input(z.object({
+      cmsType: z.string().nullable(),
+      wafType: z.string().nullable(),
+      minAttempts: z.number().optional(),
+    }))
+    .query(async ({ input }) => {
+      return await getBestMethodsForTarget(
+        input.cmsType,
+        input.wafType,
+        input.minAttempts || 3,
+      );
+    }),
+
+  // ═══ Reset Method Stats ═══
+  resetMethodStats: protectedProcedure
+    .input(z.object({
+      methodId: z.string().optional(),
+    }).optional())
+    .mutation(async ({ input }) => {
+      const deleted = await resetMethodStats(input?.methodId);
+      return { deleted, methodId: input?.methodId || "all" };
     }),
 });

