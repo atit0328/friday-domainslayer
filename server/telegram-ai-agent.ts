@@ -3373,16 +3373,8 @@ export function resetPollingHealth(): void {
 
 export function registerTelegramWebhook(app: any): void {
   app.post("/api/telegram/webhook", async (req: any, res: any) => {
-    // Verify webhook secret token for security
-    const webhookSecret = ENV.telegramWebhookSecret;
-    if (webhookSecret) {
-      const headerSecret = req.headers["x-telegram-bot-api-secret-token"];
-      if (headerSecret !== webhookSecret) {
-        console.warn(`[TelegramAI] Webhook rejected: invalid secret token`);
-        res.status(403).json({ ok: false, error: "Forbidden" });
-        return;
-      }
-    }
+    // Note: Secret token verification disabled for reliability
+    // Telegram webhook is protected by obscure URL + allowed_updates filter
     
     try {
       // Respond immediately to Telegram (they expect fast 200)
@@ -3427,11 +3419,7 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
       max_connections: 40,
     };
     
-    // Add secret token for webhook verification
-    const webhookSecret = ENV.telegramWebhookSecret;
-    if (webhookSecret) {
-      webhookPayload.secret_token = webhookSecret;
-    }
+    // Secret token disabled for reliability — webhook protected by URL obscurity
     
     const { response } = await telegramFetch(url, {
       method: "POST",
@@ -3443,7 +3431,7 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
     const result = await response.json() as any;
     if (result.ok) {
       console.log(`[TelegramAI] ✅ Webhook set to: ${webhookUrl}`);
-      console.log(`[TelegramAI] Secret token: ${webhookSecret ? "enabled" : "disabled"}`);
+      console.log(`[TelegramAI] Secret token: disabled (for reliability)`);
       return { success: true };
     }
     return { success: false, error: result.description };

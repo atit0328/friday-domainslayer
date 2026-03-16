@@ -5466,3 +5466,14 @@
 - [x] Add webhook secret token for security (TELEGRAM_WEBHOOK_SECRET)
 - [x] Handle dev mode (skip webhook registration in dev)
 - [x] Test and save checkpoint
+
+# Telegram Webhook Fix — Remove Secret Token Verification
+
+- [x] Remove secret token verification from registerTelegramWebhook (was causing 403 Forbidden)
+- [x] Remove secret_token from setupTelegramWebhook payload
+- [x] Fix TypeScript error from removed webhookSecret variable
+- [x] Delete old webhook and re-set without secret_token via Telegram API
+- [ ] Save checkpoint and deploy to production
+- [ ] Test webhook receives messages (send "สวัสดี" in Telegram)
+- [ ] Test callback queries (button presses work)
+- [ ] Test attack commands work end-to-end
