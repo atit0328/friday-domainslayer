@@ -519,20 +519,20 @@ async function handleWithConversationState(chatId: number, text: string): Promis
         
         const config = getTelegramConfig();
         if (config) {
-          console.log(`[TelegramAI] Direct attack shortcut: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
-          // Store targetUrl in conversation state so callback handlers can use it
-          if (targetUrl) {
-            setConversationState(chatId, { targetDomain: domain, targetUrl });
-          }
+          console.log(`[TelegramAI] AAA auto-attack: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
+          // Store targetUrl in conversation state
+          setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
           try {
-            const sent = await sendAttackTypeKeyboard(config, chatId, domain);
-            if (sent) {
-              return "__HANDLED_BY_KEYBOARD__";
-            }
-            // If keyboard failed, fall through to LLM processing
-            console.warn(`[TelegramAI] Keyboard failed for ${domain}, falling through to LLM`);
+            // AAA: Auto-run full_chain immediately without method selection
+            await sendTelegramReply(config, chatId, `⚡ AAA (AI All-in Attack) เริ่มโจมตี ${domain} อัตโนมัติ...`);
+            // Fire and forget — don't await so we can return immediately
+            executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
+              console.error(`[TelegramAI] AAA auto-attack error for ${domain}: ${err.message}`);
+              sendTelegramReply(config, chatId, `❌ AAA ล้มเหลว: ${err.message?.substring(0, 100)}`).catch(() => {});
+            });
+            return "__HANDLED_BY_KEYBOARD__";
           } catch (e: any) {
-            console.error(`[TelegramAI] Shortcut error for ${domain}: ${e.message}`);
+            console.error(`[TelegramAI] AAA shortcut error for ${domain}: ${e.message}`);
             // Fall through to LLM processing
           }
         }
@@ -551,19 +551,19 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     
     const config = getTelegramConfig();
     if (config) {
-      console.log(`[TelegramAI] Bare domain shortcut: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
-      // Store targetUrl in conversation state if path was provided
-      if (targetUrl) {
-        setConversationState(chatId, { targetDomain: domain, targetUrl });
-      }
+      console.log(`[TelegramAI] AAA bare domain auto-attack: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
+      // Store targetUrl in conversation state
+      setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
       try {
-        const sent = await sendAttackTypeKeyboard(config, chatId, domain);
-        if (sent) {
-          return "__HANDLED_BY_KEYBOARD__";
-        }
-        console.warn(`[TelegramAI] Bare domain keyboard failed for ${domain}, falling through to LLM`);
+        // AAA: Auto-run full_chain immediately without method selection
+        await sendTelegramReply(config, chatId, `\u26a1 AAA (AI All-in Attack) \u0e40\u0e23\u0e34\u0e48\u0e21\u0e42\u0e08\u0e21\u0e15\u0e35 ${domain} \u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34...`);
+        executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
+          console.error(`[TelegramAI] AAA bare domain error for ${domain}: ${err.message}`);
+          sendTelegramReply(config, chatId, `\u274c AAA \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27: ${err.message?.substring(0, 100)}`).catch(() => {});
+        });
+        return "__HANDLED_BY_KEYBOARD__";
       } catch (e: any) {
-        console.error(`[TelegramAI] Bare domain shortcut error for ${domain}: ${e.message}`);
+        console.error(`[TelegramAI] AAA bare domain error for ${domain}: ${e.message}`);
       }
     }
   }
@@ -590,16 +590,16 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     if (lastDomain) {
       const config = getTelegramConfig();
       if (config) {
-        // Determine what type of action they want
-        if (/scan|สแกน/.test(lowerText)) {
-          // They want to scan — send attack type keyboard with scan pre-selected context
-          await sendAttackTypeKeyboard(config, chatId, lastDomain);
-          return "__HANDLED_BY_KEYBOARD__";
-        } else {
-          // General attack — show method options
-          await sendAttackTypeKeyboard(config, chatId, lastDomain);
-          return "__HANDLED_BY_KEYBOARD__";
-        }
+        // AAA: Auto-run full_chain immediately for follow-up commands
+        const state = getConversationState(chatId);
+        const followUpTargetUrl = state?.targetUrl;
+        console.log(`[TelegramAI] AAA follow-up auto-attack: domain=${lastDomain}, targetUrl=${followUpTargetUrl || 'none'}`);
+        await sendTelegramReply(config, chatId, `\u26a1 AAA (AI All-in Attack) \u0e40\u0e23\u0e34\u0e48\u0e21\u0e42\u0e08\u0e21\u0e15\u0e35 ${lastDomain} \u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34...`);
+        executeAttackWithProgress(config, chatId, lastDomain, 'full_chain', followUpTargetUrl).catch(err => {
+          console.error(`[TelegramAI] AAA follow-up error for ${lastDomain}: ${err.message}`);
+          sendTelegramReply(config, chatId, `\u274c AAA \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27: ${err.message?.substring(0, 100)}`).catch(() => {});
+        });
+        return "__HANDLED_BY_KEYBOARD__";
       }
     }
     // No last domain found — fall through to LLM (it will ask which domain)
@@ -1910,11 +1910,8 @@ function buildSystemPrompt(context: SystemContext): string {
 - user ส่งไฟล์ .txt ที่มีรายชื่อโดเมน → ระบบจะจัดการอัตโนมัติ (แสดง confirmation keyboard)
 
 ═══ เมื่อ user สั่งโจมตี ═══
-ถ้า user สั่งโจมตีเว็บ ให้เรียก attack_website tool ทันที โดยใช้ method ที่เหมาะสม:
-- ถ้า user ไม่ระบุวิธี → ใช้ method: "full_chain" (default)
-- ถ้า user บอก "scan" / "สแกน" / "เช็คก่อน" → ใช้ method: "scan_only"
-- ถ้า user บอก "redirect" / "วาง redirect" → ใช้ method: "redirect_only"
-- ถ้า user บอก "AI เลือก" / "auto" → ใช้ method: "agentic_auto"
+ถ้า user สั่งโจมตีเว็บ ให้เรียก attack_website tool ทันที โดยใช้ method: "full_chain" เสมอ (ระบบ AAA จะเลือกวิธีที่ดีที่สุดให้อัตโนมัติ):
+- ไม่ต้องถาม user ว่าจะใช้วิธีไหน — ใช้ full_chain เสมอ AI จะเลือกเอง
 - ถ้า user บอก "ฝัง cloaking" / "inject PHP" / "cloaking inject" / "แบบ empleos" / "Accept-Language" / "ฝังโค้ด" → ใช้ method: "cloaking_inject"
 
 อย่าพิมพ์ตัวเลือก 1-4 ออกมาเป็น text เด็ดขาด — ให้เรียก tool เลย

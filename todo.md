@@ -5578,3 +5578,24 @@
 - [x] Fix: Smart method reduction when scan data is empty — only try 7 priority universal methods instead of 20+
 - [x] Fix: Fixed 3 corrupted lines from edit (preScanMs, cloakScanMs, hijackScanMs)
 - [x] TypeScript compilation verified — 0 errors, server running cleanly
+
+# Consolidate All Attack Functions into AI All-in Attack (AAA)
+
+## Dashboard
+- [x] Created AAAHub.tsx with 5 sub-tabs (Attack, Intelligence, Tools, History, Autonomous)
+- [x] Sub-tabs lazy-load existing page components
+- [x] Replaced all Blackhat Mode (24 items) + Autonomous AI (5 items) + WP Themes sidebar items with single "AAA Command ALL"
+- [x] Updated App.tsx routes — /aaa route + old routes redirect to /aaa
+- [x] AAA visible for both admin and superadmin roles
+
+## Telegram
+- [x] Direct attack shortcut ("โจมตี domain") → auto-run full_chain immediately (no keyboard)
+- [x] Bare domain shortcut ("domain.com") → auto-run full_chain immediately
+- [x] Follow-up commands ("โจมตีเลย") → auto-run full_chain immediately
+- [x] LLM system prompt updated — always use full_chain, no method selection
+- [x] attack_website tool still works via LLM with full_chain default + AI suggest
+
+## Verification
+- [x] TypeScript compilation passes (0 errors)
+- [ ] Dashboard AAA page loads and works (needs manual test)
+- [ ] Telegram auto-attack works without method selection (needs manual test)

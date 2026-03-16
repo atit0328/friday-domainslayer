@@ -1,6 +1,7 @@
 /**
  * Design: Obsidian Intelligence — Sidebar Navigation
  * Two sections: DomainSlayer (emerald) + Friday AI (violet)
+ * Single AAA menu replaces all Blackhat + Autonomous menus
  * Mobile: full-height overlay with smooth animation, touch-friendly tap targets
  */
 import { useLocation, Link } from "wouter";
@@ -8,8 +9,8 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import {
   LayoutDashboard, Search, Store, Bot, Zap, Link2,
   Gavel, Eye, ShoppingCart, Radio, Settings, ChevronLeft, ChevronRight, Brain, Skull,
-  History, LayoutTemplate, Target, Users, LineChart, Cpu, Clock, Shield, Crosshair, CalendarClock, Repeat2,
-  X, Activity, Database, BarChart3, Server, KeyRound, Radar, Sparkles, Rocket, Palette, Unlock,
+  Users, LineChart,
+  X, Sparkles,
 } from "lucide-react";
 
 const DOMAIN_NAV = [
@@ -27,48 +28,8 @@ const AI_NAV = [
   { href: "/seo", icon: Brain, label: "SEO Automation" },
   { href: "/modules", icon: Zap, label: "SEO Modules" },
   { href: "/pbn", icon: Link2, label: "PBN Manager" },
-  { href: "/cloaking", icon: Eye, label: "Cloaking Settings" },
   { href: "/algorithm", icon: Radio, label: "Algorithm Intel" },
   { href: "/rank-dashboard", icon: LineChart, label: "Rank Tracker" },
-];
-
-const BLACKHAT_NAV = [
-  { href: "/attack-dashboard", icon: BarChart3, label: "Attack Dashboard" },
-  { href: "/attack-timeline", icon: Activity, label: "Attack Timeline" },
-  { href: "/batch-attack", icon: Rocket, label: "Batch Attack" },
-  { href: "/target-acquisition", icon: Radar, label: "Target Acquisition" },
-  { href: "/agentic-attack", icon: Skull, label: "Agentic AI Attack" },
-  { href: "/ai-attack", icon: Cpu, label: "AI Attack Engine" },
-  { href: "/autonomous-history", icon: Clock, label: "Attack History" },
-  { href: "/deploy-history", icon: History, label: "Deploy History" },
-  { href: "/templates", icon: LayoutTemplate, label: "Template Library" },
-  { href: "/keyword-ranking", icon: Target, label: "Keyword Ranking" },
-  { href: "/mass-discovery", icon: Crosshair, label: "Mass Discovery" },
-  { href: "/keyword-discovery", icon: KeyRound, label: "Keyword Discovery" },
-  { href: "/redirect-takeover", icon: Repeat2, label: "Redirect Takeover" },
-  { href: "/hijack-redirect", icon: Unlock, label: "Hijack Redirect" },
-  { href: "/proxy-dashboard", icon: Shield, label: "Proxy Dashboard" },
-  { href: "/scheduled-scans", icon: CalendarClock, label: "Scheduled Scans" },
-  { href: "/cve-database", icon: Database, label: "CVE Database" },
-  { href: "/exploit-analytics", icon: BarChart3, label: "Exploit Analytics" },
-  { href: "/adaptive-learning", icon: Brain, label: "Adaptive Learning" },
-  { href: "/query-parasite", icon: Search, label: "Query Parasite" },
-  { href: "/content-freshness", icon: Activity, label: "Content Freshness" },
-  { href: "/platform-discovery", icon: Radar, label: "Platform Discovery" },
-  { href: "/algorithm-monitor", icon: Activity, label: "Algo Monitor" },
-  { href: "/competitor-gap", icon: Crosshair, label: "Competitor Gap" },
-];
-
-const AUTONOMOUS_NAV = [
-  { href: "/orchestrator-dashboard", icon: Activity, label: "Orchestrator" },
-  { href: "/ai-command-center", icon: Cpu, label: "AI Command Center" },
-  { href: "/gambling-brain", icon: Brain, label: "Gambling AI Brain" },
-  { href: "/keyword-performance", icon: BarChart3, label: "Keyword Performance" },
-  { href: "/daemon", icon: Server, label: "Daemon Control" },
-];
-
-const WP_THEMES_NAV = [
-  { href: "/wp-themes", icon: Palette, label: "WP Casino Themes" },
 ];
 
 const SYSTEM_NAV = [
@@ -123,6 +84,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     );
   };
 
+  // Check if AAA page is active (matches /aaa or any old attack route)
+  const aaaActive = location === "/aaa" || location.startsWith("/aaa/");
+
   const sidebarContent = (
     <aside
       className={`
@@ -175,69 +139,36 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         </nav>
       </div>
 
-      {/* Blackhat Section — superadmin only */}
-      {isSuperadmin && (
-      <>
-      <div className="mx-4 border-t border-sidebar-border" />
-      <div className="py-3">
-        {!collapsed && (
-          <div className="px-4 mb-2">
-            <span className="font-mono text-[10px] font-semibold tracking-widest text-red-500/60 uppercase">Blackhat Mode</span>
-          </div>
-        )}
-        <nav className="space-y-0.5 px-1">
-          {BLACKHAT_NAV.map((item) => {
-            const active = location.startsWith(item.href);
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={item.href} onClick={handleNavClick}>
-                <div
-                  className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
-                    active
-                      ? "bg-red-500/10 text-red-500 border-l-red-500"
-                      : "text-muted-foreground hover:text-red-500 hover:bg-red-500/5 active:bg-red-500/15 border-l-transparent"
-                  } ${collapsed ? "justify-center px-2" : ""}`}
-                >
-                  <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
-                  {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
-                </div>
-              </Link>
-            );
-          })}
-        </nav>
-      </div>
-      </>
-      )}
-
-      {/* AI Command Center — admin/superadmin */}
+      {/* AAA — AI All-in Attack — admin + superadmin */}
       {(isSuperadmin || user?.role === "admin") && (
       <>
       <div className="mx-4 border-t border-sidebar-border" />
       <div className="py-3">
         {!collapsed && (
           <div className="px-4 mb-2">
-            <span className="font-mono text-[10px] font-semibold tracking-widest text-cyan-400/60 uppercase">Autonomous AI</span>
+            <span className="font-mono text-[10px] font-semibold tracking-widest text-red-500/60 uppercase">AI All-in Attack</span>
           </div>
         )}
         <nav className="space-y-0.5 px-1">
-          {AUTONOMOUS_NAV.map((item) => {
-            const active = location.startsWith(item.href);
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={item.href} onClick={handleNavClick}>
-                <div
-                  className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
-                    active
-                      ? "bg-cyan-500/10 text-cyan-400 border-l-cyan-400"
-                      : "text-muted-foreground hover:text-cyan-400 hover:bg-cyan-500/5 active:bg-cyan-500/15 border-l-transparent"
-                  } ${collapsed ? "justify-center px-2" : ""}`}
-                >
-                  <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
-                  {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
+          <Link href="/aaa" onClick={handleNavClick}>
+            <div
+              className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
+                aaaActive
+                  ? "bg-red-500/10 text-red-500 border-l-red-500"
+                  : "text-muted-foreground hover:text-red-500 hover:bg-red-500/5 active:bg-red-500/15 border-l-transparent"
+              } ${collapsed ? "justify-center px-2" : ""}`}
+            >
+              <Skull className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
+              {!collapsed && (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm lg:text-[13px] font-medium truncate">AAA Command</span>
+                  <span className="text-[9px] font-mono bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full border border-red-500/30 leading-none">
+                    ALL
+                  </span>
                 </div>
-              </Link>
-            );
-          })}
+              )}
+            </div>
+          </Link>
         </nav>
       </div>
       </>
@@ -246,7 +177,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
       {/* Divider */}
       <div className="mx-4 border-t border-sidebar-border" />
 
-      {/* Friday AI SEO — moved to bottom, separate from Blackhat */}
+      {/* Friday AI SEO */}
       <div className="py-3">
         {!collapsed && (
           <div className="px-4 mb-2">
@@ -255,38 +186,6 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         )}
         <nav className="space-y-0.5 px-1">
           {AI_NAV.map((item) => renderNavItem(item, "violet"))}
-        </nav>
-      </div>
-
-      {/* Divider */}
-      <div className="mx-4 border-t border-sidebar-border" />
-
-      {/* WP Casino Themes */}
-      <div className="py-3">
-        {!collapsed && (
-          <div className="px-4 mb-2">
-            <span className="font-mono text-[10px] font-semibold tracking-widest text-amber-400/60 uppercase">WP Themes</span>
-          </div>
-        )}
-        <nav className="space-y-0.5 px-1">
-          {WP_THEMES_NAV.map((item) => {
-            const active = location.startsWith(item.href);
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={item.href} onClick={handleNavClick}>
-                <div
-                  className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 border-l-[3px] transition-all duration-200 cursor-pointer ${
-                    active
-                      ? "bg-amber-500/10 text-amber-400 border-l-amber-400"
-                      : "text-muted-foreground hover:text-amber-400 hover:bg-amber-500/5 active:bg-amber-500/15 border-l-transparent"
-                  } ${collapsed ? "justify-center px-2" : ""}`}
-                >
-                  <Icon className="w-5 h-5 lg:w-[18px] lg:h-[18px] shrink-0" />
-                  {!collapsed && <span className="text-sm lg:text-[13px] font-medium truncate">{item.label}</span>}
-                </div>
-              </Link>
-            );
-          })}
         </nav>
       </div>
 

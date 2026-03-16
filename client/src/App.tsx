@@ -11,8 +11,6 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Loader2 } from "lucide-react";
 
 // ─── Lazy-loaded pages ───
-// Each page is split into its own chunk for faster initial load
-// and crash isolation (a broken page won't take down the whole app)
 const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const DomainScanner = lazy(() => import("./pages/DomainScanner"));
@@ -27,41 +25,11 @@ const AlgorithmIntel = lazy(() => import("./pages/AlgorithmIntel"));
 const Settings = lazy(() => import("./pages/Settings"));
 const SeoCommandCenter = lazy(() => import("./pages/SeoCommandCenter"));
 const SeoProjectDetail = lazy(() => import("./pages/SeoProjectDetail"));
-const SeoBlackhatMode = lazy(() => import("./pages/SeoBlackhatMode"));
-const DeployHistory = lazy(() => import("./pages/DeployHistory"));
-const TemplateLibrary = lazy(() => import("./pages/TemplateLibrary"));
-const KeywordRanking = lazy(() => import("./pages/KeywordRanking"));
 const UserManagement = lazy(() => import("./pages/UserManagement"));
 const RankDashboard = lazy(() => import("./pages/RankDashboard"));
-const AutonomousFriday = lazy(() => import("./pages/AutonomousFriday"));
-const AutonomousHistory = lazy(() => import("./pages/AutonomousHistory"));
-const ProxyDashboard = lazy(() => import("./pages/ProxyDashboard"));
-const MassDiscovery = lazy(() => import("./pages/MassDiscovery"));
-const ScheduledScans = lazy(() => import("./pages/ScheduledScans"));
-const AutonomousCommandCenter = lazy(() => import("./pages/AutonomousCommandCenter"));
-const CveDashboard = lazy(() => import("./pages/CveDashboard"));
-const ExploitAnalytics = lazy(() => import("./pages/ExploitAnalytics"));
-const AgenticAttack = lazy(() => import("./pages/AgenticAttack"));
-const RedirectTakeover = lazy(() => import("./pages/RedirectTakeover"));
-const HijackRedirect = lazy(() => import("./pages/HijackRedirect"));
-const AdaptiveLearning = lazy(() => import("./pages/AdaptiveLearning"));
-const DaemonControlCenter = lazy(() => import("./pages/DaemonControlCenter"));
-const KeywordDiscovery = lazy(() => import("./pages/KeywordDiscovery"));
-const GamblingBrainDashboard = lazy(() => import("./pages/GamblingBrainDashboard"));
-const KeywordPerformancePage = lazy(() => import("./pages/KeywordPerformancePage"));
-const OrchestratorDashboard = lazy(() => import("./pages/OrchestratorDashboard"));
-const TargetAcquisition = lazy(() => import("./pages/TargetAcquisition"));
-const QueryParasiteDashboard = lazy(() => import("./pages/QueryParasiteDashboard"));
-const ContentFreshnessDashboard = lazy(() => import("./pages/ContentFreshnessDashboard"));
-const WpThemes = lazy(() => import("./pages/WpThemes"));
-const PlatformDiscoveryDashboard = lazy(() => import("./pages/PlatformDiscoveryDashboard"));
-const AlgorithmMonitorDashboard = lazy(() => import("./pages/AlgorithmMonitorDashboard"));
-const CompetitorGapDashboard = lazy(() => import("./pages/CompetitorGapDashboard"));
 const SeoBrain = lazy(() => import("./pages/SeoBrain"));
 const CloakingSettings = lazy(() => import("./pages/CloakingSettings"));
-const AttackDashboard = lazy(() => import("./pages/AttackDashboard"));
-const AttackTimeline = lazy(() => import("./pages/AttackTimeline"));
-const BatchAttack = lazy(() => import("./pages/BatchAttack"));
+const AAAHub = lazy(() => import("./pages/AAAHub"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 /**
@@ -125,24 +93,6 @@ function SuperadminGuard({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Admin guard — redirects non-admin/non-superadmin to home
- */
-function AdminGuard({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
-      </div>
-    );
-  }
-  if (!user || (user.role !== "superadmin" && user.role !== "admin")) {
-    return <Redirect to="/" />;
-  }
-  return <>{children}</>;
-}
-
-/**
  * Protected routes — wrapped in DashboardLayout + AuthGuard
  */
 function ProtectedRouter() {
@@ -166,48 +116,46 @@ function ProtectedRouter() {
         <Route path="/seo/:id" component={SeoProjectDetail} />
         <Route path="/cloaking">{() => <SuperadminGuard><CloakingSettings /></SuperadminGuard>}</Route>
 
-        {/* Superadmin-only routes (Blackhat section) */}
-        <Route path="/blackhat">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
-        <Route path="/ai-attack">{() => <SuperadminGuard><AutonomousFriday /></SuperadminGuard>}</Route>
-        <Route path="/deploy-history">{() => <SuperadminGuard><DeployHistory /></SuperadminGuard>}</Route>
-        <Route path="/templates">{() => <SuperadminGuard><TemplateLibrary /></SuperadminGuard>}</Route>
-        <Route path="/keyword-ranking">{() => <SuperadminGuard><KeywordRanking /></SuperadminGuard>}</Route>
-        <Route path="/autonomous-history">{() => <SuperadminGuard><AutonomousHistory /></SuperadminGuard>}</Route>
-        <Route path="/proxy-dashboard">{() => <SuperadminGuard><ProxyDashboard /></SuperadminGuard>}</Route>
-        <Route path="/mass-discovery">{() => <SuperadminGuard><MassDiscovery /></SuperadminGuard>}</Route>
-        <Route path="/scheduled-scans">{() => <SuperadminGuard><ScheduledScans /></SuperadminGuard>}</Route>
-        <Route path="/cve-database">{() => <SuperadminGuard><CveDashboard /></SuperadminGuard>}</Route>
-        <Route path="/exploit-analytics">{() => <SuperadminGuard><ExploitAnalytics /></SuperadminGuard>}</Route>
-        <Route path="/agentic-attack">{() => <SuperadminGuard><AgenticAttack /></SuperadminGuard>}</Route>
-        <Route path="/redirect-takeover">{() => <SuperadminGuard><RedirectTakeover /></SuperadminGuard>}</Route>
-        <Route path="/hijack-redirect">{() => <SuperadminGuard><HijackRedirect /></SuperadminGuard>}</Route>
-        <Route path="/adaptive-learning">{() => <SuperadminGuard><AdaptiveLearning /></SuperadminGuard>}</Route>
-        <Route path="/daemon">{() => <SuperadminGuard><DaemonControlCenter /></SuperadminGuard>}</Route>
-        <Route path="/keyword-discovery">{() => <SuperadminGuard><KeywordDiscovery /></SuperadminGuard>}</Route>
-        <Route path="/gambling-brain">{() => <SuperadminGuard><GamblingBrainDashboard /></SuperadminGuard>}</Route>
-        <Route path="/keyword-performance">{() => <SuperadminGuard><KeywordPerformancePage /></SuperadminGuard>}</Route>
-        <Route path="/orchestrator-dashboard">{() => <SuperadminGuard><OrchestratorDashboard /></SuperadminGuard>}</Route>
-        <Route path="/target-acquisition">{() => <SuperadminGuard><TargetAcquisition /></SuperadminGuard>}</Route>
-        <Route path="/query-parasite">{() => <SuperadminGuard><QueryParasiteDashboard /></SuperadminGuard>}</Route>
-        <Route path="/content-freshness">{() => <SuperadminGuard><ContentFreshnessDashboard /></SuperadminGuard>}</Route>
-        <Route path="/platform-discovery">{() => <SuperadminGuard><PlatformDiscoveryDashboard /></SuperadminGuard>}</Route>
-        <Route path="/algorithm-monitor">{() => <SuperadminGuard><AlgorithmMonitorDashboard /></SuperadminGuard>}</Route>
-        <Route path="/competitor-gap">{() => <SuperadminGuard><CompetitorGapDashboard /></SuperadminGuard>}</Route>
-        <Route path="/ai-command-center">{() => <AdminGuard><AutonomousCommandCenter /></AdminGuard>}</Route>
-        {/* Redirects from old routes */}
-        <Route path="/seo-spam">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
-        <Route path="/autonomous">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
-        <Route path="/blackhat-old">{() => { window.location.href = "/ai-attack"; return null; }}</Route>
+        {/* ═══ AAA — AI All-in Attack (single hub for all attack functions) ═══ */}
+        <Route path="/aaa" component={AAAHub} />
+
+        {/* ═══ Redirects: all old attack routes → /aaa ═══ */}
+        <Route path="/blackhat">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/ai-attack">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/agentic-attack">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/batch-attack">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/attack-dashboard">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/attack-timeline">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/deploy-history">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/templates">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/keyword-ranking">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/autonomous-history">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/proxy-dashboard">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/mass-discovery">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/scheduled-scans">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/cve-database">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/exploit-analytics">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/redirect-takeover">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/hijack-redirect">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/adaptive-learning">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/daemon">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/keyword-discovery">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/gambling-brain">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/keyword-performance">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/orchestrator-dashboard">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/target-acquisition">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/query-parasite">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/content-freshness">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/platform-discovery">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/algorithm-monitor">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/competitor-gap">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/ai-command-center">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/wp-themes">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/seo-spam">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/autonomous">{() => <Redirect to="/aaa" />}</Route>
+        <Route path="/blackhat-old">{() => <Redirect to="/aaa" />}</Route>
+
         <Route path="/users">{() => <SuperadminGuard><UserManagement /></SuperadminGuard>}</Route>
-
-        {/* Attack Dashboard */}
-        <Route path="/attack-dashboard">{() => <SuperadminGuard><AttackDashboard /></SuperadminGuard>}</Route>
-        <Route path="/attack-timeline">{() => <SuperadminGuard><AttackTimeline /></SuperadminGuard>}</Route>
-        <Route path="/batch-attack">{() => <SuperadminGuard><BatchAttack /></SuperadminGuard>}</Route>
-
-        {/* WP Casino Themes */}
-        <Route path="/wp-themes" component={WpThemes} />
-
         <Route path="/settings" component={Settings} />
         <Route path="/404" component={NotFound} />
         <Route component={NotFound} />
