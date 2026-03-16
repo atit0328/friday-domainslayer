@@ -5511,3 +5511,15 @@
 - [x] Add total elapsed time safety net (stop 30s before global timeout)
 - [x] Heartbeat messages already exist (every 30s per step)
 - [ ] Test attack flow doesn't hang anymore
+
+# Dashboard: Attack Timeline (COMPLETED)
+- [x] Review existing attack log schema and tRPC procedures
+- [x] Create tRPC procedures: timeline, attackDetail, methodStats
+- [x] Build Attack Timeline dashboard page with visual timeline
+- [x] Show per-method timing, success/fail status, error reasons
+- [x] Add filtering by domain, date range, status
+- [x] Method success rate stats with avg duration
+- [x] Integrate into sidebar navigation (BLACKHAT section)
+- [x] Fix SQL bug: dh2.created_at → dh2.createdAt in dashboardStats
+- [x] Write vitest tests — 9 tests passing
+- [x] Test with real attack data

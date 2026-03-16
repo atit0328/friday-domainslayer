@@ -12,9 +12,8 @@ import {
   cleanupOldLogs,
 } from "../attack-logger";
 import { getDb } from "../db";
-import { attackLogs } from "../../drizzle/schema";
-import { deployHistory } from "../../drizzle/schema";
-import { eq, sql, desc, and, gte, count, or } from "drizzle-orm";
+import { attackLogs, deployHistory, strategyOutcomeLogs } from "../../drizzle/schema";
+import { eq, sql, desc, and, gte, lte, count, or, like } from "drizzle-orm";
 
 /** Build userId condition: admin sees all, regular user sees own + legacy(0) */
 function userLogCondition(userId: number, admin: boolean) {
@@ -145,6 +144,195 @@ export const attackLogsRouter = router({
     .mutation(async ({ input }) => {
       const deleted = await cleanupOldLogs(input.daysOld);
       return { deleted };
+    }),
+
+  /**
+   * Attack Timeline — list all attacks with per-method breakdown for timeline view
+   * Returns deploys with their associated strategy outcome logs (method-level detail)
+   */
+  timeline: protectedProcedure
+    .input(z.object({
+      days: z.number().min(1).max(365).default(30),
+      domain: z.string().optional(),
+      status: z.enum(["running", "success", "partial", "failed"]).optional(),
+      limit: z.number().min(1).max(100).default(30),
+      offset: z.number().min(0).default(0),
+    }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return { attacks: [], total: 0 };
+
+      const admin = isAdminUser(ctx.user);
+      const since = new Date(Date.now() - input.days * 24 * 60 * 60 * 1000);
+
+      // Build conditions
+      const conditions: any[] = [gte(deployHistory.createdAt, since)];
+      const udc = userDeployCondition(ctx.user!.id, admin);
+      if (udc) conditions.push(udc);
+      if (input.domain) conditions.push(like(deployHistory.targetDomain, `%${input.domain}%`));
+      if (input.status) conditions.push(eq(deployHistory.status, input.status));
+
+      // Get total count
+      const totalResult = await db.select({ cnt: count() }).from(deployHistory).where(and(...conditions));
+      const total = Number(totalResult[0]?.cnt || 0);
+
+      // Get deploys
+      const deploys = await db.select({
+        id: deployHistory.id,
+        domain: deployHistory.targetDomain,
+        targetUrl: deployHistory.targetUrl,
+        redirectUrl: deployHistory.redirectUrl,
+        status: deployHistory.status,
+        cms: deployHistory.cms,
+        serverType: deployHistory.serverType,
+        wafDetected: deployHistory.wafDetected,
+        altMethodUsed: deployHistory.altMethodUsed,
+        techniqueUsed: deployHistory.techniqueUsed,
+        bypassMethod: deployHistory.bypassMethod,
+        preScreenScore: deployHistory.preScreenScore,
+        preScreenRisk: deployHistory.preScreenRisk,
+        filesDeployed: deployHistory.filesDeployed,
+        filesAttempted: deployHistory.filesAttempted,
+        shellUploaded: deployHistory.shellUploaded,
+        redirectActive: deployHistory.redirectActive,
+        duration: deployHistory.duration,
+        errorBreakdown: deployHistory.errorBreakdown,
+        aiAnalysis: deployHistory.aiAnalysis,
+        deployedUrls: deployHistory.deployedUrls,
+        startedAt: deployHistory.startedAt,
+        completedAt: deployHistory.completedAt,
+        createdAt: deployHistory.createdAt,
+      })
+      .from(deployHistory)
+      .where(and(...conditions))
+      .orderBy(desc(deployHistory.createdAt))
+      .limit(input.limit)
+      .offset(input.offset);
+
+      // For each deploy, get strategy outcome logs (method-level breakdown)
+      const attacks = await Promise.all(deploys.map(async (deploy) => {
+        const methods = await db.select({
+          id: strategyOutcomeLogs.id,
+          method: strategyOutcomeLogs.method,
+          exploitType: strategyOutcomeLogs.exploitType,
+          success: strategyOutcomeLogs.success,
+          httpStatus: strategyOutcomeLogs.httpStatus,
+          errorCategory: strategyOutcomeLogs.errorCategory,
+          errorMessage: strategyOutcomeLogs.errorMessage,
+          durationMs: strategyOutcomeLogs.durationMs,
+          filesPlaced: strategyOutcomeLogs.filesPlaced,
+          redirectVerified: strategyOutcomeLogs.redirectVerified,
+          attemptNumber: strategyOutcomeLogs.attemptNumber,
+          isRetry: strategyOutcomeLogs.isRetry,
+          wafBypassUsed: strategyOutcomeLogs.wafBypassUsed,
+          aiFailureCategory: strategyOutcomeLogs.aiFailureCategory,
+          aiReasoning: strategyOutcomeLogs.aiReasoning,
+          aiConfidence: strategyOutcomeLogs.aiConfidence,
+          createdAt: strategyOutcomeLogs.createdAt,
+        })
+        .from(strategyOutcomeLogs)
+        .where(eq(strategyOutcomeLogs.targetDomain, deploy.domain))
+        .orderBy(desc(strategyOutcomeLogs.createdAt))
+        .limit(20);
+
+        // Get log count for this deploy
+        const logCountResult = await db.select({ cnt: count() })
+          .from(attackLogs)
+          .where(deploy.id ? eq(attackLogs.deployId, deploy.id) : eq(attackLogs.domain, deploy.domain));
+
+        return {
+          ...deploy,
+          methods,
+          logCount: Number(logCountResult[0]?.cnt || 0),
+        };
+      }));
+
+      return { attacks, total };
+    }),
+
+  /**
+   * Attack Detail — full log timeline for a single deploy
+   */
+  attackDetail: protectedProcedure
+    .input(z.object({
+      deployId: z.number(),
+      limit: z.number().min(1).max(500).default(200),
+    }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return null;
+
+      // Get the deploy
+      const [deploy] = await db.select().from(deployHistory).where(eq(deployHistory.id, input.deployId)).limit(1);
+      if (!deploy) return null;
+
+      // Get all logs for this deploy
+      const logs = await db.select()
+        .from(attackLogs)
+        .where(eq(attackLogs.deployId, input.deployId))
+        .orderBy(attackLogs.timestamp)
+        .limit(input.limit);
+
+      // Get method outcomes
+      const methods = await db.select()
+        .from(strategyOutcomeLogs)
+        .where(eq(strategyOutcomeLogs.targetDomain, deploy.targetDomain))
+        .orderBy(strategyOutcomeLogs.createdAt)
+        .limit(50);
+
+      // Build phase timeline
+      const phases: Record<string, { phase: string; startTime: Date | null; endTime: Date | null; logs: typeof logs; status: string }> = {};
+      for (const log of logs) {
+        if (!phases[log.phase]) {
+          phases[log.phase] = { phase: log.phase, startTime: log.timestamp, endTime: log.timestamp, logs: [], status: "info" };
+        }
+        phases[log.phase].logs.push(log);
+        phases[log.phase].endTime = log.timestamp;
+        if (log.severity === "error" || log.severity === "critical") phases[log.phase].status = "error";
+        else if (log.severity === "success" && phases[log.phase].status !== "error") phases[log.phase].status = "success";
+      }
+
+      return {
+        deploy,
+        logs,
+        methods,
+        phaseTimeline: Object.values(phases),
+      };
+    }),
+
+  /**
+   * Method Success Rate — aggregate method performance across all attacks
+   */
+  methodStats: protectedProcedure
+    .input(z.object({
+      days: z.number().min(1).max(365).default(30),
+    }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      const since = new Date(Date.now() - input.days * 24 * 60 * 60 * 1000);
+
+      const rows = await db.select({
+        method: strategyOutcomeLogs.method,
+        total: count(),
+        successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
+        avgDuration: sql<number>`AVG(${strategyOutcomeLogs.durationMs})`,
+        avgConfidence: sql<number>`AVG(${strategyOutcomeLogs.aiConfidence})`,
+      })
+      .from(strategyOutcomeLogs)
+      .where(gte(strategyOutcomeLogs.createdAt, since))
+      .groupBy(strategyOutcomeLogs.method)
+      .orderBy(desc(count()));
+
+      return rows.map(r => ({
+        method: r.method,
+        total: Number(r.total),
+        successes: Number(r.successes || 0),
+        successRate: Number(r.total) > 0 ? Math.round((Number(r.successes || 0) / Number(r.total)) * 100) : 0,
+        avgDurationMs: Math.round(Number(r.avgDuration || 0)),
+        avgConfidence: Math.round(Number(r.avgConfidence || 0)),
+      }));
     }),
 
   /**
@@ -295,8 +483,8 @@ export const attackLogsRouter = router({
 
       // 7. Domains attacked
       const domainSubquery = admin
-        ? sql`(SELECT status FROM deploy_history dh2 WHERE dh2.domain = ${deployHistory.targetDomain} ORDER BY dh2.created_at DESC LIMIT 1)`
-        : sql`(SELECT status FROM deploy_history dh2 WHERE dh2.domain = ${deployHistory.targetDomain} AND dh2.user_id = ${ctx.user!.id} ORDER BY dh2.created_at DESC LIMIT 1)`;
+        ? sql`(SELECT deployStatus FROM deploy_history dh2 WHERE dh2.targetDomain = ${deployHistory.targetDomain} ORDER BY dh2.createdAt DESC LIMIT 1)`
+        : sql`(SELECT deployStatus FROM deploy_history dh2 WHERE dh2.targetDomain = ${deployHistory.targetDomain} AND dh2.userId = ${ctx.user!.id} ORDER BY dh2.createdAt DESC LIMIT 1)`;
 
       const domainRows = await db
         .select({
