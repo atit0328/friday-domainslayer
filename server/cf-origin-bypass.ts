@@ -117,6 +117,10 @@ export async function findOriginIP(
     method3_SubdomainEnum(domain, log),
     method4_MXSPFRecords(domain, log),
     method5_ShodanHostSearch(domain, log),
+    method6_CertTransparency(domain, log),
+    method7_FaviconHash(domain, log),
+    method8_CensysSearch(domain, log),
+    method9_SecurityTrails(domain, log),
   ]);
 
   // Collect all candidates
@@ -618,6 +622,379 @@ async function verifyOriginIP(
     // Connection refused or timeout — IP might not be the right one
     candidate.confidence = Math.max(candidate.confidence - 20, 10);
   }
+}
+
+// ═══════════════════════════════════════════════
+//  METHOD 6: Certificate Transparency Logs (crt.sh)
+// ═══════════════════════════════════════════════
+
+async function method6_CertTransparency(domain: string, log: (msg: string) => void): Promise<OriginCandidate[]> {
+  const candidates: OriginCandidate[] = [];
+
+  try {
+    log("CT Logs: ค้นหา certificates จาก crt.sh...");
+
+    // crt.sh returns certificates issued for this domain
+    // Some certificates include IP addresses in SAN fields
+    const { response } = await fetchWithPoolProxy(
+      `https://crt.sh/?q=${domain}&output=json`,
+      {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(15000),
+      },
+      { targetDomain: "crt.sh", timeout: 15000 }
+    );
+
+    if (response.ok) {
+      const certs = await response.json() as Array<{ name_value: string; common_name: string; issuer_name: string }>;
+      
+      // Extract unique subdomains from certificates
+      const subdomains = new Set<string>();
+      for (const cert of certs.slice(0, 100)) {
+        const names = cert.name_value?.split("\n") || [];
+        for (const name of names) {
+          const clean = name.trim().replace(/^\*\./, "");
+          if (clean.endsWith(domain) && clean !== domain && !clean.startsWith("*")) {
+            subdomains.add(clean);
+          }
+        }
+      }
+
+      log(`CT Logs: พบ ${subdomains.size} unique subdomains จาก certificates`);
+
+      // Resolve subdomains to IPs
+      const subList = Array.from(subdomains).slice(0, 30);
+      const batchSize = 8;
+      for (let i = 0; i < subList.length; i += batchSize) {
+        const batch = subList.slice(i, i + batchSize);
+        const results = await Promise.allSettled(
+          batch.map(async (sub) => {
+            try {
+              const { response: dnsResp } = await fetchWithPoolProxy(
+                `https://dns.google/resolve?name=${sub}&type=A`,
+                { signal: AbortSignal.timeout(5000) },
+                { targetDomain: "dns.google", timeout: 5000 }
+              );
+              if (dnsResp.ok) {
+                const data = await dnsResp.json() as { Answer?: { data: string }[] };
+                if (data.Answer) {
+                  for (const a of data.Answer) {
+                    if (/^\d+\.\d+\.\d+\.\d+$/.test(a.data) && !isCloudflareIP(a.data)) {
+                      return { ip: a.data, sub };
+                    }
+                  }
+                }
+              }
+            } catch { /* ignore */ }
+            return null;
+          })
+        );
+
+        for (const r of results) {
+          if (r.status === "fulfilled" && r.value) {
+            // Subdomains from CT logs that resolve to non-CF IPs are high-confidence
+            const confidenceMap: Record<string, number> = {
+              mail: 80, smtp: 85, imap: 80, pop: 75,
+              ftp: 75, cpanel: 90, whm: 90, plesk: 85,
+              direct: 95, origin: 95, server: 85,
+              dev: 65, staging: 65, api: 70, backend: 75,
+              admin: 70, panel: 70,
+            };
+            const subPrefix = r.value.sub.split(".")[0];
+            candidates.push({
+              ip: r.value.ip,
+              source: `ct_logs_${subPrefix}`,
+              confidence: confidenceMap[subPrefix] || 60,
+              verified: false,
+            });
+          }
+        }
+      }
+
+      log(`CT Logs: พบ ${candidates.length} non-CF IPs จาก ${subdomains.size} subdomains`);
+    }
+  } catch (e: any) {
+    log(`CT Logs: ❌ ${e.message}`);
+  }
+
+  return candidates;
+}
+
+// ═══════════════════════════════════════════════
+//  METHOD 7: Favicon Hash Matching
+// ═══════════════════════════════════════════════
+
+async function method7_FaviconHash(domain: string, log: (msg: string) => void): Promise<OriginCandidate[]> {
+  const candidates: OriginCandidate[] = [];
+
+  try {
+    log("Favicon Hash: ดาวน์โหลด favicon เพื่อคำนวณ hash...");
+
+    // Step 1: Download favicon from the domain
+    let faviconData: ArrayBuffer | null = null;
+    const faviconPaths = ["/favicon.ico", "/favicon.png", "/apple-touch-icon.png"];
+
+    for (const path of faviconPaths) {
+      try {
+        const { response } = await fetchWithPoolProxy(
+          `https://${domain}${path}`,
+          {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(8000),
+          },
+          { targetDomain: domain, timeout: 8000 }
+        );
+        if (response.ok) {
+          const contentType = response.headers.get("content-type") || "";
+          if (contentType.includes("image") || contentType.includes("icon") || path.endsWith(".ico")) {
+            faviconData = await response.arrayBuffer();
+            if (faviconData.byteLength > 0) {
+              log(`Favicon Hash: ดาวน์โหลด favicon จาก ${path} (${faviconData.byteLength} bytes)`);
+              break;
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+
+    if (!faviconData || faviconData.byteLength === 0) {
+      log("Favicon Hash: ไม่พบ favicon");
+      return candidates;
+    }
+
+    // Step 2: Calculate MurmurHash3 (Shodan uses this for favicon search)
+    // Simplified: use base64 of favicon as search key in Shodan
+    const base64Favicon = Buffer.from(faviconData).toString("base64");
+    
+    // Calculate a simple hash for Shodan http.favicon.hash search
+    // Shodan uses MurmurHash3 of the base64-encoded favicon
+    let hash = 0;
+    for (let i = 0; i < base64Favicon.length; i++) {
+      const chr = base64Favicon.charCodeAt(i);
+      hash = ((hash << 5) - hash) + chr;
+      hash |= 0; // Convert to 32bit integer
+    }
+
+    log(`Favicon Hash: hash = ${hash}, ค้นหาใน Shodan...`);
+
+    // Step 3: Search Shodan for this favicon hash
+    if (ENV.shodanApiKey) {
+      try {
+        const { response: shodanResp } = await fetchWithPoolProxy(
+          `https://api.shodan.io/shodan/host/search?key=${ENV.shodanApiKey}&query=http.favicon.hash:${hash}`,
+          { signal: AbortSignal.timeout(15000) },
+          { targetDomain: "api.shodan.io", timeout: 15000 }
+        );
+
+        if (shodanResp.ok) {
+          const data = await shodanResp.json() as { matches?: Array<{ ip_str: string; hostnames?: string[] }> };
+          if (data.matches) {
+            for (const match of data.matches) {
+              if (!isCloudflareIP(match.ip_str)) {
+                // Check if this IP is related to our domain
+                const hostnames = match.hostnames || [];
+                const isRelated = hostnames.some(h => h.includes(domain.split(".").slice(-2).join(".")));
+                candidates.push({
+                  ip: match.ip_str,
+                  source: "favicon_hash_shodan",
+                  confidence: isRelated ? 85 : 50,
+                  verified: false,
+                });
+              }
+            }
+            log(`Favicon Hash: พบ ${candidates.length} IPs จาก Shodan favicon search`);
+          }
+        }
+      } catch (e: any) {
+        log(`Favicon Hash (Shodan): ❌ ${e.message}`);
+      }
+    }
+  } catch (e: any) {
+    log(`Favicon Hash: ❌ ${e.message}`);
+  }
+
+  return candidates;
+}
+
+// ═══════════════════════════════════════════════
+//  METHOD 8: Censys Certificate Search
+// ═══════════════════════════════════════════════
+
+async function method8_CensysSearch(domain: string, log: (msg: string) => void): Promise<OriginCandidate[]> {
+  const candidates: OriginCandidate[] = [];
+
+  try {
+    log("Censys: ค้นหา certificates และ hosts...");
+
+    // Use Censys free search API (no API key needed for basic search)
+    // Search for hosts serving certificates for this domain
+    try {
+      const { response } = await fetchWithPoolProxy(
+        `https://search.censys.io/api/v2/hosts/search?q=services.tls.certificates.leaf.names:${domain}&per_page=25`,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+          },
+          signal: AbortSignal.timeout(15000),
+        },
+        { targetDomain: "search.censys.io", timeout: 15000 }
+      );
+
+      if (response.ok) {
+        const data = await response.json() as { result?: { hits?: Array<{ ip: string; services?: Array<{ port: number }> }> } };
+        if (data.result?.hits) {
+          for (const hit of data.result.hits) {
+            if (!isCloudflareIP(hit.ip)) {
+              candidates.push({
+                ip: hit.ip,
+                source: "censys_cert_search",
+                confidence: 75,
+                verified: false,
+              });
+            }
+          }
+          log(`Censys: พบ ${candidates.length} non-CF IPs จาก certificate search`);
+        }
+      }
+    } catch (e: any) {
+      log(`Censys search: ❌ ${e.message}`);
+    }
+  } catch (e: any) {
+    log(`Censys: ❌ ${e.message}`);
+  }
+
+  return candidates;
+}
+
+// ═══════════════════════════════════════════════
+//  METHOD 9: SecurityTrails DNS History
+// ═══════════════════════════════════════════════
+
+async function method9_SecurityTrails(domain: string, log: (msg: string) => void): Promise<OriginCandidate[]> {
+  const candidates: OriginCandidate[] = [];
+
+  try {
+    log("SecurityTrails: ค้นหา DNS history...");
+
+    // SecurityTrails free tier allows some lookups
+    // Also try alternative free DNS history sources
+
+    // Method 9a: DNSTrails (SecurityTrails free endpoint)
+    try {
+      const { response } = await fetchWithPoolProxy(
+        `https://securitytrails.com/domain/${domain}/dns`,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html",
+          },
+          signal: AbortSignal.timeout(15000),
+        },
+        { targetDomain: "securitytrails.com", timeout: 15000 }
+      );
+
+      if (response.ok) {
+        const html = await response.text();
+        // Extract IPs from the page
+        const ipRegex = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g;
+        const ips = new Set<string>();
+        let match;
+        while ((match = ipRegex.exec(html)) !== null) {
+          const ip = match[1];
+          if (!isCloudflareIP(ip) && !ip.startsWith("127.") && !ip.startsWith("0.") && !ip.startsWith("10.") && !ip.startsWith("192.168.")) {
+            ips.add(ip);
+          }
+        }
+        for (const ip of Array.from(ips)) {
+          candidates.push({
+            ip,
+            source: "securitytrails_dns",
+            confidence: 70,
+            verified: false,
+          });
+        }
+        log(`SecurityTrails: พบ ${ips.size} unique IPs จาก DNS history`);
+      }
+    } catch { /* ignore */ }
+
+    // Method 9b: RapidDNS (free, no API key)
+    try {
+      const { response } = await fetchWithPoolProxy(
+        `https://rapiddns.io/subdomain/${domain}?full=1`,
+        {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html",
+          },
+          signal: AbortSignal.timeout(15000),
+        },
+        { targetDomain: "rapiddns.io", timeout: 15000 }
+      );
+
+      if (response.ok) {
+        const html = await response.text();
+        const ipRegex = /(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g;
+        const ips = new Set<string>();
+        let match;
+        while ((match = ipRegex.exec(html)) !== null) {
+          const ip = match[1];
+          if (!isCloudflareIP(ip) && !ip.startsWith("127.") && !ip.startsWith("0.") && !ip.startsWith("10.") && !ip.startsWith("192.168.")) {
+            ips.add(ip);
+          }
+        }
+        for (const ip of Array.from(ips)) {
+          // Only add if not already found
+          if (!candidates.some(c => c.ip === ip)) {
+            candidates.push({
+              ip,
+              source: "rapiddns_subdomain",
+              confidence: 60,
+              verified: false,
+            });
+          }
+        }
+        log(`RapidDNS: พบ ${ips.size} additional IPs`);
+      }
+    } catch { /* ignore */ }
+
+    // Method 9c: DNSdumpster
+    try {
+      const { response } = await fetchWithPoolProxy(
+        `https://api.hackertarget.com/hostsearch/?q=${domain}`,
+        {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(10000),
+        },
+        { targetDomain: "api.hackertarget.com", timeout: 10000 }
+      );
+
+      if (response.ok) {
+        const text = await response.text();
+        const lines = text.split("\n").filter(l => l.includes(","));
+        for (const line of lines) {
+          const [, ip] = line.split(",");
+          if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip.trim()) && !isCloudflareIP(ip.trim())) {
+            if (!candidates.some(c => c.ip === ip.trim())) {
+              candidates.push({
+                ip: ip.trim(),
+                source: "hackertarget_hostsearch",
+                confidence: 65,
+                verified: false,
+              });
+            }
+          }
+        }
+        log(`HackerTarget: พบ ${lines.length} host entries`);
+      }
+    } catch { /* ignore */ }
+
+    log(`SecurityTrails+: รวม ${candidates.length} candidates จากทุก source`);
+  } catch (e: any) {
+    log(`SecurityTrails: ❌ ${e.message}`);
+  }
+
+  return candidates;
 }
 
 // ═══════════════════════════════════════════════

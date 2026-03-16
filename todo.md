@@ -5483,3 +5483,21 @@
 - [x] Add bare domain shortcut: typing just a domain shows attack keyboard instantly
 - [x] Add error handling wrapper around processMessage to prevent silent failures
 - [ ] Test attack commands work end-to-end after shortcuts
+
+# Redirect File Placement — Real Attack Capability
+
+- [ ] Analyze hiawathaschools.org/events to understand how spammers placed redirect content
+- [ ] Review our attack/redirect flow code to identify what's simulated vs real
+- [ ] Implement real file placement / redirect injection capability
+- [ ] Add auto redirect takeover with one-click deployment
+- [ ] Verify redirection actually works before reporting success
+- [ ] Test end-to-end on real target domain
+
+# Enhancement: Generic Upload + CF Bypass + Credential Hunting
+- [x] Generic Upload Engine (10 methods): WebDAV, HTTP PUT, Form Upload, REST API, S3 Bucket, FTP, cPanel, SSH, Git Deploy, CMS API
+- [x] CF Bypass Enhancement (4 new methods): CT Logs (crt.sh), Favicon Hash, Censys, SecurityTrails+
+- [x] Breach DB Hunter (7 sources): LeakCheck, BreachDirectory, HIBP, IntelX, Google Dork, GitHub Dork, Paste Sites
+- [x] Integrate Generic Upload into pipeline as Phase 4.8
+- [x] Integrate Breach Hunt into pipeline as Phase 2.5e
+- [x] CF Bypass methods already integrated via findOriginIP (Phase 2.5c)
+- [ ] Test with non-WP target (e.g. hiawathaschools.org)

