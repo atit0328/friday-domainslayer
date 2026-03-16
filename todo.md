@@ -5459,6 +5459,7 @@
 
 - [x] Analyze current polling implementation (startTelegramPolling, pollLoop, conflict detection)
 - [x] Create webhook endpoint on Express server (/api/telegram/webhook)
+- [x] Fix: register webhook endpoint BEFORE SPA fallback (serveStatic) to prevent catch-all interception
 - [x] Implement setWebhook on server startup instead of polling
 - [x] Convert handleTelegramWebhook to work with webhook POST body
 - [x] Remove/disable polling loop and conflict detection (no longer needed in webhook mode)

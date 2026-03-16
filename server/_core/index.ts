@@ -18,7 +18,7 @@ import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
 import { startSeoOrchestrator } from "../seo-orchestrator";
-import { startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler } from "../telegram-ai-agent";
+import { registerTelegramWebhook, setupTelegramWebhook, startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler } from "../telegram-ai-agent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -61,6 +61,15 @@ async function startServer() {
       createContext,
     })
   );
+  
+  // ═══ Register Telegram webhook endpoint BEFORE SPA fallback ═══
+  // This must come before serveStatic() which has a catch-all SPA fallback
+  // that would intercept webhook POST requests
+  if (process.env.NODE_ENV !== "development") {
+    registerTelegramWebhook(app);
+    console.log("[Server] 🔗 Telegram webhook endpoint registered (before SPA fallback)");
+  }
+  
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
@@ -118,10 +127,23 @@ async function startServer() {
           startSeoOrchestrator();
           console.log("[Server] 🧠 SEO Orchestrator brain initialized");
           
-          // Start Telegram in WEBHOOK mode (not polling!)
-          // This registers /api/telegram/webhook endpoint and sets webhook URL with Telegram API
-          await startTelegramWebhookMode(app);
-          console.log("[Server] 💬 Telegram AI Chat Agent initialized (WEBHOOK MODE)");
+          // Set webhook URL with Telegram API (endpoint already registered above)
+          // This tells Telegram to push updates to our /api/telegram/webhook endpoint
+          const WEBHOOK_DOMAINS = [
+            "domainslayer.ai",
+            "www.domainslayer.ai", 
+            "fridayai-5qwxsxug.manus.space",
+          ];
+          const webhookUrl = `https://${WEBHOOK_DOMAINS[0]}/api/telegram/webhook`;
+          console.log(`[Server] 🔗 Setting Telegram webhook to: ${webhookUrl}`);
+          const webhookResult = await setupTelegramWebhook(webhookUrl);
+          if (webhookResult.success) {
+            console.log("[Server] 💬 Telegram AI Chat Agent initialized (WEBHOOK MODE)");
+          } else {
+            console.error(`[Server] ❌ Webhook setup failed: ${webhookResult.error}`);
+            console.log("[Server] ⚠️ Falling back to polling mode...");
+            await startTelegramPolling();
+          }
           
           startDailySummaryScheduler();
           console.log("[Server] 📅 Daily Summary Scheduler initialized");
