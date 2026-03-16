@@ -16,6 +16,8 @@ export const ENV = {
   telegramChatId: process.env.TELEGRAM_CHAT_ID ?? "",
   telegramChatId2: process.env.TELEGRAM_CHAT_ID_2 ?? "",
   telegramChatId3: process.env.TELEGRAM_CHAT_ID_3 ?? "",
+  // Telegram Webhook
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET ?? "",
   // Fallback LLM providers
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",

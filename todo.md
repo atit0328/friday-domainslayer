@@ -5454,3 +5454,14 @@
 - [x] Check if attack agent disabled state prevents manual attacks via Telegram (no, manual attacks work independently)
 - [x] Fix: moved heavy schedulers to prod-only, increased LLM timeout 30s→60s, added timeout fallback to next provider
 - [x] Test and save checkpoint
+
+# Convert Telegram Bot: Polling → Webhook Mode
+
+- [x] Analyze current polling implementation (startTelegramPolling, pollLoop, conflict detection)
+- [x] Create webhook endpoint on Express server (/api/telegram/webhook)
+- [x] Implement setWebhook on server startup instead of polling
+- [x] Convert handleTelegramWebhook to work with webhook POST body
+- [x] Remove/disable polling loop and conflict detection (no longer needed in webhook mode)
+- [x] Add webhook secret token for security (TELEGRAM_WEBHOOK_SECRET)
+- [x] Handle dev mode (skip webhook registration in dev)
+- [x] Test and save checkpoint

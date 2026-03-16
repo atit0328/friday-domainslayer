@@ -18,7 +18,7 @@ import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
 import { startSeoOrchestrator } from "../seo-orchestrator";
-import { registerTelegramWebhook, startTelegramPolling, startDailySummaryScheduler } from "../telegram-ai-agent";
+import { startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler } from "../telegram-ai-agent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -53,8 +53,6 @@ async function startServer() {
   registerAutonomousSSE(app);
   // SSE streaming for AI Command Center (real-time orchestrator events)
   registerOrchestratorSSE(app);
-  // Telegram AI Chat Agent webhook (disabled at startup — only register when webhook URL is explicitly set via tRPC)
-  // registerTelegramWebhook(app);
   // tRPC API
   app.use(
     "/api/trpc",
@@ -107,40 +105,48 @@ async function startServer() {
       startDaemon();
       console.log("[Server] ⚙️ Background Daemon initialized");
       
-      // ═══ PRODUCTION-ONLY: Telegram bot + AI agents ═══
-      // Wait 30s before starting to let old instance die during deploy
-      const TELEGRAM_STARTUP_DELAY = 30_000;
-      console.log(`[Server] ⏳ PRODUCTION — Waiting ${TELEGRAM_STARTUP_DELAY / 1000}s before starting Telegram bot and autonomous agents...`);
-      setTimeout(() => {
-        startOrchestrator();
-        console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
-        startSeoOrchestrator();
-        console.log("[Server] 🧠 SEO Orchestrator brain initialized");
-        startTelegramPolling();
-        console.log("[Server] 💬 Telegram AI Chat Agent initialized");
-        startDailySummaryScheduler();
-        console.log("[Server] 📅 Daily Summary Scheduler initialized");
-      }, TELEGRAM_STARTUP_DELAY);
+      // ═══ PRODUCTION-ONLY: Telegram bot (WEBHOOK MODE) + AI agents ═══
+      // Webhook mode = zero conflict risk, no polling loop, instant response
+      // Telegram pushes updates to our /api/telegram/webhook endpoint
+      const STARTUP_DELAY = 10_000; // 10s delay to let Express fully initialize
+      console.log(`[Server] ⏳ PRODUCTION — Starting Telegram webhook + AI agents in ${STARTUP_DELAY / 1000}s...`);
+      setTimeout(async () => {
+        try {
+          // Start orchestrators first (they don't conflict)
+          startOrchestrator();
+          console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
+          startSeoOrchestrator();
+          console.log("[Server] 🧠 SEO Orchestrator brain initialized");
+          
+          // Start Telegram in WEBHOOK mode (not polling!)
+          // This registers /api/telegram/webhook endpoint and sets webhook URL with Telegram API
+          await startTelegramWebhookMode(app);
+          console.log("[Server] 💬 Telegram AI Chat Agent initialized (WEBHOOK MODE)");
+          
+          startDailySummaryScheduler();
+          console.log("[Server] 📅 Daily Summary Scheduler initialized");
+          
+          console.log("[Server] ✅ All production services started successfully");
+        } catch (err: any) {
+          console.error(`[Server] ❌ Error starting production services: ${err.message}`);
+        }
+      }, STARTUP_DELAY);
     }
   });
 }
 
 startServer().catch(console.error);
 
-// Graceful shutdown — stop polling on tsx watch restart to prevent duplicate instances
+// Graceful shutdown — cleanup on process termination
 process.on("SIGTERM", () => {
   console.log("[Server] SIGTERM received, cleaning up...");
-  import("../telegram-ai-agent").then(m => {
-    m.stopTelegramPolling();
-    m.stopDailySummaryScheduler();
-  }).catch(() => {});
+  stopTelegramPolling(); // Also stops webhook health tracking
+  stopDailySummaryScheduler();
   process.exit(0);
 });
 process.on("SIGINT", () => {
   console.log("[Server] SIGINT received, cleaning up...");
-  import("../telegram-ai-agent").then(m => {
-    m.stopTelegramPolling();
-    m.stopDailySummaryScheduler();
-  }).catch(() => {});
+  stopTelegramPolling();
+  stopDailySummaryScheduler();
   process.exit(0);
 });

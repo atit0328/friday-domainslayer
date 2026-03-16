@@ -2449,6 +2449,18 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
         }
       }
       
+      // Bot mode info
+      const health = getPollingHealth();
+      const isWebhookMode = !pollingActive && health.status === "connected";
+      const botMode = isWebhookMode ? "🔗 Webhook" : pollingActive ? "🔄 Polling" : "⏹ Stopped";
+      const uptime = health.uptimeMs ? formatElapsed(health.uptimeMs) : "N/A";
+      lines.push(`\n🤖 Bot Mode: ${botMode}`);
+      lines.push(`⏱ Uptime: ${uptime}`);
+      lines.push(`📊 Status: ${health.status}`);
+      if (health.lastError) {
+        lines.push(`⚠️ Last Error: ${health.lastError}`);
+      }
+      
       // System context (condensed)
       const context = await gatherSystemContext();
       lines.push(`\nSystem:`);
@@ -3361,16 +3373,41 @@ export function resetPollingHealth(): void {
 
 export function registerTelegramWebhook(app: any): void {
   app.post("/api/telegram/webhook", async (req: any, res: any) => {
+    // Verify webhook secret token for security
+    const webhookSecret = ENV.telegramWebhookSecret;
+    if (webhookSecret) {
+      const headerSecret = req.headers["x-telegram-bot-api-secret-token"];
+      if (headerSecret !== webhookSecret) {
+        console.warn(`[TelegramAI] Webhook rejected: invalid secret token`);
+        res.status(403).json({ ok: false, error: "Forbidden" });
+        return;
+      }
+    }
+    
     try {
-      await handleTelegramWebhook(req.body);
+      // Respond immediately to Telegram (they expect fast 200)
       res.json({ ok: true });
+      // Process update asynchronously
+      handleTelegramWebhook(req.body).catch((error: any) => {
+        console.error(`[TelegramAI] Webhook processing error: ${error.message}`);
+      });
     } catch (error: any) {
       console.error(`[TelegramAI] Webhook error: ${error.message}`);
-      res.json({ ok: true });
+      if (!res.headersSent) res.json({ ok: true });
     }
   });
   
-  console.log("[TelegramAI] Webhook registered at /api/telegram/webhook");
+  // Health check endpoint for webhook status
+  app.get("/api/telegram/webhook", (_req: any, res: any) => {
+    res.json({ 
+      ok: true, 
+      mode: "webhook",
+      status: healthStats.status,
+      startedAt: healthStats.startedAt,
+    });
+  });
+  
+  console.log("[TelegramAI] Webhook endpoint registered at /api/telegram/webhook");
 }
 
 // ═══════════════════════════════════════════════════════
@@ -3383,25 +3420,79 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
   
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/setWebhook`;
+    const webhookPayload: Record<string, any> = {
+      url: webhookUrl,
+      allowed_updates: ["message", "callback_query"],
+      drop_pending_updates: true,
+      max_connections: 40,
+    };
+    
+    // Add secret token for webhook verification
+    const webhookSecret = ENV.telegramWebhookSecret;
+    if (webhookSecret) {
+      webhookPayload.secret_token = webhookSecret;
+    }
+    
     const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url: webhookUrl,
-        allowed_updates: ["message", "callback_query"],
-        drop_pending_updates: true,
-      }),
+      body: JSON.stringify(webhookPayload),
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
     
     const result = await response.json() as any;
     if (result.ok) {
-      console.log(`[TelegramAI] Webhook set to: ${webhookUrl}`);
+      console.log(`[TelegramAI] ✅ Webhook set to: ${webhookUrl}`);
+      console.log(`[TelegramAI] Secret token: ${webhookSecret ? "enabled" : "disabled"}`);
       return { success: true };
     }
     return { success: false, error: result.description };
   } catch (error: any) {
     return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Start Telegram bot in Webhook mode (production)
+ * 1. Register webhook endpoint on Express app
+ * 2. Set webhook URL with Telegram API
+ * 3. No polling loop needed — Telegram pushes updates to us
+ */
+export async function startTelegramWebhookMode(app: any): Promise<void> {
+  const config = getTelegramConfig();
+  if (!config) {
+    console.log("[TelegramAI] Telegram not configured, skipping webhook setup");
+    return;
+  }
+  
+  // Step 1: Register the webhook endpoint on Express
+  registerTelegramWebhook(app);
+  
+  // Step 2: Determine webhook URL from known domains
+  // Priority: custom domain > manus.space domain
+  const WEBHOOK_DOMAINS = [
+    "domainslayer.ai",
+    "www.domainslayer.ai",
+    "fridayai-5qwxsxug.manus.space",
+  ];
+  
+  const webhookUrl = `https://${WEBHOOK_DOMAINS[0]}/api/telegram/webhook`;
+  
+  // Step 3: Set webhook with Telegram API
+  console.log(`[TelegramAI] 🔗 Setting webhook to: ${webhookUrl}`);
+  const result = await setupTelegramWebhook(webhookUrl);
+  
+  if (result.success) {
+    // Update health stats
+    healthStats.startedAt = Date.now();
+    healthStats.status = "connected";
+    healthStats.consecutiveFailures = 0;
+    console.log("[TelegramAI] ✅ Webhook mode active — no polling needed, zero conflict risk!");
+  } else {
+    console.error(`[TelegramAI] ❌ Failed to set webhook: ${result.error}`);
+    console.log("[TelegramAI] ⚠️ Falling back to polling mode...");
+    // Fallback to polling if webhook setup fails
+    await startTelegramPolling();
   }
 }
 
