@@ -5473,7 +5473,9 @@
 - [x] Remove secret_token from setupTelegramWebhook payload
 - [x] Fix TypeScript error from removed webhookSecret variable
 - [x] Delete old webhook and re-set without secret_token via Telegram API
-- [ ] Save checkpoint and deploy to production
+- [x] Save checkpoint and deploy to production
+- [x] Remove polling fallback from production startup (prevents 409 conflicts)
+- [x] Change drop_pending_updates to false (keep messages during deploy)
 - [ ] Test webhook receives messages (send "สวัสดี" in Telegram)
 - [ ] Test callback queries (button presses work)
 - [ ] Test attack commands work end-to-end

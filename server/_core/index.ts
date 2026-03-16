@@ -141,8 +141,9 @@ async function startServer() {
             console.log("[Server] 💬 Telegram AI Chat Agent initialized (WEBHOOK MODE)");
           } else {
             console.error(`[Server] ❌ Webhook setup failed: ${webhookResult.error}`);
-            console.log("[Server] ⚠️ Falling back to polling mode...");
-            await startTelegramPolling();
+            console.log("[Server] ⚠️ Webhook setup failed but endpoint is registered — webhook can be set manually from sandbox");
+            // NO POLLING FALLBACK — polling causes 409 conflicts with webhook
+            // If webhook setup fails, set it manually: node -e 'fetch("https://api.telegram.org/bot<TOKEN>/setWebhook", ...)'
           }
           
           startDailySummaryScheduler();

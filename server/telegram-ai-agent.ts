@@ -3416,7 +3416,7 @@ export async function setupTelegramWebhook(webhookUrl: string): Promise<{ succes
     const webhookPayload: Record<string, any> = {
       url: webhookUrl,
       allowed_updates: ["message", "callback_query"],
-      drop_pending_updates: true,
+      drop_pending_updates: false,  // Keep pending updates during deploy/restart
       max_connections: 40,
     };
     
