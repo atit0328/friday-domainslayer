@@ -5551,3 +5551,17 @@
 - [x] Fix: Add overall FULL_SCAN_TIMEOUT = 120s with checkTimeout() between stages
 - [x] Fix: Graceful fallback — timed-out stages return empty results instead of hanging
 - [x] TypeScript compilation verified — no errors
+
+# Telegram Bot — Fix: Attack should use full URL path, not just root domain
+
+- [x] Found 3 places where path was stripped: shortcut regex, bare domain regex, attack_website tool
+- [x] Added `targetUrl` field to ConversationState to preserve full URL with path
+- [x] Fixed direct attack shortcut to extract full URL (domain + path) and store in state
+- [x] Fixed bare domain shortcut to detect and preserve URL path
+- [x] Fixed attack_website tool to not strip path, pass attackTargetUrl to execution
+- [x] Added `targetUrl` parameter to executeAttackWithProgress() function
+- [x] Added `effectiveTargetUrl` variable — uses targetUrl if provided, falls back to `https://${domain}`
+- [x] Replaced all 22 occurrences of `targetUrl: \`https://${domain}\`` with `targetUrl: effectiveTargetUrl`
+- [x] Fixed atk_confirm callback to retrieve targetUrl from conversationState
+- [x] Fixed atk_mode callback to also retrieve targetUrl from conversationState
+- [x] TypeScript compilation verified — no errors
