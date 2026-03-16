@@ -967,37 +967,47 @@ export async function runUnifiedAttackPipeline(
     return uploadedFiles.some(f => f.redirectWorks && f.redirectDestinationMatch);
   }
 
-  // ─── Phase 0: AI Target Analysis (NEW — deep intelligence before attack) ───
+  // ─── Phase 0+1: AI Target Analysis + Pre-screening (PARALLEL to save time) ───
+  const reconStartTime = Date.now();
+  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.4, 4 * 60 * 1000); // Max 40% of total time or 4 min for recon
   let aiTargetAnalysis: AiTargetAnalysis | null = null;
-  try {
-    loggedOnEvent({
-      phase: "ai_analysis",
-      step: "start",
-      detail: `🧠 Phase 0: AI Target Analysis — วิเคราะห์เว็บเป้าหมาย ${config.targetUrl} อย่างละเอียด...`,
-      progress: 0,
-    });
 
-    aiTargetAnalysis = await Promise.race([
+  loggedOnEvent({
+    phase: "ai_analysis",
+    step: "start",
+    detail: `🧠 Phase 0+1: AI Analysis + Pre-screen (ทำพร้อมกัน) — ${config.targetUrl}`,
+    progress: 0,
+  });
+
+  // Run AI analysis and prescreen in PARALLEL to save time
+  const [aiResult, prescreenResult] = await Promise.allSettled([
+    // AI Target Analysis (20s timeout)
+    Promise.race([
       runAiTargetAnalysis(
         config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""),
         (step: AnalysisStep) => {
-          // Stream each analysis step to frontend
           loggedOnEvent({
             phase: "ai_analysis",
             step: step.stepId,
             detail: `🧠 [${step.stepName}] ${step.detail}`,
-            progress: Math.round(step.progress * 0.12), // Scale 0-100 to 0-12 (Phase 0 = 12% of total)
-            data: {
-              analysisStep: step,
-            },
+            progress: Math.round(step.progress * 0.12),
+            data: { analysisStep: step },
           });
         },
       ),
-      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (45s)")), 45000)),
-    ]);
+      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (20s)")), 20000)),
+    ]),
+    // Pre-screening (15s timeout)
+    Promise.race([
+      preScreenTarget(config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")),
+      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), 15000)),
+    ]),
+  ]);
 
+  // Process AI analysis result
+  if (aiResult.status === "fulfilled") {
+    aiTargetAnalysis = aiResult.value;
     aiDecisions.push(`AI Analysis: ${aiTargetAnalysis.httpFingerprint.serverType || "Unknown"} server, CMS: ${aiTargetAnalysis.techStack.cms || "none"}, WAF: ${aiTargetAnalysis.security.wafDetected || "none"}, DA: ${aiTargetAnalysis.seoMetrics.domainAuthority}, Success: ${aiTargetAnalysis.aiStrategy.overallSuccessProbability}%`);
-
     loggedOnEvent({
       phase: "ai_analysis",
       step: "complete",
@@ -1005,36 +1015,19 @@ export async function runUnifiedAttackPipeline(
       progress: 12,
       data: { aiTargetAnalysis },
     });
-  } catch (error: any) {
-    errors.push(`AI Target Analysis failed: ${error.message}`);
+  } else {
+    errors.push(`AI Target Analysis failed: ${aiResult.reason?.message || "unknown"}`);
     loggedOnEvent({
       phase: "ai_analysis",
       step: "error",
-      detail: `⚠️ AI Analysis ล้มเหลว: ${error.message} — ดำเนินการต่อด้วย pre-screen แบบเดิม`,
+      detail: `⚠️ AI Analysis ล้มเหลว: ${aiResult.reason?.message || "unknown"} — ใช้ pre-screen แทน`,
       progress: 12,
     });
   }
 
-  loggedOnEvent({
-    phase: "prescreen",
-    step: "start",
-    detail: `🔍 เริ่มวิเคราะห์เป้าหมาย: ${config.targetUrl}`,
-    progress: 12,
-  });
-
-  // ─── Phase 1: Pre-screening (uses AI analysis data if available) ───
-  try {
-    loggedOnEvent({
-      phase: "prescreen",
-      step: "scanning",
-      detail: "🔍 Phase 1: Pre-screening — ตรวจสอบเพิ่มเติมจาก AI analysis...",
-      progress: 13,
-    });
-
-    prescreen = await Promise.race([
-      preScreenTarget(config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")),
-      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), 30000)),
-    ]);
+  // Process prescreen result
+  if (prescreenResult.status === "fulfilled") {
+    prescreen = prescreenResult.value;
 
     // Merge AI analysis data into prescreen if available
     if (aiTargetAnalysis && prescreen) {
@@ -1089,15 +1082,23 @@ export async function runUnifiedAttackPipeline(
         verifiedUrls: 0,
       },
     });
-  } catch (error: any) {
-    errors.push(`Pre-screen failed: ${error.message}`);
+  } else {
+    errors.push(`Pre-screen failed: ${prescreenResult.reason?.message || "unknown"}`);
     loggedOnEvent({
       phase: "prescreen",
       step: "error",
-      detail: `⚠️ Pre-screen ล้มเหลว: ${error.message} — ดำเนินการต่อด้วยข้อมูลจำกัด`,
+      detail: `⚠️ Pre-screen ล้มเหลว: ${prescreenResult.reason?.message || "unknown"} — ดำเนินการต่อด้วยข้อมูลจำกัด`,
       progress: 18,
     });
   }
+
+  const reconElapsed = Date.now() - reconStartTime;
+  loggedOnEvent({
+    phase: "prescreen",
+    step: "recon_summary",
+    detail: `⏱️ Recon ใช้เวลา ${Math.round(reconElapsed / 1000)}s / ${Math.round(RECON_TIME_BUDGET / 1000)}s budget — AI: ${aiResult.status === "fulfilled" ? "✅" : "❌"}, Pre-screen: ${prescreenResult.status === "fulfilled" ? "✅" : "❌"}`,
+    progress: 18,
+  });
 
   // ═══ SMART FALLBACK: Build target profile after prescreen ═══
   try {
@@ -1146,7 +1147,7 @@ export async function runUnifiedAttackPipeline(
           progress: 20 + (progress / 100) * 15,
         });
       }, undefined, config.originIp),
-      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 65000)), // 65s — slightly more than scanner's 60s FULL_SCAN_TIMEOUT
+      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 35000)), // 35s — reduced to leave time for upload phases
     ]);
 
     if (vulnScan) {
@@ -1223,7 +1224,7 @@ export async function runUnifiedAttackPipeline(
 
       wafDetectionResult = await Promise.race([
         detectWaf(config.targetUrl),
-        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), 60000)),
+        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), 20000)),
       ]);
 
       if (wafDetectionResult.detected) {
@@ -1427,7 +1428,7 @@ export async function runUnifiedAttackPipeline(
             progress: 42,
           });
         }),
-        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), 90000)),
+        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), 45000)),
       ]);
 
       if (cfBypassResult.found && cfBypassResult.originIP) {
@@ -1488,7 +1489,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), 65000)),
+        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), 30000)),
       ]);
 
       if (unifiedCfBypassResult.originIp && !originIp) {

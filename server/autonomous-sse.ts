@@ -22,7 +22,7 @@ import { autonomousDeploys, autonomousBatches } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 
 // ─── Constants ───
-const PIPELINE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min max per target
+const PIPELINE_TIMEOUT_MS = 15 * 60 * 1000; // 15 min max per target (increased: recon + upload needs time)
 const HEARTBEAT_INTERVAL_MS = 3_000;
 
 // ─── Helpers ───
@@ -331,6 +331,7 @@ async function runSingleTarget(
     cloaking: true,
     maxUploadAttempts: 5,
     timeoutPerMethod: 60000,
+    globalTimeout: 12 * 60 * 1000, // 12 min internal pipeline timeout
   };
 
   progressCallback({
@@ -354,7 +355,7 @@ async function runSingleTarget(
           data: event.data,
         });
       }),
-      new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Unified pipeline timeout")), 4 * 60 * 1000)),
+      new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Unified pipeline timeout")), 13 * 60 * 1000)),
     ]);
   } catch (e: any) {
     progressCallback({

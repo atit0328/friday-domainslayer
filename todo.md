@@ -5682,3 +5682,13 @@
 - [x] Write vitest tests for CF bypass module (8 tests)
 - [x] Write vitest tests for parasite SEO WP fixes (22 tests)
 - [ ] Save checkpoint
+
+# Pipeline Resilience Fix — ไม่ยอมแพ้เมื่อ AI Analysis Timeout
+- [x] Fix pipeline: AI Analysis + Pre-screen ทำพร้อมกัน (Promise.allSettled) — ประหยัด ~55s
+- [x] Recon timeouts ลดลง: AI 45→20s, prescreen 30→15s, vuln 65→35s, WAF 60→20s, CF 90→45s
+- [x] Outer timeouts เพิ่ม: ATTACK_TIMEOUT 10→20min, PIPELINE 5→15min, pipeline method 5→12min
+- [x] Pass globalTimeout ให้ pipeline รู้ว่ามีเวลาเท่าไหร่
+- [x] Recon time budget tracking
+- [x] TypeScript 0 errors
+- [x] Tests pass (37/37)
+- [x] Save checkpoint

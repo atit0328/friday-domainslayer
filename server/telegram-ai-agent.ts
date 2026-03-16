@@ -174,7 +174,7 @@ const recentCompletedAttacks: Array<{
   completedAt: number;
 }> = [];
 const MAX_RECENT_COMPLETED = 20;
-const ATTACK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — ป้องกันค้างนาน user กดปุ่ม Stop ได้เอง
+const ATTACK_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes — ให้เวลาเพียงพอสำหรับ recon + upload phases
 
 function registerRunningAttack(domain: string, method: string, chatId: number, progressMsgId: number): RunningAttack {
   const id = `${domain}:${method}:${Date.now()}`;
@@ -5049,10 +5049,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // Per-method timeout settings (ms)
       const METHOD_TIMEOUTS: Record<string, number> = {
-        pipeline: 5 * 60 * 1000,       // 5 min — pipeline (reduced from 10)
-        agentic_auto: 4 * 60 * 1000,   // 4 min — AI session (reduced from 8)
-        hijack: 3 * 60 * 1000,         // 3 min — credential hunt + methods (reduced from 5)
-        advanced: 3 * 60 * 1000,       // 3 min (reduced from 5)
+        pipeline: 12 * 60 * 1000,      // 12 min — pipeline (increased: recon phases need time before upload)
+        agentic_auto: 8 * 60 * 1000,   // 8 min — AI session (restored: needs time for full attack cycle)
+        hijack: 5 * 60 * 1000,         // 5 min — credential hunt + methods (restored)
+        advanced: 5 * 60 * 1000,       // 5 min (restored)
         cloaking: 2 * 60 * 1000,       // 2 min (reduced from 3)
         redirect: 90 * 1000,           // 1.5 min (reduced from 2)
       };
