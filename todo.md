@@ -5599,3 +5599,15 @@
 - [x] TypeScript compilation passes (0 errors)
 - [ ] Dashboard AAA page loads and works (needs manual test)
 - [ ] Telegram auto-attack works without method selection (needs manual test)
+
+# Attack Pipeline Reliability Fixes
+
+- [x] Fix scan fingerprint timeout (3m42s → 12s max via directFetchFirst + reduced stage timeout)
+- [x] Use direct fetch before proxy for scan stages (directFetchFirst: direct 4s → proxy 5s fallback)
+- [x] Improve Cloudflare site handling (hasStrongWaf early-exit: skip writable paths + upload endpoints)
+- [x] Ensure attack methods actually execute and report success/failure properly (verified method loop)
+- [x] Reduce overall scan timeout from 180s to 60s for faster fallback to attack methods
+- [x] Reduce unified-attack-pipeline AI analysis timeout (90s → 45s)
+- [x] Reduce unified-attack-pipeline prescreen timeout (60s → 30s)
+- [x] Sync pipeline vuln scan timeout with scanner (30s → 65s to match scanner's 60s FULL_SCAN_TIMEOUT)
+- [x] Reduce all vuln scan stage timeouts (fingerprint 30→12s, CMS 40→15s, writable 45→15s, upload 25→10s, panels 25→10s, AI 45→20s)

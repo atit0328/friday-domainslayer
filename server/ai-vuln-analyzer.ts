@@ -103,7 +103,8 @@ export type ScanProgressCallback = (stage: string, detail: string, progress: num
 // ═══════════════════════════════════════════════════════
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const FETCH_TIMEOUT = 6000; // 6s per request (reduced from 10s to prevent scan hangs)
+const FETCH_TIMEOUT = 5000; // 5s per request (reduced from 6s)
+const DIRECT_FETCH_TIMEOUT = 4000; // 4s for direct-first fetch (no proxy overhead)
 
 const COMMON_UPLOAD_PATHS = [
   "/wp-content/uploads/",
@@ -195,23 +196,48 @@ const CDN_SIGNATURES: Record<string, string[]> = {
 //  HELPERS
 // ═══════════════════════════════════════════════════════
 
-async function safeFetch(url: string, options: RequestInit = {}): Promise<Response | null> {
+/**
+ * directFetchFirst: Try direct fetch first (fast path), fallback to proxy only if direct fails.
+ * This is the default for scan stages — avoids wasting 12s on proxy when direct works fine.
+ */
+async function directFetchFirst(url: string, options: RequestInit = {}): Promise<Response | null> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), DIRECT_FETCH_TIMEOUT);
   try {
-    const domain = url.includes("://") ? new URL(url).hostname : undefined;
-    const { response } = await fetchWithPoolProxy(url, {
+    const resp = await fetch(url, {
       ...options,
       headers: { "User-Agent": UA, ...(options.headers || {}) },
       redirect: "follow",
-    }, { 
-      targetDomain: domain, 
-      timeout: FETCH_TIMEOUT,
-      maxRetries: 1,        // Only 1 proxy retry (was default 2) — reduces total time from 18s to 12s per request
-      fallbackDirect: true,  // Always fallback to direct if proxy fails
+      signal: controller.signal,
     });
-    return response;
+    clearTimeout(t);
+    // If we got a real response (even 403/404), return it — it means server is reachable
+    return resp;
   } catch {
-    return null;
+    clearTimeout(t);
+    // Direct failed — try via proxy as fallback
+    try {
+      const domain = url.includes("://") ? new URL(url).hostname : undefined;
+      const { response } = await fetchWithPoolProxy(url, {
+        ...options,
+        headers: { "User-Agent": UA, ...(options.headers || {}) },
+        redirect: "follow",
+      }, {
+        targetDomain: domain,
+        timeout: FETCH_TIMEOUT,
+        maxRetries: 0,         // Only 1 proxy attempt on fallback
+        fallbackDirect: false, // Already tried direct
+      });
+      return response;
+    } catch {
+      return null;
+    }
   }
+}
+
+async function safeFetch(url: string, options: RequestInit = {}): Promise<Response | null> {
+  // Use directFetchFirst for scan stages (fast path)
+  return directFetchFirst(url, options);
 }
 
 function ensureUrl(domain: string): string {
@@ -933,7 +959,7 @@ Respond in JSON format with this schema:
 //  MAIN: Full Vulnerability Scan
 // ═══════════════════════════════════════════════════════
 
-const FULL_SCAN_TIMEOUT = 180_000; // 3 minutes max for entire scan (increased to match larger stage timeouts)
+const FULL_SCAN_TIMEOUT = 60_000; // 60s max for entire scan (reduced from 180s — scan should be fast)
 
 export async function fullVulnScan(
   targetDomain: string,
@@ -984,40 +1010,50 @@ export async function fullVulnScan(
     }
   };
 
-  // Stage timeouts are set based on: each safeFetch = ~12s worst case (1 proxy retry + direct fallback)
-  // fingerprint: 3 requests → ~36s, cms: up to 20 requests (parallel) → ~24s, etc.
+  // Stage timeouts reduced: directFetchFirst = ~4s worst case (direct) + 5s proxy fallback
+  // fingerprint: 3 requests → ~15s, cms: parallel → ~10s, etc.
 
-  // Stage 1: Server fingerprinting (30s max — 3 sequential requests)
+  // Stage 1: Server fingerprinting (12s max — 3 sequential requests)
   const serverInfo = await runStage("fingerprint", () => fingerprint(baseUrl, onProgress), {
     ip: "", server: "unknown", poweredBy: "", os: "linux", phpVersion: "",
     headers: {}, waf: null, cdn: null, ssl: baseUrl.startsWith("https"), httpMethods: ["GET", "POST"],
-  }, 30_000);
+  }, 12_000);
   checkTimeout();
 
-  // Stage 2: CMS detection (40s max — multiple requests, some parallel)
+  // ═══ CLOUDFLARE EARLY EXIT: If strong WAF detected, skip expensive stages ═══
+  const hasStrongWaf = !!(serverInfo.waf && ["cloudflare", "sucuri", "akamai", "incapsula", "aws_waf"].includes(serverInfo.waf.toLowerCase()));
+  if (hasStrongWaf) {
+    onProgress("waf_detected" as any, `🛡️ ${serverInfo.waf} WAF detected — skipping writable path scan (will be blocked)`, 40);
+  }
+
+  // Stage 2: CMS detection (15s max — multiple requests, some parallel)
   const cms = await runStage("cms_detect", () => detectCms(baseUrl, onProgress), {
     type: "unknown" as const, version: "", plugins: [], themes: [],
     vulnerableComponents: [], adminUrl: "", loginUrl: "", apiEndpoints: [],
-  }, 40_000);
+  }, 15_000);
   checkTimeout();
 
-  // Stage 3: Writable path discovery (45s max — parallel batches)
-  const writablePaths = await runStage("writable_paths", () => discoverWritablePaths(baseUrl, cms, serverInfo, onProgress), [], 45_000);
+  // Stage 3: Writable path discovery (15s max — SKIP if strong WAF detected)
+  const writablePaths = hasStrongWaf
+    ? [] // WAF will block all PUT/POST attempts — don't waste time
+    : await runStage("writable_paths", () => discoverWritablePaths(baseUrl, cms, serverInfo, onProgress), [], 15_000);
+  if (!hasStrongWaf) checkTimeout();
+
+  // Stage 4: Upload endpoint discovery (10s max — SKIP if strong WAF)
+  const uploadEndpoints = hasStrongWaf
+    ? []
+    : await runStage("upload_endpoints", () => discoverUploadEndpoints(baseUrl, cms, onProgress), [], 10_000);
+  if (!hasStrongWaf) checkTimeout();
+
+  // Stage 5: Exposed panels & misconfigurations (10s max each — parallel requests)
+  const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 10_000);
+  const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 10_000);
   checkTimeout();
 
-  // Stage 4: Upload endpoint discovery (25s max — parallel requests)
-  const uploadEndpoints = await runStage("upload_endpoints", () => discoverUploadEndpoints(baseUrl, cms, onProgress), [], 25_000);
-  checkTimeout();
-
-  // Stage 5: Exposed panels & misconfigurations (25s max each — parallel requests)
-  const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 25_000);
-  const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 25_000);
-  checkTimeout();
-
-  // Stage 6: AI attack vector ranking (45s max — LLM call)
+  // Stage 6: AI attack vector ranking (20s max — LLM call)
   const { vectors, analysis } = await runStage("ai_analysis", () => aiRankAttackVectors(
     baseUrl, serverInfo, cms, writablePaths, uploadEndpoints, exposedPanels, misconfigurations, onProgress,
-  ), { vectors: [], analysis: "AI analysis timed out" }, 45_000);
+  ), { vectors: [], analysis: "AI analysis timed out" }, 20_000);
 
   const result: VulnScanResult = {
     target: baseUrl,

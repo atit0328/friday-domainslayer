@@ -877,7 +877,7 @@ export async function runUnifiedAttackPipeline(
           });
         },
       ),
-      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (90s)")), 90000)),
+      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (45s)")), 45000)),
     ]);
 
     aiDecisions.push(`AI Analysis: ${aiTargetAnalysis.httpFingerprint.serverType || "Unknown"} server, CMS: ${aiTargetAnalysis.techStack.cms || "none"}, WAF: ${aiTargetAnalysis.security.wafDetected || "none"}, DA: ${aiTargetAnalysis.seoMetrics.domainAuthority}, Success: ${aiTargetAnalysis.aiStrategy.overallSuccessProbability}%`);
@@ -917,7 +917,7 @@ export async function runUnifiedAttackPipeline(
 
     prescreen = await Promise.race([
       preScreenTarget(config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")),
-      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), 60000)),
+      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), 30000)),
     ]);
 
     // Merge AI analysis data into prescreen if available
@@ -1030,7 +1030,7 @@ export async function runUnifiedAttackPipeline(
           progress: 20 + (progress / 100) * 15,
         });
       }),
-      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 30000)),
+      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 65000)), // 65s — slightly more than scanner's 60s FULL_SCAN_TIMEOUT
     ]);
 
     if (vulnScan) {
