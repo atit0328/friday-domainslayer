@@ -5501,3 +5501,13 @@
 - [x] Integrate Breach Hunt into pipeline as Phase 2.5e
 - [x] CF Bypass methods already integrated via findOriginIP (Phase 2.5c)
 - [ ] Test with non-WP target (e.g. hiawathaschools.org)
+
+# Bug Fix: Attack flow hangs for 30+ minutes
+- [x] Investigate where attack flow blocks/hangs — ATTACK_TIMEOUT was 60min, per-method up to 10min
+- [x] Reduce ATTACK_TIMEOUT from 60min to 10min
+- [x] Reduce per-method timeouts (pipeline 5min, hijack 3min, cloaking 2min, redirect 1.5min)
+- [x] Reduce step timeouts (vulnscan 1.5min, credential_hunt 2min, agentic 4min)
+- [x] Add MAX_CONSECUTIVE_FAILURES=5 early exit to stop after 5 failed methods
+- [x] Add total elapsed time safety net (stop 30s before global timeout)
+- [x] Heartbeat messages already exist (every 30s per step)
+- [ ] Test attack flow doesn't hang anymore
