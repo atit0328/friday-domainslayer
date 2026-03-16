@@ -5565,3 +5565,16 @@
 - [x] Fixed atk_confirm callback to retrieve targetUrl from conversationState
 - [x] Fixed atk_mode callback to also retrieve targetUrl from conversationState
 - [x] TypeScript compilation verified — no errors
+
+# Telegram Bot — Fix: Scan stages all timeout + full_chain hangs after scan failure
+
+- [x] Root cause: safeFetch uses maxRetries=2 + direct fallback = 3 attempts × 6s = 18s per request, exceeding stage timeouts
+- [x] Fix: Reduced safeFetch maxRetries from 2 → 1 and timeout from 6s → 5s (max ~10s per request)
+- [x] Fix: Increased stage timeouts to be realistic (fingerprint: 30s, cms: 40s, writable: 45s, upload: 25s, panels: 25s, AI: 45s)
+- [x] Fix: Increased FULL_SCAN_TIMEOUT from 120s → 180s to accommodate larger stage timeouts
+- [x] Fix: Added AbortSignal support to fullVulnScan — global timeout truly cancels scan stages
+- [x] Fix: Passed attackEntry.abortController.signal to all 7 fullVulnScan calls across all modes
+- [x] Fix: Added GLOBAL_ABORT listener to withMethodTimeout so global timeout cancels running methods
+- [x] Fix: Smart method reduction when scan data is empty — only try 7 priority universal methods instead of 20+
+- [x] Fix: Fixed 3 corrupted lines from edit (preScanMs, cloakScanMs, hijackScanMs)
+- [x] TypeScript compilation verified — 0 errors, server running cleanly

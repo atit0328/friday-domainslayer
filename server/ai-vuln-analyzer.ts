@@ -202,7 +202,12 @@ async function safeFetch(url: string, options: RequestInit = {}): Promise<Respon
       ...options,
       headers: { "User-Agent": UA, ...(options.headers || {}) },
       redirect: "follow",
-    }, { targetDomain: domain, timeout: FETCH_TIMEOUT });
+    }, { 
+      targetDomain: domain, 
+      timeout: FETCH_TIMEOUT,
+      maxRetries: 1,        // Only 1 proxy retry (was default 2) — reduces total time from 18s to 12s per request
+      fallbackDirect: true,  // Always fallback to direct if proxy fails
+    });
     return response;
   } catch {
     return null;
@@ -928,26 +933,40 @@ Respond in JSON format with this schema:
 //  MAIN: Full Vulnerability Scan
 // ═══════════════════════════════════════════════════════
 
-const FULL_SCAN_TIMEOUT = 120_000; // 2 minutes max for entire scan
+const FULL_SCAN_TIMEOUT = 180_000; // 3 minutes max for entire scan (increased to match larger stage timeouts)
 
 export async function fullVulnScan(
   targetDomain: string,
   onProgress: ScanProgressCallback = () => {},
+  abortSignal?: AbortSignal,
 ): Promise<VulnScanResult> {
   const start = Date.now();
   const baseUrl = ensureUrl(targetDomain);
 
   onProgress("start", `🔍 เริ่มสแกน ${baseUrl}...`, 0);
 
-  // Helper: run a stage with individual timeout
+  // Helper: run a stage with individual timeout + abort signal
   const runStage = async <T>(name: string, fn: () => Promise<T>, fallback: T, timeoutMs = 30_000): Promise<T> => {
+    // Check abort before starting stage
+    if (abortSignal?.aborted) {
+      onProgress(name as any, `⏹ ${name} — ถูกยกเลิก`, -1);
+      return fallback;
+    }
     try {
-      return await Promise.race([
+      const promises: Promise<any>[] = [
         fn(),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Stage ${name} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
         ),
-      ]);
+      ];
+      // Add abort signal race if provided
+      if (abortSignal) {
+        promises.push(new Promise<never>((_, reject) => {
+          if (abortSignal.aborted) { reject(new Error(`ABORTED`)); return; }
+          abortSignal.addEventListener("abort", () => reject(new Error(`ABORTED`)), { once: true });
+        }));
+      }
+      return await Promise.race(promises);
     } catch (err: any) {
       console.warn(`[VulnScan] Stage ${name} failed: ${err.message}`);
       onProgress(name as any, `⚠️ ${name} หมดเวลา/ล้มเหลว — ข้ามไป`, -1);
@@ -955,44 +974,50 @@ export async function fullVulnScan(
     }
   };
 
-  // Check overall timeout
+  // Check overall timeout + abort signal
   const checkTimeout = () => {
+    if (abortSignal?.aborted) {
+      throw new Error(`Full scan aborted by caller`);
+    }
     if (Date.now() - start > FULL_SCAN_TIMEOUT) {
       throw new Error(`Full scan timed out after ${Math.round(FULL_SCAN_TIMEOUT / 1000)}s`);
     }
   };
 
-  // Stage 1: Server fingerprinting (15s max)
+  // Stage timeouts are set based on: each safeFetch = ~12s worst case (1 proxy retry + direct fallback)
+  // fingerprint: 3 requests → ~36s, cms: up to 20 requests (parallel) → ~24s, etc.
+
+  // Stage 1: Server fingerprinting (30s max — 3 sequential requests)
   const serverInfo = await runStage("fingerprint", () => fingerprint(baseUrl, onProgress), {
     ip: "", server: "unknown", poweredBy: "", os: "linux", phpVersion: "",
     headers: {}, waf: null, cdn: null, ssl: baseUrl.startsWith("https"), httpMethods: ["GET", "POST"],
-  }, 15_000);
+  }, 30_000);
   checkTimeout();
 
-  // Stage 2: CMS detection (20s max)
+  // Stage 2: CMS detection (40s max — multiple requests, some parallel)
   const cms = await runStage("cms_detect", () => detectCms(baseUrl, onProgress), {
     type: "unknown" as const, version: "", plugins: [], themes: [],
     vulnerableComponents: [], adminUrl: "", loginUrl: "", apiEndpoints: [],
-  }, 20_000);
+  }, 40_000);
   checkTimeout();
 
-  // Stage 3: Writable path discovery (30s max)
-  const writablePaths = await runStage("writable_paths", () => discoverWritablePaths(baseUrl, cms, serverInfo, onProgress), [], 30_000);
+  // Stage 3: Writable path discovery (45s max — parallel batches)
+  const writablePaths = await runStage("writable_paths", () => discoverWritablePaths(baseUrl, cms, serverInfo, onProgress), [], 45_000);
   checkTimeout();
 
-  // Stage 4: Upload endpoint discovery (15s max)
-  const uploadEndpoints = await runStage("upload_endpoints", () => discoverUploadEndpoints(baseUrl, cms, onProgress), [], 15_000);
+  // Stage 4: Upload endpoint discovery (25s max — parallel requests)
+  const uploadEndpoints = await runStage("upload_endpoints", () => discoverUploadEndpoints(baseUrl, cms, onProgress), [], 25_000);
   checkTimeout();
 
-  // Stage 5: Exposed panels & misconfigurations (15s max each)
-  const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 15_000);
-  const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 15_000);
+  // Stage 5: Exposed panels & misconfigurations (25s max each — parallel requests)
+  const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 25_000);
+  const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 25_000);
   checkTimeout();
 
-  // Stage 6: AI attack vector ranking (30s max)
+  // Stage 6: AI attack vector ranking (45s max — LLM call)
   const { vectors, analysis } = await runStage("ai_analysis", () => aiRankAttackVectors(
     baseUrl, serverInfo, cms, writablePaths, uploadEndpoints, exposedPanels, misconfigurations, onProgress,
-  ), { vectors: [], analysis: "AI analysis timed out" }, 30_000);
+  ), { vectors: [], analysis: "AI analysis timed out" }, 45_000);
 
   const result: VulnScanResult = {
     target: baseUrl,

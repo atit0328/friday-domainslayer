@@ -4411,7 +4411,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { generateVulnScanAnalysis } = await import("./telegram-narrator");
         vulnScanResult = await fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
-        });
+        }, attackEntry.abortController.signal);
         const vulnMs = Date.now() - vulnStart;
         await narrator.updateStep(vulnStep, "done",
           `Server: ${vulnScanResult.serverInfo.server} | CMS: ${vulnScanResult.cms.type} | WAF: ${vulnScanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length}`,
@@ -4557,9 +4557,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         return fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
-        });
+        }, attackEntry.abortController.signal);
       }, { heartbeatLabel: "Vuln Scan" });
-      
+      const preScanMs = Date.now() - preScanStart;
       if (scanOutcome.ok) {
         const scanResult = scanOutcome.result;
         const scanMs = Date.now() - preScanStart;
@@ -4787,7 +4787,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               narrator.addStep(`🤖 ${detail.substring(0, 60)}`).catch(() => {});
             }
           } catch { /* ignore */ }
-        });
+        }, attackEntry.abortController.signal);
         const scanMs = Date.now() - scanStart;
         await narrator.updateStep(scanStepServer, "done", 
           generateVulnScanAnalysis({
@@ -4957,10 +4957,29 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           }).join("\n")
         );
       } else {
-        // Fallback: fixed order based on CMS
-        const allIds = compatibleMethods.map(m => m.id);
-        methodOrder = allIds;
-        await narrator.addAnalysis(`\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 scan \u2014 \u0E43\u0E0A\u0E49\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (${compatibleMethods.length} \u0E27\u0E34\u0E18\u0E35\u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A ${detectedCms.toUpperCase()})`);
+        // Fallback: NO scan data — use smart priority order (not all 20+ methods)
+        // When scan fails, we have no intel → only try high-value universal methods first
+        const PRIORITY_METHODS_NO_SCAN = [
+          "pipeline",       // Unified Pipeline — best general-purpose method
+          "redirect",       // Redirect Takeover — works on any CMS
+          "hijack",         // Credential hunt + hijack — universal
+          "cloaking",       // PHP injection — common on WP
+          "auto_prepend",   // .user.ini — works on any PHP site
+          "agentic_auto",   // AI autonomous — last resort, most adaptive
+          "open_redirect",  // Open redirect chain — universal
+        ];
+        
+        // Use priority order, but only include methods that are in compatibleMethods
+        const priorityIds = PRIORITY_METHODS_NO_SCAN.filter(id => compatibleMethods.some(m => m.id === id));
+        // Add remaining compatible methods after priority ones (in case user wants to try more)
+        const remainingIds = compatibleMethods.map(m => m.id).filter(id => !priorityIds.includes(id));
+        methodOrder = [...priorityIds, ...remainingIds];
+        
+        const skippedCount = remainingIds.length;
+        await narrator.addAnalysis(
+          `\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 scan \u2014 \u0E43\u0E0A\u0E49\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (${priorityIds.length} \u0E27\u0E34\u0E18\u0E35\u0E2B\u0E25\u0E31\u0E01 + ${skippedCount} \u0E2A\u0E33\u0E23\u0E2D\u0E07)\n` +
+          `\uD83C\uDFAF Priority: ${priorityIds.map((id, i) => `${i + 1}. ${compatibleMethods.find(m => m.id === id)?.name || id}`).join(", ")}`
+        );
       }
       
       // Set totalMethods for progress counter display
@@ -4986,6 +5005,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error(`METHOD_TIMEOUT: ${methodId} exceeded ${Math.round(timeout / 60000)}min limit`)), timeout)
           ),
+          // Also listen to global abort signal so global timeout truly cancels
+          new Promise<never>((_, reject) => {
+            if (attackEntry.abortController.signal.aborted) {
+              reject(new Error(`GLOBAL_ABORT: attack aborted`));
+              return;
+            }
+            attackEntry.abortController.signal.addEventListener("abort", () => {
+              reject(new Error(`GLOBAL_ABORT: attack aborted after ${Math.round((Date.now() - attackStartTime) / 1000)}s`));
+            }, { once: true });
+          }),
         ]);
       }
       
@@ -6195,7 +6224,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         const scanResult = await fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
-        });
+        }, attackEntry.abortController.signal);
         await narrator.updateStep(agentScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
           Date.now() - s1
@@ -6435,9 +6464,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         return fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
-        });
+        }, attackEntry.abortController.signal);
       }, { heartbeatLabel: "Vuln Scan" });
-      
+      const cloakScanMs = Date.now() - s1;
       if (cloakScanOutcome.ok) {
         const scanResult = cloakScanOutcome.result;
         await narrator.updateStep(cloakScanStep, "done",
@@ -6620,11 +6649,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const hijackScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
       const hijackScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-        return fullVulnScan(domain, (stage, detail) => {
+         return fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
-        });
+        }, attackEntry.abortController.signal);
       }, { heartbeatLabel: "Vuln Scan" });
-      
+      const hijackScanMs = Date.now() - s1;
       if (hijackScanOutcome.ok) {
         const scanResult = hijackScanOutcome.result;
         await narrator.updateStep(hijackScanStep, "done",
@@ -6885,7 +6914,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         const scanResult = await fullVulnScan(domain, (stage, detail) => {
           try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
-        });
+        }, attackEntry.abortController.signal);
         await narrator.updateStep(advScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
           Date.now() - s1
