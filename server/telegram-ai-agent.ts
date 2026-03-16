@@ -3373,8 +3373,9 @@ export function resetPollingHealth(): void {
 
 export function registerTelegramWebhook(app: any): void {
   app.post("/api/telegram/webhook", async (req: any, res: any) => {
-    // Note: Secret token verification disabled for reliability
+    // Note: Secret token verification disabled for reliability (v2 - force deploy)
     // Telegram webhook is protected by obscure URL + allowed_updates filter
+    console.log(`[TelegramAI] Webhook received update: ${JSON.stringify(req.body?.update_id || 'unknown')}`);
     
     try {
       // Respond immediately to Telegram (they expect fast 200)
