@@ -5702,3 +5702,14 @@
 - [x] TypeScript 0 errors
 - [x] Tests pass (36/36)
 - [ ] Save checkpoint
+
+# Telegram Progress Messages — ส่ง update ทุก phase ระหว่าง pipeline ทำงาน
+- [x] Analyze current progress callback flow (pipeline → telegram-ai-agent narrator)
+- [x] Pipeline already has 177 loggedOnEvent calls — events are comprehensive
+- [x] Improved callback handler to show sub-step details (upload method, elapsed time, results)
+- [x] Expanded translatePipelineEvent: 8 patterns → 25+ patterns (CMS, WAF, CF, upload, brute, verify, DNS, cloaking, etc.)
+- [x] Fixed hardcoded "10 นาที" timeout message → dynamic ATTACK_TIMEOUT_MS
+- [x] Added elapsed time tracking in phase headers
+- [x] TypeScript 0 errors
+- [x] Tests pass (48/48)
+- [ ] Save checkpoint

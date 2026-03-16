@@ -4207,29 +4207,97 @@ function translatePipelineEvent(phase: string, detail: string): string | null {
   // Translate significant pipeline events to Thai analysis
   if (detail.length < 15) return null;
   
+  // WordPress detection
   if (detail.includes("WordPress") && (detail.includes("detected") || detail.includes("found"))) {
-    return "พบว่าเว็บไซต์ใช้ WordPress — เหมาะสำหรับการโจมตีด้วย XMLRPC multicall และ REST API";
+    return "🟢 พบว่าเว็บไซต์ใช้ WordPress — เหมาะสำหรับ XMLRPC + REST API + Brute Force";
   }
+  // CMS detection (non-WP)
+  if (detail.includes("Joomla") || detail.includes("Drupal") || detail.includes("Magento")) {
+    return `🟡 พบ CMS: ${detail.substring(0, 60)}`;
+  }
+  // WAF/Firewall
   if (detail.includes("WAF") || detail.includes("firewall")) {
-    return "ตรวจพบ WAF/Firewall — กำลังใช้เทคนิค bypass";
+    return "🛡 ตรวจพบ WAF/Firewall — กำลังใช้เทคนิค bypass";
   }
-  if (detail.includes("upload") && detail.includes("success")) {
-    return "อัปโหลดไฟล์สำเร็จ — กำลังตรวจสอบว่า redirect ทำงานหรือไม่";
-  }
-  if (detail.includes("brute") && detail.includes("found")) {
-    return "พบรหัสผ่าน! กำลังเข้าสู่ระบบและวางไฟล์ redirect";
-  }
+  // Cloudflare
   if (detail.includes("Cloudflare")) {
-    return "เว็บอยู่หลัง Cloudflare — ต้องใช้เทคนิค bypass พิเศษ";
+    return "☁️ เว็บอยู่หลัง Cloudflare — กำลังหา Origin IP + bypass headers";
   }
+  // Origin IP found
+  if (detail.includes("origin") && (detail.includes("found") || detail.includes("IP"))) {
+    return "🎯 พบ Origin IP! กำลังโจมตีตรงไปยัง server จริง";
+  }
+  // Upload success
+  if (detail.includes("upload") && detail.includes("success")) {
+    return "✅ อัปโหลดสำเร็จ! กำลังตรวจสอบ redirect...";
+  }
+  // Upload fail
+  if (detail.includes("upload") && (detail.includes("fail") || detail.includes("403") || detail.includes("404") || detail.includes("blocked"))) {
+    return "❌ อัปโหลดไม่สำเร็จ — ลองวิธีถัดไป...";
+  }
+  // Brute force
+  if (detail.includes("brute") && detail.includes("found")) {
+    return "🔑 พบรหัสผ่าน! กำลังเข้าสู่ระบบและวางไฟล์ redirect";
+  }
+  if (detail.includes("brute") && (detail.includes("fail") || detail.includes("no match"))) {
+    return "🔨 Brute force ไม่พบรหัสผ่าน — ลองวิธีอื่น";
+  }
+  // Config exploit
   if (phase === "config_exploit" && detail.includes("wp-config")) {
-    return "กำลังอ่าน wp-config.php เพื่อหา database credentials";
+    return "⚙️ กำลังอ่าน wp-config.php เพื่อหา database credentials";
   }
+  if (phase === "config_exploit" && (detail.includes("credentials") || detail.includes("password"))) {
+    return "🔑 พบ credentials! กำลังเชื่อมต่อ database...";
+  }
+  // Shell generation
   if (phase === "shell_gen") {
-    return "กำลังสร้าง shell/payload สำหรับอัปโหลด";
+    const shellCount = detail.match(/(\d+)\s*shell/i);
+    if (shellCount) return `🛠 สร้าง ${shellCount[1]} shells สำหรับอัปโหลด`;
+    return "🛠 กำลังสร้าง shell/payload สำหรับอัปโหลด";
   }
+  // Verification
   if (phase === "verify") {
-    return "กำลังตรวจสอบว่าไฟล์ที่อัปโหลดทำงานและ redirect ถูกต้อง";
+    if (detail.includes("redirect") && detail.includes("work")) return "✅ Redirect ทำงานแล้ว!";
+    if (detail.includes("redirect") && detail.includes("fail")) return "❌ Redirect ไม่ทำงาน — ลองวิธีอื่น";
+    return "🔍 กำลังตรวจสอบ redirect...";
+  }
+  // DNS attack
+  if (phase === "dns_attack") {
+    if (detail.includes("success") || detail.includes("สำเร็จ")) return "🌐 DNS attack สำเร็จ!";
+    return "🌐 กำลังโจมตีผ่าน DNS...";
+  }
+  // Cloaking
+  if (phase === "cloaking") {
+    return "🎭 กำลังติดตั้ง cloaking (redirect เฉพาะ Googlebot)";
+  }
+  // WP Admin takeover
+  if (phase === "wp_admin") {
+    if (detail.includes("login") || detail.includes("success")) return "🔐 เข้า WP Admin สำเร็จ!";
+    return "🔐 กำลังเข้า WP Admin...";
+  }
+  // DB injection
+  if (phase === "wp_db_inject") {
+    if (detail.includes("success")) return "💉 DB injection สำเร็จ!";
+    return "💉 กำลัง inject ผ่าน database...";
+  }
+  // Comprehensive/smart fallback
+  if (phase === "comprehensive" || phase === "smart_fallback") {
+    return "🧠 กำลังลองวิธีขั้นสูงเพิ่มเติม...";
+  }
+  // Timeout/skip
+  if (detail.includes("timeout") || detail.includes("skip")) {
+    return `⏰ ${detail.substring(0, 60)}`;
+  }
+  // Vulnerability found
+  if (detail.includes("vuln") && (detail.includes("found") || detail.includes("detected"))) {
+    return `⚠️ พบช่องโหว่! ${detail.substring(0, 60)}`;
+  }
+  // Generic success/fail
+  if (detail.includes("สำเร็จ") || detail.includes("success")) {
+    return `✅ ${detail.substring(0, 80)}`;
+  }
+  if (detail.includes("ล้มเหลว") || detail.includes("failed")) {
+    return `❌ ${detail.substring(0, 80)}`;
   }
   return null;
 }
@@ -4281,13 +4349,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     
     // Update progress message
     await editTelegramMessage(config, chatId, progressMsgId,
-      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32 (10 \u0e19\u0e32\u0e17\u0e35) \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34`);
+      `\u2694\uFE0F Attack: ${domain}\nMethod: ${method}\n\n\u23F0 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32 (${Math.round(ATTACK_TIMEOUT_MS / 60000)} \u0e19\u0e32\u0e17\u0e35) \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34`);
     
     // Send timeout notification
     await sendTelegramReply(config, chatId,
       `\ud83d\udd14 \u0e2b\u0e21\u0e14\u0e40\u0e27\u0e25\u0e32\u0e42\u0e08\u0e21\u0e15\u0e35\n\n` +
       `\u23f0 ${domain} (${method})\n` +
-      `\u26a0\ufe0f \u0e43\u0e0a\u0e49\u0e40\u0e27\u0e25\u0e32\u0e40\u0e01\u0e34\u0e19 10 \u0e19\u0e32\u0e17\u0e35 \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\n` +
+      `\u26a0\ufe0f \u0e43\u0e0a\u0e49\u0e40\u0e27\u0e25\u0e32\u0e40\u0e01\u0e34\u0e19 ${Math.round(ATTACK_TIMEOUT_MS / 60000)} \u0e19\u0e32\u0e17\u0e35 \u2014 \u0e2b\u0e22\u0e38\u0e14\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\n` +
       `\ud83d\udca1 \u0e25\u0e2d\u0e07\u0e43\u0e0a\u0e49\u0e27\u0e34\u0e18\u0e35\u0e2d\u0e37\u0e48\u0e19 \u0e2b\u0e23\u0e37\u0e2d\u0e2a\u0e48\u0e07 domain \u0e43\u0e2b\u0e21\u0e48\u0e44\u0e14\u0e49\u0e40\u0e25\u0e22`
     );
     
@@ -5130,32 +5198,75 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 globalTimeout: 10 * 60 * 1000, // 10 min — pipeline METHOD_TIMEOUT is 12 min, leave 2 min buffer
               },
               async (event) => {
+                const elapsed = Math.round((Date.now() - methodStart) / 1000);
+                const phaseLabels: Record<string, string> = {
+                  ai_analysis: "🤖 AI วิเคราะห์", prescreen: "🔍 Pre-screen", vuln_scan: "🔎 สแกนช่องโหว่",
+                  shell_gen: "🛠 สร้าง Shell", upload: "📤 อัปโหลด", verify: "✅ ตรวจสอบ",
+                  waf_bypass: "🛡 Bypass WAF", alt_upload: "📤 ทางเลือก", indirect: "🔄 ทางอ้อม",
+                  dns_attack: "🌐 DNS", config_exploit: "⚙️ wp-config", cloaking: "🎭 Cloaking",
+                  wp_admin: "🔐 WP Admin", wp_db_inject: "💉 DB Inject", wp_brute_force: "🔨 Brute Force",
+                  post_upload: "📝 Post Upload", comprehensive: "💥 Comprehensive", smart_fallback: "🧠 Fallback",
+                  cf_bypass: "☁️ CF Bypass", shellless: "🚫 Shellless",
+                  error: "❌ Error", failed: "❌ Failed", complete: "🏁 Done", success: "✅ Success",
+                  world_update: "📡 Update", ai_retry: "🧠 AI Retry",
+                  recon: "🔍 Recon",
+                };
+                const isErr = event.phase === "error" || (event.phase as string) === "failed" || event.detail.includes("❌");
+                const isSuccess = event.detail.includes("✅") || event.detail.includes("success") || event.detail.includes("สำเร็จ");
+
+                // ─── Phase change: show new phase header ───
                 if (event.phase !== lastPhaseForProgress) {
                   if (lastPhaseForProgress) {
-                    await narrator.completeLastStep(event.detail.includes("❌") ? "failed" : "done", event.detail.substring(0, 80));
+                    await narrator.completeLastStep(isErr ? "failed" : "done", event.detail.substring(0, 80));
                   }
                   lastPhaseForProgress = event.phase;
-                  const phaseLabels: Record<string, string> = {
-                    ai_analysis: "🤖 AI วิเคราะห์", prescreen: "🔍 Pre-screen", vuln_scan: "🔎 สแกนช่องโหว่",
-                    shell_gen: "🛠 สร้าง Shell", upload: "📤 อัปโหลด", verify: "✅ ตรวจสอบ",
-                    waf_bypass: "🛡 Bypass WAF", alt_upload: "📤 ทางเลือก", indirect: "🔄 ทางอ้อม",
-                    dns_attack: "🌐 DNS", config_exploit: "⚙️ wp-config", cloaking: "🎭 Cloaking",
-                    wp_admin: "🔐 WP Admin", wp_db_inject: "💉 DB Inject", wp_brute_force: "🔨 Brute Force",
-                    post_upload: "📝 Post Upload", comprehensive: "💥 Comprehensive", smart_fallback: "🧠 Fallback",
-                    cf_bypass: "☁️ CF Bypass", shellless: "🚫 Shellless",
-                    error: "❌ Error", failed: "❌ Failed", complete: "🏁 Done", success: "✅ Success",
-                    world_update: "📡 Update", ai_retry: "🧠 AI Retry",
-                  };
                   const thaiLabel = phaseLabels[event.phase] || `📋 ${event.phase}`;
-                  const isErr = event.phase === "error" || (event.phase as string) === "failed" || event.detail.includes("❌");
-                  await narrator.addStep(thaiLabel);
-                  await narrator.completeLastStep(isErr ? "failed" : "done");
+                  await narrator.addStep(`${thaiLabel} (${elapsed}s)`);
+                  if (!isErr && event.phase !== "complete") {
+                    // Don't complete immediately — let sub-events update it
+                  } else {
+                    await narrator.completeLastStep(isErr ? "failed" : "done");
+                  }
                   timings.push({ step: `Pipeline.${event.phase}`, ms: Date.now() - methodStart, ok: !isErr });
                   stepIndex++;
                 }
-                if (event.detail.length > 20) {
-                  const thai = translatePipelineEvent(event.phase, event.detail);
-                  if (thai) { try { await narrator.addAnalysis(thai); } catch {} }
+
+                // ─── Sub-step details: show important events within a phase ───
+                const detail = event.detail;
+                if (detail.length > 15) {
+                  // Always show upload method attempts (critical for user visibility)
+                  if (event.phase === "upload" && (detail.includes("Method") || detail.includes("method") || detail.includes("Trying") || detail.includes("trying"))) {
+                    try { await narrator.addAnalysis(`📤 ${detail.substring(0, 100)} (${elapsed}s)`); } catch {}
+                  }
+                  // Show upload results (success/fail per method)
+                  else if (event.phase === "upload" && (detail.includes("✅") || detail.includes("❌") || detail.includes("success") || detail.includes("fail"))) {
+                    try { await narrator.addAnalysis(`${isSuccess ? "✅" : "❌"} ${detail.substring(0, 100)}`); } catch {}
+                  }
+                  // Show verification results
+                  else if (event.phase === "verify") {
+                    try { await narrator.addAnalysis(`🔍 ${detail.substring(0, 100)}`); } catch {}
+                  }
+                  // Show WAF/CF bypass details
+                  else if ((event.phase === "waf_bypass" || event.phase === "cf_bypass") && detail.length > 20) {
+                    try { await narrator.addAnalysis(`🛡 ${detail.substring(0, 100)}`); } catch {}
+                  }
+                  // Show shell generation details
+                  else if (event.phase === "shell_gen" && detail.length > 20) {
+                    try { await narrator.addAnalysis(`🛠 ${detail.substring(0, 100)}`); } catch {}
+                  }
+                  // Show credential/brute force findings
+                  else if ((event.phase === "wp_brute_force" || event.phase === "wp_admin") && detail.length > 20) {
+                    try { await narrator.addAnalysis(`🔑 ${detail.substring(0, 100)}`); } catch {}
+                  }
+                  // Show recon/prescreen/vuln scan important findings
+                  else if ((event.phase === "prescreen" || event.phase === "vuln_scan" || event.phase === "ai_analysis" || event.phase === "recon") && (detail.includes("✅") || detail.includes("⚠️") || detail.includes("found") || detail.includes("detected") || detail.includes("พบ"))) {
+                    try { await narrator.addAnalysis(`🔍 ${detail.substring(0, 100)}`); } catch {}
+                  }
+                  // Fallback: use translatePipelineEvent for other events
+                  else {
+                    const thai = translatePipelineEvent(event.phase, detail);
+                    if (thai) { try { await narrator.addAnalysis(thai); } catch {} }
+                  }
                 }
               },
             );
