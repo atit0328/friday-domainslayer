@@ -5725,4 +5725,29 @@
 - [x] shouldStop() checks already present at 40+ locations between phases
 - [x] TypeScript 0 errors
 - [x] Tests pass (26/26 across 4 test files)
+- [x] Save checkpoint
+
+# Pipeline ค้างที่ 29% หลัง vuln scan — ไม่มี progress update อีกเลย
+- [x] วิเคราะห์ flow หลัง vuln scan timeout: อะไรทำให้เงียบ
+  └─ Root cause 1: Event callback filter เข้มเกินไป — phase ที่ไม่มี keyword match ถูก drop → translatePipelineEvent return null
+  └─ Root cause 2: addAnalysis ใช้ key analysis_${steps.length} → Map.set ทับ key เดิม เห็นแค่ analysis สุดท้าย
+  └─ Root cause 3: Heartbeat 30s ใช้ addStep (สร้าง step ใหม่ซ้ำ) แทน addAnalysis
+- [x] ตรวจสอบ method loop ใน telegram-ai-agent.ts: narrator update ทำงานไหม
+- [x] ตรวจสอบ pipeline event callback: ส่ง event กลับ Telegram จริงไหม
+- [x] เพิ่ม real-time progress update ทุก phase transition
+  └─ Rewrote event callback: ALWAYS show every event (detail > 10 chars) with phase-specific emoji
+  └─ No more filter/drop — every pipeline event goes to Telegram
+- [x] เพิ่ม error reporting ทันทีเมื่อ phase ล้มเหลว
+  └─ Method errors now show as visible steps (addStep + completeLastStep failed) not just analysis
+  └─ Early exit conditions (consecutive failures, time limit) show as visible steps too
+- [x] ทำให้ heartbeat ทำงานจริง (ทุก 15s ต้องมี update)
+  └─ Heartbeat reduced 30s → 15s, uses addAnalysis instead of addStep
+  └─ Retry heartbeat also fixed: 30s → 15s, addAnalysis
+- [x] Narrator fixes:
+  └─ addAnalysis uses unique counter key (analysis_u${counter}) — no more overwrite
+  └─ Max 3 analyses per step, auto-prune old steps (keep last 5)
+  └─ MIN_EDIT_INTERVAL reduced 1500ms → 1000ms
+  └─ Fixed TS2802: Array.from() for Map iteration
+- [x] TypeScript 0 errors
+- [x] Tests pass (26/26 across 4 test files, 3 pipeline integration tests pre-existing timeout — not caused by our changes)
 - [ ] Save checkpoint

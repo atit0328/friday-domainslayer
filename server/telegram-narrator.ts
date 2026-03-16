@@ -376,7 +376,9 @@ export class TelegramNarrator {
   private methodResults: Array<{ name: string; icon: string; success: boolean }> = [];
   
   /** Minimum interval between edits (ms) to avoid Telegram rate limits */
-  private static MIN_EDIT_INTERVAL = 1500;
+  private static MIN_EDIT_INTERVAL = 1000;
+  /** Counter for unique analysis keys */
+  private analysisCounter: number = 0;
 
   constructor(config: NarratorConfig) {
     this.config = config;
@@ -441,8 +443,41 @@ export class TelegramNarrator {
 
   /** Add analysis text for current phase (shown between steps) */
   async addAnalysis(text: string): Promise<void> {
-    const key = `analysis_${this.steps.length}`;
-    this.phaseAnalysis.set(key, text);
+    // Use unique counter key so multiple analyses per step don't overwrite each other
+    this.analysisCounter++;
+    const key = `analysis_u${this.analysisCounter}`;
+    const stepIdx = this.steps.length;
+    // Store with step index for rendering
+    this.phaseAnalysis.set(key, `${stepIdx}|${text}`);
+    
+    // Keep max 3 analyses per step (remove oldest for this step)
+    const keysForStep: string[] = [];
+    const entries = Array.from(this.phaseAnalysis.entries());
+    for (const [k, v] of entries) {
+      if (k.startsWith("analysis_u")) {
+        const pi = v.indexOf("|");
+        if (pi !== -1 && parseInt(v.substring(0, pi), 10) === stepIdx) {
+          keysForStep.push(k);
+        }
+      }
+    }
+    while (keysForStep.length > 3) {
+      this.phaseAnalysis.delete(keysForStep.shift()!);
+    }
+    
+    // Prune analyses for old steps (keep only last 5 steps' analyses)
+    if (stepIdx > 5) {
+      const pruneEntries = Array.from(this.phaseAnalysis.entries());
+      for (const [k, v] of pruneEntries) {
+        if (k.startsWith("analysis_u")) {
+          const pi = v.indexOf("|");
+          if (pi !== -1 && parseInt(v.substring(0, pi), 10) < stepIdx - 4) {
+            this.phaseAnalysis.delete(k);
+          }
+        }
+      }
+    }
+    
     await this.updateMessage();
   }
 
@@ -536,11 +571,18 @@ export class TelegramNarrator {
         text += `\n   └─ ${step.analysis}`;
       }
       
-      // Show phase analysis between steps
-      const analysisKey = `analysis_${i + 1}`;
-      const analysis = this.phaseAnalysis.get(analysisKey);
-      if (analysis) {
-        text += `\n\n${analysis}\n`;
+      // Show phase analysis after this step (collect all analyses tagged for this step index)
+      const stepEntries = Array.from(this.phaseAnalysis.entries());
+      for (const [key, val] of stepEntries) {
+        if (key.startsWith("analysis_u")) {
+          const pipeIdx = val.indexOf("|");
+          if (pipeIdx === -1) continue;
+          const stepIdx = parseInt(val.substring(0, pipeIdx), 10);
+          const analysisText = val.substring(pipeIdx + 1);
+          if (stepIdx === i + 1) {
+            text += `\n   └─ ${analysisText}`;
+          }
+        }
       }
     }
     

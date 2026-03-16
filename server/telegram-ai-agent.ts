@@ -5164,13 +5164,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}/${methodOrder.length}: ${methodDef.name}`);
         const methodStart = Date.now();
         
-        // Heartbeat: update narrator every 30s to show we're still alive
+        // Heartbeat: update narrator every 15s to show we're still alive
         const heartbeatInterval = setInterval(async () => {
           const elapsed = Math.round((Date.now() - methodStart) / 1000);
           try {
-            await narrator.addStep(`⏳ ${methodDef.name} กำลังทำงาน... (${elapsed}s)`);
+            await narrator.addAnalysis(`⏳ ${methodDef.name} ยังทำงาน... (${elapsed}s)`);
           } catch { /* ignore */ }
-        }, 30_000);
+        }, 15_000);
         
         try {
           await withMethodTimeout(methodId, async () => {
@@ -5231,42 +5231,23 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                   stepIndex++;
                 }
 
-                // ─── Sub-step details: show important events within a phase ───
+                // ─── Sub-step details: ALWAYS show every event to Telegram ───
                 const detail = event.detail;
-                if (detail.length > 15) {
-                  // Always show upload method attempts (critical for user visibility)
-                  if (event.phase === "upload" && (detail.includes("Method") || detail.includes("method") || detail.includes("Trying") || detail.includes("trying"))) {
-                    try { await narrator.addAnalysis(`📤 ${detail.substring(0, 100)} (${elapsed}s)`); } catch {}
-                  }
-                  // Show upload results (success/fail per method)
-                  else if (event.phase === "upload" && (detail.includes("✅") || detail.includes("❌") || detail.includes("success") || detail.includes("fail"))) {
-                    try { await narrator.addAnalysis(`${isSuccess ? "✅" : "❌"} ${detail.substring(0, 100)}`); } catch {}
-                  }
-                  // Show verification results
-                  else if (event.phase === "verify") {
-                    try { await narrator.addAnalysis(`🔍 ${detail.substring(0, 100)}`); } catch {}
-                  }
-                  // Show WAF/CF bypass details
-                  else if ((event.phase === "waf_bypass" || event.phase === "cf_bypass") && detail.length > 20) {
-                    try { await narrator.addAnalysis(`🛡 ${detail.substring(0, 100)}`); } catch {}
-                  }
-                  // Show shell generation details
-                  else if (event.phase === "shell_gen" && detail.length > 20) {
-                    try { await narrator.addAnalysis(`🛠 ${detail.substring(0, 100)}`); } catch {}
-                  }
-                  // Show credential/brute force findings
-                  else if ((event.phase === "wp_brute_force" || event.phase === "wp_admin") && detail.length > 20) {
-                    try { await narrator.addAnalysis(`🔑 ${detail.substring(0, 100)}`); } catch {}
-                  }
-                  // Show recon/prescreen/vuln scan important findings
-                  else if ((event.phase === "prescreen" || event.phase === "vuln_scan" || event.phase === "ai_analysis" || event.phase === "recon") && (detail.includes("✅") || detail.includes("⚠️") || detail.includes("found") || detail.includes("detected") || detail.includes("พบ"))) {
-                    try { await narrator.addAnalysis(`🔍 ${detail.substring(0, 100)}`); } catch {}
-                  }
-                  // Fallback: use translatePipelineEvent for other events
-                  else {
-                    const thai = translatePipelineEvent(event.phase, detail);
-                    if (thai) { try { await narrator.addAnalysis(thai); } catch {} }
-                  }
+                if (detail.length > 10) {
+                  // Pick the right emoji based on phase
+                  const phaseEmoji: Record<string, string> = {
+                    upload: "📤", verify: "🔍", waf_bypass: "🛡", cf_bypass: "☁️",
+                    shell_gen: "🛠", wp_brute_force: "🔑", wp_admin: "🔐",
+                    config_exploit: "⚙️", dns_attack: "🌐", cloaking: "🎭",
+                    wp_db_inject: "💉", indirect: "🔄", alt_upload: "📤",
+                    comprehensive: "💥", smart_fallback: "🧠", shellless: "🚫",
+                    post_upload: "📝", ai_analysis: "🤖", prescreen: "🔍",
+                    vuln_scan: "🔎", recon: "🔍", ai_retry: "🧠",
+                  };
+                  const emoji = isErr ? "❌" : isSuccess ? "✅" : (phaseEmoji[event.phase] || "📋");
+                  try {
+                    await narrator.addAnalysis(`${emoji} ${detail.substring(0, 120)} (${elapsed}s)`);
+                  } catch {}
                 }
               },
             );
@@ -5946,11 +5927,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             timedOutMethods.push({ methodId, methodDef, originalTimeout: METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT });
           }
           
-          await narrator.addAnalysis(
-            isTimeout
-              ? `⏰ ${methodDef.name} หมดเวลา — skip ไปวิธีถัดไป...`
-              : `❌ ${methodDef.name} error: ${methodErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป...`
-          );
+          // Show error as a visible step + analysis
+          const errDetail = isTimeout
+            ? `⏰ ${methodDef.name} หมดเวลา (${Math.round((Date.now() - methodStart) / 1000)}s) — skip ไปวิธีถัดไป`
+            : `❌ ${methodDef.name}: ${methodErr.message?.substring(0, 60) || "unknown"} — ลองวิธีถัดไป`;
+          await narrator.addStep(errDetail);
+          await narrator.completeLastStep("failed");
         } finally {
           clearInterval(heartbeatInterval);
         }
@@ -6010,17 +5992,17 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         
         // Early exit: stop if too many consecutive failures
         if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES) {
-          await narrator.addAnalysis(
-            `⚠️ ${failedMethods.length} วิธีล้มเหลวติดกัน — หยุดเพื่อประหยัดเวลา\n` +
-            `💡 ลองใช้วิธีเฉพาะเจาะจง เช่น hijack_redirect หรือ cloaking_inject`
-          );
+          await narrator.addStep(`⚠️ ${failedMethods.length} วิธีล้มเหลวติดกัน — หยุดเพื่อประหยัดเวลา`);
+          await narrator.completeLastStep("failed");
+          await narrator.addAnalysis(`💡 ลองใช้วิธีเฉพาะเจาะจง เช่น hijack_redirect หรือ cloaking_inject`);
           break;
         }
         
         // Early exit: check total elapsed time (safety net)
         const totalElapsed = Date.now() - attackStartTime;
         if (totalElapsed > ATTACK_TIMEOUT_MS - 30_000) {
-          await narrator.addAnalysis(`⏰ ใกล้หมดเวลา (${Math.round(totalElapsed / 60000)} นาที) — หยุดอัตโนมัติ`);
+          await narrator.addStep(`⏰ ใกล้หมดเวลา (${Math.round(totalElapsed / 60000)} นาที) — หยุดอัตโนมัติ`);
+          await narrator.completeLastStep("failed");
           break;
         }
       } // end for loop
@@ -6047,9 +6029,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           const retryHeartbeat = setInterval(async () => {
             const elapsed = Math.round((Date.now() - retryStart) / 1000);
             try {
-              await narrator.addStep(`⏳ Retry ${methodDef.name}... (${elapsed}s)`);
+              await narrator.addAnalysis(`⏳ Retry ${methodDef.name} ยังทำงาน... (${elapsed}s)`);
             } catch { /* ignore */ }
-          }, 30_000);
+          }, 15_000);
           
           try {
             // Override timeout for this retry
