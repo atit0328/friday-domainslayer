@@ -19,6 +19,7 @@ import { invokeLLM, type Message, type Tool, type InvokeResult } from "./_core/l
 import { ENV } from "./_core/env";
 import { getTelegramConfig, sendVulnAlert, sendAttackSuccessAlert, sendFailureSummaryAlert, type TelegramConfig, type MethodAttempt } from "./telegram-notifier";
 import { runFailureLearningLoop, suggestBestMode, type FailureRecord } from "./failure-learning-engine";
+import { recordAttackOutcome, getMethodEffectiveness, type AttackOutcome } from "./adaptive-learning";
 
 // ─── Direct fetch for Telegram API (no proxy pool) ───
 async function telegramFetch(
@@ -4979,6 +4980,53 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         );
       }
       
+      // ═══ AUTO-PRIORITY: Reorder methods using historical success rates ═══
+      try {
+        const detectedWaf = vulnScanResult?.serverInfo?.waf || null;
+        const effectiveness = await getMethodEffectiveness(detectedCms === "unknown" ? null : detectedCms, detectedWaf);
+        if (effectiveness.length > 0) {
+          // Build boost/penalty map from historical data
+          const boostMap = new Map<string, number>();
+          const skipSet = new Set<string>();
+          for (const eff of effectiveness) {
+            if (eff.shouldSkip && eff.attempts >= 5) {
+              skipSet.add(eff.method);
+            } else if (eff.successRate > 0) {
+              boostMap.set(eff.method, eff.successRate);
+            }
+          }
+          
+          // Remove methods that historically always fail for this CMS/WAF combo
+          const beforeCount = methodOrder.length;
+          if (skipSet.size > 0) {
+            methodOrder = methodOrder.filter(id => !skipSet.has(id));
+          }
+          
+          // Boost methods with high historical success rates (stable sort)
+          if (boostMap.size > 0) {
+            methodOrder.sort((a, b) => {
+              const boostA = boostMap.get(a) || 0;
+              const boostB = boostMap.get(b) || 0;
+              return boostB - boostA; // Higher success rate first
+            });
+          }
+          
+          const skippedByHistory = beforeCount - methodOrder.length;
+          if (skippedByHistory > 0 || boostMap.size > 0) {
+            await narrator.addAnalysis(
+              `📊 Auto-Priority (historical data):\n` +
+              (skippedByHistory > 0 ? `⏭️ Skip ${skippedByHistory} วิธีที่ไม่เคยสำเร็จกับ ${detectedCms}/${detectedWaf || 'no-waf'}\n` : "") +
+              (boostMap.size > 0 ? `🔝 Boost: ${Array.from(boostMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, r]) => `${m} (${(r * 100).toFixed(0)}%)`).join(", ")}` : "")
+            );
+          }
+        }
+      } catch (effErr: any) {
+        console.warn(`[TelegramAI] Auto-priority error (non-fatal): ${effErr.message}`);
+      }
+      
+      // ═══ METHOD OUTCOME TRACKING: Track each method's result ═══
+      const methodOutcomes: Array<{ methodId: string; methodName: string; success: boolean; durationMs: number; errorMessage?: string; attemptNumber: number }> = [];
+      
       // Set totalMethods for progress counter display
       (narrator as any).config.totalMethods = methodOrder.length;
       
@@ -5780,10 +5828,57 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }
         
         // Record method result for progress counter
-        const methodSuccess = fullChainSuccess && successMethod === methodId;
+        // FIX: successMethod uses human-readable names (e.g. "Unified Pipeline") not methodId (e.g. "pipeline")
+        // So we check if fullChainSuccess just became true during this iteration
+        const methodSuccess = fullChainSuccess && !methodOutcomes.some(o => o.success);
         narrator.recordMethodResult(methodDef.name, methodDef.icon, methodSuccess);
         
-        timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: Date.now() - methodStart, ok: fullChainSuccess });
+        // Track outcome for adaptive learning
+        const methodDurationMs = Date.now() - methodStart;
+        methodOutcomes.push({
+          methodId,
+          methodName: methodDef.name,
+          success: methodSuccess,
+          durationMs: methodDurationMs,
+          errorMessage: methodSuccess ? undefined : failedMethods[failedMethods.length - 1],
+          attemptNumber: mi + 1,
+        });
+        
+        // Record to adaptive learning DB (fire-and-forget)
+        recordAttackOutcome({
+          targetDomain: domain,
+          cms: detectedCms === "unknown" ? null : detectedCms,
+          cmsVersion: vulnScanResult?.cms?.version || null,
+          serverType: vulnScanResult?.serverInfo?.server || null,
+          phpVersion: vulnScanResult?.serverInfo?.phpVersion || null,
+          wafDetected: vulnScanResult?.serverInfo?.waf || null,
+          wafStrength: vulnScanResult?.serverInfo?.cdn || null,
+          vulnScore: vulnScanResult ? vulnScanResult.misconfigurations.filter(m => m.exploitable).length : null,
+          method: methodId,
+          exploitType: methodDef.name,
+          payloadType: null,
+          wafBypassUsed: [],
+          payloadModifications: [],
+          attackPath: null,
+          attemptNumber: mi + 1,
+          isRetry: false,
+          previousMethodsTried: methodOutcomes.filter(o => !o.success).map(o => o.methodId),
+          success: methodSuccess,
+          httpStatus: null,
+          errorCategory: methodSuccess ? null : "method_failed",
+          errorMessage: methodSuccess ? null : (failedMethods[failedMethods.length - 1]?.substring(0, 200) || null),
+          filesPlaced: 0,
+          redirectVerified: methodSuccess,
+          durationMs: methodDurationMs,
+          aiFailureCategory: null,
+          aiReasoning: null,
+          aiConfidence: null,
+          aiEstimatedSuccess: null,
+          sessionId: attackEntry.id ? Number(attackEntry.id) : null,
+          agenticSessionId: null,
+        }).catch(err => console.warn(`[TelegramAI] recordAttackOutcome error: ${err.message}`));
+        
+        timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: methodDurationMs, ok: fullChainSuccess });
         
         // Early exit: stop if too many consecutive failures
         if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES) {

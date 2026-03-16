@@ -5611,3 +5611,31 @@
 - [x] Reduce unified-attack-pipeline prescreen timeout (60s → 30s)
 - [x] Sync pipeline vuln scan timeout with scanner (30s → 65s to match scanner's 60s FULL_SCAN_TIMEOUT)
 - [x] Reduce all vuln scan stage timeouts (fingerprint 30→12s, CMS 40→15s, writable 45→15s, upload 25→10s, panels 25→10s, AI 45→20s)
+
+# Attack Success Tracking + Auto-Priority
+
+- [ ] Create attack_method_stats DB table (method_id, total_attempts, successes, failures, timeouts, avg_duration_ms, last_success_at, success_rate, cms_type)
+- [ ] Create tracking helper functions (recordMethodResult, getMethodStats, getMethodSuccessRates)
+- [x] Integrate tracking into full_chain method loop (recordAttackOutcome wired into method loop)
+- [x] Build auto-priority: reorder methods by historical success rate per CMS type (getMethodEffectiveness)
+- [ ] Add method stats tRPC procedures (list, reset, getByMethod)
+- [ ] Add Attack Method Stats UI in AAA dashboard (success rates, avg duration, charts)
+
+# Cloudflare Bypass Retry Logic
+
+- [ ] Build CF bypass module (server/cf-bypass.ts) with multiple techniques
+- [ ] Technique 1: Origin IP discovery (DNS history, subdomains, SSL certs, Shodan)
+- [ ] Technique 2: Header manipulation (CF-Connecting-IP, X-Forwarded-For spoofing)
+- [ ] Technique 3: Cache-based bypass (cached pages, CDN edge bypass)
+- [ ] Technique 4: WAF rule evasion (encoding tricks, chunked transfer, parameter pollution)
+- [ ] Integrate CF bypass into vuln scanner (use bypass when WAF detected)
+- [ ] Integrate CF bypass into attack pipeline methods
+- [ ] Write vitest tests for both features
+
+# Real-World Hack Analysis + Attack Pipeline Improvement
+- [x] Analyze www.moenas.com/menus hack technique (Parasite SEO + conditional JS redirect on Wix/CF)
+- [x] Identify what attack method was used (CMS content injection + conditional redirect, not file upload)
+- [x] Wire recordAttackOutcome() into full_chain method loop
+- [x] Fix successMethod === methodId comparison bug (added METHOD_ID_MAP for correct matching)
+- [x] Add auto-priority reorder using getMethodEffectiveness()
+- [x] Enhance attack methods: new parasite-seo-injector.ts with Thai SEO content + conditional JS redirect + schema markup + FAQ + comparison tables
