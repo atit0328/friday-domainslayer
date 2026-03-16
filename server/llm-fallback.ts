@@ -163,8 +163,9 @@ async function invokeBuiltin(params: InvokeParams): Promise<InvokeResult> {
   const rf = params.responseFormat || params.response_format;
   if (rf) payload.response_format = rf;
 
-  // Add timeout: 30s for chat, 120s for heavy tasks
-  const timeoutMs = isChatMode ? 30_000 : 120_000;
+  // Add timeout: 60s for chat, 120s for heavy tasks
+  // Chat mode needs 60s because tool-calling with many tools can be slow
+  const timeoutMs = isChatMode ? 60_000 : 120_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   
@@ -214,9 +215,9 @@ async function invokeOpenAI(params: InvokeParams): Promise<InvokeResult> {
   const rf = params.responseFormat || params.response_format;
   if (rf) payload.response_format = rf;
 
-  // Add 30s timeout for OpenAI
+  // Add 60s timeout for OpenAI (consistent with other providers)
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  const timer = setTimeout(() => controller.abort(), 60_000);
   
   let response: Response;
   try {
@@ -302,7 +303,8 @@ async function invokeAnthropic(params: InvokeParams): Promise<InvokeResult> {
   }
 
   // Timeout: 30s for chat, 90s for heavy tasks with thinking
-  const timeoutMs = isChatMode ? 30_000 : 90_000;
+  // Chat mode needs 60s because tool-calling with many tools can be slow
+  const timeoutMs = isChatMode ? 60_000 : 90_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   
@@ -420,9 +422,15 @@ export async function invokeLLMWithFallback(params: InvokeParams): Promise<Invok
       errors.push(`${provider.label}: ${errorMsg}`);
       console.log(`[LLM-Fallback] ❌ ${provider.label} failed: ${errorMsg.slice(0, 200)}`);
       
-      // If it's NOT a quota error, don't try fallback (it might be a bad request)
-      if (!isQuotaError(errorMsg) && !errorMsg.includes("500") && !errorMsg.includes("503")) {
-        throw err; // Re-throw non-quota errors immediately
+      // If it's NOT a quota/timeout/server error, don't try fallback (it might be a bad request)
+      const isTimeoutError = err.name === "AbortError" || errorMsg.includes("abort") || errorMsg.includes("timeout");
+      if (!isQuotaError(errorMsg) && !isTimeoutError && !errorMsg.includes("500") && !errorMsg.includes("503")) {
+        throw err; // Re-throw non-recoverable errors immediately
+      }
+      
+      // For timeout errors, log and try next provider
+      if (isTimeoutError) {
+        console.log(`[LLM-Fallback] ⏱️ ${provider.label} timed out, trying next provider...`);
       }
       
       // Continue to next provider for quota/server errors

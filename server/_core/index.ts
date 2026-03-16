@@ -79,41 +79,45 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
-    // Start SEO scheduler for weekly auto-run
-    startScheduler();
-    // Start proxy health check scheduler (every 30 minutes)
-    startProxyScheduler(30 * 60 * 1000);
-    // Start vulnerability scan scheduler (every 15 minutes)
-    startScanScheduler();
-    // Start CVE auto-update scheduler (daily at 03:00 UTC)
-    startCveScheduler();
-    // Start adaptive learning scheduler (every 6 hours)
-    startLearningScheduler();
-    // Start background daemon (persistent task queue)
-    startDaemon();
+    
     // ═══════════════════════════════════════════════════════
-    // PRODUCTION-ONLY services — skip in dev to prevent bot conflicts
-    // Dev server (sandbox) must NOT start Telegram polling or autonomous agents
-    // because production is already running them → causes 409 Conflict errors
+    // ENVIRONMENT GUARD: Dev vs Production services
+    // Dev server (sandbox) runs ONLY lightweight services (SEO scheduler, proxy check)
+    // Production runs ALL services including Telegram bot, AI agents, heavy schedulers
+    // This prevents: bot conflicts, LLM quota competition, duplicate background tasks
     // ═══════════════════════════════════════════════════════
     const isDev = process.env.NODE_ENV === "development";
+    
+    // Lightweight services — safe to run in both dev and production
+    startScheduler();
+    startProxyScheduler(30 * 60 * 1000);
+    
     if (isDev) {
-      console.log("[Server] ⚠️ DEV MODE — Skipping Telegram bot, orchestrators, and autonomous agents to prevent bot conflicts");
+      console.log("[Server] ⚠️ DEV MODE — Running only lightweight services (SEO scheduler, proxy check)");
+      console.log("[Server] ⚠️ DEV MODE — Skipping: Telegram bot, orchestrators, AI agents, CVE/Learning schedulers, Daemon");
     } else {
-      // PRODUCTION: Wait 30s before starting Telegram bot to let old instance die during deploy
+      // ═══ PRODUCTION-ONLY: Heavy background services ═══
+      // These consume LLM quota and must not run in dev
+      startScanScheduler();
+      console.log("[Server] 🔍 Vulnerability Scan Scheduler initialized");
+      startCveScheduler();
+      console.log("[Server] 🛡️ CVE Auto-Update Scheduler initialized");
+      startLearningScheduler();
+      console.log("[Server] 🧠 Adaptive Learning Scheduler initialized");
+      startDaemon();
+      console.log("[Server] ⚙️ Background Daemon initialized");
+      
+      // ═══ PRODUCTION-ONLY: Telegram bot + AI agents ═══
+      // Wait 30s before starting to let old instance die during deploy
       const TELEGRAM_STARTUP_DELAY = 30_000;
       console.log(`[Server] ⏳ PRODUCTION — Waiting ${TELEGRAM_STARTUP_DELAY / 1000}s before starting Telegram bot and autonomous agents...`);
       setTimeout(() => {
-        // Start agentic auto orchestrator (attack agent is DISABLED by default — use /daemon on attack to enable)
         startOrchestrator();
         console.log("[Server] 🤖 Agentic Auto Orchestrator initialized");
-        // Start SEO Orchestrator brain (autonomous 7-day sprint engine)
         startSeoOrchestrator();
         console.log("[Server] 🧠 SEO Orchestrator brain initialized");
-        // Start Telegram AI Chat Agent (polling mode)
         startTelegramPolling();
         console.log("[Server] 💬 Telegram AI Chat Agent initialized");
-        // Start Daily Summary Scheduler (8:00 AM Bangkok time)
         startDailySummaryScheduler();
         console.log("[Server] 📅 Daily Summary Scheduler initialized");
       }, TELEGRAM_STARTUP_DELAY);

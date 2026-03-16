@@ -5447,3 +5447,10 @@
 - [x] Find root cause of persistent conflict even after NODE_ENV guard
 - [x] Fix the conflict loop and ensure single bot instance
 - [x] Test and save checkpoint
+
+# Fix Bot Hanging After Attack Command
+
+- [x] Investigate attack command flow — why bot shows "processing" but never executes
+- [x] Check if attack agent disabled state prevents manual attacks via Telegram (no, manual attacks work independently)
+- [x] Fix: moved heavy schedulers to prod-only, increased LLM timeout 30s→60s, added timeout fallback to next provider
+- [x] Test and save checkpoint
