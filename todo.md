@@ -5476,6 +5476,10 @@
 - [x] Save checkpoint and deploy to production
 - [x] Remove polling fallback from production startup (prevents 409 conflicts)
 - [x] Change drop_pending_updates to false (keep messages during deploy)
-- [ ] Test webhook receives messages (send "สวัสดี" in Telegram)
+- [x] Test webhook receives messages (send "สวัสดี" in Telegram) — bot responds!
 - [ ] Test callback queries (button presses work)
-- [ ] Test attack commands work end-to-end
+- [x] Fix: Attack command hangs after showing "กำลังประมวลผล" — added direct shortcuts + error handling
+- [x] Add direct attack shortcut: "โจมตี domain" bypasses LLM for instant keyboard response
+- [x] Add bare domain shortcut: typing just a domain shows attack keyboard instantly
+- [x] Add error handling wrapper around processMessage to prevent silent failures
+- [ ] Test attack commands work end-to-end after shortcuts

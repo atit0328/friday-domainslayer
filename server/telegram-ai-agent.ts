@@ -492,6 +492,41 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     }
   }
   
+  // ─── Direct attack shortcut: "โจมตี domain" or "hack domain" with domain in text ───
+  // This bypasses LLM entirely for faster response
+  const directAttackPatterns = [
+    /^(?:โจมตี|hack|attack|scan|สแกน|เอา|take\s*over)\s+(.+)/i,
+  ];
+  for (const pattern of directAttackPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const rest = match[1].trim();
+      // Extract domain from the rest of the text
+      const domainMatch = rest.match(/(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})/);
+      if (domainMatch) {
+        const domain = domainMatch[1];
+        const config = getTelegramConfig();
+        if (config) {
+          console.log(`[TelegramAI] Direct attack shortcut: ${domain}`);
+          await sendAttackTypeKeyboard(config, chatId, domain);
+          return "__HANDLED_BY_KEYBOARD__";
+        }
+      }
+    }
+  }
+  
+  // ─── Bare domain shortcut: user just types a domain name ───
+  const bareDomainMatch = text.trim().match(/^(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})(?:\/\S*)?$/);
+  if (bareDomainMatch && !lowerText.startsWith('/')) {
+    const domain = bareDomainMatch[1];
+    const config = getTelegramConfig();
+    if (config) {
+      console.log(`[TelegramAI] Bare domain shortcut: ${domain}`);
+      await sendAttackTypeKeyboard(config, chatId, domain);
+      return "__HANDLED_BY_KEYBOARD__";
+    }
+  }
+  
   // Smart follow-up: detect commands that reference a previously discussed domain
   // e.g., "scan ดูก่อน", "hack เลย", "โจมตีเลย", "redirect เลย"
   const followUpPatterns = [
@@ -2872,10 +2907,20 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     } catch {}
     
     const msgStart = Date.now();
-    const reply = await processMessage(msg.chat.id, msg.text);
+    let reply: string;
+    try {
+      reply = await processMessage(msg.chat.id, msg.text);
+    } catch (processErr: any) {
+      console.error(`[TelegramAI] CRITICAL: processMessage threw: ${processErr.message}\n${processErr.stack?.substring(0, 500)}`);
+      reply = `⚠️ ระบบมีปัญหาชั่วคราว: ${processErr.message?.substring(0, 80) || 'unknown error'}\n\nลองพิมพ์ใหม่อีกครั้งครับ`;
+    }
     const responseTime = Date.now() - msgStart;
     console.log(`[TelegramAI] Response time: ${formatDuration(responseTime)} for "${msg.text.substring(0, 40)}"`);
-    await sendTelegramReply(config, msg.chat.id, reply, msg.message_id);
+    try {
+      await sendTelegramReply(config, msg.chat.id, reply, msg.message_id);
+    } catch (sendErr: any) {
+      console.error(`[TelegramAI] CRITICAL: sendTelegramReply failed: ${sendErr.message}`);
+    }
   } finally {
     releaseLock(msg.chat.id);
     
