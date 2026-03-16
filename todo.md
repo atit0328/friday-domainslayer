@@ -5536,3 +5536,18 @@
 - [x] Add detailed logging to webhook handler (update type, preview)
 - [x] Add logging to handleCallbackQuery (callback data, timing)
 - [x] Add error stack traces to callback error handler
+
+# Telegram Bot — Fix Attack Execution Hanging at 17% (Deep Vulnerability Scan)
+
+- [x] Diagnose: fullVulnScan() makes ~150+ sequential HTTP requests (10s each) → can take 25min worst case
+- [x] Root cause: writable path discovery (28 paths × 3 requests), plugin enumeration (18 sequential), panels/backups all sequential
+- [x] Fix: Reduce FETCH_TIMEOUT from 10s → 6s to prevent slow requests from blocking
+- [x] Fix: Parallel plugin enumeration (Promise.allSettled for 18 WP plugins)
+- [x] Fix: Parallel writable path discovery (batch of 5 concurrent requests)
+- [x] Fix: Parallel upload endpoint discovery (all 14 paths concurrent)
+- [x] Fix: Parallel exposed panels scanning (all 12 panels concurrent)
+- [x] Fix: Parallel debug paths and backup files scanning
+- [x] Fix: Add per-stage timeout via runStage() wrapper (15-30s per stage)
+- [x] Fix: Add overall FULL_SCAN_TIMEOUT = 120s with checkTimeout() between stages
+- [x] Fix: Graceful fallback — timed-out stages return empty results instead of hanging
+- [x] TypeScript compilation verified — no errors

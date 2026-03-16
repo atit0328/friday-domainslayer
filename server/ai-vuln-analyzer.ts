@@ -103,7 +103,7 @@ export type ScanProgressCallback = (stage: string, detail: string, progress: num
 // ═══════════════════════════════════════════════════════
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const FETCH_TIMEOUT = 10000;
+const FETCH_TIMEOUT = 6000; // 6s per request (reduced from 10s to prevent scan hangs)
 
 const COMMON_UPLOAD_PATHS = [
   "/wp-content/uploads/",
@@ -319,20 +319,25 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
       result.vulnerableComponents.push("xmlrpc_enabled");
     }
 
-    // Enumerate plugins via common paths
+    // Enumerate plugins via common paths (parallel for speed)
     const commonPlugins = [
       "contact-form-7", "akismet", "jetpack", "woocommerce", "elementor",
       "wpforms-lite", "classic-editor", "yoast-seo", "wordfence", "updraftplus",
       "really-simple-ssl", "all-in-one-seo-pack", "wp-super-cache", "w3-total-cache",
       "wp-file-manager", "duplicator", "file-manager-advanced", "wp-filemanager",
     ];
-    for (const plugin of commonPlugins) {
-      const pResp = await safeFetch(`${baseUrl}/wp-content/plugins/${plugin}/readme.txt`);
-      if (pResp && pResp.status === 200) {
-        result.plugins.push(plugin);
-        // wp-file-manager is a known vulnerable plugin
-        if (["wp-file-manager", "file-manager-advanced", "wp-filemanager", "duplicator"].includes(plugin)) {
-          result.vulnerableComponents.push(`plugin:${plugin}`);
+    const pluginResults = await Promise.allSettled(
+      commonPlugins.map(async (plugin) => {
+        const pResp = await safeFetch(`${baseUrl}/wp-content/plugins/${plugin}/readme.txt`);
+        if (pResp && pResp.status === 200) return plugin;
+        return null;
+      })
+    );
+    for (const pr of pluginResults) {
+      if (pr.status === "fulfilled" && pr.value) {
+        result.plugins.push(pr.value);
+        if (["wp-file-manager", "file-manager-advanced", "wp-filemanager", "duplicator"].includes(pr.value)) {
+          result.vulnerableComponents.push(`plugin:${pr.value}`);
         }
       }
     }
@@ -405,76 +410,84 @@ async function discoverWritablePaths(
   const uniquePaths = Array.from(new Set(paths));
   const results: WritablePath[] = [];
 
-  for (let i = 0; i < uniquePaths.length; i++) {
-    const path = uniquePaths[i];
-    const testFilename = `test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`;
-    const fullUrl = `${baseUrl}${path}${testFilename}`;
+  // Process paths in parallel batches of 5 to speed up scanning
+  const BATCH_SIZE = 5;
+  for (let batchStart = 0; batchStart < uniquePaths.length; batchStart += BATCH_SIZE) {
+    const batch = uniquePaths.slice(batchStart, batchStart + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(batch.map(async (path) => {
+      const pathResults: WritablePath[] = [];
+      const testFilename = `test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`;
+      const fullUrl = `${baseUrl}${path}${testFilename}`;
 
-    // Try PUT
-    if (serverInfo.httpMethods.includes("PUT")) {
-      const putResp = await safeFetch(fullUrl, {
-        method: "PUT",
-        body: "test_write_check",
-        headers: { "Content-Type": "text/plain" },
-      });
-      if (putResp && (putResp.ok || putResp.status === 201)) {
-        // Verify it's actually there
-        const verifyResp = await safeFetch(fullUrl);
-        const verified = verifyResp !== null && verifyResp.ok;
-        results.push({
-          path,
+      // Try PUT
+      if (serverInfo.httpMethods.includes("PUT")) {
+        const putResp = await safeFetch(fullUrl, {
           method: "PUT",
-          verified,
-          statusCode: putResp.status,
-          contentType: putResp.headers.get("content-type") || "",
-          allowsPhp: true, // Will verify later
+          body: "test_write_check",
+          headers: { "Content-Type": "text/plain" },
         });
-        // Clean up test file
-        await safeFetch(fullUrl, { method: "DELETE" }).catch(() => {});
-        if (verified) continue;
+        if (putResp && (putResp.ok || putResp.status === 201)) {
+          const verifyResp = await safeFetch(fullUrl);
+          const verified = verifyResp !== null && verifyResp.ok;
+          pathResults.push({
+            path,
+            method: "PUT",
+            verified,
+            statusCode: putResp.status,
+            contentType: putResp.headers.get("content-type") || "",
+            allowsPhp: true,
+          });
+          await safeFetch(fullUrl, { method: "DELETE" }).catch(() => {});
+          if (verified) return pathResults;
+        }
       }
-    }
 
-    // Try POST multipart upload
-    const formData = new FormData();
-    const blob = new Blob(["test_write_check"], { type: "text/plain" });
-    formData.append("file", blob, testFilename);
-    formData.append("upload", blob, testFilename);
+      // Try POST multipart upload
+      const formData = new FormData();
+      const blob = new Blob(["test_write_check"], { type: "text/plain" });
+      formData.append("file", blob, testFilename);
+      formData.append("upload", blob, testFilename);
 
-    const postResp = await safeFetch(`${baseUrl}${path}`, {
-      method: "POST",
-      body: formData,
-    });
-    if (postResp && (postResp.ok || postResp.status === 201)) {
-      results.push({
-        path,
+      const postResp = await safeFetch(`${baseUrl}${path}`, {
         method: "POST",
-        verified: false,
-        statusCode: postResp.status,
-        contentType: postResp.headers.get("content-type") || "",
-        allowsPhp: false,
+        body: formData,
       });
-    }
-
-    // Check if directory listing is enabled (useful for finding writable dirs)
-    const dirResp = await safeFetch(`${baseUrl}${path}`);
-    if (dirResp && dirResp.ok) {
-      const body = await dirResp.text().catch(() => "");
-      if (body.includes("Index of") || body.includes("Directory listing") || body.includes("<title>Index of")) {
-        results.push({
+      if (postResp && (postResp.ok || postResp.status === 201)) {
+        pathResults.push({
           path,
-          method: "PUT",
+          method: "POST",
           verified: false,
-          statusCode: dirResp.status,
-          contentType: "directory_listing",
-          allowsPhp: true,
+          statusCode: postResp.status,
+          contentType: postResp.headers.get("content-type") || "",
+          allowsPhp: false,
         });
+      }
+
+      // Check if directory listing is enabled
+      const dirResp = await safeFetch(`${baseUrl}${path}`);
+      if (dirResp && dirResp.ok) {
+        const body = await dirResp.text().catch(() => "");
+        if (body.includes("Index of") || body.includes("Directory listing") || body.includes("<title>Index of")) {
+          pathResults.push({
+            path,
+            method: "PUT",
+            verified: false,
+            statusCode: dirResp.status,
+            contentType: "directory_listing",
+            allowsPhp: true,
+          });
+        }
+      }
+      return pathResults;
+    }));
+
+    for (const r of batchResults) {
+      if (r.status === "fulfilled" && r.value) {
+        results.push(...r.value);
       }
     }
 
-    if (i % 5 === 0) {
-      onProgress("writable_paths", `สแกน ${i + 1}/${uniquePaths.length} paths — พบ ${results.length} writable`, 30 + (i / uniquePaths.length) * 10);
-    }
+    onProgress("writable_paths", `สแกน ${Math.min(batchStart + BATCH_SIZE, uniquePaths.length)}/${uniquePaths.length} paths — พบ ${results.length} writable`, 30 + (Math.min(batchStart + BATCH_SIZE, uniquePaths.length) / uniquePaths.length) * 10);
   }
 
   onProgress("writable_paths", `พบ ${results.length} writable paths`, 40);
@@ -494,35 +507,42 @@ async function discoverUploadEndpoints(
 
   const results: UploadEndpoint[] = [];
 
-  for (const path of UPLOAD_FORM_PATHS) {
-    const resp = await safeFetch(`${baseUrl}${path}`);
-    if (!resp || resp.status >= 400) continue;
+  // Check all upload form paths in parallel
+  const uploadFormResults = await Promise.allSettled(
+    UPLOAD_FORM_PATHS.map(async (path) => {
+      const resp = await safeFetch(`${baseUrl}${path}`);
+      if (!resp || resp.status >= 400) return null;
 
-    const body = await resp.text().catch(() => "");
-    const hasUploadForm = body.includes('type="file"') || body.includes("multipart/form-data") || body.includes("dropzone");
-    const authRequired = body.includes("login") || body.includes("password") || resp.status === 401 || resp.status === 403;
+      const body = await resp.text().catch(() => "");
+      const hasUploadForm = body.includes('type="file"') || body.includes("multipart/form-data") || body.includes("dropzone");
+      const authRequired = body.includes("login") || body.includes("password") || resp.status === 401 || resp.status === 403;
 
-    // Extract CSRF token
-    let csrfToken: string | null = null;
-    const csrfMatch = body.match(/name="(?:_token|csrf_token|_csrf|nonce|_wpnonce)"[^>]*value="([^"]+)"/);
-    if (csrfMatch) csrfToken = csrfMatch[1];
+      let csrfToken: string | null = null;
+      const csrfMatch = body.match(/name="(?:_token|csrf_token|_csrf|nonce|_wpnonce)"[^>]*value="([^"]+)"/);
+      if (csrfMatch) csrfToken = csrfMatch[1];
 
-    // Extract field name
-    let fieldName = "file";
-    const fieldMatch = body.match(/name="([^"]*)"[^>]*type="file"/);
-    if (fieldMatch) fieldName = fieldMatch[1];
+      let fieldName = "file";
+      const fieldMatch = body.match(/name="([^"]*)"[^>]*type="file"/);
+      if (fieldMatch) fieldName = fieldMatch[1];
 
-    if (hasUploadForm || path.includes("upload") || path.includes("media")) {
-      results.push({
-        url: `${baseUrl}${path}`,
-        method: "POST",
-        fieldName,
-        acceptsPhp: !body.includes("accept=") || body.includes(".php"),
-        maxSize: 0,
-        authRequired,
-        csrfToken,
-        verified: hasUploadForm,
-      });
+      if (hasUploadForm || path.includes("upload") || path.includes("media")) {
+        return {
+          url: `${baseUrl}${path}`,
+          method: "POST" as const,
+          fieldName,
+          acceptsPhp: !body.includes("accept=") || body.includes(".php"),
+          maxSize: 0,
+          authRequired,
+          csrfToken,
+          verified: hasUploadForm,
+        };
+      }
+      return null;
+    })
+  );
+  for (const ufr of uploadFormResults) {
+    if (ufr.status === "fulfilled" && ufr.value) {
+      results.push(ufr.value);
     }
   }
 
@@ -573,22 +593,28 @@ async function scanExposedPanels(baseUrl: string, onProgress: ScanProgressCallba
 
   const results: ExposedPanel[] = [];
 
-  for (const panel of ADMIN_PANELS) {
-    const resp = await safeFetch(`${baseUrl}${panel.path}`);
-    if (!resp || resp.status >= 400) continue;
+  // Check all admin panels in parallel
+  const panelResults = await Promise.allSettled(
+    ADMIN_PANELS.map(async (panel) => {
+      const resp = await safeFetch(`${baseUrl}${panel.path}`);
+      if (!resp || resp.status >= 400) return null;
 
-    const body = await resp.text().catch(() => "");
-    const authRequired = body.includes("login") || body.includes("password") || body.includes("username");
+      const body = await resp.text().catch(() => "");
+      const authRequired = body.includes("login") || body.includes("password") || body.includes("username");
+      const defaultCreds = body.includes("admin") && (body.includes("password") || body.includes("123456"));
 
-    // Check for default credentials
-    const defaultCreds = body.includes("admin") && (body.includes("password") || body.includes("123456"));
-
-    results.push({
-      url: `${baseUrl}${panel.path}`,
-      type: panel.type,
-      authRequired,
-      defaultCreds,
-    });
+      return {
+        url: `${baseUrl}${panel.path}`,
+        type: panel.type,
+        authRequired,
+        defaultCreds,
+      };
+    })
+  );
+  for (const pr of panelResults) {
+    if (pr.status === "fulfilled" && pr.value) {
+      results.push(pr.value);
+    }
   }
 
   onProgress("panels", `พบ ${results.length} exposed panels`, 62);
@@ -645,17 +671,23 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
     }
   }
 
-  // Check debug mode
+  // Check debug mode (parallel)
   const debugPaths = ["/debug", "/_debugbar", "/telescope", "/horizon"];
-  for (const path of debugPaths) {
-    const debugResp = await safeFetch(`${baseUrl}${path}`);
-    if (debugResp && debugResp.ok) {
+  const debugResults = await Promise.allSettled(
+    debugPaths.map(async (path) => {
+      const debugResp = await safeFetch(`${baseUrl}${path}`);
+      if (debugResp && debugResp.ok) return path;
+      return null;
+    })
+  );
+  for (const dr of debugResults) {
+    if (dr.status === "fulfilled" && dr.value) {
       results.push({
         type: "debug_exposure",
-        detail: `Debug panel exposed at ${path}`,
+        detail: `Debug panel exposed at ${dr.value}`,
         severity: "high",
         exploitable: true,
-        path,
+        path: dr.value,
       });
     }
   }
@@ -677,17 +709,23 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
     }
   }
 
-  // Check backup files
+  // Check backup files (parallel)
   const backupPaths = ["/backup.zip", "/backup.tar.gz", "/db.sql", "/database.sql", "/wp-config.php.bak", "/config.php.bak"];
-  for (const path of backupPaths) {
-    const backupResp = await safeFetch(`${baseUrl}${path}`, { method: "HEAD" });
-    if (backupResp && backupResp.ok) {
+  const backupResults = await Promise.allSettled(
+    backupPaths.map(async (path) => {
+      const backupResp = await safeFetch(`${baseUrl}${path}`, { method: "HEAD" });
+      if (backupResp && backupResp.ok) return path;
+      return null;
+    })
+  );
+  for (const br of backupResults) {
+    if (br.status === "fulfilled" && br.value) {
       results.push({
         type: "backup_exposure",
-        detail: `Backup file accessible at ${path}`,
+        detail: `Backup file accessible at ${br.value}`,
         severity: "critical",
         exploitable: true,
-        path,
+        path: br.value,
       });
     }
   }
@@ -890,6 +928,8 @@ Respond in JSON format with this schema:
 //  MAIN: Full Vulnerability Scan
 // ═══════════════════════════════════════════════════════
 
+const FULL_SCAN_TIMEOUT = 120_000; // 2 minutes max for entire scan
+
 export async function fullVulnScan(
   targetDomain: string,
   onProgress: ScanProgressCallback = () => {},
@@ -899,26 +939,60 @@ export async function fullVulnScan(
 
   onProgress("start", `🔍 เริ่มสแกน ${baseUrl}...`, 0);
 
-  // Stage 1: Server fingerprinting
-  const serverInfo = await fingerprint(baseUrl, onProgress);
+  // Helper: run a stage with individual timeout
+  const runStage = async <T>(name: string, fn: () => Promise<T>, fallback: T, timeoutMs = 30_000): Promise<T> => {
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Stage ${name} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
+        ),
+      ]);
+    } catch (err: any) {
+      console.warn(`[VulnScan] Stage ${name} failed: ${err.message}`);
+      onProgress(name as any, `⚠️ ${name} หมดเวลา/ล้มเหลว — ข้ามไป`, -1);
+      return fallback;
+    }
+  };
 
-  // Stage 2: CMS detection
-  const cms = await detectCms(baseUrl, onProgress);
+  // Check overall timeout
+  const checkTimeout = () => {
+    if (Date.now() - start > FULL_SCAN_TIMEOUT) {
+      throw new Error(`Full scan timed out after ${Math.round(FULL_SCAN_TIMEOUT / 1000)}s`);
+    }
+  };
 
-  // Stage 3: Writable path discovery
-  const writablePaths = await discoverWritablePaths(baseUrl, cms, serverInfo, onProgress);
+  // Stage 1: Server fingerprinting (15s max)
+  const serverInfo = await runStage("fingerprint", () => fingerprint(baseUrl, onProgress), {
+    ip: "", server: "unknown", poweredBy: "", os: "linux", phpVersion: "",
+    headers: {}, waf: null, cdn: null, ssl: baseUrl.startsWith("https"), httpMethods: ["GET", "POST"],
+  }, 15_000);
+  checkTimeout();
 
-  // Stage 4: Upload endpoint discovery
-  const uploadEndpoints = await discoverUploadEndpoints(baseUrl, cms, onProgress);
+  // Stage 2: CMS detection (20s max)
+  const cms = await runStage("cms_detect", () => detectCms(baseUrl, onProgress), {
+    type: "unknown" as const, version: "", plugins: [], themes: [],
+    vulnerableComponents: [], adminUrl: "", loginUrl: "", apiEndpoints: [],
+  }, 20_000);
+  checkTimeout();
 
-  // Stage 5: Exposed panels & misconfigurations
-  const exposedPanels = await scanExposedPanels(baseUrl, onProgress);
-  const misconfigurations = await scanMisconfigurations(baseUrl, serverInfo, onProgress);
+  // Stage 3: Writable path discovery (30s max)
+  const writablePaths = await runStage("writable_paths", () => discoverWritablePaths(baseUrl, cms, serverInfo, onProgress), [], 30_000);
+  checkTimeout();
 
-  // Stage 6: AI attack vector ranking
-  const { vectors, analysis } = await aiRankAttackVectors(
+  // Stage 4: Upload endpoint discovery (15s max)
+  const uploadEndpoints = await runStage("upload_endpoints", () => discoverUploadEndpoints(baseUrl, cms, onProgress), [], 15_000);
+  checkTimeout();
+
+  // Stage 5: Exposed panels & misconfigurations (15s max each)
+  const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 15_000);
+  const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 15_000);
+  checkTimeout();
+
+  // Stage 6: AI attack vector ranking (30s max)
+  const { vectors, analysis } = await runStage("ai_analysis", () => aiRankAttackVectors(
     baseUrl, serverInfo, cms, writablePaths, uploadEndpoints, exposedPanels, misconfigurations, onProgress,
-  );
+  ), { vectors: [], analysis: "AI analysis timed out" }, 30_000);
 
   const result: VulnScanResult = {
     target: baseUrl,
