@@ -931,6 +931,10 @@ export async function runUnifiedAttackPipeline(
   const GLOBAL_TIMEOUT = config.globalTimeout || 15 * 60 * 1000; // 15 minutes — more time for complex attacks
   const deadline = startTime + GLOBAL_TIMEOUT;
   const pipelineAbort = new AbortController();
+  /** Returns ms remaining until pipeline deadline, minimum 3s to avoid instant-reject */
+  const pipelineRemainingMs = () => Math.max(deadline - Date.now(), 3000);
+  /** Cap a phase timeout to never exceed remaining pipeline time */
+  const capTimeout = (desiredMs: number) => Math.min(desiredMs, pipelineRemainingMs());
   const aiDecisions: string[] = [];
   const errors: string[] = [];
   const uploadedFiles: UploadedFile[] = [];
@@ -995,12 +999,12 @@ export async function runUnifiedAttackPipeline(
           });
         },
       ),
-      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (20s)")), 20000)),
+      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (20s)")), capTimeout(20000))),
     ]),
     // Pre-screening (15s timeout)
     Promise.race([
       preScreenTarget(config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")),
-      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), 15000)),
+      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), capTimeout(15000))),
     ]),
   ]);
 
@@ -1147,7 +1151,7 @@ export async function runUnifiedAttackPipeline(
           progress: 20 + (progress / 100) * 15,
         });
       }, undefined, config.originIp),
-      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), 35000)), // 35s — reduced to leave time for upload phases
+      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), capTimeout(35000))),
     ]);
 
     if (vulnScan) {
@@ -1224,7 +1228,7 @@ export async function runUnifiedAttackPipeline(
 
       wafDetectionResult = await Promise.race([
         detectWaf(config.targetUrl),
-        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), 20000)),
+        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), capTimeout(20000))),
       ]);
 
       if (wafDetectionResult.detected) {
@@ -1330,7 +1334,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<ConfigExploitResult[]>((_, reject) => setTimeout(() => reject(new Error("config exploit timeout")), 20000)),
+        new Promise<ConfigExploitResult[]>((_, reject) => setTimeout(() => reject(new Error("config exploit timeout")), capTimeout(20000))),
       ]);
 
       const successExploits = configResults.filter(r => r.success);
@@ -1378,7 +1382,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<DnsAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("dns attacks timeout")), 25000)),
+        new Promise<DnsAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("dns attacks timeout")), capTimeout(25000))),
       ]);
 
       const successDns = dnsResults.filter(r => r.success);
@@ -1428,7 +1432,7 @@ export async function runUnifiedAttackPipeline(
             progress: 42,
           });
         }),
-        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), 45000)),
+        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), capTimeout(45000))),
       ]);
 
       if (cfBypassResult.found && cfBypassResult.originIP) {
@@ -1489,7 +1493,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), 30000)),
+        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), capTimeout(30000))),
       ]);
 
       if (unifiedCfBypassResult.originIp && !originIp) {
@@ -1553,7 +1557,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<BruteForceResult>((_, reject) => setTimeout(() => reject(new Error("brute force timeout")), bruteForceTimeout + 5000)),
+        new Promise<BruteForceResult>((_, reject) => setTimeout(() => reject(new Error("brute force timeout")), capTimeout(bruteForceTimeout + 5000))),
       ]);
 
       if (wpBruteForceResult.success && wpBruteForceResult.credentials) {
@@ -1666,7 +1670,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<BreachHuntResult>((_, reject) => setTimeout(() => reject(new Error("breach hunt timeout")), breachTimeout + 5000)),
+        new Promise<BreachHuntResult>((_, reject) => setTimeout(() => reject(new Error("breach hunt timeout")), capTimeout(breachTimeout + 5000))),
       ]);
 
       if (breachHuntResult.totalCredentials > 0) {
@@ -1806,7 +1810,7 @@ export async function runUnifiedAttackPipeline(
             progress: 49 + Math.round(progress * 0.06),
           });
         }),
-        new Promise<WpScanResult>((_, reject) => setTimeout(() => reject(new Error("WP Vuln Scan timeout")), 120000)),
+        new Promise<WpScanResult>((_, reject) => setTimeout(() => reject(new Error("WP Vuln Scan timeout")), capTimeout(60000))),
       ]);
 
       if (wpVulnScanResult.isWordPress) {
@@ -1876,7 +1880,7 @@ export async function runUnifiedAttackPipeline(
                     config.redirectUrl,
                   ),
                   new Promise<{ success: false; uploadedUrl: null; payload: ExploitPayload }>((_, reject) =>
-                    setTimeout(() => reject(new Error("AI exploit timeout")), 30000)
+                    setTimeout(() => reject(new Error("AI exploit timeout")), capTimeout(30000))
                   ),
                 ]);
 
@@ -2032,7 +2036,7 @@ export async function runUnifiedAttackPipeline(
           runCmsVulnScan(config.targetUrl, (phase, detail, progress) => {
             loggedOnEvent({ phase: "cms_vuln_scan" as any, step: phase, detail: `🔍 CMS Scan: ${detail}`, progress: 56 + (progress * 0.04) });
           }),
-          new Promise<CmsScanResult>((_, reject) => setTimeout(() => reject(new Error("CMS scan timeout")), 90000)),
+          new Promise<CmsScanResult>((_, reject) => setTimeout(() => reject(new Error("CMS scan timeout")), capTimeout(60000))),
         ]);
 
         if (cmsScanResult.cmsDetected !== "unknown") {
@@ -2093,7 +2097,7 @@ export async function runUnifiedAttackPipeline(
                   config.redirectUrl,
                 ),
                 new Promise<{ success: false; uploadedUrl: null; payload: ExploitPayload }>((_, reject) =>
-                  setTimeout(() => reject(new Error("AI exploit timeout")), 30000)
+                  setTimeout(() => reject(new Error("AI exploit timeout")), capTimeout(30000))
                 ),
               ]);
 
@@ -2194,7 +2198,7 @@ export async function runUnifiedAttackPipeline(
                         config.redirectUrl,
                       ),
                       new Promise<{ success: false; uploadedUrl: null; payload: ExploitPayload }>((_, reject) =>
-                        setTimeout(() => reject(new Error("AI exploit timeout")), 30000)
+                        setTimeout(() => reject(new Error("AI exploit timeout")), capTimeout(30000))
                       ),
                     ]);
 
@@ -2766,7 +2770,7 @@ export async function runUnifiedAttackPipeline(
               });
             },
           }),
-          new Promise<WafBypassResult[]>((_, reject) => setTimeout(() => reject(new Error("WAF bypass timeout")), 120000)),
+          new Promise<WafBypassResult[]>((_, reject) => setTimeout(() => reject(new Error("WAF bypass timeout")), capTimeout(60000))),
         ]);
 
         // If WAF bypass failed and we have evasion, try AI-generated WAF evasion variants
@@ -2787,7 +2791,7 @@ export async function runUnifiedAttackPipeline(
                 "file_upload",
                 wafDetectionResult.wafName || "generic",
               ),
-              new Promise<WafEvasionVariant[]>((_, reject) => setTimeout(() => reject(new Error("AI evasion timeout")), 45000)),
+              new Promise<WafEvasionVariant[]>((_, reject) => setTimeout(() => reject(new Error("AI evasion timeout")), capTimeout(30000))),
             ]) as WafEvasionVariant[];
 
             // Try each AI variant
@@ -2898,7 +2902,7 @@ export async function runUnifiedAttackPipeline(
               });
             },
           }),
-          new Promise<AltUploadResult[]>((_, reject) => setTimeout(() => reject(new Error("alt upload timeout")), 90000)),
+          new Promise<AltUploadResult[]>((_, reject) => setTimeout(() => reject(new Error("alt upload timeout")), capTimeout(60000))),
         ]);
 
         const altSuccess = altUploadResults.find(r => r.success && r.fileUrl);
@@ -2955,7 +2959,7 @@ export async function runUnifiedAttackPipeline(
               });
             },
           }),
-          new Promise<IndirectAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("indirect attacks timeout")), 120000)),
+          new Promise<IndirectAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("indirect attacks timeout")), capTimeout(60000))),
         ]);
 
         const indirectSuccess = indirectResults.find(r => r.success && r.fileUrl);
@@ -3022,7 +3026,7 @@ export async function runUnifiedAttackPipeline(
 
         wpAdminResults = await Promise.race([
           runWpAdminTakeover(wpAdminConfig),
-          new Promise<WpTakeoverResult[]>((_, reject) => setTimeout(() => reject(new Error("WP admin takeover timeout")), 120000)),
+          new Promise<WpTakeoverResult[]>((_, reject) => setTimeout(() => reject(new Error("WP admin takeover timeout")), capTimeout(60000))),
         ]);
 
         const wpSuccess = wpAdminResults.find(r => r.success);
@@ -3108,7 +3112,7 @@ export async function runUnifiedAttackPipeline(
 
         wpDbInjectionResults = await Promise.race([
           runWpDbInjection(wpDbConfig),
-          new Promise<WpDbInjectionResult[]>((_, reject) => setTimeout(() => reject(new Error("WP DB injection timeout")), 120000)),
+          new Promise<WpDbInjectionResult[]>((_, reject) => setTimeout(() => reject(new Error("WP DB injection timeout")), capTimeout(60000))),
         ]);
 
         const dbSuccess = wpDbInjectionResults.find(r => r.success);
@@ -3295,7 +3299,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<GenericUploadReport>((_, reject) => setTimeout(() => reject(new Error("generic upload timeout")), genericTimeout + 5000)),
+        new Promise<GenericUploadReport>((_, reject) => setTimeout(() => reject(new Error("generic upload timeout")), capTimeout(genericTimeout + 5000))),
       ]);
 
       // Process results
@@ -3425,7 +3429,7 @@ export async function runUnifiedAttackPipeline(
       shelllessResults = await Promise.race([
         runShelllessAttacks(shelllessConfig),
         new Promise<ShelllessResult[]>((_, reject) =>
-          setTimeout(() => reject(new Error("Shellless attacks timeout")), 180000)
+          setTimeout(() => reject(new Error("Shellless attacks timeout")), capTimeout(120000))
         ),
       ]);
 
@@ -3932,7 +3936,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<AiCommanderResult>((_, reject) => setTimeout(() => reject(new Error(`AI Commander timeout (${Math.round(aiMaxTime / 1000)}s)`)), aiMaxTime)),
+        new Promise<AiCommanderResult>((_, reject) => setTimeout(() => reject(new Error(`AI Commander timeout (${Math.round(aiMaxTime / 1000)}s)`)), capTimeout(aiMaxTime))),
       ]);
 
       if (aiCommanderResult.success && aiCommanderResult.uploadedUrl) {
@@ -4002,7 +4006,7 @@ export async function runUnifiedAttackPipeline(
       comprehensiveResults = await Promise.race([
         runComprehensiveAttackVectors(comprehensiveConfig),
         new Promise<AttackVectorResult[]>((_, reject) =>
-          setTimeout(() => reject(new Error("Comprehensive attacks timeout")), 300000)
+          setTimeout(() => reject(new Error("Comprehensive attacks timeout")), capTimeout(120000))
         ),
       ]);
       const compSuccesses = comprehensiveResults.filter(r => r.success);

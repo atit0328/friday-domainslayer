@@ -5712,4 +5712,17 @@
 - [x] Added elapsed time tracking in phase headers
 - [x] TypeScript 0 errors
 - [x] Tests pass (48/48)
+- [x] Save checkpoint
+
+# Pipeline Silent Hang Fix — เงียบไป 10 นาทีหลัง vuln scan
+- [x] Trace pipeline flow after vuln scan: WAF detect → CF bypass → DNS attack → WP brute → config exploit → shell gen → upload
+- [x] Find which phase hangs without sending progress events
+- [x] Root cause: Post-vuln-scan phases had cumulative timeouts of 25+ min (WP Vuln 120s, CMS 90s, WAF Bypass 120s, Shellless 180s, Comprehensive 300s) exceeding 10min globalTimeout
+- [x] Added capTimeout() helper: caps every phase timeout to never exceed remaining pipeline time
+- [x] Added pipelineRemainingMs() helper: returns ms remaining until pipeline deadline (min 3s)
+- [x] Capped 26 timeout points across the entire pipeline with capTimeout()
+- [x] Reduced oversized phase timeouts: WP Vuln 120→60s, CMS 90→60s, WAF Bypass 120→60s, Shellless 180→120s, Comprehensive 300→120s
+- [x] shouldStop() checks already present at 40+ locations between phases
+- [x] TypeScript 0 errors
+- [x] Tests pass (26/26 across 4 test files)
 - [ ] Save checkpoint
