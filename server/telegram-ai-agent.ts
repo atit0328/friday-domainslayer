@@ -229,11 +229,14 @@ function formatElapsed(ms: number): string {
 function acquireLock(chatId: number): boolean {
   if (chatLocks.get(chatId)) return false;
   chatLocks.set(chatId, true);
-  // Auto-release lock after 45 seconds to prevent deadlocks (reduced from 120s)
+  // Auto-release lock after 25 seconds to prevent deadlocks
+  // Reduced from 45s — most operations complete in <15s, and stale locks cause silent failures
   setTimeout(() => {
-    chatLocks.delete(chatId);
-    console.warn(`[TelegramAI] Auto-released stale lock for chat ${chatId}`);
-  }, 45_000);
+    if (chatLocks.get(chatId)) {
+      chatLocks.delete(chatId);
+      console.warn(`[TelegramAI] Auto-released stale lock for chat ${chatId} after 25s`);
+    }
+  }, 25_000);
   return true;
 }
 
@@ -508,8 +511,17 @@ async function handleWithConversationState(chatId: number, text: string): Promis
         const config = getTelegramConfig();
         if (config) {
           console.log(`[TelegramAI] Direct attack shortcut: ${domain}`);
-          await sendAttackTypeKeyboard(config, chatId, domain);
-          return "__HANDLED_BY_KEYBOARD__";
+          try {
+            const sent = await sendAttackTypeKeyboard(config, chatId, domain);
+            if (sent) {
+              return "__HANDLED_BY_KEYBOARD__";
+            }
+            // If keyboard failed, fall through to LLM processing
+            console.warn(`[TelegramAI] Keyboard failed for ${domain}, falling through to LLM`);
+          } catch (e: any) {
+            console.error(`[TelegramAI] Shortcut error for ${domain}: ${e.message}`);
+            // Fall through to LLM processing
+          }
         }
       }
     }
@@ -522,8 +534,15 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     const config = getTelegramConfig();
     if (config) {
       console.log(`[TelegramAI] Bare domain shortcut: ${domain}`);
-      await sendAttackTypeKeyboard(config, chatId, domain);
-      return "__HANDLED_BY_KEYBOARD__";
+      try {
+        const sent = await sendAttackTypeKeyboard(config, chatId, domain);
+        if (sent) {
+          return "__HANDLED_BY_KEYBOARD__";
+        }
+        console.warn(`[TelegramAI] Bare domain keyboard failed for ${domain}, falling through to LLM`);
+      } catch (e: any) {
+        console.error(`[TelegramAI] Bare domain shortcut error for ${domain}: ${e.message}`);
+      }
     }
   }
   
@@ -3420,14 +3439,20 @@ export function registerTelegramWebhook(app: any): void {
   app.post("/api/telegram/webhook", async (req: any, res: any) => {
     // Note: Secret token verification disabled for reliability (v2 - force deploy)
     // Telegram webhook is protected by obscure URL + allowed_updates filter
-    console.log(`[TelegramAI] Webhook received update: ${JSON.stringify(req.body?.update_id || 'unknown')}`);
+    const updateType = req.body?.callback_query ? 'callback_query' : req.body?.message ? 'message' : 'unknown';
+    const updatePreview = updateType === 'message' 
+      ? req.body?.message?.text?.substring(0, 50) 
+      : updateType === 'callback_query'
+        ? req.body?.callback_query?.data
+        : 'N/A';
+    console.log(`[TelegramAI] Webhook: update_id=${req.body?.update_id} type=${updateType} preview="${updatePreview}"`);
     
     try {
       // Respond immediately to Telegram (they expect fast 200)
       res.json({ ok: true });
       // Process update asynchronously
       handleTelegramWebhook(req.body).catch((error: any) => {
-        console.error(`[TelegramAI] Webhook processing error: ${error.message}`);
+        console.error(`[TelegramAI] Webhook processing error (${updateType}): ${error.message}\n${error.stack?.substring(0, 300)}`);
       });
     } catch (error: any) {
       console.error(`[TelegramAI] Webhook error: ${error.message}`);
@@ -3649,18 +3674,24 @@ async function sendAttackTargetKeyboard(config: TelegramConfig, chatId: number):
   }
 }
 
-async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, domain: string): Promise<void> {
+async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, domain: string): Promise<boolean> {
   try {
     // ─── AI Auto-suggest best mode based on failure history ───
     let aiSuggestionText = "";
     let suggestedMode: string | null = null;
     try {
-      const suggestion = await suggestBestMode(domain);
+      // Timeout suggestion to 5s to prevent blocking
+      const suggestion = await Promise.race([
+        suggestBestMode(domain),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+      ]);
       if (suggestion && suggestion.confidence >= 50) {
         suggestedMode = suggestion.recommendedMode;
         aiSuggestionText = `\n\n🧠 AI แนะนำ: ${suggestion.recommendedMode} (${suggestion.confidence}% confidence)\nเหตุผล: ${suggestion.reasoning}`;
       }
-    } catch {}
+    } catch (e: any) {
+      console.warn(`[TelegramAI] suggestBestMode failed for ${domain}: ${e.message}`);
+    }
 
     const keyboard = [
       [
@@ -3684,7 +3715,7 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
     keyboard.push([{ text: "\u274C ยกเลิก", callback_data: "atk_cancel" }]);
     
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    await telegramFetch(url, {
+    const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -3694,8 +3725,24 @@ async function sendAttackTypeKeyboard(config: TelegramConfig, chatId: number, do
       }),
       signal: AbortSignal.timeout(10000),
     }, { timeout: 10000 });
+    console.log(`[TelegramAI] Attack keyboard sent for ${domain}, status: ${response.status}`);
+    return response.ok;
   } catch (error: any) {
     console.error(`[TelegramAI] Failed to send attack type keyboard: ${error.message}`);
+    // Fallback: send plain text reply so user isn't left hanging
+    try {
+      await sendTelegramReply(config, chatId,
+        `⚔️ Target: ${domain}\n\n` +
+        `เลือกวิธีโจมตี:\n` +
+        `• พิมพ์ "scan ${domain}" — สแกนช่องโหว่\n` +
+        `• พิมพ์ "hack ${domain}" — Full Chain Attack\n` +
+        `• พิมพ์ "redirect ${domain}" — Redirect Takeover\n\n` +
+        `(Keyboard ส่งไม่ได้: ${error.message?.substring(0, 50)})`
+      );
+    } catch (fallbackErr: any) {
+      console.error(`[TelegramAI] Even fallback text failed: ${fallbackErr.message}`);
+    }
+    return false;
   }
 }
 
@@ -7231,14 +7278,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
 }
 
 async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_query"]>): Promise<void> {
+  const cbqStart = Date.now();
   const config = getTelegramConfig();
   if (!config) return;
   
   const chatId = cbq.message?.chat?.id;
   if (!chatId) return;
   
+  console.log(`[TelegramAI] Callback query: ${cbq.data} from chat ${chatId}`);
+  
   const allowedChatIds = getAllowedChatIds();
-  if (!allowedChatIds.includes(chatId) && !allowedChatIds.includes(cbq.from.id)) return;
+  if (!allowedChatIds.includes(chatId) && !allowedChatIds.includes(cbq.from.id)) {
+    console.log(`[TelegramAI] Callback from unauthorized chat: ${chatId}`);
+    return;
+  }
   
   // Answer callback query
   try {
@@ -7882,12 +7935,14 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
       }
     }
   } catch (error: any) {
-    responseText = `เกิดข้อผิดพลาด: ${error.message}`;
+    console.error(`[TelegramAI] Callback error for ${cbq.data}: ${error.message}\n${error.stack?.substring(0, 300)}`);
+    responseText = `เกิดข้อผิดพลาด: ${error.message?.substring(0, 100)}`;
   }
   
   if (responseText) {
     await sendTelegramReply(config, chatId, responseText);
   }
+  console.log(`[TelegramAI] Callback ${cbq.data} completed in ${Date.now() - cbqStart}ms`);
 }
 
 // ═══════════════════════════════════════════════════════

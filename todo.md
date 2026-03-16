@@ -5523,3 +5523,16 @@
 - [x] Fix SQL bug: dh2.created_at → dh2.createdAt in dashboardStats
 - [x] Write vitest tests — 9 tests passing
 - [x] Test with real attack data
+
+# Telegram Bot — Fix Silent Failure on Attack Commands
+
+- [x] Diagnose root cause: sendAttackTypeKeyboard() catch block swallows errors silently
+- [x] Fix sendAttackTypeKeyboard() — add fallback text reply when keyboard fails
+- [x] Fix sendAttackTypeKeyboard() — add 5s timeout to suggestBestMode() to prevent blocking
+- [x] Fix sendAttackTypeKeyboard() — return boolean success status
+- [x] Fix direct attack shortcut — check keyboard success before returning __HANDLED_BY_KEYBOARD__
+- [x] Fix bare domain shortcut — same fallback-to-LLM pattern
+- [x] Reduce chat lock auto-release from 45s to 25s to prevent stale lock deadlocks
+- [x] Add detailed logging to webhook handler (update type, preview)
+- [x] Add logging to handleCallbackQuery (callback data, timing)
+- [x] Add error stack traces to callback error handler
