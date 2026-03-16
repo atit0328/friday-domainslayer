@@ -5127,7 +5127,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 4 * 60 * 1000, // 4 min — per-method timeout is 5 min
+                globalTimeout: 10 * 60 * 1000, // 10 min — pipeline METHOD_TIMEOUT is 12 min, leave 2 min buffer
               },
               async (event) => {
                 if (event.phase !== lastPhaseForProgress) {

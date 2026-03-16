@@ -5692,3 +5692,13 @@
 - [x] TypeScript 0 errors
 - [x] Tests pass (37/37)
 - [x] Save checkpoint
+
+# Pipeline Hang Fix — 15 นาทีไม่มี response
+- [x] Check server logs — found: DEV MODE skips Telegram bot, production uses old code
+- [x] Root cause: globalTimeout 4min → pipeline kills itself before reaching upload phase
+- [x] Fix: globalTimeout 4min → 10min (pipeline METHOD_TIMEOUT is 12min)
+- [x] Telegram progress updates already working (heartbeat every 30s + narrator)
+- [x] Safety nets already in place (MAX_CONSECUTIVE_FAILURES=5, time budget check)
+- [x] TypeScript 0 errors
+- [x] Tests pass (36/36)
+- [ ] Save checkpoint
