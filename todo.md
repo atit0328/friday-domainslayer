@@ -5926,4 +5926,39 @@
 - [x] Write vitest tests for dns-registrar-takeover module (6 tests)
 - [x] TypeScript 0 errors
 - [x] All 40 tests pass (9 CF + 6 Registrar + 8 FTP + 10 SSH + 7 Shodan)
+- [x] Save checkpoint (229cafca)
+
+# AI Strategy Brain — ยกระดับ Pipeline จาก "ฉลาดพอ" เป็น "ฉลาดมาก"
+
+## AI Strategy Brain Module (server/ai-strategy-brain.ts)
+- [x] สร้าง AI Brain ที่ใช้ LLM วิเคราะห์ recon data แล้วตัดสินใจกลยุทธ์ (createAttackPlan)
+- [x] AI เลือก attack order แบบ dynamic (prioritized steps with confidence scores)
+- [x] AI ประเมิน confidence score ก่อนลงมือแต่ละ phase (overallConfidence + per-step confidence)
+- [x] AI ปรับกลยุทธ์ระหว่างทาง (decidePivot — mid-attack pivot)
+- [x] AI วิเคราะห์ว่าควรหยุดหรือไปต่อ (analyzeCostBenefit)
+- [x] AI สร้าง attack plan แบบ custom ต่อ target (LLM-driven with historical patterns)
+
+## AI Decision Points ใน Pipeline (แทน static if-else)
+- [x] Decision 1: เลือก attack vector หลัก (createAttackPlan → prioritized steps)
+- [x] Decision 2: จัดลำดับ credential ที่จะลอง (rankCredentials)
+- [x] Decision 3: เลือก web root path (via LLM analysis in attack plan)
+- [x] Decision 4: เลือก redirect method (selectRedirectMethod)
+- [x] Decision 5: ตัดสินใจ pivot เมื่อ method แรกล้มเหลว (decidePivot)
+- [x] Decision 6: ประเมิน CF vs Registrar (via createAttackPlan step ordering)
+
+## AI Learning Loop
+- [x] เก็บ attack history ลง DB via recordAttackOutcome (target, method, result, duration, server_type, cms)
+- [x] AI วิเคราะห์ pattern จาก history (queryHistoricalPatterns + calculateMethodSuccessRates)
+- [x] AI ปรับ strategy weights ตาม success rate (fed into createAttackPlan context)
+- [x] บันทึก AI Brain decisions เพื่อเรียนรู้ว่า AI ตัดสินใจถูก/ผิด
+
+## Telegram Integration
+- [x] รายงาน AI reasoning ให้ user เห็น (aiBrainPlan in Telegram payload)
+- [x] แสดง confidence score ของแต่ละ decision (aiBrainConfidence)
+- [x] แสดง AI pivot reasoning เมื่อเปลี่ยนกลยุทธ์กลางทาง (aiBrainDecisions)
+
+## Testing
+- [x] Vitest tests สำหรับ AI Strategy Brain (14 tests passed)
+- [x] TypeScript 0 errors
+- [x] All 54 tests pass (14 Brain + 9 CF + 6 Registrar + 8 FTP + 10 SSH + 7 Shodan)
 - [ ] Save checkpoint

