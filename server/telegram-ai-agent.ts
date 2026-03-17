@@ -5638,6 +5638,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const DEFAULT_METHOD_TIMEOUT = 2 * 60 * 1000; // 2 min default (reduced from 3)
       const MAX_CONSECUTIVE_FAILURES = 15; // Stop after 15 consecutive failures (run ALL systems before giving up)
       
+      // ═══ GLOBAL METHOD LOOP TIMEOUT (8 min) ═══
+      // Graceful shutdown: when this deadline is reached, stop trying new methods and send summary
+      // This is separate from ATTACK_TIMEOUT_MS (30 min) which covers the entire attack including vuln scan + verify
+      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes for all method attempts
+      const methodLoopDeadline = Date.now() + FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS;
+      
       // Helper: run with per-method timeout
       const withMethodTimeout = async <T,>(methodId: string, fn: () => Promise<T>): Promise<T> => {
         const timeout = METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT;
@@ -5667,8 +5673,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           break;
         }
         
+        // ═══ GLOBAL METHOD LOOP DEADLINE CHECK ═══
+        const remainingMs = methodLoopDeadline - Date.now();
+        if (remainingMs <= 0) {
+          const elapsedMin = Math.round(FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS / 60000);
+          const triedCount = mi;
+          const remainingCount = methodOrder.length - mi;
+          await narrator.addStep(`⏰ Method loop หมดเวลา (${elapsedMin} นาที) — ลองแล้ว ${triedCount} วิธี, ข้าม ${remainingCount} วิธีที่เหลือ`);
+          await narrator.completeLastStep("failed");
+          await narrator.addAnalysis(
+            `⏰ **Graceful Shutdown** — หมดเวลา ${elapsedMin} นาที\n` +
+            `ลองแล้ว: ${triedCount} วิธี (สำเร็จ: ${methodOutcomes.filter(o => o.success).length})\n` +
+            `ข้าม: ${methodOrder.slice(mi).map(id => ALL_METHODS.find(m => m.id === id)?.name || id).join(", ")}`
+          );
+          break;
+        }
+        
         const methodId = methodOrder[mi];
         const methodDef = ALL_METHODS.find(m => m.id === methodId)!;
+        
+        // Cap per-method timeout to remaining time (don't exceed loop deadline)
+        const methodTimeout = METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT;
+        if (methodTimeout > remainingMs + 30_000) {
+          // This method's timeout exceeds remaining time — cap it
+          const cappedTimeout = Math.max(remainingMs, 30_000); // at least 30s
+          METHOD_TIMEOUTS[methodId] = cappedTimeout;
+        }
         
         // Update method progress counter
         narrator.setMethodProgress(mi + 1, methodDef.name, methodDef.icon);
@@ -6551,7 +6581,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       } // end for loop
       
       // ═══ AUTO-RETRY: Retry timed-out methods with extended timeout ═══
-      if (!fullChainSuccess && timedOutMethods.length > 0 && !attackEntry.abortController.signal.aborted) {
+      // Skip auto-retry if method loop deadline already passed (graceful shutdown)
+      const retryDeadlineRemaining = methodLoopDeadline - Date.now();
+      if (!fullChainSuccess && timedOutMethods.length > 0 && !attackEntry.abortController.signal.aborted && retryDeadlineRemaining > 60_000) {
         const MAX_RETRIES = 2; // retry up to 2 timed-out methods
         const retryMethods = timedOutMethods.slice(0, MAX_RETRIES);
         

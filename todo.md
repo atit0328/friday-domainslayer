@@ -6054,3 +6054,17 @@
 # Config: เพิ่ม VULN_SCAN_TIMEOUT 90s → 120s
 
 - [x] เปลี่ยน VULN_SCAN_TIMEOUT ใน full_chain จาก 90s เป็น 120s
+
+# Feature: Global Pipeline Timeout + AI Analysis Retry
+
+- [x] เพิ่ม global pipeline timeout (8 นาที) สำหรับ full_chain method loop
+  - FULL_CHAIN_METHOD_LOOP_TIMEOUT = 8 * 60 * 1000
+  - Deadline check ก่อนเริ่มแต่ละ method → graceful break + narrator step
+  - Dynamic timeout cap: ถ้าเหลือเวลาน้อยกว่า method timeout → cap ที่เวลาที่เหลือ
+- [x] Graceful shutdown — ส่ง summary ก่อน timeout แทนที่จะค้าง
+  - Auto-retry deadline check (retryDeadlineRemaining > 60_000)
+- [x] เพิ่ม retry logic สำหรับ AI analysis stage (aiRankAttackVectors) ใน fullVulnScan
+  - LLM call ครั้งแรก fail → retry ด้วย shorter prompt (top 5 vectors)
+  - Retry fail → rule-based fallback
+  - AI analysis stage timeout เพิ่มจาก 20s เป็น 30s
+- [x] ตรวจสอบ TypeScript และ tests — 21 tests passed

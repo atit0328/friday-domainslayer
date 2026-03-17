@@ -891,8 +891,63 @@ Respond in JSON format with this schema:
       onProgress("ai_analysis", `AI วิเคราะห์เสร็จ — ${parsed.vectors.length} attack vectors จัดอันดับแล้ว`, 85);
       return parsed;
     }
-  } catch (error) {
-    onProgress("ai_analysis", "AI analysis failed — using rule-based ranking", 85);
+  } catch (error: any) {
+    // ═══ RETRY: Try once more with a shorter/simpler prompt ═══
+    onProgress("ai_analysis", `\u26a0\ufe0f AI \u0e04\u0e23\u0e31\u0e49\u0e07\u0e41\u0e23\u0e01\u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27 (${error.message?.substring(0, 30) || "error"}) \u2014 \u0e25\u0e2d\u0e07\u0e43\u0e2b\u0e21\u0e48...`, 78);
+    try {
+      const shortPrompt = `Target: ${target}\nServer: ${serverInfo.server}\nCMS: ${cms.type} ${cms.version || ""}\nWAF: ${serverInfo.waf || "none"}\nWritable: ${writablePaths.length} paths\nUploads: ${uploadEndpoints.length} endpoints\nPanels: ${exposedPanels.length}\nCritical misconfigs: ${misconfigs.filter(m => m.severity === "critical").length}\n\nRank top 5 attack vectors for PHP file upload. JSON format: {"vectors": [{"id","name","method","targetPath","successProbability","shellType","technique","payloadType","riskLevel","aiReasoning"}], "analysis": "string"}`;
+      const retryResponse = await invokeLLM({
+        messages: [
+          { role: "system", content: "You are a penetration tester. Respond with JSON only." },
+          { role: "user", content: shortPrompt },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "attack_vectors",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                vectors: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      name: { type: "string" },
+                      method: { type: "string" },
+                      targetPath: { type: "string" },
+                      successProbability: { type: "number" },
+                      shellType: { type: "string" },
+                      technique: { type: "string" },
+                      payloadType: { type: "string" },
+                      riskLevel: { type: "number" },
+                      aiReasoning: { type: "string" },
+                    },
+                    required: ["id", "name", "method", "targetPath", "successProbability", "shellType", "technique", "payloadType", "riskLevel", "aiReasoning"],
+                    additionalProperties: false,
+                  },
+                },
+                analysis: { type: "string" },
+              },
+              required: ["vectors", "analysis"],
+              additionalProperties: false,
+            },
+          },
+        },
+      });
+      const retryContent = retryResponse.choices?.[0]?.message?.content as string | undefined;
+      if (retryContent) {
+        const retryParsed = JSON.parse(retryContent);
+        retryParsed.vectors.sort((a: any, b: any) => b.successProbability - a.successProbability);
+        onProgress("ai_analysis", `\u2705 AI retry \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08 \u2014 ${retryParsed.vectors.length} attack vectors`, 85);
+        return retryParsed;
+      }
+    } catch (retryError: any) {
+      console.warn(`[VulnScan] AI retry also failed: ${retryError.message}`);
+      onProgress("ai_analysis", `\u274c AI retry \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\u0e2d\u0e35\u0e01 \u2014 \u0e43\u0e0a\u0e49 rule-based ranking`, 85);
+    }
   }
 
   // Fallback: rule-based ranking
@@ -1118,10 +1173,10 @@ export async function fullVulnScan(
   if (collector) { collector.exposedPanels = exposedPanels; collector.misconfigurations = misconfigurations; collector.completedStages.push("panels", "misconfig"); }
   checkTimeout();
 
-  // Stage 6: AI attack vector ranking (20s max — LLM call)
+  // Stage 6: AI attack vector ranking (30s max — LLM call + 1 retry)
   const { vectors, analysis } = await runStage("ai_analysis", () => aiRankAttackVectors(
     baseUrl, serverInfo, cms, writablePaths, uploadEndpoints, exposedPanels, misconfigurations, onProgress,
-  ), { vectors: [], analysis: "AI analysis timed out" }, 20_000);
+  ), { vectors: [], analysis: "AI analysis timed out" }, 30_000);
   if (collector) { collector.attackVectors = vectors; collector.aiAnalysis = analysis; collector.completedStages.push("ai_analysis"); }
 
   const result: VulnScanResult = {
