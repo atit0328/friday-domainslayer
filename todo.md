@@ -5995,4 +5995,22 @@
 - [x] WP Admin takeover guard ถูกลบ — รันเสมอถ้าเป็น WP
 - [x] TypeScript 0 errors
 - [x] All 54 tests pass
+- [x] Save checkpoint (e59da282)
+
+## Bug: Pipeline ค้าง 10+ นาทีที่ Deep Vulnerability Scan / Fingerprint (gladstone64.com)
+- [ ] ตรวจสอบ server logs หาจุดที่ค้าง
+- [ ] วิเคราะห์ code path ที่ทำให้ hang
+- [ ] แก้ไข timeout/hang issue
+- [ ] ทดสอบและ verify fix
 - [ ] Save checkpoint
+
+# Bug Fix: Pipeline ค้าง 10+ นาทีตรง Deep Vulnerability Scan (Telegram message ไม่อัพเดท)
+
+- [x] วิเคราะห์ root cause: fullVulnScan callback สร้าง addStep() ไม่จำกัด → steps สะสม → ข้อความยาวเกิน Telegram limit → edit fail
+- [x] Fix 1: Step pruning — buildStepsText() แสดงแค่ 8 steps ล่าสุด + summary ของ steps ก่อนหน้า
+- [x] Fix 2: Auto-complete previous running steps — addStep() จะ auto-complete step ก่อนหน้าที่ยัง running อยู่
+- [x] Fix 3: เพิ่ม MIN_EDIT_INTERVAL เป็น 2000ms (จาก 1000ms) เพื่อลด Telegram rate limit
+- [x] Fix 4: Wrap fullVulnScan ใน full_chain ด้วย timeout 90s (ก่อนหน้าไม่มี timeout wrapper)
+- [x] Fix 5: เปลี่ยน fullVulnScan callbacks ทุกจุด (6 จุด) จาก addStep → addAnalysis + stage dedup
+- [x] Fix 6: Truncate long analysis text (150 chars max) ป้องกัน message overflow
+- [x] เขียน vitest tests 8 tests — ทั้งหมดผ่าน

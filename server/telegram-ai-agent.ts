@@ -4948,8 +4948,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       try {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         const { generateVulnScanAnalysis } = await import("./telegram-narrator");
+        let lastSOScanStage = "";
         vulnScanResult = await fullVulnScan(domain, (stage, detail) => {
-          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+          try {
+            if (stage !== lastSOScanStage) {
+              lastSOScanStage = stage;
+              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+            }
+          } catch {}
         }, attackEntry.abortController.signal);
         const vulnMs = Date.now() - vulnStart;
         await narrator.updateStep(vulnStep, "done",
@@ -5092,10 +5098,17 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const preScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
       const preScanStart = Date.now();
+      let lastROScanStage = "";
       const scanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         return fullVulnScan(domain, (stage, detail) => {
-          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+          try {
+            // Use addAnalysis instead of addStep to avoid step accumulation
+            if (stage !== lastROScanStage) {
+              lastROScanStage = stage;
+              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+            }
+          } catch {}
         }, attackEntry.abortController.signal);
       }, { heartbeatLabel: "Vuln Scan" });
       const preScanMs = Date.now() - preScanStart;
@@ -5301,32 +5314,45 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       timings.push({ step: `Redirect URL selected`, ms: Date.now() - s1, ok: true });
       stepIndex++;
       
-      // ===== PHASE 1: Deep Vulnerability Scan =====
+      // ===== PHASE 1: Deep Vulnerability Scan (with timeout) =====
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const scanStepServer = await narrator.addStep("🖥️ Fingerprint เซิร์ฟเวอร์");
       const scanStart = Date.now();
       const { fullVulnScan } = await import("./ai-vuln-analyzer");
       const { generateVulnScanAnalysis } = await import("./telegram-narrator");
       let vulnScanResult: Awaited<ReturnType<typeof fullVulnScan>> | null = null;
+      
+      // Track last scan stage to avoid duplicate updates
+      let lastScanStage = "";
+      const VULN_SCAN_TIMEOUT = 90_000; // 90s timeout for vuln scan in full_chain
+      
       try {
-        vulnScanResult = await fullVulnScan(domain, (stage, detail, progress) => {
+        // Wrap fullVulnScan with timeout to prevent pipeline hang
+        const scanPromise = fullVulnScan(domain, (stage, detail, progress) => {
           try {
-            // Update narrator with scan progress
-            if (stage === "fingerprint") {
-              narrator.addStep(`🖥️ ${detail.substring(0, 60)}`).catch(() => {});
-            } else if (stage === "cms") {
-              narrator.addStep(`💻 ${detail.substring(0, 60)}`).catch(() => {});
-            } else if (stage === "writable") {
-              narrator.addStep(`📂 ${detail.substring(0, 60)}`).catch(() => {});
-            } else if (stage === "upload") {
-              narrator.addStep(`📤 ${detail.substring(0, 60)}`).catch(() => {});
-            } else if (stage === "panels") {
-              narrator.addStep(`🛡️ ${detail.substring(0, 60)}`).catch(() => {});
-            } else if (stage === "ai_rank") {
-              narrator.addStep(`🤖 ${detail.substring(0, 60)}`).catch(() => {});
+            // Use addAnalysis instead of addStep to avoid step accumulation
+            // Only update on stage change to reduce Telegram API calls
+            if (stage !== lastScanStage) {
+              lastScanStage = stage;
+              const stageIcons: Record<string, string> = {
+                fingerprint: "🖥️", cms: "💻", cms_detect: "💻",
+                writable: "📂", writable_paths: "📂", upload: "📤",
+                upload_endpoints: "📤", panels: "🛡️", misconfig: "⚠️",
+                ai_analysis: "🤖", ai_rank: "🤖", start: "🔍",
+                waf_detected: "🛡️", complete: "✅",
+              };
+              const icon = stageIcons[stage] || "🔎";
+              narrator.addAnalysis(`${icon} ${detail.substring(0, 80)}`).catch(() => {});
             }
           } catch { /* ignore */ }
         }, attackEntry.abortController.signal);
+        
+        vulnScanResult = await Promise.race([
+          scanPromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`VULN_SCAN_TIMEOUT: exceeded ${VULN_SCAN_TIMEOUT / 1000}s`)), VULN_SCAN_TIMEOUT)
+          ),
+        ]);
         const scanMs = Date.now() - scanStart;
         await narrator.updateStep(scanStepServer, "done", 
           generateVulnScanAnalysis({
@@ -5371,9 +5397,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           }).catch(err => console.warn(`[TelegramAI] Full chain vuln alert failed: ${err}`));
         }
       } catch (scanErr: any) {
-        await narrator.updateStep(scanStepServer, "failed", `Scan error: ${scanErr.message?.substring(0, 60) || "unknown"}`, Date.now() - scanStart);
-        await narrator.addAnalysis(`⚠️ Scan ล้มเหลว — จะโจมตีต่อโดยไม่มีข้อมูล scan`);
-        timings.push({ step: `Deep Vuln Scan failed: ${scanErr.message?.substring(0, 40)}`, ms: Date.now() - scanStart, ok: false });
+        const scanMs = Date.now() - scanStart;
+        const isTimeout = scanErr.message?.includes("VULN_SCAN_TIMEOUT") || scanErr.message?.includes("timed out");
+        const errMsg = isTimeout 
+          ? `⏰ Vuln Scan หมดเวลา (${Math.round(scanMs / 1000)}s) — ข้ามไป`
+          : `Scan error: ${scanErr.message?.substring(0, 60) || "unknown"}`;
+        await narrator.updateStep(scanStepServer, "failed", errMsg, scanMs);
+        await narrator.addAnalysis(isTimeout 
+          ? `⏰ Vuln Scan หมดเวลา — จะโจมตีต่อโดยไม่มีข้อมูล scan`
+          : `⚠️ Scan ล้มเหลว — จะโจมตีต่อโดยไม่มีข้อมูล scan`);
+        timings.push({ step: `Deep Vuln Scan ${isTimeout ? "timeout" : "failed"}: ${scanErr.message?.substring(0, 40)}`, ms: scanMs, ok: false });
       }
       stepIndex++;
       
@@ -6911,8 +6944,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const agentScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
       try {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
+        let lastAgentScanStage = "";
         const scanResult = await fullVulnScan(domain, (stage, detail) => {
-          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+          try {
+            if (stage !== lastAgentScanStage) {
+              lastAgentScanStage = stage;
+              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+            }
+          } catch {}
         }, attackEntry.abortController.signal);
         await narrator.updateStep(agentScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
@@ -7149,10 +7188,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const cloakScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
+      let lastCloakScanStage = "";
       const cloakScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         return fullVulnScan(domain, (stage, detail) => {
-          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+          try {
+            if (stage !== lastCloakScanStage) {
+              lastCloakScanStage = stage;
+              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+            }
+          } catch {}
         }, attackEntry.abortController.signal);
       }, { heartbeatLabel: "Vuln Scan" });
       const cloakScanMs = Date.now() - s1;
@@ -7336,10 +7381,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const hijackScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
+      let lastHijackScanStage = "";
       const hijackScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-         return fullVulnScan(domain, (stage, detail) => {
-          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+        return fullVulnScan(domain, (stage, detail) => {
+          try {
+            if (stage !== lastHijackScanStage) {
+              lastHijackScanStage = stage;
+              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+            }
+          } catch {}
         }, attackEntry.abortController.signal);
       }, { heartbeatLabel: "Vuln Scan" });
       const hijackScanMs = Date.now() - s1;
@@ -7601,8 +7652,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const advScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
       try {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
+        let lastAdvScanStage = "";
         const scanResult = await fullVulnScan(domain, (stage, detail) => {
-          try { narrator.addStep(`🔎 ${detail.substring(0, 55)}`).catch(() => {}); } catch {}
+          try {
+            if (stage !== lastAdvScanStage) {
+              lastAdvScanStage = stage;
+              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+            }
+          } catch {}
         }, attackEntry.abortController.signal);
         await narrator.updateStep(advScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,

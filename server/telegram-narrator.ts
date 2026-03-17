@@ -376,7 +376,7 @@ export class TelegramNarrator {
   private methodResults: Array<{ name: string; icon: string; success: boolean }> = [];
   
   /** Minimum interval between edits (ms) to avoid Telegram rate limits */
-  private static MIN_EDIT_INTERVAL = 1000;
+  private static MIN_EDIT_INTERVAL = 2000;
   /** Counter for unique analysis keys */
   private analysisCounter: number = 0;
 
@@ -417,6 +417,14 @@ export class TelegramNarrator {
 
   /** Add a sub-step within current phase */
   async addStep(label: string, status: NarratorStep["status"] = "running"): Promise<number> {
+    // Auto-complete previous running steps to prevent accumulation
+    // (keeps at most 1 running step at a time)
+    for (let i = this.steps.length - 1; i >= 0; i--) {
+      if (this.steps[i].status === "running") {
+        this.steps[i].status = "done";
+        break; // Only complete the most recent running step
+      }
+    }
     const idx = this.steps.length;
     this.steps.push({ label, status });
     await this.updateMessage();
@@ -559,7 +567,19 @@ export class TelegramNarrator {
   private buildStepsText(): string {
     let text = "";
     
-    for (let i = 0; i < this.steps.length; i++) {
+    // ── Step pruning: only show last MAX_VISIBLE_STEPS to keep message short ──
+    const MAX_VISIBLE_STEPS = 8;
+    const totalSteps = this.steps.length;
+    const startIdx = Math.max(0, totalSteps - MAX_VISIBLE_STEPS);
+    
+    // Show summary of hidden steps
+    if (startIdx > 0) {
+      const hiddenDone = this.steps.slice(0, startIdx).filter(s => s.status === "done" || s.status === "skipped").length;
+      const hiddenFailed = this.steps.slice(0, startIdx).filter(s => s.status === "failed").length;
+      text += `\n📊 ขั้นตอนก่อนหน้า: ✅${hiddenDone} ❌${hiddenFailed} (${startIdx} steps)`;
+    }
+    
+    for (let i = startIdx; i < totalSteps; i++) {
       const step = this.steps[i];
       const icon = STATUS_ICON[step.status];
       const duration = step.durationMs ? ` (${formatDurationThai(step.durationMs)})` : "";
@@ -568,19 +588,25 @@ export class TelegramNarrator {
       
       // Show analysis after completed/failed steps
       if (step.analysis && (step.status === "done" || step.status === "failed")) {
-        text += `\n   └─ ${step.analysis}`;
+        // Truncate long analysis to prevent message overflow
+        const truncAnalysis = step.analysis.length > 150 ? step.analysis.substring(0, 147) + "..." : step.analysis;
+        text += `\n   └─ ${truncAnalysis}`;
       }
       
       // Show phase analysis after this step (collect all analyses tagged for this step index)
+      // Only show analyses for visible steps
       const stepEntries = Array.from(this.phaseAnalysis.entries());
+      let analysisCount = 0;
       for (const [key, val] of stepEntries) {
         if (key.startsWith("analysis_u")) {
           const pipeIdx = val.indexOf("|");
           if (pipeIdx === -1) continue;
           const stepIdx = parseInt(val.substring(0, pipeIdx), 10);
           const analysisText = val.substring(pipeIdx + 1);
-          if (stepIdx === i + 1) {
-            text += `\n   └─ ${analysisText}`;
+          if (stepIdx === i + 1 && analysisCount < 2) {
+            const truncText = analysisText.length > 120 ? analysisText.substring(0, 117) + "..." : analysisText;
+            text += `\n   └─ ${truncText}`;
+            analysisCount++;
           }
         }
       }
