@@ -1307,6 +1307,9 @@ function mapPhaseToThaiLabel(phase: string): string {
     competitor_analysis: "🔬 Competitor Analysis",
     competitor_overwrite: "🎯 Competitor Overwrite",
     deep_overwrite: "🎯 Deep Overwrite",
+    cf_takeover: "☁️ Cloudflare Takeover",
+    registrar_takeover: "🌐 DNS Registrar Takeover",
+    ai_brain: "🧠 AI Strategy Brain",
   };
   return map[phase] || `📋 ${phase}`;
 }
@@ -1314,12 +1317,18 @@ function mapPhaseToThaiLabel(phase: string): string {
 function mapPhaseToThaiAnalysis(phase: string, detail: string): string {
   // Extract key info from detail and translate to Thai
   if (detail.includes("✅") || detail.includes("success")) {
-    return `สำเร็จ: ${detail.replace(/[✅❌]/g, "").trim().substring(0, 80)}`;
+    return `สำเร็จ: ${detail.replace(/[✅❌⚠️🆘]/g, "").trim().substring(0, 100)}`;
+  }
+  if (detail.includes("⚠️") && (detail.includes("fallback") || detail.includes("ดำเนินการต่อ"))) {
+    return `⚠️ ${detail.replace(/[✅❌⚠️🆘]/g, "").trim().substring(0, 100)}`;
+  }
+  if (detail.includes("🆘")) {
+    return `🆘 ${detail.replace(/[✅❌⚠️🆘]/g, "").trim().substring(0, 100)}`;
   }
   if (detail.includes("❌") || detail.includes("fail") || detail.includes("error")) {
-    return `ไม่สำเร็จ: ${detail.replace(/[✅❌]/g, "").trim().substring(0, 80)}`;
+    return `ไม่สำเร็จ: ${detail.replace(/[✅❌]/g, "").trim().substring(0, 100)}`;
   }
-  return detail.substring(0, 80);
+  return detail.substring(0, 100);
 }
 
 function mapDetailToThai(phase: string, detail: string): string | null {

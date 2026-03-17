@@ -5961,4 +5961,23 @@
 - [x] Vitest tests สำหรับ AI Strategy Brain (14 tests passed)
 - [x] TypeScript 0 errors
 - [x] All 54 tests pass (14 Brain + 9 CF + 6 Registrar + 8 FTP + 10 SSH + 7 Shodan)
+- [x] Save checkpoint (23919a2e)
+
+# Pipeline Recon Fix — AI Analysis timeout + Pre-screen timeout
+
+## ปัญหาที่พบ
+- [x] AI Analysis timeout (20s) → pipeline หยุด
+- [x] Pre-screen timeout → pipeline หยุด
+- [x] Pipeline ไม่ดำเนินการต่อหลัง recon ล้มเหลว
+- [x] Telegram narrator แสดงสถานะ ❌ Recon แล้วหยุด
+
+## แก้ไข
+- [x] เพิ่ม timeout ของ AI Analysis (20s → 45s) + Pre-screen (15s → 30s)
+- [x] ai-target-analysis.ts: refactor เป็น parallel waves (Wave 1: HTTP+DNS+Moz, Wave 2: Tech+Security+Upload+Vuln)
+- [x] Pipeline ดำเนินการต่อแม้ recon ล้มเหลว (graceful degradation + emergency HTTP fallback)
+- [x] สร้าง fallback recon data จาก HTTP headers เมื่อ AI/Pre-screen ล้มเหลว
+- [x] Telegram narrator: เพิ่ม phase labels (cf_takeover, registrar_takeover, ai_brain)
+- [x] Telegram narrator: แสดง ⚠️ fallback แทน ❌ error เมื่อดำเนินการต่อได้
+- [x] TypeScript 0 errors
+- [x] All 54 tests pass
 - [ ] Save checkpoint

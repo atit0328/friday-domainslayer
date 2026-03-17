@@ -212,47 +212,114 @@ export async function runAiTargetAnalysis(
 
   let progressAccum = 0;
 
-  // ─── Step 1: HTTP Fingerprinting ───
-  const step1Start = Date.now();
+  // ═══ WAVE 1: Independent steps run in PARALLEL (HTTP + DNS + Moz) ═══
   onStep({ stepId: "http_fingerprint", stepName: "HTTP Fingerprinting", status: "running", detail: "กำลังวิเคราะห์ HTTP headers, server type, response time...", progress: 0 });
-  try {
-    await httpFingerprint(targetUrl, cleanDomain, result);
+  onStep({ stepId: "dns_lookup", stepName: "DNS & Network Analysis", status: "running", detail: "กำลังค้นหา DNS records, IP, nameservers, hosting...", progress: 0 });
+  onStep({ stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: "running", detail: "กำลังดึง Domain Authority, Page Authority, Spam Score จาก Moz API...", progress: 0 });
+
+  const wave1Start = Date.now();
+  const [httpRes, dnsRes, mozRes] = await Promise.allSettled([
+    // Step 1: HTTP Fingerprinting (25s timeout)
+    Promise.race([
+      httpFingerprint(targetUrl, cleanDomain, result),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("HTTP fingerprint timeout (25s)")), 25000)),
+    ]),
+    // Step 2: DNS Analysis (15s timeout)
+    Promise.race([
+      dnsAnalysis(cleanDomain, result),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("DNS analysis timeout (15s)")), 15000)),
+    ]),
+    // Step 5: Moz Metrics (10s timeout)
+    Promise.race([
+      getMozMetrics(cleanDomain),
+      new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Moz metrics timeout (10s)")), 10000)),
+    ]),
+  ]);
+
+  // Process HTTP result
+  if (httpRes.status === "fulfilled") {
     progressAccum += 15;
     onStep({
       stepId: "http_fingerprint", stepName: "HTTP Fingerprinting", status: "complete",
       detail: `Server: ${result.httpFingerprint.serverType || "Unknown"} | PHP: ${result.httpFingerprint.phpVersion || "N/A"} | Response: ${result.httpFingerprint.responseTime}ms | Status: ${result.httpFingerprint.statusCode}`,
-      progress: progressAccum,
-      data: result.httpFingerprint,
-      duration: Date.now() - step1Start,
+      progress: progressAccum, data: result.httpFingerprint, duration: Date.now() - wave1Start,
     });
-  } catch (e: any) {
+  } else {
     progressAccum += 15;
-    onStep({ stepId: "http_fingerprint", stepName: "HTTP Fingerprinting", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step1Start });
+    onStep({ stepId: "http_fingerprint", stepName: "HTTP Fingerprinting", status: "error", detail: `ล้มเหลว: ${httpRes.reason?.message || "unknown"}`, progress: progressAccum, duration: Date.now() - wave1Start });
   }
 
-  // ─── Step 2: DNS & Network Analysis ───
-  const step2Start = Date.now();
-  onStep({ stepId: "dns_lookup", stepName: "DNS & Network Analysis", status: "running", detail: "กำลังค้นหา DNS records, IP, nameservers, hosting...", progress: progressAccum });
-  try {
-    await dnsAnalysis(cleanDomain, result);
+  // Process DNS result
+  if (dnsRes.status === "fulfilled") {
     progressAccum += 10;
     onStep({
       stepId: "dns_lookup", stepName: "DNS & Network Analysis", status: "complete",
       detail: `IP: ${result.dnsInfo.ipAddress || "N/A"} | Hosting: ${result.dnsInfo.hostingProvider || "Unknown"} | CDN: ${result.dnsInfo.cdnDetected || "None"} | CF Proxied: ${result.dnsInfo.cloudflareProxied ? "Yes" : "No"}`,
-      progress: progressAccum,
-      data: result.dnsInfo,
-      duration: Date.now() - step2Start,
+      progress: progressAccum, data: result.dnsInfo, duration: Date.now() - wave1Start,
     });
-  } catch (e: any) {
+  } else {
     progressAccum += 10;
-    onStep({ stepId: "dns_lookup", stepName: "DNS & Network Analysis", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step2Start });
+    onStep({ stepId: "dns_lookup", stepName: "DNS & Network Analysis", status: "error", detail: `ล้มเหลว: ${dnsRes.reason?.message || "unknown"}`, progress: progressAccum, duration: Date.now() - wave1Start });
   }
 
-  // ─── Step 3: Technology Stack Detection ───
-  const step3Start = Date.now();
+  // Process Moz result
+  if (mozRes.status === "fulfilled" && mozRes.value) {
+    const mozMetrics = mozRes.value;
+    progressAccum += 10;
+    result.seoMetrics = {
+      domainAuthority: mozMetrics.domainAuthority,
+      pageAuthority: mozMetrics.pageAuthority,
+      spamScore: mozMetrics.spamScore,
+      backlinks: mozMetrics.externalPagesToRootDomain,
+      referringDomains: mozMetrics.rootDomainsToRootDomain,
+      mozAvailable: true,
+    };
+    onStep({
+      stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: "complete",
+      detail: `DA: ${mozMetrics.domainAuthority} | PA: ${mozMetrics.pageAuthority} | Spam Score: ${mozMetrics.spamScore} | Backlinks: ${mozMetrics.externalPagesToRootDomain.toLocaleString()} | Referring Domains: ${mozMetrics.rootDomainsToRootDomain.toLocaleString()}`,
+      progress: progressAccum, data: result.seoMetrics, duration: Date.now() - wave1Start,
+    });
+  } else {
+    progressAccum += 10;
+    onStep({
+      stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: mozRes.status === "rejected" ? "error" : "complete",
+      detail: mozRes.status === "rejected" ? `ล้มเหลว: ${mozRes.reason?.message || "unknown"}` : "Moz API ไม่พร้อมใช้งาน — ข้ามขั้นตอนนี้",
+      progress: progressAccum, duration: Date.now() - wave1Start,
+    });
+  }
+
+  // ═══ WAVE 2: Steps that benefit from HTTP data run in PARALLEL (Tech + Security + Upload + Vuln) ═══
   onStep({ stepId: "tech_detection", stepName: "Technology Stack Detection", status: "running", detail: "กำลังตรวจจับ CMS, framework, plugins, theme...", progress: progressAccum });
-  try {
-    await detectTechStack(targetUrl, cleanDomain, result);
+  onStep({ stepId: "security_scan", stepName: "Security Assessment", status: "running", detail: "กำลังตรวจสอบ WAF, security headers, SSL...", progress: progressAccum });
+  onStep({ stepId: "upload_surface", stepName: "Upload Surface Mapping", status: "running", detail: "กำลังสแกน writable paths, upload endpoints, file managers...", progress: progressAccum });
+  onStep({ stepId: "vuln_check", stepName: "Vulnerability Assessment", status: "running", detail: "กำลังตรวจสอบ known CVEs, misconfigurations, exposed files...", progress: progressAccum });
+
+  const wave2Start = Date.now();
+  const [techRes, secRes, uploadRes, vulnRes] = await Promise.allSettled([
+    // Step 3: Tech Stack (15s timeout)
+    Promise.race([
+      detectTechStack(targetUrl, cleanDomain, result),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Tech detection timeout (15s)")), 15000)),
+    ]),
+    // Step 4: Security Assessment (15s timeout)
+    Promise.race([
+      securityAssessment(targetUrl, cleanDomain, result),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Security assessment timeout (15s)")), 15000)),
+    ]),
+    // Step 6: Upload Surface (15s timeout)
+    Promise.race([
+      mapUploadSurface(targetUrl, cleanDomain, result),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Upload surface timeout (15s)")), 15000)),
+    ]),
+    // Step 7: Vulnerability Check (15s timeout)
+    Promise.race([
+      vulnerabilityCheck(targetUrl, cleanDomain, result),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error("Vuln check timeout (15s)")), 15000)),
+    ]),
+  ]);
+
+  // Process Tech result
+  if (techRes.status === "fulfilled") {
     progressAccum += 15;
     const techSummary = [
       result.techStack.cms ? `CMS: ${result.techStack.cms}${result.techStack.cmsVersion ? ` v${result.techStack.cmsVersion}` : ""}` : null,
@@ -263,104 +330,52 @@ export async function runAiTargetAnalysis(
     onStep({
       stepId: "tech_detection", stepName: "Technology Stack Detection", status: "complete",
       detail: techSummary || "ไม่พบ CMS/framework ที่รู้จัก",
-      progress: progressAccum,
-      data: result.techStack,
-      duration: Date.now() - step3Start,
+      progress: progressAccum, data: result.techStack, duration: Date.now() - wave2Start,
     });
-  } catch (e: any) {
+  } else {
     progressAccum += 15;
-    onStep({ stepId: "tech_detection", stepName: "Technology Stack Detection", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step3Start });
+    onStep({ stepId: "tech_detection", stepName: "Technology Stack Detection", status: "error", detail: `ล้มเหลว: ${techRes.reason?.message || "unknown"}`, progress: progressAccum, duration: Date.now() - wave2Start });
   }
 
-  // ─── Step 4: Security Assessment ───
-  const step4Start = Date.now();
-  onStep({ stepId: "security_scan", stepName: "Security Assessment", status: "running", detail: "กำลังตรวจสอบ WAF, security headers, SSL...", progress: progressAccum });
-  try {
-    await securityAssessment(targetUrl, cleanDomain, result);
+  // Process Security result
+  if (secRes.status === "fulfilled") {
     progressAccum += 15;
     onStep({
       stepId: "security_scan", stepName: "Security Assessment", status: "complete",
       detail: `WAF: ${result.security.wafDetected || "None"} (${result.security.wafStrength}) | Security Score: ${result.security.securityScore}/100 | HSTS: ${result.security.hsts ? "Yes" : "No"} | CSP: ${result.security.csp ? "Yes" : "No"}`,
-      progress: progressAccum,
-      data: result.security,
-      duration: Date.now() - step4Start,
+      progress: progressAccum, data: result.security, duration: Date.now() - wave2Start,
     });
-  } catch (e: any) {
+  } else {
     progressAccum += 15;
-    onStep({ stepId: "security_scan", stepName: "Security Assessment", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step4Start });
+    onStep({ stepId: "security_scan", stepName: "Security Assessment", status: "error", detail: `ล้มเหลว: ${secRes.reason?.message || "unknown"}`, progress: progressAccum, duration: Date.now() - wave2Start });
   }
 
-  // ─── Step 5: SEO Metrics (Moz) ───
-  const step5Start = Date.now();
-  onStep({ stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: "running", detail: "กำลังดึง Domain Authority, Page Authority, Spam Score จาก Moz API...", progress: progressAccum });
-  try {
-    const mozMetrics = await getMozMetrics(cleanDomain);
-    progressAccum += 10;
-    if (mozMetrics) {
-      result.seoMetrics = {
-        domainAuthority: mozMetrics.domainAuthority,
-        pageAuthority: mozMetrics.pageAuthority,
-        spamScore: mozMetrics.spamScore,
-        backlinks: mozMetrics.externalPagesToRootDomain,
-        referringDomains: mozMetrics.rootDomainsToRootDomain,
-        mozAvailable: true,
-      };
-      onStep({
-        stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: "complete",
-        detail: `DA: ${mozMetrics.domainAuthority} | PA: ${mozMetrics.pageAuthority} | Spam Score: ${mozMetrics.spamScore} | Backlinks: ${mozMetrics.externalPagesToRootDomain.toLocaleString()} | Referring Domains: ${mozMetrics.rootDomainsToRootDomain.toLocaleString()}`,
-        progress: progressAccum,
-        data: result.seoMetrics,
-        duration: Date.now() - step5Start,
-      });
-    } else {
-      onStep({
-        stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: "complete",
-        detail: "Moz API ไม่พร้อมใช้งาน — ข้ามขั้นตอนนี้",
-        progress: progressAccum,
-        duration: Date.now() - step5Start,
-      });
-    }
-  } catch (e: any) {
-    progressAccum += 10;
-    onStep({ stepId: "moz_metrics", stepName: "SEO Metrics (Moz DA/PA)", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step5Start });
-  }
-
-  // ─── Step 6: Upload Surface Mapping ───
-  const step6Start = Date.now();
-  onStep({ stepId: "upload_surface", stepName: "Upload Surface Mapping", status: "running", detail: "กำลังสแกน writable paths, upload endpoints, file managers...", progress: progressAccum });
-  try {
-    await mapUploadSurface(targetUrl, cleanDomain, result);
+  // Process Upload Surface result
+  if (uploadRes.status === "fulfilled") {
     progressAccum += 15;
     onStep({
       stepId: "upload_surface", stepName: "Upload Surface Mapping", status: "complete",
       detail: `Writable: ${result.uploadSurface.writablePaths.length} | Upload Endpoints: ${result.uploadSurface.uploadEndpoints.length} | File Manager: ${result.uploadSurface.fileManagerDetected ? "Yes" : "No"} | XMLRPC: ${result.uploadSurface.xmlrpcAvailable ? "Yes" : "No"} | REST API: ${result.uploadSurface.restApiAvailable ? "Yes" : "No"}`,
-      progress: progressAccum,
-      data: result.uploadSurface,
-      duration: Date.now() - step6Start,
+      progress: progressAccum, data: result.uploadSurface, duration: Date.now() - wave2Start,
     });
-  } catch (e: any) {
+  } else {
     progressAccum += 15;
-    onStep({ stepId: "upload_surface", stepName: "Upload Surface Mapping", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step6Start });
+    onStep({ stepId: "upload_surface", stepName: "Upload Surface Mapping", status: "error", detail: `ล้มเหลว: ${uploadRes.reason?.message || "unknown"}`, progress: progressAccum, duration: Date.now() - wave2Start });
   }
 
-  // ─── Step 7: Vulnerability Assessment ───
-  const step7Start = Date.now();
-  onStep({ stepId: "vuln_check", stepName: "Vulnerability Assessment", status: "running", detail: "กำลังตรวจสอบ known CVEs, misconfigurations, exposed files...", progress: progressAccum });
-  try {
-    await vulnerabilityCheck(targetUrl, cleanDomain, result);
+  // Process Vulnerability result
+  if (vulnRes.status === "fulfilled") {
     progressAccum += 10;
     const criticals = result.vulnerabilities.knownCVEs.filter(v => v.severity === "critical").length;
     const highs = result.vulnerabilities.knownCVEs.filter(v => v.severity === "high").length;
     onStep({
       stepId: "vuln_check", stepName: "Vulnerability Assessment", status: "complete",
       detail: `CVEs: ${result.vulnerabilities.knownCVEs.length} (${criticals} critical, ${highs} high) | Misconfigs: ${result.vulnerabilities.misconfigurations.length} | Exposed Files: ${result.vulnerabilities.exposedFiles.length} | Risk Score: ${result.vulnerabilities.totalRiskScore}/100`,
-      progress: progressAccum,
-      data: result.vulnerabilities,
-      duration: Date.now() - step7Start,
+      progress: progressAccum, data: result.vulnerabilities, duration: Date.now() - wave2Start,
     });
-  } catch (e: any) {
+  } else {
     progressAccum += 10;
-    onStep({ stepId: "vuln_check", stepName: "Vulnerability Assessment", status: "error", detail: `ล้มเหลว: ${e.message}`, progress: progressAccum, duration: Date.now() - step7Start });
+    onStep({ stepId: "vuln_check", stepName: "Vulnerability Assessment", status: "error", detail: `ล้มเหลว: ${vulnRes.reason?.message || "unknown"}`, progress: progressAccum, duration: Date.now() - wave2Start });
   }
 
   // ─── Step 8: AI Strategic Analysis (LLM) ───

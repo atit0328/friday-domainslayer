@@ -1020,7 +1020,7 @@ export async function runUnifiedAttackPipeline(
 
   // Run AI analysis and prescreen in PARALLEL to save time
   const [aiResult, prescreenResult] = await Promise.allSettled([
-    // AI Target Analysis (20s timeout)
+    // AI Target Analysis (45s timeout — increased for slow targets)
     Promise.race([
       runAiTargetAnalysis(
         config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, ""),
@@ -1034,12 +1034,12 @@ export async function runUnifiedAttackPipeline(
           });
         },
       ),
-      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (20s)")), capTimeout(20000))),
+      new Promise<AiTargetAnalysis>((_, reject) => setTimeout(() => reject(new Error("AI analysis timeout (45s)")), capTimeout(45000))),
     ]),
-    // Pre-screening (15s timeout)
+    // Pre-screening (30s timeout — increased for slow targets)
     Promise.race([
       preScreenTarget(config.targetUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")),
-      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), capTimeout(15000))),
+      new Promise<PreScreenResult>((_, reject) => setTimeout(() => reject(new Error("prescreen timeout")), capTimeout(30000))),
     ]),
   ]);
 
@@ -1131,11 +1131,97 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
+  // ═══ EMERGENCY FALLBACK: Quick HTTP recon when BOTH AI + Pre-screen fail ═══
+  if (!aiTargetAnalysis && !prescreen) {
+    loggedOnEvent({
+      phase: "prescreen",
+      step: "emergency_fallback",
+      detail: `🆘 AI + Pre-screen ล้มเหลวทั้งคู่ — ใช้ HTTP headers fallback เพื่อสร้าง basic profile`,
+      progress: 18,
+    });
+    try {
+      const controller = new AbortController();
+      const httpTimeout = setTimeout(() => controller.abort(), 15000);
+      const resp = await fetch(config.targetUrl, {
+        method: "HEAD",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      }).catch(() => null);
+      clearTimeout(httpTimeout);
+
+      if (resp) {
+        const server = resp.headers.get("server") || "";
+        const xPowered = resp.headers.get("x-powered-by") || "";
+        const cfRay = resp.headers.get("cf-ray");
+
+        // Build minimal prescreen from HTTP headers
+        prescreen = {
+          serverType: server.toLowerCase().includes("nginx") ? "Nginx" :
+                      server.toLowerCase().includes("apache") ? "Apache" :
+                      server.toLowerCase().includes("litespeed") ? "LiteSpeed" :
+                      server.toLowerCase().includes("iis") ? "IIS" :
+                      server.toLowerCase().includes("cloudflare") ? "Cloudflare" : server || "Unknown",
+          cms: null,
+          cmsVersion: null,
+          wafDetected: cfRay ? "Cloudflare" : null,
+          wafStrength: cfRay ? "medium" : null,
+          hostingProvider: cfRay ? "Cloudflare (CDN)" : null,
+          ipAddress: null,
+          phpVersion: xPowered.includes("PHP") ? xPowered.replace(/.*PHP\//, "").split(" ")[0] : null,
+          overallSuccessProbability: 40,
+          writablePaths: [],
+          uploadEndpoints: [],
+          openPorts: [],
+        } as any;
+
+        // Try to detect CMS from body
+        try {
+          const bodyController = new AbortController();
+          const bodyTimeout = setTimeout(() => bodyController.abort(), 10000);
+          const bodyResp = await fetch(config.targetUrl, {
+            signal: bodyController.signal,
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+          }).catch(() => null);
+          clearTimeout(bodyTimeout);
+          if (bodyResp) {
+            const body = await bodyResp.text().catch(() => "");
+            if (body.includes("wp-content") || body.includes("wp-json") || body.includes("wordpress")) {
+              (prescreen as any).cms = "WordPress";
+            } else if (body.includes("Joomla")) {
+              (prescreen as any).cms = "Joomla";
+            } else if (body.includes("Drupal")) {
+              (prescreen as any).cms = "Drupal";
+            }
+          }
+        } catch { /* ignore body detection errors */ }
+
+        aiDecisions.push(`Emergency HTTP Fallback: Server=${(prescreen as any).serverType}, CMS=${(prescreen as any).cms || "none"}, WAF=${(prescreen as any).wafDetected || "none"}`);
+        loggedOnEvent({
+          phase: "prescreen",
+          step: "emergency_fallback_done",
+          detail: `✅ HTTP Fallback สำเร็จ — Server: ${(prescreen as any).serverType}, CMS: ${(prescreen as any).cms || "none"}, WAF: ${(prescreen as any).wafDetected || "none"} — ดำเนินการต่อ`,
+          progress: 18,
+        });
+      }
+    } catch (e: any) {
+      loggedOnEvent({
+        phase: "prescreen",
+        step: "emergency_fallback_error",
+        detail: `⚠️ HTTP Fallback ล้มเหลว: ${e.message} — ดำเนินการต่อแบบ blind`,
+        progress: 18,
+      });
+    }
+  }
+
   const reconElapsed = Date.now() - reconStartTime;
+  const reconHasData = !!(aiTargetAnalysis || prescreen);
   loggedOnEvent({
     phase: "prescreen",
     step: "recon_summary",
-    detail: `⏱️ Recon ใช้เวลา ${Math.round(reconElapsed / 1000)}s / ${Math.round(RECON_TIME_BUDGET / 1000)}s budget — AI: ${aiResult.status === "fulfilled" ? "✅" : "❌"}, Pre-screen: ${prescreenResult.status === "fulfilled" ? "✅" : "❌"}`,
+    detail: reconHasData
+      ? `✅ Recon เสร็จ (${Math.round(reconElapsed / 1000)}s) — AI: ${aiResult.status === "fulfilled" ? "✅" : "⚠️ fallback"}, Pre-screen: ${prescreenResult.status === "fulfilled" ? "✅" : prescreen ? "⚠️ HTTP fallback" : "❌"} — ดำเนินการโจมตีต่อ`
+      : `⚠️ Recon จำกัด (${Math.round(reconElapsed / 1000)}s) — AI: ❌, Pre-screen: ❌ — ดำเนินการโจมตีแบบ blind mode`,
     progress: 18,
   });
 
