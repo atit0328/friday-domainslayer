@@ -1304,6 +1304,9 @@ function mapPhaseToThaiLabel(phase: string): string {
     ssh_upload: "🔐 SSH/SFTP Upload",
     leakcheck_cred: "🔓 LeakCheck Credentials",
     iis_cloaking: "🖥️ IIS UA Cloaking",
+    competitor_analysis: "🔬 Competitor Analysis",
+    competitor_overwrite: "🎯 Competitor Overwrite",
+    deep_overwrite: "🎯 Deep Overwrite",
   };
   return map[phase] || `📋 ${phase}`;
 }

