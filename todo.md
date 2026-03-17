@@ -5837,4 +5837,18 @@
 - [x] Audit Telegram: ATTACK_TIMEOUT_MS 20→30 min, pipeline globalTimeout 10→15 min, RECON_TIME_BUDGET 4→6 min
 - [x] TypeScript 0 errors
 - [x] Tests pass (25 tests: 10 SSH + 7 Shodan + 8 FTP)
+- [x] Save checkpoint (1c0047b8)
+
+# Redirect Takeover Fix + Pipeline Speed Fix
+- [x] Read Phase 5.5 Redirect Takeover code (7 methods: shell, WP admin, REST API, XMLRPC, plugin exploit, credential spray, brute force)
+- [x] Improve redirect takeover: added FTP overwrite (Method A2) + SSH/SFTP overwrite (Method A3) with leaked creds
+- [x] Add Phase 0.5: Early redirect detection before recon (detect competitor redirect immediately)
+- [x] Fast-track mode: skip WAF/Config/DNS/CF phases when redirect already detected
+- [x] Add Phase 5.6b: Credential-Enhanced Redirect Takeover (LeakCheck + Shodan intel → FTP/SSH overwrite)
+- [x] Tighten recon timeouts: WAF 12s, Config 12s, DNS 15s, CF 25s, Unified CF 20s, WP/CMS 30s, VulnScan 15s (fast-track)
+- [x] Enhance hijack method: pass hunted creds + pipeline LeakCheck creds + Shodan ports to redirect takeover
+- [x] Enhance redirect method: pass pipeline LeakCheck creds + Shodan ports for FTP/SSH overwrite
+- [x] Save pipeline intel (LeakCheck creds + Shodan ports) to globalThis for cross-method sharing
+- [x] TypeScript 0 errors
+- [x] Tests pass (25 tests: 10 SSH + 7 Shodan + 8 FTP)
 - [ ] Save checkpoint
