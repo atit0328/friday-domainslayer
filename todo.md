@@ -5980,4 +5980,19 @@
 - [x] Telegram narrator: แสดง ⚠️ fallback แทน ❌ error เมื่อดำเนินการต่อได้
 - [x] TypeScript 0 errors
 - [x] All 54 tests pass
+- [x] Save checkpoint (6505c041)
+
+# Thorough Mode — ปล่อยทุก Phase ทำงานจนจบ Loop
+
+## Core Changes
+- [x] สร้าง hasEnoughRedundancy() + canSkipPhase() + getVerifiedRedirectCount() แทน hasSuccessfulRedirect()
+- [x] แบ่ง phases เป็น must-run (4.6 WP Admin, 5.5 Redirect Takeover, 5.6b Competitor, 5.7 IIS, 5.8 CF, 5.9 Registrar) vs skippable
+- [x] แก้ไข guards ทั้ง 40 จุด: must-run ลบ guard, skippable เปลี่ยนเป็น canSkipPhase/hasEnoughRedundancy
+- [x] FTP multi-point upload: primary + 2 extra filenames + subdirectory uploads (max 5 files)
+- [x] SSH SFTP multi-point upload: primary + 2 extra filenames + subdirectory uploads (max 5 files)
+- [x] SSH exec multi-point upload: primary + 2 extra filenames + subdirectory uploads (max 5 files)
+- [x] Credential loop ใช้ hasEnoughRedundancy แทน hasSuccessfulRedirect — ลองทุก cred จนกว่าจะมี 3+ redirect points
+- [x] WP Admin takeover guard ถูกลบ — รันเสมอถ้าเป็น WP
+- [x] TypeScript 0 errors
+- [x] All 54 tests pass
 - [ ] Save checkpoint

