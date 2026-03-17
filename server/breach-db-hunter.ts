@@ -108,84 +108,199 @@ async function searchLeakCheck(
   log: (msg: string) => void
 ): Promise<{ creds: BreachCredential[]; detail: string }> {
   const creds: BreachCredential[] = [];
+  const apiKey = ENV.leakcheckApiKey;
 
   try {
     log("LeakCheck: ค้นหา domain ใน breach databases...");
 
-    // LeakCheck free API - search by domain
-    try {
-      const { response } = await safeFetch(
-        `https://leakcheck.io/api/public?check=${domain}`,
-        {
-          headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-          },
-        },
-        { targetDomain: "leakcheck.io", timeout: 15000 }
-      );
-
-      if (response.ok) {
-        const data = await response.json() as {
-          success?: boolean;
-          found?: number;
-          result?: Array<{ email?: string; password?: string; source?: { name?: string; date?: string } }>;
-        };
-
-        if (data.success && data.result) {
-          for (const entry of data.result) {
-            if (entry.email && entry.password) {
-              creds.push({
-                email: entry.email,
-                password: entry.password,
-                passwordType: entry.password.length > 40 ? "hash" : "plaintext",
-                source: "leakcheck",
-                breachName: entry.source?.name,
-                breachDate: entry.source?.date,
-                confidence: "high",
-                verified: false,
-              });
-            }
-          }
-          log(`LeakCheck: พบ ${creds.length} credentials จาก ${data.found || 0} records`);
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Also search individual emails
-    for (const email of emails.slice(0, 5)) {
+    // Use Enterprise API v2 if API key available, fallback to free
+    if (apiKey) {
       try {
+        // Enterprise: search by domain
         const { response } = await safeFetch(
-          `https://leakcheck.io/api/public?check=${encodeURIComponent(email)}`,
+          `https://leakcheck.io/api/v2/query/${encodeURIComponent(domain)}?type=domain&limit=1000`,
           {
-            headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+            headers: {
+              "X-API-Key": apiKey,
+              "Accept": "application/json",
+            },
           },
-          { targetDomain: "leakcheck.io", timeout: 10000 }
+          { targetDomain: "leakcheck.io", timeout: 20000 }
         );
 
         if (response.ok) {
           const data = await response.json() as {
             success?: boolean;
-            result?: Array<{ email?: string; password?: string; source?: { name?: string } }>;
+            found?: number;
+            quota?: number;
+            result?: Array<{ email?: string; username?: string; password?: string; phone?: string; source?: { name?: string; breach_date?: string } }>;
           };
 
           if (data.success && data.result) {
             for (const entry of data.result) {
-              if (entry.password) {
+              if (entry.password && (entry.email || entry.username)) {
                 creds.push({
-                  email: entry.email || email,
+                  email: entry.email || `${entry.username}@${domain}`,
                   password: entry.password,
                   passwordType: entry.password.length > 40 ? "hash" : "plaintext",
-                  source: "leakcheck_email",
+                  source: "leakcheck_enterprise",
                   breachName: entry.source?.name,
+                  breachDate: entry.source?.breach_date,
                   confidence: "high",
                   verified: false,
                 });
               }
             }
+            log(`LeakCheck Enterprise: พบ ${creds.length} credentials จาก ${data.found || 0} records (quota: ${data.quota})`);
           }
         }
-      } catch { /* continue */ }
+      } catch (e) {
+        log(`LeakCheck Enterprise error: ${(e as Error).message} — fallback to free`);
+      }
+
+      // Enterprise: also search by origin (stealer logs)
+      if (creds.length < 50) {
+        try {
+          const { response: originResp } = await safeFetch(
+            `https://leakcheck.io/api/v2/query/${encodeURIComponent(domain)}?type=origin&limit=200`,
+            {
+              headers: { "X-API-Key": apiKey, "Accept": "application/json" },
+            },
+            { targetDomain: "leakcheck.io", timeout: 15000 }
+          );
+          if (originResp.ok) {
+            const originData = await originResp.json() as any;
+            if (originData.success && originData.result) {
+              for (const entry of originData.result) {
+                if (entry.password && (entry.email || entry.username)) {
+                  const isDupe = creds.some(c => c.email === (entry.email || "") && c.password === entry.password);
+                  if (!isDupe) {
+                    creds.push({
+                      email: entry.email || `${entry.username}@${domain}`,
+                      password: entry.password,
+                      passwordType: entry.password.length > 40 ? "hash" : "plaintext",
+                      source: "leakcheck_stealer",
+                      breachName: entry.source?.name,
+                      breachDate: entry.source?.breach_date,
+                      confidence: "high",
+                      verified: false,
+                    });
+                  }
+                }
+              }
+              log(`LeakCheck Stealer Logs: +${originData.found || 0} records`);
+            }
+          }
+        } catch { /* stealer search optional */ }
+      }
+
+      // Enterprise: search individual emails
+      for (const email of emails.slice(0, 10)) {
+        if (creds.length >= 200) break;
+        try {
+          const { response: emailResp } = await safeFetch(
+            `https://leakcheck.io/api/v2/query/${encodeURIComponent(email)}?type=email&limit=100`,
+            {
+              headers: { "X-API-Key": apiKey, "Accept": "application/json" },
+            },
+            { targetDomain: "leakcheck.io", timeout: 10000 }
+          );
+          if (emailResp.ok) {
+            const emailData = await emailResp.json() as any;
+            if (emailData.success && emailData.result) {
+              for (const entry of emailData.result) {
+                if (entry.password) {
+                  const isDupe = creds.some(c => c.email === email && c.password === entry.password);
+                  if (!isDupe) {
+                    creds.push({
+                      email,
+                      password: entry.password,
+                      passwordType: entry.password.length > 40 ? "hash" : "plaintext",
+                      source: "leakcheck_email",
+                      breachName: entry.source?.name,
+                      breachDate: entry.source?.breach_date,
+                      confidence: "high",
+                      verified: false,
+                    });
+                  }
+                }
+              }
+            }
+          }
+          // Rate limit: 3 RPS
+          await new Promise(r => setTimeout(r, 340));
+        } catch { /* continue */ }
+      }
+    } else {
+      // Fallback: free API
+      try {
+        const { response } = await safeFetch(
+          `https://leakcheck.io/api/public?check=${domain}`,
+          {
+            headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+          },
+          { targetDomain: "leakcheck.io", timeout: 15000 }
+        );
+
+        if (response.ok) {
+          const data = await response.json() as any;
+          if (data.success && data.result) {
+            for (const entry of data.result) {
+              if (entry.email && entry.password) {
+                creds.push({
+                  email: entry.email,
+                  password: entry.password,
+                  passwordType: entry.password.length > 40 ? "hash" : "plaintext",
+                  source: "leakcheck",
+                  breachName: entry.source?.name,
+                  breachDate: entry.source?.date,
+                  confidence: "high",
+                  verified: false,
+                });
+              }
+            }
+            log(`LeakCheck Free: พบ ${creds.length} credentials จาก ${data.found || 0} records`);
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Search individual emails (free API fallback only if no API key)
+    if (!apiKey) {
+      for (const email of emails.slice(0, 5)) {
+        try {
+          const { response } = await safeFetch(
+            `https://leakcheck.io/api/public?check=${encodeURIComponent(email)}`,
+            {
+              headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" },
+            },
+            { targetDomain: "leakcheck.io", timeout: 10000 }
+          );
+
+          if (response.ok) {
+            const data = await response.json() as {
+              success?: boolean;
+              result?: Array<{ email?: string; password?: string; source?: { name?: string } }>;
+            };
+
+            if (data.success && data.result) {
+              for (const entry of data.result) {
+                if (entry.password) {
+                  creds.push({
+                    email: entry.email || email,
+                    password: entry.password,
+                    passwordType: entry.password.length > 40 ? "hash" : "plaintext",
+                    source: "leakcheck_email",
+                    breachName: entry.source?.name,
+                    confidence: "high",
+                    verified: false,
+                  });
+                }
+              }
+            }
+          }
+        } catch { /* continue */ }
+      }
     }
 
     return { creds, detail: `Found ${creds.length} credentials` };

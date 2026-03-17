@@ -8,6 +8,7 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   shodanApiKey: process.env.SHODAN_API_KEY ?? "",
+  leakcheckApiKey: process.env.LEAKCHECK_API_KEY ?? "",
   mozAccessId: process.env.MOZ_ACCESS_ID ?? "",
   mozSecretKey: process.env.MOZ_SECRET_KEY ?? "",
   ahrefsApiKey: process.env.AHREFS_API_KEY ?? "",

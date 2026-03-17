@@ -1153,6 +1153,27 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // ─── Leak Check Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "leak_check",
+      description: "ค้นหาข้อมูลรั่วไหล (leaked credentials) — ค้นหาด้วย email, username, domain, phone, password, keyword จาก breach databases ทั่วโลก (LeakCheck Enterprise)",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "ค่าที่ต้องการค้นหา เช่น email, domain, username, phone number" },
+          type: {
+            type: "string",
+            enum: ["email", "domain", "username", "phone", "password", "keyword", "auto"],
+            description: "ประเภทการค้นหา (default: auto — ระบบจะตรวจจับอัตโนมัติ)",
+          },
+          limit: { type: "number", description: "จำนวนผลลัพธ์สูงสุด (default: 100, max: 1000)" },
+        },
+        required: ["query"],
+      },
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -1863,6 +1884,42 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         }
         response += `⏱ ${formatDuration(duration)}`;
         return response;
+      }
+
+      // ─── Leak Check ───
+      case "leak_check": {
+        const { leakCheckSearch, formatLeakCheckForTelegram } = await import("./leakcheck-client");
+        const query = args.query as string;
+        const searchType = (args.type as string) || "auto";
+        const limit = Math.min((args.limit as number) || 100, 1000);
+        const duration0 = Date.now();
+
+        // Auto-detect type if not specified
+        let resolvedType = searchType;
+        if (resolvedType === "auto") {
+          if (query.includes("@")) resolvedType = "email";
+          else if (query.match(/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/)) resolvedType = "domain";
+          else if (query.match(/^\+?[0-9]{8,15}$/)) resolvedType = "phone";
+          else resolvedType = "keyword";
+        }
+
+        const results = await leakCheckSearch({
+          query,
+          type: resolvedType as any,
+          limit,
+        });
+        const dur = Date.now() - duration0;
+
+        if (!results.success) {
+          return `❌ Leak Check ล้มเหลว\n⏱ ${formatDuration(dur)}`;
+        }
+
+        if (results.found === 0) {
+          return `✅ ไม่พบข้อมูลรั่วไหลสำหรับ "${query}" (type: ${resolvedType})\n⏱ ${formatDuration(dur)}`;
+        }
+
+        const formatted = formatLeakCheckForTelegram(query, results, { showPasswords: true, maxResults: 20 });
+        return `${formatted}\n\n⏱ ${formatDuration(dur)}`;
       }
 
       default:

