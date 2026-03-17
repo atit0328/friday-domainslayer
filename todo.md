@@ -6167,3 +6167,17 @@
 - [x] Show method result (success/fail/timeout) via recordMethodResult in all modes
 - [x] TypeScript: 0 errors, Tests: passed
 - [x] Checkpoint saved
+
+# Bug Fix: Telegram heartbeat hangs during Deep Vulnerability Scan (Fingerprint step)
+
+- [x] Investigate heartbeat mechanism — editInProgress lock blocks heartbeat updates
+- [x] Fix: Force-reset editInProgress after 3 consecutive heartbeat skips (90s)
+- [x] Fix: Reduce editMessage timeout from 8s to 5s
+- [x] Fix: Cap rate limit retry_after to 5s max
+- [x] Fix: Reduce MIN_EDIT_INTERVAL from 2000ms to 1500ms
+- [x] Fix: Add logging for heartbeat failures
+- [x] Wrap scan_only fullVulnScan with runStepWithTimeout
+- [x] Wrap agentic_auto fullVulnScan with runStepWithTimeout
+- [x] Wrap advanced fullVulnScan with runStepWithTimeout
+- [x] TypeScript: 0 errors, Tests: passed
+- [x] Checkpoint saved

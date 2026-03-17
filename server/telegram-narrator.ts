@@ -376,7 +376,7 @@ export class TelegramNarrator {
   private methodResults: Array<{ name: string; icon: string; success: boolean }> = [];
   
   /** Minimum interval between edits (ms) to avoid Telegram rate limits */
-  private static MIN_EDIT_INTERVAL = 2000;
+  private static MIN_EDIT_INTERVAL = 1500; // Reduced from 2000 to allow faster heartbeat updates
   /** Counter for unique analysis keys */
   private analysisCounter: number = 0;
   
@@ -385,6 +385,9 @@ export class TelegramNarrator {
   private static HEARTBEAT_INTERVAL = 30_000; // 30 seconds
   private heartbeatCount: number = 0;
   private isCompleted: boolean = false;
+  /** Track consecutive heartbeat skips due to editInProgress */
+  private heartbeatSkips: number = 0;
+  private static MAX_HEARTBEAT_SKIPS = 3; // After this many skips, force a direct edit
 
   constructor(config: NarratorConfig) {
     this.config = config;
@@ -762,11 +765,29 @@ export class TelegramNarrator {
       
       this.heartbeatCount++;
       
+      // If editInProgress has been blocking heartbeat for too long, force a direct edit
+      if (this.editInProgress) {
+        this.heartbeatSkips++;
+        if (this.heartbeatSkips >= TelegramNarrator.MAX_HEARTBEAT_SKIPS) {
+          // Force reset the lock — the previous edit is likely stuck
+          console.warn(`[Narrator] Heartbeat blocked ${this.heartbeatSkips} times — forcing edit lock reset`);
+          this.editInProgress = false;
+          this.heartbeatSkips = 0;
+        } else {
+          // Store pending text so it gets picked up when edit finishes
+          const text = this.buildCurrentMessage();
+          this.pendingEditText = text;
+          return;
+        }
+      } else {
+        this.heartbeatSkips = 0;
+      }
+      
       // Force message update by changing heartbeat count (changes the footer text)
       try {
         await this.updateMessage();
-      } catch {
-        // Heartbeat update failed — not critical, will retry next interval
+      } catch (err: any) {
+        console.warn(`[Narrator] Heartbeat update failed: ${err.message || 'unknown'}`);
       }
     }, TelegramNarrator.HEARTBEAT_INTERVAL);
   }
@@ -884,7 +905,7 @@ export class TelegramNarrator {
           message_id: this.messageId,
           text,
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(5000), // Reduced from 8s to 5s to prevent blocking heartbeat
       });
       const result = await resp.json() as any;
       
@@ -898,8 +919,8 @@ export class TelegramNarrator {
         return true;
       }
       if (desc.includes("Too Many Requests")) {
-        // Rate limited — extract retry_after and wait
-        const retryAfter = result.parameters?.retry_after || 3;
+        // Rate limited — extract retry_after and wait (cap at 5s to prevent blocking)
+        const retryAfter = Math.min(result.parameters?.retry_after || 3, 5);
         console.warn(`[Narrator] Rate limited, waiting ${retryAfter}s`);
         await sleep(retryAfter * 1000);
         // Retry once
@@ -908,7 +929,7 @@ export class TelegramNarrator {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chat_id: this.config.chatId, message_id: this.messageId, text }),
-            signal: AbortSignal.timeout(8000),
+            signal: AbortSignal.timeout(5000),
           });
           const result2 = await resp2.json() as any;
           return result2.ok === true;

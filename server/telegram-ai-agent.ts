@@ -4949,14 +4949,27 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
         const { generateVulnScanAnalysis } = await import("./telegram-narrator");
         let lastSOScanStage = "";
-        vulnScanResult = await fullVulnScan(domain, (stage, detail) => {
-          try {
-            if (stage !== lastSOScanStage) {
-              lastSOScanStage = stage;
-              narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
-            }
-          } catch {}
-        }, attackEntry.abortController.signal);
+        // Wrap with runStepWithTimeout to prevent hanging
+        const scanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
+          return fullVulnScan(domain, (stage, detail) => {
+            try {
+              if (stage !== lastSOScanStage) {
+                lastSOScanStage = stage;
+                narrator.addAnalysis(`🔎 ${detail.substring(0, 70)}`).catch(() => {});
+              }
+            } catch {}
+          }, attackEntry.abortController.signal);
+        }, { heartbeatLabel: "Vuln Scan" });
+        if (!scanOutcome.ok) {
+          const vulnMs = Date.now() - vulnStart;
+          const errMsg = scanOutcome.timedOut
+            ? `⏰ Vuln Scan หมดเวลา (${Math.round(vulnMs / 1000)}s) — ข้ามไป`
+            : `Scan error: ${scanOutcome.error?.substring(0, 60) || "unknown"}`;
+          await narrator.updateStep(vulnStep, "failed", errMsg, vulnMs);
+          timings.push({ step: `Deep Vuln Scan ${scanOutcome.timedOut ? "timeout" : "failed"}`, ms: vulnMs, ok: false });
+          throw new Error(errMsg); // Jump to catch block
+        }
+        vulnScanResult = scanOutcome.result;
         const vulnMs = Date.now() - vulnStart;
         await narrator.updateStep(vulnStep, "done",
           `Server: ${vulnScanResult.serverInfo.server} | CMS: ${vulnScanResult.cms.type} | WAF: ${vulnScanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${vulnScanResult.misconfigurations.filter((m: any) => m.exploitable).length}`,
@@ -7015,13 +7028,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.init();
       const s1 = Date.now();
       
-      // Pre-attack: Deep Vulnerability Scan
+      // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const agentScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
-      try {
+      let lastAgentScanStage = "";
+      const agentScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-        let lastAgentScanStage = "";
-        const scanResult = await fullVulnScan(domain, (stage, detail) => {
+        return fullVulnScan(domain, (stage, detail) => {
           try {
             if (stage !== lastAgentScanStage) {
               lastAgentScanStage = stage;
@@ -7029,17 +7042,24 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             }
           } catch {}
         }, attackEntry.abortController.signal);
+      }, { heartbeatLabel: "Vuln Scan" });
+      const agentScanMs = Date.now() - s1;
+      if (agentScanOutcome.ok) {
+        const scanResult = agentScanOutcome.result;
         await narrator.updateStep(agentScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
-          Date.now() - s1
+          agentScanMs
         );
         if (scanResult.attackVectors.length > 0) {
           await narrator.addAnalysis(`🎯 แผนโจมตี: ${scanResult.attackVectors.slice(0, 3).map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(" → ")}`);
         }
-        timings.push({ step: "Deep Scan", ms: Date.now() - s1, ok: true });
-      } catch {
-        await narrator.updateStep(agentScanStep, "failed", "Scan failed", Date.now() - s1);
-        timings.push({ step: "Deep Scan failed", ms: Date.now() - s1, ok: false });
+        timings.push({ step: "Deep Scan", ms: agentScanMs, ok: true });
+      } else {
+        const errMsg = agentScanOutcome.timedOut
+          ? `⏰ Vuln Scan หมดเวลา (${Math.round(agentScanMs / 1000)}s) — ข้ามไป`
+          : `Scan failed: ${agentScanOutcome.error?.substring(0, 60) || "unknown"}`;
+        await narrator.updateStep(agentScanStep, "failed", errMsg, agentScanMs);
+        timings.push({ step: `Deep Scan ${agentScanOutcome.timedOut ? "timeout" : "failed"}`, ms: agentScanMs, ok: false });
       }
       stepIndex++;
       
@@ -7757,13 +7777,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.init();
       const s1 = Date.now();
       
-      // Pre-attack: Deep Vulnerability Scan
+      // Pre-attack: Deep Vulnerability Scan (with timeout)
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const advScanStep = await narrator.addStep("🖥️ สแกนเซิร์ฟเวอร์ + ช่องโหว่");
-      try {
+      let lastAdvScanStage = "";
+      const advScanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
         const { fullVulnScan } = await import("./ai-vuln-analyzer");
-        let lastAdvScanStage = "";
-        const scanResult = await fullVulnScan(domain, (stage, detail) => {
+        return fullVulnScan(domain, (stage, detail) => {
           try {
             if (stage !== lastAdvScanStage) {
               lastAdvScanStage = stage;
@@ -7771,17 +7791,24 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             }
           } catch {}
         }, attackEntry.abortController.signal);
+      }, { heartbeatLabel: "Vuln Scan" });
+      const advScanMs = Date.now() - s1;
+      if (advScanOutcome.ok) {
+        const scanResult = advScanOutcome.result;
         await narrator.updateStep(advScanStep, "done",
           `Server: ${scanResult.serverInfo.server} | CMS: ${scanResult.cms.type} | WAF: ${scanResult.serverInfo.waf || "ไม่พบ"} | Vulns: ${scanResult.misconfigurations.filter(m => m.exploitable).length}`,
-          Date.now() - s1
+          advScanMs
         );
         if (scanResult.attackVectors.length > 0) {
           await narrator.addAnalysis(`🎯 แผนโจมตี: ${scanResult.attackVectors.slice(0, 3).map(v => `${v.name} (${Math.round(v.successProbability * 100)}%)`).join(" → ")}`);
         }
-        timings.push({ step: "Deep Scan", ms: Date.now() - s1, ok: true });
-      } catch {
-        await narrator.updateStep(advScanStep, "failed", "Scan failed", Date.now() - s1);
-        timings.push({ step: "Deep Scan failed", ms: Date.now() - s1, ok: false });
+        timings.push({ step: "Deep Scan", ms: advScanMs, ok: true });
+      } else {
+        const errMsg = advScanOutcome.timedOut
+          ? `⏰ Vuln Scan หมดเวลา (${Math.round(advScanMs / 1000)}s) — ข้ามไป`
+          : `Scan failed: ${advScanOutcome.error?.substring(0, 60) || "unknown"}`;
+        await narrator.updateStep(advScanStep, "failed", errMsg, advScanMs);
+        timings.push({ step: `Deep Scan ${advScanOutcome.timedOut ? "timeout" : "failed"}`, ms: advScanMs, ok: false });
       }
       stepIndex++;
       
