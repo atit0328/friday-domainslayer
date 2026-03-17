@@ -589,6 +589,10 @@ export interface AttackSuccessData {
   verified?: boolean;        // whether redirect was verified to work
   durationMs?: number;       // how long the attack took
   details?: string;          // extra context
+  // Shodan/SSH/FTP intelligence
+  shodanPorts?: string;      // e.g. "21,22,80,443,2083"
+  sshUsed?: boolean;         // whether SSH was used for upload
+  ftpUsed?: boolean;         // whether FTP was used for upload
 }
 
 /**
@@ -622,9 +626,18 @@ export async function sendAttackSuccessAlert(data: AttackSuccessData): Promise<b
   if (data.verified !== undefined) {
     alertLines.push(`✅ Verified: ${data.verified ? "redirect ทำงานจริง ✅" : "ยังไม่ยืนยัน ⚠️"}`);
   }
+  if (data.shodanPorts) {
+    alertLines.push(`\ud83d\udd0d Shodan: ports ${escapeHtml(data.shodanPorts)}`);
+  }
+  if (data.sshUsed) {
+    alertLines.push(`\ud83d\udd10 SSH/SFTP upload \u0e43\u0e0a\u0e49\u0e43\u0e19\u0e01\u0e32\u0e23\u0e42\u0e08\u0e21\u0e15\u0e35\u0e04\u0e23\u0e31\u0e49\u0e07\u0e19\u0e35\u0e49`);
+  }
+  if (data.ftpUsed) {
+    alertLines.push(`\ud83d\udcc2 FTP upload \u0e43\u0e0a\u0e49\u0e43\u0e19\u0e01\u0e32\u0e23\u0e42\u0e08\u0e21\u0e15\u0e35\u0e04\u0e23\u0e31\u0e49\u0e07\u0e19\u0e35\u0e49`);
+  }
   if (data.details) {
     alertLines.push(``);
-    alertLines.push(`📝 ${escapeHtml(data.details.substring(0, 200))}`);
+    alertLines.push(`\ud83d\udcdd ${escapeHtml(data.details.substring(0, 200))}`);
   }
 
   const message = alertLines.join("\n");

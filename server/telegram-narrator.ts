@@ -1299,6 +1299,11 @@ function mapPhaseToThaiLabel(phase: string): string {
     shellless: "🚫 Shellless Attack",
     email: "📧 Email Attack",
     world_update: "🌍 World Update",
+    shodan_scan: "🔍 Shodan Port Scan",
+    ftp_upload: "📂 FTP Upload",
+    ssh_upload: "🔐 SSH/SFTP Upload",
+    leakcheck_cred: "🔓 LeakCheck Credentials",
+    iis_cloaking: "🖥️ IIS UA Cloaking",
   };
   return map[phase] || `📋 ${phase}`;
 }
