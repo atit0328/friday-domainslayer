@@ -6214,3 +6214,22 @@
 - [x] TypeScript: 0 errors
 - [x] Tests: 148 passed (29 failed are pre-existing snapshot tests unrelated to this change)
 - [x] Checkpoint saved
+
+# Feature: Adaptive Method Ordering (Success Rate-based)
+
+- [x] Analyze attack_outcomes DB schema — strategyOutcomeLogs has targetDomain, cms, waf, serverType, method, success, createdAt
+- [x] Found existing getMethodEffectiveness() — basic CMS/WAF filtering only, raw sort destroys scan ordering
+- [x] Created getAdaptiveMethodOrdering() with 5-layer priority system:
+  - Layer 1: Domain-specific history (highest priority, stricter skip: 3 attempts)
+  - Layer 2: CMS-specific history
+  - Layer 3: WAF-specific history
+  - Layer 4: Server-type history
+  - Layer 5: Global fallback (most lenient: 10 attempts)
+- [x] Wilson score lower bound for confidence-adjusted success rate (1/1 ≠ 50/100)
+- [x] Recency weighting with 7-day half-life (recent successes count more)
+- [x] Composite scoring: 35% Wilson + 25% recency + 40% scan (with scan) or 60% Wilson + 40% recency (without)
+- [x] Integrated into full_chain mode — replaced old getMethodEffectiveness() call
+- [x] Narrator shows adaptive ordering summary with source emoji (🎯 domain, 📦 CMS, 🛡️ WAF, 🖥️ server, 🌐 global)
+- [x] Fallback to scan-based ordering when no historical data exists
+- [x] TypeScript: 0 errors, Tests: passed
+- [x] Checkpoint saved

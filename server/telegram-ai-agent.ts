@@ -5653,48 +5653,54 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         );
       }
       
-      // ═══ AUTO-PRIORITY: Reorder methods using historical success rates ═══
+      // ═══ ADAPTIVE METHOD ORDERING: Multi-layer historical intelligence ═══
       try {
         const detectedWaf = vulnScanResult?.serverInfo?.waf || null;
-        const effectiveness = await getMethodEffectiveness(detectedCms === "unknown" ? null : detectedCms, detectedWaf);
-        if (effectiveness.length > 0) {
-          // Build boost/penalty map from historical data
-          const boostMap = new Map<string, number>();
-          const skipSet = new Set<string>();
-          for (const eff of effectiveness) {
-            if (eff.shouldSkip && eff.attempts >= 5) {
-              skipSet.add(eff.method);
-            } else if (eff.successRate > 0) {
-              boostMap.set(eff.method, eff.successRate);
+        const detectedServer = vulnScanResult?.serverInfo?.server || null;
+        
+        // Build scan scores map from the scan-based ordering
+        const scanScoresMap = new Map<string, number>();
+        if (vulnScanResult && vulnScanResult.attackVectors.length > 0) {
+          for (const m of compatibleMethods) {
+            let score = 0;
+            const vecText = vulnScanResult.attackVectors.map(v => `${v.name} ${v.technique} ${v.method} ${v.payloadType}`.toLowerCase()).join(" ");
+            for (const kw of m.keywords) {
+              if (vecText.includes(kw)) {
+                score += vulnScanResult.attackVectors.find(v => `${v.name} ${v.technique} ${v.method} ${v.payloadType}`.toLowerCase().includes(kw))?.successProbability || 0;
+              }
             }
-          }
-          
-          // Remove methods that historically always fail for this CMS/WAF combo
-          const beforeCount = methodOrder.length;
-          if (skipSet.size > 0) {
-            methodOrder = methodOrder.filter(id => !skipSet.has(id));
-          }
-          
-          // Boost methods with high historical success rates (stable sort)
-          if (boostMap.size > 0) {
-            methodOrder.sort((a, b) => {
-              const boostA = boostMap.get(a) || 0;
-              const boostB = boostMap.get(b) || 0;
-              return boostB - boostA; // Higher success rate first
-            });
-          }
-          
-          const skippedByHistory = beforeCount - methodOrder.length;
-          if (skippedByHistory > 0 || boostMap.size > 0) {
-            await narrator.addAnalysis(
-              `📊 Auto-Priority (historical data):\n` +
-              (skippedByHistory > 0 ? `⏭️ Skip ${skippedByHistory} วิธีที่ไม่เคยสำเร็จกับ ${detectedCms}/${detectedWaf || 'no-waf'}\n` : "") +
-              (boostMap.size > 0 ? `🔝 Boost: ${Array.from(boostMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([m, r]) => `${m} (${(r * 100).toFixed(0)}%)`).join(", ")}` : "")
-            );
+            if (score > 0) scanScoresMap.set(m.id, score);
           }
         }
+        
+        const { getAdaptiveMethodOrdering } = await import("./adaptive-learning");
+        const adaptiveResult = await getAdaptiveMethodOrdering({
+          targetDomain: domain,
+          cms: detectedCms === "unknown" ? null : detectedCms,
+          waf: detectedWaf,
+          serverType: detectedServer,
+          methodIds: methodOrder,
+          scanScores: scanScoresMap.size > 0 ? scanScoresMap : undefined,
+        });
+        
+        // Apply adaptive ordering
+        const beforeCount = methodOrder.length;
+        if (adaptiveResult.orderedMethods.length > 0) {
+          methodOrder = adaptiveResult.orderedMethods;
+        }
+        
+        // Log adaptive results
+        const skippedByHistory = beforeCount - methodOrder.length;
+        if (adaptiveResult.narratorSummary) {
+          await narrator.addAnalysis(adaptiveResult.narratorSummary);
+        }
+        
+        if (skippedByHistory > 0) {
+          console.log(`[TelegramAI] Adaptive skip: ${adaptiveResult.skipMethods.join(", ")}`);
+        }
+        console.log(`[TelegramAI] Adaptive order: ${methodOrder.slice(0, 5).join(", ")}...`);
       } catch (effErr: any) {
-        console.warn(`[TelegramAI] Auto-priority error (non-fatal): ${effErr.message}`);
+        console.warn(`[TelegramAI] Adaptive ordering error (non-fatal): ${effErr.message}`);
       }
       
       // ═══ METHOD OUTCOME TRACKING: Track each method's result ═══

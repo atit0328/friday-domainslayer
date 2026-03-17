@@ -1455,3 +1455,398 @@ export async function runEnhancedLearningCycle(): Promise<{
 
   return { patternsUpdated, profilesUpdated, strategiesEvolved, timestamp: Date.now() };
 }
+
+// ═══════════════════════════════════════════════════════
+//  13. ADAPTIVE METHOD ORDERING (Enhanced)
+//  Uses domain-specific history, recency weight, confidence (Wilson score),
+//  server-type filtering, and weighted merge with scan scores.
+// ═══════════════════════════════════════════════════════
+
+export interface AdaptiveMethodScore {
+  method: string;
+  /** Raw historical success rate (0-100) */
+  rawSuccessRate: number;
+  /** Wilson lower-bound confidence score (0-100) — penalizes low-sample methods */
+  wilsonScore: number;
+  /** Recency-weighted score (0-100) — recent successes count more */
+  recencyScore: number;
+  /** Final composite score (0-100) — used for ordering */
+  compositeScore: number;
+  /** Number of historical attempts */
+  attempts: number;
+  /** Number of historical successes */
+  successes: number;
+  /** Data source: "domain" | "cms" | "waf" | "server" | "global" */
+  source: string;
+  /** Whether this method should be skipped (0% success with 5+ attempts) */
+  shouldSkip: boolean;
+  /** Human-readable reason */
+  reason: string;
+}
+
+/**
+ * Wilson score lower bound — gives a confidence-adjusted success rate.
+ * With 1 success out of 1 attempt → ~20% (low confidence)
+ * With 50 successes out of 100 attempts → ~40% (high confidence)
+ * z = 1.96 for 95% confidence interval
+ */
+function wilsonLowerBound(successes: number, attempts: number, z = 1.96): number {
+  if (attempts === 0) return 0;
+  const p = successes / attempts;
+  const denominator = 1 + (z * z) / attempts;
+  const centre = p + (z * z) / (2 * attempts);
+  const adjustment = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * attempts)) / attempts);
+  return Math.max(0, (centre - adjustment) / denominator);
+}
+
+/**
+ * Get adaptive method ordering scores for a target.
+ * Queries multiple data layers (domain → CMS → WAF → server → global)
+ * and merges them with recency weighting and Wilson confidence scoring.
+ */
+export async function getAdaptiveMethodOrdering(params: {
+  targetDomain: string;
+  cms: string | null;
+  waf: string | null;
+  serverType: string | null;
+  /** Current method IDs to score (from scan-based ordering) */
+  methodIds: string[];
+  /** Scan-based scores (method → score 0-100) — will be merged with historical */
+  scanScores?: Map<string, number>;
+}): Promise<{
+  /** Methods ordered by composite score (highest first) */
+  orderedMethods: string[];
+  /** Full scoring details for each method */
+  scores: AdaptiveMethodScore[];
+  /** Methods recommended to skip */
+  skipMethods: string[];
+  /** Summary text for narrator */
+  narratorSummary: string;
+}> {
+  const { targetDomain, cms, waf, serverType, methodIds, scanScores } = params;
+  const scoreMap = new Map<string, AdaptiveMethodScore>();
+
+  // Initialize all methods with zero scores
+  for (const id of methodIds) {
+    scoreMap.set(id, {
+      method: id,
+      rawSuccessRate: 0,
+      wilsonScore: 0,
+      recencyScore: 0,
+      compositeScore: 0,
+      attempts: 0,
+      successes: 0,
+      source: "none",
+      shouldSkip: false,
+      reason: "No historical data",
+    });
+  }
+
+  try {
+    const db = await getDb();
+    if (!db) {
+      return buildResult(scoreMap, methodIds, scanScores);
+    }
+
+    // ═══ Layer 1: Domain-specific history (highest priority) ═══
+    const domainRows = await db
+      .select({
+        method: strategyOutcomeLogs.method,
+        attempts: count(),
+        successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
+        lastSuccess: sql<string>`MAX(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN ${strategyOutcomeLogs.createdAt} ELSE NULL END)`,
+        lastAttempt: sql<string>`MAX(${strategyOutcomeLogs.createdAt})`,
+      })
+      .from(strategyOutcomeLogs)
+      .where(eq(strategyOutcomeLogs.targetDomain, targetDomain))
+      .groupBy(strategyOutcomeLogs.method);
+
+    for (const row of domainRows) {
+      if (!scoreMap.has(row.method)) continue;
+      const attempts = Number(row.attempts) || 0;
+      const successes = Number(row.successes) || 0;
+      const rate = attempts > 0 ? (successes / attempts) * 100 : 0;
+      const wilson = wilsonLowerBound(successes, attempts) * 100;
+      const recency = calculateRecencyScore(row.lastSuccess);
+
+      scoreMap.set(row.method, {
+        method: row.method,
+        rawSuccessRate: Math.round(rate),
+        wilsonScore: Math.round(wilson),
+        recencyScore: recency,
+        compositeScore: 0, // calculated later
+        attempts,
+        successes,
+        source: "domain",
+        shouldSkip: attempts >= 3 && successes === 0, // stricter for domain-specific
+        reason: attempts >= 3 && successes === 0
+          ? `0% success after ${attempts} attempts on this domain`
+          : successes > 0
+            ? `${Math.round(rate)}% success on this domain (${successes}/${attempts})`
+            : `${attempts} attempts, no success yet`,
+      });
+    }
+
+    // ═══ Layer 2: CMS-specific history ═══
+    if (cms && cms !== "unknown") {
+      const cmsRows = await db
+        .select({
+          method: strategyOutcomeLogs.method,
+          attempts: count(),
+          successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
+          lastSuccess: sql<string>`MAX(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN ${strategyOutcomeLogs.createdAt} ELSE NULL END)`,
+        })
+        .from(strategyOutcomeLogs)
+        .where(eq(strategyOutcomeLogs.cms, cms))
+        .groupBy(strategyOutcomeLogs.method);
+
+      for (const row of cmsRows) {
+        if (!scoreMap.has(row.method)) continue;
+        const existing = scoreMap.get(row.method)!;
+        if (existing.source === "domain") continue; // domain data takes priority
+        
+        const attempts = Number(row.attempts) || 0;
+        const successes = Number(row.successes) || 0;
+        const rate = attempts > 0 ? (successes / attempts) * 100 : 0;
+        const wilson = wilsonLowerBound(successes, attempts) * 100;
+        const recency = calculateRecencyScore(row.lastSuccess);
+
+        scoreMap.set(row.method, {
+          method: row.method,
+          rawSuccessRate: Math.round(rate),
+          wilsonScore: Math.round(wilson),
+          recencyScore: recency,
+          compositeScore: 0,
+          attempts,
+          successes,
+          source: "cms",
+          shouldSkip: attempts >= 5 && rate < 5,
+          reason: `${Math.round(rate)}% success on ${cms} sites (${successes}/${attempts})`,
+        });
+      }
+    }
+
+    // ═══ Layer 3: WAF-specific history ═══
+    if (waf) {
+      const wafRows = await db
+        .select({
+          method: strategyOutcomeLogs.method,
+          attempts: count(),
+          successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
+          lastSuccess: sql<string>`MAX(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN ${strategyOutcomeLogs.createdAt} ELSE NULL END)`,
+        })
+        .from(strategyOutcomeLogs)
+        .where(eq(strategyOutcomeLogs.wafDetected, waf))
+        .groupBy(strategyOutcomeLogs.method);
+
+      for (const row of wafRows) {
+        if (!scoreMap.has(row.method)) continue;
+        const existing = scoreMap.get(row.method)!;
+        if (existing.source === "domain" || existing.source === "cms") continue;
+        
+        const attempts = Number(row.attempts) || 0;
+        const successes = Number(row.successes) || 0;
+        const rate = attempts > 0 ? (successes / attempts) * 100 : 0;
+        const wilson = wilsonLowerBound(successes, attempts) * 100;
+        const recency = calculateRecencyScore(row.lastSuccess);
+
+        scoreMap.set(row.method, {
+          method: row.method,
+          rawSuccessRate: Math.round(rate),
+          wilsonScore: Math.round(wilson),
+          recencyScore: recency,
+          compositeScore: 0,
+          attempts,
+          successes,
+          source: "waf",
+          shouldSkip: attempts >= 5 && rate < 5,
+          reason: `${Math.round(rate)}% success against ${waf} WAF (${successes}/${attempts})`,
+        });
+      }
+    }
+
+    // ═══ Layer 4: Server-type history ═══
+    if (serverType) {
+      const serverRows = await db
+        .select({
+          method: strategyOutcomeLogs.method,
+          attempts: count(),
+          successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
+          lastSuccess: sql<string>`MAX(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN ${strategyOutcomeLogs.createdAt} ELSE NULL END)`,
+        })
+        .from(strategyOutcomeLogs)
+        .where(eq(strategyOutcomeLogs.serverType, serverType))
+        .groupBy(strategyOutcomeLogs.method);
+
+      for (const row of serverRows) {
+        if (!scoreMap.has(row.method)) continue;
+        const existing = scoreMap.get(row.method)!;
+        if (existing.source !== "none") continue; // only fill gaps
+        
+        const attempts = Number(row.attempts) || 0;
+        const successes = Number(row.successes) || 0;
+        const rate = attempts > 0 ? (successes / attempts) * 100 : 0;
+        const wilson = wilsonLowerBound(successes, attempts) * 100;
+        const recency = calculateRecencyScore(row.lastSuccess);
+
+        scoreMap.set(row.method, {
+          method: row.method,
+          rawSuccessRate: Math.round(rate),
+          wilsonScore: Math.round(wilson),
+          recencyScore: recency,
+          compositeScore: 0,
+          attempts,
+          successes,
+          source: "server",
+          shouldSkip: attempts >= 5 && rate < 5,
+          reason: `${Math.round(rate)}% success on ${serverType} servers (${successes}/${attempts})`,
+        });
+      }
+    }
+
+    // ═══ Layer 5: Global fallback (all targets) ═══
+    const globalRows = await db
+      .select({
+        method: strategyOutcomeLogs.method,
+        attempts: count(),
+        successes: sql<number>`SUM(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN 1 ELSE 0 END)`,
+        lastSuccess: sql<string>`MAX(CASE WHEN ${strategyOutcomeLogs.success} = 1 THEN ${strategyOutcomeLogs.createdAt} ELSE NULL END)`,
+      })
+      .from(strategyOutcomeLogs)
+      .groupBy(strategyOutcomeLogs.method);
+
+    for (const row of globalRows) {
+      if (!scoreMap.has(row.method)) continue;
+      const existing = scoreMap.get(row.method)!;
+      if (existing.source !== "none") continue; // only fill gaps
+      
+      const attempts = Number(row.attempts) || 0;
+      const successes = Number(row.successes) || 0;
+      const rate = attempts > 0 ? (successes / attempts) * 100 : 0;
+      const wilson = wilsonLowerBound(successes, attempts) * 100;
+      const recency = calculateRecencyScore(row.lastSuccess);
+
+      scoreMap.set(row.method, {
+        method: row.method,
+        rawSuccessRate: Math.round(rate),
+        wilsonScore: Math.round(wilson),
+        recencyScore: recency,
+        compositeScore: 0,
+        attempts,
+        successes,
+        source: "global",
+        shouldSkip: attempts >= 10 && rate < 3, // more lenient for global
+        reason: `${Math.round(rate)}% global success rate (${successes}/${attempts})`,
+      });
+    }
+
+  } catch (e: any) {
+    console.error(`[AdaptiveLearning] getAdaptiveMethodOrdering error: ${e.message}`);
+  }
+
+  return buildResult(scoreMap, methodIds, scanScores);
+}
+
+/**
+ * Calculate recency score (0-100) based on last success timestamp.
+ * Recent successes (< 24h) → 100, older successes decay exponentially.
+ * Half-life: 7 days.
+ */
+function calculateRecencyScore(lastSuccessStr: string | null): number {
+  if (!lastSuccessStr) return 0;
+  const lastSuccess = new Date(lastSuccessStr).getTime();
+  if (isNaN(lastSuccess)) return 0;
+  const ageMs = Date.now() - lastSuccess;
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+  const halfLife = 7; // days
+  return Math.round(100 * Math.pow(0.5, ageDays / halfLife));
+}
+
+/**
+ * Build final result with composite scores and ordering.
+ * Composite = 40% Wilson + 30% recency + 30% scan score (if available)
+ */
+function buildResult(
+  scoreMap: Map<string, AdaptiveMethodScore>,
+  originalOrder: string[],
+  scanScores?: Map<string, number>,
+): {
+  orderedMethods: string[];
+  scores: AdaptiveMethodScore[];
+  skipMethods: string[];
+  narratorSummary: string;
+} {
+  // Normalize scan scores to 0-100
+  let maxScanScore = 0;
+  if (scanScores) {
+    for (const v of Array.from(scanScores.values())) {
+      if (v > maxScanScore) maxScanScore = v;
+    }
+  }
+
+  // Calculate composite scores
+  for (const [id, score] of Array.from(scoreMap.entries())) {
+    const scanNorm = scanScores && maxScanScore > 0
+      ? ((scanScores.get(id) || 0) / maxScanScore) * 100
+      : 0;
+
+    if (scanScores && maxScanScore > 0) {
+      // With scan data: 35% Wilson + 25% recency + 40% scan
+      score.compositeScore = Math.round(
+        score.wilsonScore * 0.35 +
+        score.recencyScore * 0.25 +
+        scanNorm * 0.40
+      );
+    } else {
+      // Without scan data: 60% Wilson + 40% recency
+      score.compositeScore = Math.round(
+        score.wilsonScore * 0.60 +
+        score.recencyScore * 0.40
+      );
+    }
+  }
+
+  // Separate skip methods
+  const skipMethods: string[] = [];
+  const activeMethods: string[] = [];
+  for (const id of originalOrder) {
+    const score = scoreMap.get(id);
+    if (score?.shouldSkip) {
+      skipMethods.push(id);
+    } else {
+      activeMethods.push(id);
+    }
+  }
+
+  // Sort active methods by composite score (descending), preserve original order for ties
+  const orderedMethods = [...activeMethods].sort((a, b) => {
+    const scoreA = scoreMap.get(a)?.compositeScore || 0;
+    const scoreB = scoreMap.get(b)?.compositeScore || 0;
+    if (scoreA !== scoreB) return scoreB - scoreA;
+    // Tie-break: preserve original order
+    return activeMethods.indexOf(a) - activeMethods.indexOf(b);
+  });
+
+  // Build narrator summary
+  const scores = Array.from(scoreMap.values()).sort((a, b) => b.compositeScore - a.compositeScore);
+  const topMethods = scores.filter(s => !s.shouldSkip && s.compositeScore > 0).slice(0, 5);
+  const hasData = topMethods.length > 0;
+
+  let narratorSummary = "";
+  if (hasData) {
+    const sourceEmoji: Record<string, string> = {
+      domain: "🎯", cms: "📦", waf: "🛡️", server: "🖥️", global: "🌐", none: "❓",
+    };
+    narratorSummary = `📊 Adaptive Ordering (${scores.filter(s => s.source !== "none").length} methods with history):\n`;
+    narratorSummary += topMethods.map((s, i) =>
+      `${i + 1}. ${s.method} — ${sourceEmoji[s.source] || "❓"} ${s.compositeScore}pts (${s.rawSuccessRate}% rate, ${s.attempts} attempts)`
+    ).join("\n");
+    if (skipMethods.length > 0) {
+      narratorSummary += `\n⏭️ Skip ${skipMethods.length}: ${skipMethods.join(", ")}`;
+    }
+  } else {
+    narratorSummary = `📊 No historical data — using scan-based ordering`;
+  }
+
+  return { orderedMethods, scores, skipMethods, narratorSummary };
+}
