@@ -199,10 +199,24 @@ const CDN_SIGNATURES: Record<string, string[]> = {
 /**
  * directFetchFirst: Try direct fetch first (fast path), fallback to proxy only if direct fails.
  * This is the default for scan stages — avoids wasting 12s on proxy when direct works fine.
+ * 
+ * @param stageSignal — AbortSignal from runStage. When stage times out, this signal fires
+ *   and cancels ALL underlying HTTP requests immediately. This prevents the old bug where
+ *   Promise.race resolved but fetch calls kept running in the background for minutes.
  */
-async function directFetchFirst(url: string, options: RequestInit = {}): Promise<Response | null> {
+async function directFetchFirst(url: string, options: RequestInit = {}, stageSignal?: AbortSignal): Promise<Response | null> {
+  // If stage already aborted, return immediately
+  if (stageSignal?.aborted) return null;
+  
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), DIRECT_FETCH_TIMEOUT);
+  
+  // Link to stage signal so stage timeout cancels this fetch
+  const onStageAbort = () => controller.abort();
+  if (stageSignal) {
+    stageSignal.addEventListener("abort", onStageAbort, { once: true });
+  }
+  
   try {
     const resp = await fetch(url, {
       ...options,
@@ -215,6 +229,8 @@ async function directFetchFirst(url: string, options: RequestInit = {}): Promise
     return resp;
   } catch {
     clearTimeout(t);
+    // If stage was aborted, don't bother with proxy fallback
+    if (stageSignal?.aborted) return null;
     // Direct failed — try via proxy as fallback
     try {
       const domain = url.includes("://") ? new URL(url).hostname : undefined;
@@ -222,6 +238,7 @@ async function directFetchFirst(url: string, options: RequestInit = {}): Promise
         ...options,
         headers: { "User-Agent": UA, ...(options.headers || {}) },
         redirect: "follow",
+        signal: stageSignal, // Pass stage signal so proxy fetch also gets cancelled
       }, {
         targetDomain: domain,
         timeout: FETCH_TIMEOUT,
@@ -232,12 +249,16 @@ async function directFetchFirst(url: string, options: RequestInit = {}): Promise
     } catch {
       return null;
     }
+  } finally {
+    if (stageSignal) {
+      stageSignal.removeEventListener("abort", onStageAbort);
+    }
   }
 }
 
-async function safeFetch(url: string, options: RequestInit = {}): Promise<Response | null> {
+async function safeFetch(url: string, options: RequestInit = {}, stageSignal?: AbortSignal): Promise<Response | null> {
   // Use directFetchFirst for scan stages (fast path)
-  return directFetchFirst(url, options);
+  return directFetchFirst(url, options, stageSignal);
 }
 
 function ensureUrl(domain: string): string {
@@ -249,10 +270,10 @@ function ensureUrl(domain: string): string {
 //  STAGE 1: SERVER FINGERPRINTING
 // ═══════════════════════════════════════════════════════
 
-async function fingerprint(baseUrl: string, onProgress: ScanProgressCallback): Promise<ServerInfo> {
+async function fingerprint(baseUrl: string, onProgress: ScanProgressCallback, stageSignal?: AbortSignal): Promise<ServerInfo> {
   onProgress("fingerprint", "กำลังสแกนข้อมูลเซิร์ฟเวอร์...", 5);
 
-  const resp = await safeFetch(baseUrl);
+  const resp = await safeFetch(baseUrl, {}, stageSignal);
   const headers: Record<string, string> = {};
   if (resp) {
     resp.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
@@ -271,25 +292,29 @@ async function fingerprint(baseUrl: string, onProgress: ScanProgressCallback): P
     if (sigs.some(s => headerStr.includes(s))) { cdn = name; break; }
   }
 
-  // Check allowed HTTP methods via OPTIONS
+  // Check allowed HTTP methods via OPTIONS (skip if stage already timed out)
   let httpMethods: string[] = ["GET", "POST"];
-  try {
-    const optResp = await safeFetch(baseUrl, { method: "OPTIONS" });
-    if (optResp) {
-      const allow = optResp.headers.get("allow") || optResp.headers.get("access-control-allow-methods") || "";
-      if (allow) httpMethods = allow.split(",").map(m => m.trim().toUpperCase());
-    }
-  } catch { /* ignore */ }
+  if (!stageSignal?.aborted) {
+    try {
+      const optResp = await safeFetch(baseUrl, { method: "OPTIONS" }, stageSignal);
+      if (optResp) {
+        const allow = optResp.headers.get("allow") || optResp.headers.get("access-control-allow-methods") || "";
+        if (allow) httpMethods = allow.split(",").map(m => m.trim().toUpperCase());
+      }
+    } catch { /* ignore */ }
+  }
 
-  // Resolve IP
+  // Resolve IP (skip if stage already timed out)
   let ip = "";
-  try {
-    const dnsResp = await safeFetch(`https://dns.google/resolve?name=${new URL(baseUrl).hostname}&type=A`);
-    if (dnsResp) {
-      const data = await dnsResp.json() as any;
-      ip = data?.Answer?.[0]?.data || "";
-    }
-  } catch { /* ignore */ }
+  if (!stageSignal?.aborted) {
+    try {
+      const dnsResp = await safeFetch(`https://dns.google/resolve?name=${new URL(baseUrl).hostname}&type=A`, {}, stageSignal);
+      if (dnsResp) {
+        const data = await dnsResp.json() as any;
+        ip = data?.Answer?.[0]?.data || "";
+      }
+    } catch { /* ignore */ }
+  }
 
   onProgress("fingerprint", `เซิร์ฟเวอร์: ${headers["server"] || "unknown"}, WAF: ${waf || "none"}, CDN: ${cdn || "none"}`, 10);
 
@@ -311,7 +336,7 @@ async function fingerprint(baseUrl: string, onProgress: ScanProgressCallback): P
 //  STAGE 2: CMS DETECTION
 // ═══════════════════════════════════════════════════════
 
-async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Promise<CmsDetection> {
+async function detectCms(baseUrl: string, onProgress: ScanProgressCallback, stageSignal?: AbortSignal): Promise<CmsDetection> {
   onProgress("cms_detect", "กำลังตรวจจับ CMS...", 15);
 
   const result: CmsDetection = {
@@ -326,14 +351,14 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
   };
 
   // Check WordPress
-  const wpResp = await safeFetch(`${baseUrl}/wp-login.php`);
+  const wpResp = await safeFetch(`${baseUrl}/wp-login.php`, {}, stageSignal);
   if (wpResp && (wpResp.status === 200 || wpResp.status === 302)) {
     result.type = "wordpress";
     result.loginUrl = `${baseUrl}/wp-login.php`;
     result.adminUrl = `${baseUrl}/wp-admin/`;
 
     // Check WP REST API
-    const apiResp = await safeFetch(`${baseUrl}/wp-json/wp/v2/`);
+    const apiResp = await safeFetch(`${baseUrl}/wp-json/wp/v2/`, {}, stageSignal);
     if (apiResp && apiResp.status === 200) {
       result.apiEndpoints.push(`${baseUrl}/wp-json/wp/v2/`);
       // Try to get version
@@ -344,7 +369,7 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
     }
 
     // Check XMLRPC
-    const xmlrpcResp = await safeFetch(`${baseUrl}/xmlrpc.php`, { method: "POST", body: '<?xml version="1.0"?><methodCall><methodName>system.listMethods</methodName></methodCall>' });
+    const xmlrpcResp = await safeFetch(`${baseUrl}/xmlrpc.php`, { method: "POST", body: '<?xml version="1.0"?><methodCall><methodName>system.listMethods</methodName></methodCall>' }, stageSignal);
     if (xmlrpcResp && xmlrpcResp.status === 200) {
       result.apiEndpoints.push(`${baseUrl}/xmlrpc.php`);
       result.vulnerableComponents.push("xmlrpc_enabled");
@@ -359,7 +384,7 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
     ];
     const pluginResults = await Promise.allSettled(
       commonPlugins.map(async (plugin) => {
-        const pResp = await safeFetch(`${baseUrl}/wp-content/plugins/${plugin}/readme.txt`);
+        const pResp = await safeFetch(`${baseUrl}/wp-content/plugins/${plugin}/readme.txt`, {}, stageSignal);
         if (pResp && pResp.status === 200) return plugin;
         return null;
       })
@@ -378,7 +403,7 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
   }
 
   // Check Joomla
-  const joomlaResp = await safeFetch(`${baseUrl}/administrator/`);
+  const joomlaResp = await safeFetch(`${baseUrl}/administrator/`, {}, stageSignal);
   if (joomlaResp && joomlaResp.status === 200) {
     const body = await joomlaResp.text();
     if (body.includes("Joomla") || body.includes("joomla")) {
@@ -391,7 +416,7 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
   }
 
   // Check Drupal
-  const drupalResp = await safeFetch(`${baseUrl}/core/CHANGELOG.txt`);
+  const drupalResp = await safeFetch(`${baseUrl}/core/CHANGELOG.txt`, {}, stageSignal);
   if (drupalResp && drupalResp.status === 200) {
     result.type = "drupal";
     result.adminUrl = `${baseUrl}/admin/`;
@@ -401,7 +426,7 @@ async function detectCms(baseUrl: string, onProgress: ScanProgressCallback): Pro
   }
 
   // Check homepage for CMS hints
-  const homeResp = await safeFetch(baseUrl);
+  const homeResp = await safeFetch(baseUrl, {}, stageSignal);
   if (homeResp) {
     const body = await homeResp.text().catch(() => "");
     if (body.includes("wp-content") || body.includes("wp-includes")) {
@@ -434,6 +459,7 @@ async function discoverWritablePaths(
   cms: CmsDetection,
   serverInfo: ServerInfo,
   onProgress: ScanProgressCallback,
+  stageSignal?: AbortSignal,
 ): Promise<WritablePath[]> {
   onProgress("writable_paths", "กำลังค้นหา writable paths...", 30);
 
@@ -456,9 +482,9 @@ async function discoverWritablePaths(
           method: "PUT",
           body: "test_write_check",
           headers: { "Content-Type": "text/plain" },
-        });
+        }, stageSignal);
         if (putResp && (putResp.ok || putResp.status === 201)) {
-          const verifyResp = await safeFetch(fullUrl);
+          const verifyResp = await safeFetch(fullUrl, {}, stageSignal);
           const verified = verifyResp !== null && verifyResp.ok;
           pathResults.push({
             path,
@@ -468,7 +494,7 @@ async function discoverWritablePaths(
             contentType: putResp.headers.get("content-type") || "",
             allowsPhp: true,
           });
-          await safeFetch(fullUrl, { method: "DELETE" }).catch(() => {});
+          await safeFetch(fullUrl, { method: "DELETE" }, stageSignal).catch(() => {});
           if (verified) return pathResults;
         }
       }
@@ -482,7 +508,7 @@ async function discoverWritablePaths(
       const postResp = await safeFetch(`${baseUrl}${path}`, {
         method: "POST",
         body: formData,
-      });
+      }, stageSignal);
       if (postResp && (postResp.ok || postResp.status === 201)) {
         pathResults.push({
           path,
@@ -495,7 +521,7 @@ async function discoverWritablePaths(
       }
 
       // Check if directory listing is enabled
-      const dirResp = await safeFetch(`${baseUrl}${path}`);
+      const dirResp = await safeFetch(`${baseUrl}${path}`, {}, stageSignal);
       if (dirResp && dirResp.ok) {
         const body = await dirResp.text().catch(() => "");
         if (body.includes("Index of") || body.includes("Directory listing") || body.includes("<title>Index of")) {
@@ -533,6 +559,7 @@ async function discoverUploadEndpoints(
   baseUrl: string,
   cms: CmsDetection,
   onProgress: ScanProgressCallback,
+  stageSignal?: AbortSignal,
 ): Promise<UploadEndpoint[]> {
   onProgress("upload_endpoints", "กำลังค้นหา upload endpoints...", 45);
 
@@ -541,7 +568,7 @@ async function discoverUploadEndpoints(
   // Check all upload form paths in parallel
   const uploadFormResults = await Promise.allSettled(
     UPLOAD_FORM_PATHS.map(async (path) => {
-      const resp = await safeFetch(`${baseUrl}${path}`);
+      const resp = await safeFetch(`${baseUrl}${path}`, {}, stageSignal);
       if (!resp || resp.status >= 400) return null;
 
       const body = await resp.text().catch(() => "");
@@ -584,7 +611,7 @@ async function discoverUploadEndpoints(
       method: "POST",
       headers: { "Content-Type": "image/jpeg" },
       body: "test",
-    });
+    }, stageSignal);
     if (wpMediaResp && wpMediaResp.status !== 404) {
       results.push({
         url: `${baseUrl}/wp-json/wp/v2/media`,
@@ -619,7 +646,7 @@ async function discoverUploadEndpoints(
 //  STAGE 5: EXPOSED PANELS & MISCONFIGURATIONS
 // ═══════════════════════════════════════════════════════
 
-async function scanExposedPanels(baseUrl: string, onProgress: ScanProgressCallback): Promise<ExposedPanel[]> {
+async function scanExposedPanels(baseUrl: string, onProgress: ScanProgressCallback, stageSignal?: AbortSignal): Promise<ExposedPanel[]> {
   onProgress("panels", "กำลังสแกน exposed panels...", 58);
 
   const results: ExposedPanel[] = [];
@@ -627,7 +654,7 @@ async function scanExposedPanels(baseUrl: string, onProgress: ScanProgressCallba
   // Check all admin panels in parallel
   const panelResults = await Promise.allSettled(
     ADMIN_PANELS.map(async (panel) => {
-      const resp = await safeFetch(`${baseUrl}${panel.path}`);
+      const resp = await safeFetch(`${baseUrl}${panel.path}`, {}, stageSignal);
       if (!resp || resp.status >= 400) return null;
 
       const body = await resp.text().catch(() => "");
@@ -652,13 +679,13 @@ async function scanExposedPanels(baseUrl: string, onProgress: ScanProgressCallba
   return results;
 }
 
-async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, onProgress: ScanProgressCallback): Promise<Misconfiguration[]> {
+async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, onProgress: ScanProgressCallback, stageSignal?: AbortSignal): Promise<Misconfiguration[]> {
   onProgress("misconfig", "กำลังสแกน misconfigurations...", 65);
 
   const results: Misconfiguration[] = [];
 
   // Check .env file exposure
-  const envResp = await safeFetch(`${baseUrl}/.env`);
+  const envResp = await safeFetch(`${baseUrl}/.env`, {}, stageSignal);
   if (envResp && envResp.ok) {
     const body = await envResp.text().catch(() => "");
     if (body.includes("=") && (body.includes("DB_") || body.includes("APP_") || body.includes("SECRET"))) {
@@ -673,7 +700,7 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
   }
 
   // Check .git exposure
-  const gitResp = await safeFetch(`${baseUrl}/.git/config`);
+  const gitResp = await safeFetch(`${baseUrl}/.git/config`, {}, stageSignal);
   if (gitResp && gitResp.ok) {
     results.push({
       type: "git_exposure",
@@ -686,7 +713,7 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
 
   // Check phpinfo
   for (const path of ["/phpinfo.php", "/info.php", "/php_info.php", "/test.php"]) {
-    const phpResp = await safeFetch(`${baseUrl}${path}`);
+    const phpResp = await safeFetch(`${baseUrl}${path}`, {}, stageSignal);
     if (phpResp && phpResp.ok) {
       const body = await phpResp.text().catch(() => "");
       if (body.includes("phpinfo()") || body.includes("PHP Version")) {
@@ -706,7 +733,7 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
   const debugPaths = ["/debug", "/_debugbar", "/telescope", "/horizon"];
   const debugResults = await Promise.allSettled(
     debugPaths.map(async (path) => {
-      const debugResp = await safeFetch(`${baseUrl}${path}`);
+      const debugResp = await safeFetch(`${baseUrl}${path}`, {}, stageSignal);
       if (debugResp && debugResp.ok) return path;
       return null;
     })
@@ -725,7 +752,7 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
 
   // Check directory listing on root
   if (!serverInfo.waf) {
-    const rootResp = await safeFetch(baseUrl);
+    const rootResp = await safeFetch(baseUrl, {}, stageSignal);
     if (rootResp) {
       const body = await rootResp.text().catch(() => "");
       if (body.includes("Index of /")) {
@@ -744,7 +771,7 @@ async function scanMisconfigurations(baseUrl: string, serverInfo: ServerInfo, on
   const backupPaths = ["/backup.zip", "/backup.tar.gz", "/db.sql", "/database.sql", "/wp-config.php.bak", "/config.php.bak"];
   const backupResults = await Promise.allSettled(
     backupPaths.map(async (path) => {
-      const backupResp = await safeFetch(`${baseUrl}${path}`, { method: "HEAD" });
+      const backupResp = await safeFetch(`${baseUrl}${path}`, { method: "HEAD" }, stageSignal);
       if (backupResp && backupResp.ok) return path;
       return null;
     })
@@ -1086,54 +1113,59 @@ export async function fullVulnScan(
   onProgress("start", `🔍 เริ่มสแกน ${baseUrl}...`, 0);
 
   // Helper: run a stage with individual timeout + abort signal
-  const runStage = async <T>(name: string, fn: () => Promise<T>, fallback: T, timeoutMs = 30_000): Promise<T> => {
+  // Uses a per-stage AbortController so that when timeout fires, ALL underlying
+  // HTTP requests in that stage are cancelled immediately (not just Promise.race).
+  const stageAbortController = new AbortController(); // shared across stages for cleanup
+  const runStage = async <T>(name: string, fn: (stageSignal: AbortSignal) => Promise<T>, fallback: T, timeoutMs = 30_000): Promise<T> => {
     // Check abort before starting stage
     if (abortSignal?.aborted) {
       onProgress(name as any, `⏹ ${name} — ถูกยกเลิก`, -1);
       return fallback;
     }
+    
+    // Create a per-stage AbortController that fires on timeout OR parent abort
+    const stageCtrl = new AbortController();
+    const timer = setTimeout(() => stageCtrl.abort(), timeoutMs);
+    
+    // Link to parent abort signal
+    const onParentAbort = () => stageCtrl.abort();
+    if (abortSignal) {
+      if (abortSignal.aborted) { clearTimeout(timer); stageCtrl.abort(); }
+      else abortSignal.addEventListener("abort", onParentAbort, { once: true });
+    }
+    
     try {
-      const promises: Promise<any>[] = [
-        fn(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Stage ${name} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
-        ),
-      ];
-      // Add abort signal race if provided
-      if (abortSignal) {
-        promises.push(new Promise<never>((_, reject) => {
-          if (abortSignal.aborted) { reject(new Error(`ABORTED`)); return; }
-          abortSignal.addEventListener("abort", () => reject(new Error(`ABORTED`)), { once: true });
-        }));
-      }
-      return await Promise.race(promises);
+      const result = await fn(stageCtrl.signal);
+      clearTimeout(timer);
+      return result;
     } catch (err: any) {
+      clearTimeout(timer);
+      // Abort any still-running fetches in this stage
+      if (!stageCtrl.signal.aborted) stageCtrl.abort();
       console.warn(`[VulnScan] Stage ${name} failed: ${err.message}`);
       onProgress(name as any, `⚠️ ${name} หมดเวลา/ล้มเหลว — ข้ามไป`, -1);
       return fallback;
+    } finally {
+      if (abortSignal) {
+        abortSignal.removeEventListener("abort", onParentAbort);
+      }
     }
   };
 
-  // Check overall timeout + abort signal
-  const checkTimeout = () => {
-    if (abortSignal?.aborted) {
-      throw new Error(`Full scan aborted by caller`);
-    }
-    if (Date.now() - start > FULL_SCAN_TIMEOUT) {
-      throw new Error(`Full scan timed out after ${Math.round(FULL_SCAN_TIMEOUT / 1000)}s`);
-    }
+  // Check overall timeout + abort signal — returns true if should stop
+  const shouldStop = (): boolean => {
+    return !!(abortSignal?.aborted) || (Date.now() - start > FULL_SCAN_TIMEOUT);
   };
 
   // Stage timeouts reduced: directFetchFirst = ~4s worst case (direct) + 5s proxy fallback
   // fingerprint: 3 requests → ~15s, cms: parallel → ~10s, etc.
 
   // Stage 1: Server fingerprinting (12s max — 3 sequential requests)
-  const serverInfo = await runStage("fingerprint", () => fingerprint(baseUrl, onProgress), {
+  const serverInfo = await runStage("fingerprint", (sig) => fingerprint(baseUrl, onProgress, sig), {
     ip: "", server: "unknown", poweredBy: "", os: "linux", phpVersion: "",
     headers: {}, waf: null, cdn: null, ssl: baseUrl.startsWith("https"), httpMethods: ["GET", "POST"],
   }, 12_000);
   if (collector) { collector.serverInfo = serverInfo; collector.completedStages.push("fingerprint"); }
-  checkTimeout();
 
   // ═══ CLOUDFLARE EARLY EXIT: If strong WAF detected, skip expensive stages (unless we have origin IP) ═══
   const hasStrongWaf = !!(serverInfo.waf && ["cloudflare", "sucuri", "akamai", "incapsula", "aws_waf"].includes(serverInfo.waf.toLowerCase()));
@@ -1145,36 +1177,32 @@ export async function fullVulnScan(
   }
 
   // Stage 2: CMS detection (15s max — multiple requests, some parallel)
-  const cms = await runStage("cms_detect", () => detectCms(baseUrl, onProgress), {
+  const cms = await runStage("cms_detect", (sig) => detectCms(baseUrl, onProgress, sig), {
     type: "unknown" as const, version: "", plugins: [], themes: [],
     vulnerableComponents: [], adminUrl: "", loginUrl: "", apiEndpoints: [],
   }, 15_000);
   if (collector) { collector.cms = cms; collector.completedStages.push("cms_detect"); }
-  checkTimeout();
 
   // Stage 3: Writable path discovery (15s max — SKIP if strong WAF detected, UNLESS we have origin IP)
   const scanUrl = canBypassWaf ? originBaseUrl : baseUrl;
   const writablePaths = (hasStrongWaf && !canBypassWaf)
     ? [] // WAF will block all PUT/POST attempts — don't waste time
-    : await runStage("writable_paths", () => discoverWritablePaths(scanUrl, cms, serverInfo, onProgress), [], 15_000);
+    : await runStage("writable_paths", (sig) => discoverWritablePaths(scanUrl, cms, serverInfo, onProgress, sig), [], 15_000);
   if (collector) { collector.writablePaths = writablePaths; collector.completedStages.push("writable_paths"); }
-  if (!(hasStrongWaf && !canBypassWaf)) checkTimeout();
 
   // Stage 4: Upload endpoint discovery (10s max — SKIP if strong WAF, UNLESS we have origin IP)
   const uploadEndpoints = (hasStrongWaf && !canBypassWaf)
     ? []
-    : await runStage("upload_endpoints", () => discoverUploadEndpoints(scanUrl, cms, onProgress), [], 10_000);
+    : await runStage("upload_endpoints", (sig) => discoverUploadEndpoints(scanUrl, cms, onProgress, sig), [], 10_000);
   if (collector) { collector.uploadEndpoints = uploadEndpoints; collector.completedStages.push("upload_endpoints"); }
-  if (!(hasStrongWaf && !canBypassWaf)) checkTimeout();
 
   // Stage 5: Exposed panels & misconfigurations (10s max each — parallel requests)
-  const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 10_000);
-  const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 10_000);
+  const exposedPanels = await runStage("panels", (sig) => scanExposedPanels(baseUrl, onProgress, sig), [], 10_000);
+  const misconfigurations = await runStage("misconfig", (sig) => scanMisconfigurations(baseUrl, serverInfo, onProgress, sig), [], 10_000);
   if (collector) { collector.exposedPanels = exposedPanels; collector.misconfigurations = misconfigurations; collector.completedStages.push("panels", "misconfig"); }
-  checkTimeout();
 
   // Stage 6: AI attack vector ranking (30s max — LLM call + 1 retry)
-  const { vectors, analysis } = await runStage("ai_analysis", () => aiRankAttackVectors(
+  const { vectors, analysis } = await runStage("ai_analysis", (_sig) => aiRankAttackVectors(
     baseUrl, serverInfo, cms, writablePaths, uploadEndpoints, exposedPanels, misconfigurations, onProgress,
   ), { vectors: [], analysis: "AI analysis timed out" }, 30_000);
   if (collector) { collector.attackVectors = vectors; collector.aiAnalysis = analysis; collector.completedStages.push("ai_analysis"); }

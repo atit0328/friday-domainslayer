@@ -118,7 +118,10 @@ describe("AI Vuln Analyzer", () => {
     mockFetch.mockRejectedValue(new Error("Network error"));
 
     const { fullVulnScan } = await import("./ai-vuln-analyzer");
-    const result = await fullVulnScan("unreachable.com", () => {});
+    // Use AbortController with short timeout to prevent proxy fallback from hanging
+    const abort = new AbortController();
+    setTimeout(() => abort.abort(), 15000);
+    const result = await fullVulnScan("unreachable.com", () => {}, abort.signal);
 
     expect(result).toBeDefined();
     expect(result.target).toContain("unreachable.com");

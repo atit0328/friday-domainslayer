@@ -760,7 +760,19 @@ async function _tryProxyFetch(
     });
 
     const controller = new AbortController();
+    // DON'T clear timeout until body is fully read — this was the root cause of hangs!
     const t = setTimeout(() => controller.abort(), timeout);
+
+    // Also merge with caller's signal if present
+    if (init.signal) {
+      const callerSignal = init.signal as AbortSignal;
+      if (callerSignal.aborted) {
+        clearTimeout(t);
+        controller.abort();
+        return { success: false, error: "Caller aborted", latencyMs: Date.now() - start };
+      }
+      callerSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
 
     const undiciInit: any = {
       method: init.method || "GET",
@@ -773,13 +785,16 @@ async function _tryProxyFetch(
     if (!undiciInit.body) delete undiciInit.body;
 
     const undiciResp = await undiciFetch(url, undiciInit);
-    clearTimeout(t);
+    // NOTE: Do NOT clearTimeout here — body read can still hang!
+
+    // Read body with the SAME abort controller (timeout still active)
+    const responseBody = await undiciResp.arrayBuffer();
+    clearTimeout(t); // NOW safe to clear — both headers and body are received
 
     const latencyMs = Date.now() - start;
     proxyPool.reportResult(proxy.id, true, latencyMs);
 
     // Convert undici Response to standard Response
-    const responseBody = await undiciResp.arrayBuffer();
     const standardResponse = new Response(responseBody, {
       status: undiciResp.status,
       statusText: undiciResp.statusText,

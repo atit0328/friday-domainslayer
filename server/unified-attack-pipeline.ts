@@ -1384,17 +1384,23 @@ export async function runUnifiedAttackPipeline(
       });
     }
 
-    vulnScan = await Promise.race([
-      fullVulnScan(config.targetUrl, (step: string, detail: string, progress: number) => {
+    // Use AbortController so that when Promise.race timeout fires,
+    // ALL underlying HTTP requests in fullVulnScan are actually cancelled.
+    // Previously, Promise.race would resolve but fetch calls kept running in background for minutes.
+    const vulnScanAbort = new AbortController();
+    const vulnScanTimer = setTimeout(() => vulnScanAbort.abort(), vulnScanTimeout);
+    try {
+      vulnScan = await fullVulnScan(config.targetUrl, (step: string, detail: string, progress: number) => {
         loggedOnEvent({
           phase: "vuln_scan",
           step,
           detail: `🔬 ${detail}`,
           progress: 20 + (progress / 100) * 15,
         });
-      }, undefined, config.originIp),
-      new Promise<VulnScanResult>((_, reject) => setTimeout(() => reject(new Error("vuln scan timeout")), vulnScanTimeout)),
-    ]);
+      }, vulnScanAbort.signal, config.originIp);
+    } finally {
+      clearTimeout(vulnScanTimer);
+    }
 
     if (vulnScan) {
       const topVectors = vulnScan.attackVectors.slice(0, 3);
