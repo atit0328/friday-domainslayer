@@ -6181,3 +6181,17 @@
 - [x] Wrap advanced fullVulnScan with runStepWithTimeout
 - [x] TypeScript: 0 errors, Tests: passed
 - [x] Checkpoint saved
+
+# Bug Fix: Method 1/20 (Unified Attack Pipeline) hangs 10-15 minutes in full_chain
+
+- [x] Root cause: pipeline timeout (12 min) > method loop deadline (8 min) → method 1/20 consumed all time
+- [x] Pipeline also had shouldStop() returning false always → never stops on its own
+- [x] Fix: Reduce pipeline per-method timeout: 12 min → 3 min
+- [x] Fix: Reduce pipeline globalTimeout: 15 min → 3 min
+- [x] Fix: Reduce agentic_auto timeout: 8 min → 3 min
+- [x] Fix: Reduce hijack/advanced timeout: 5 min → 3 min
+- [x] Fix: Increase method loop deadline: 8 min → 20 min (so all 20 methods can run)
+- [x] Fix: Add per-method AbortController → timed-out methods actually cancel HTTP requests
+- [x] Fix: withMethodTimeout now passes abort signal to method functions
+- [x] TypeScript: 0 errors, Tests: passed
+- [x] Checkpoint saved

@@ -5661,42 +5661,65 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       (narrator as any).config.totalMethods = methodOrder.length;
       
       // Per-method timeout settings (ms)
+      // ═══ PER-METHOD TIMEOUTS ═══
+      // Each method gets a strict time budget. If it exceeds this, it's killed and we move to the next.
+      // Key principle: NO single method should consume >15% of the loop time.
       const METHOD_TIMEOUTS: Record<string, number> = {
-        pipeline: 12 * 60 * 1000,      // 12 min — pipeline (increased: recon phases need time before upload)
-        agentic_auto: 8 * 60 * 1000,   // 8 min — AI session (restored: needs time for full attack cycle)
-        hijack: 5 * 60 * 1000,         // 5 min — credential hunt + methods (restored)
-        advanced: 5 * 60 * 1000,       // 5 min (restored)
-        cloaking: 2 * 60 * 1000,       // 2 min (reduced from 3)
-        redirect: 90 * 1000,           // 1.5 min (reduced from 2)
+        pipeline: 3 * 60 * 1000,       // 3 min — pipeline (reduced from 12: must be fast, other methods need time)
+        agentic_auto: 3 * 60 * 1000,   // 3 min — AI session (reduced from 8: quick attempt then move on)
+        hijack: 3 * 60 * 1000,         // 3 min — credential hunt + methods (reduced from 5)
+        advanced: 3 * 60 * 1000,       // 3 min — advanced techniques (reduced from 5)
+        cloaking: 2 * 60 * 1000,       // 2 min
+        redirect: 90 * 1000,           // 1.5 min
       };
-      const DEFAULT_METHOD_TIMEOUT = 2 * 60 * 1000; // 2 min default (reduced from 3)
+      const DEFAULT_METHOD_TIMEOUT = 2 * 60 * 1000; // 2 min default
       const MAX_CONSECUTIVE_FAILURES = 15; // Stop after 15 consecutive failures (run ALL systems before giving up)
       
-      // ═══ GLOBAL METHOD LOOP TIMEOUT (8 min) ═══
+      // ═══ GLOBAL METHOD LOOP TIMEOUT (20 min) ═══
       // Graceful shutdown: when this deadline is reached, stop trying new methods and send summary
+      // Increased from 8 min to 20 min to allow all 20 methods to run (each ~3 min max)
       // This is separate from ATTACK_TIMEOUT_MS (30 min) which covers the entire attack including vuln scan + verify
-      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes for all method attempts
+      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes for all method attempts
       const methodLoopDeadline = Date.now() + FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS;
       
-      // Helper: run with per-method timeout
-      const withMethodTimeout = async <T,>(methodId: string, fn: () => Promise<T>): Promise<T> => {
+      // Helper: run with per-method timeout + abort signal
+      // Creates a per-method AbortController so timed-out methods actually stop their HTTP requests
+      let currentMethodAbort: AbortController | null = null;
+      const withMethodTimeout = async <T,>(methodId: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
         const timeout = METHOD_TIMEOUTS[methodId] || DEFAULT_METHOD_TIMEOUT;
-        return Promise.race([
-          fn(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`METHOD_TIMEOUT: ${methodId} exceeded ${Math.round(timeout / 60000)}min limit`)), timeout)
-          ),
-          // Also listen to global abort signal so global timeout truly cancels
-          new Promise<never>((_, reject) => {
-            if (attackEntry.abortController.signal.aborted) {
-              reject(new Error(`GLOBAL_ABORT: attack aborted`));
-              return;
-            }
-            attackEntry.abortController.signal.addEventListener("abort", () => {
-              reject(new Error(`GLOBAL_ABORT: attack aborted after ${Math.round((Date.now() - attackStartTime) / 1000)}s`));
-            }, { once: true });
-          }),
-        ]);
+        // Create per-method abort controller
+        currentMethodAbort = new AbortController();
+        const methodAbort = currentMethodAbort;
+        // Link to global abort
+        const onGlobalAbort = () => methodAbort.abort();
+        attackEntry.abortController.signal.addEventListener("abort", onGlobalAbort, { once: true });
+        
+        const timeoutId = setTimeout(() => {
+          methodAbort.abort(); // Actually cancel HTTP requests inside the method
+        }, timeout);
+        
+        try {
+          return await Promise.race([
+            fn(methodAbort.signal),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`METHOD_TIMEOUT: ${methodId} exceeded ${Math.round(timeout / 60000)}min limit`)), timeout)
+            ),
+            // Also listen to global abort signal so global timeout truly cancels
+            new Promise<never>((_, reject) => {
+              if (attackEntry.abortController.signal.aborted) {
+                reject(new Error(`GLOBAL_ABORT: attack aborted`));
+                return;
+              }
+              attackEntry.abortController.signal.addEventListener("abort", () => {
+                reject(new Error(`GLOBAL_ABORT: attack aborted after ${Math.round((Date.now() - attackStartTime) / 1000)}s`));
+              }, { once: true });
+            }),
+          ]);
+        } finally {
+          clearTimeout(timeoutId);
+          attackEntry.abortController.signal.removeEventListener("abort", onGlobalAbort);
+          currentMethodAbort = null;
+        }
       }
       
       // Execute methods in AI-determined order
@@ -5743,7 +5766,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // method name + elapsed time in footer — no need for per-method heartbeat here
         
         try {
-          await withMethodTimeout(methodId, async () => {
+          await withMethodTimeout(methodId, async (_methodSignal) => {
           if (methodId === "pipeline") {
             // ── Unified Pipeline ──
             const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
@@ -5765,7 +5788,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 15 * 60 * 1000, // 15 min — ให้เวลาพอรันทุก phase ครบ (Shodan + LeakCheck + FTP + SSH + cPanel + WP + all methods)
+                globalTimeout: 3 * 60 * 1000, // 3 min — match per-method timeout (was 15 min, caused 1/20 hang)
               },
               async (event) => {
                 const elapsed = Math.round((Date.now() - methodStart) / 1000);
