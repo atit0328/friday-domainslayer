@@ -44,6 +44,7 @@ import AiAnalysisCard from "@/components/AiAnalysisCard";
 import DeepVulnReport from "@/components/DeepVulnReport";
 import AttackLogViewer from "@/components/AttackLogViewer";
 import AttackStatsDashboard from "@/components/AttackStatsDashboard";
+import PhaseProgressTracker, { createInitialPhaseTrackerState, processEventForTracker, type PhaseTrackerMap } from "@/components/PhaseProgressTracker";
 
 // ─── Types ───
 interface AutonomousEvent {
@@ -275,6 +276,10 @@ export default function AutonomousFriday() {
     cloakingContentSize: 0,
   });
 
+  // ═══ Phase Progress Tracker state ═══
+  const [phaseTracker, setPhaseTracker] = useState<PhaseTrackerMap>(createInitialPhaseTrackerState());
+  const [pipelineStartTime, setPipelineStartTime] = useState<number | null>(null);
+
   // ═══ AI Analysis state ═══
   const [aiAnalysisSteps, setAiAnalysisSteps] = useState<Array<{
     stepId: string; stepName: string; status: "running" | "complete" | "error" | "skipped";
@@ -362,6 +367,16 @@ export default function AutonomousFriday() {
   // ─── Process SSE event ───
   const processEvent = useCallback((evt: AutonomousEvent) => {
     setEvents((prev) => [...prev, evt]);
+
+    // Update phase progress tracker
+    setPhaseTracker((prev) => processEventForTracker(prev, {
+      phase: evt.phase,
+      step: evt.step !== undefined ? String(evt.step) : undefined,
+      detail: evt.detail,
+      progress: evt.progress,
+      type: evt.type,
+      timestamp: Date.now(),
+    }));
 
     // Update layer state
     if (evt.layer && evt.layer >= 1 && evt.layer <= 3) {
@@ -577,6 +592,8 @@ export default function AutonomousFriday() {
 
   // ─── Reset all pipeline state ───
   const resetPipelineState = () => {
+    setPhaseTracker(createInitialPhaseTrackerState());
+    setPipelineStartTime(null);
     setAiAnalysisSteps([]);
     setAiAnalysisData(null);
     setDeepVulnAnalysis(null);
@@ -705,6 +722,7 @@ export default function AutonomousFriday() {
     }
 
     setRunning(true);
+    setPipelineStartTime(Date.now());
     setEvents([]);
     setFinalResult(null);
     setError(null);
@@ -813,6 +831,7 @@ export default function AutonomousFriday() {
       return;
     }
     setRunning(true);
+    setPipelineStartTime(Date.now());
     setEvents([]);
     setFinalResult(null);
     setError(null);
@@ -1728,6 +1747,18 @@ export default function AutonomousFriday() {
             </Card>
           )}
 
+          {/* Phase Progress Tracker */}
+          {(running || events.length > 0) && (
+            <div className="mb-4">
+              <PhaseProgressTracker
+                phases={phaseTracker}
+                isRunning={running}
+                startTime={pipelineStartTime}
+                totalProgress={overallProgress}
+              />
+            </div>
+          )}
+
           {/* Main Monitor Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Left: Layer Status + World State */}
@@ -2267,6 +2298,7 @@ export default function AutonomousFriday() {
                           resetPipelineState();
                           if (job.status === "running" || job.status === "queued") {
                             setRunning(true);
+                            setPipelineStartTime(Date.now());
                             pollingRef.current = setInterval(() => pollJobEvents(job.id), 2000);
                           }
                         }}

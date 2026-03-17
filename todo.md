@@ -6115,3 +6115,22 @@
 - [x] Add AbortController to fullVulnScan Promise.race pattern
 - [ ] Run full end-to-end test verifying all phases complete (pending live test)
 - [ ] Checkpoint and deliver
+
+# Phase Progress Tracker UI — Real-time Attack Phase Monitoring
+
+- [x] Read current attack page UI structure and event data format
+- [x] Design PhaseProgressTracker component (timeline/stepper style)
+- [x] Show per-phase: name, status (pending/running/done/error), elapsed time, detail message
+- [x] Highlight currently running phase with animation
+- [x] Show total elapsed time and overall progress bar
+- [x] Integrate tracker into AAA Command attack page (before Main Monitor Grid)
+- [x] Wire up real-time events from pipeline to tracker (processEventForTracker)
+- [x] Mobile responsive design
+- [x] Test and checkpoint
+- [x] 32 phases tracked: Recon(4), Scan(9), Attack(6), Exploit(7), Post(6)
+- [x] Grouped by category with color-coded headers
+- [x] Collapsible sub-steps per phase (last 10 shown)
+- [x] Filter toggle: All Phases / Active Only
+- [x] Compact mode with mini dot grid + tooltips
+- [x] pipelineStartTime set on job start (3 locations)
+- [x] resetPipelineState resets tracker
