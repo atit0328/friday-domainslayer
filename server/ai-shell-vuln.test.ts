@@ -118,16 +118,16 @@ describe("AI Vuln Analyzer", () => {
     mockFetch.mockRejectedValue(new Error("Network error"));
 
     const { fullVulnScan } = await import("./ai-vuln-analyzer");
-    // Use AbortController with short timeout to prevent proxy fallback from hanging
+    // Use AbortController with very short timeout (5s) to cancel proxy fallback quickly
     const abort = new AbortController();
-    setTimeout(() => abort.abort(), 15000);
+    setTimeout(() => abort.abort(), 5000);
     const result = await fullVulnScan("unreachable.com", () => {}, abort.signal);
 
     expect(result).toBeDefined();
     expect(result.target).toContain("unreachable.com");
     expect(result.serverInfo).toBeDefined();
     expect(result.cms).toBeDefined();
-  }, 30000);
+  }, 60000);
 
   it("should detect WAF from headers", async () => {
     mockFetch.mockImplementation((url: string | URL | Request) => {

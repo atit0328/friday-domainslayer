@@ -6097,3 +6097,21 @@
 - [x] Fix test: add AbortController to "should handle network errors" test
 - [x] TypeScript compilation: 0 errors
 - [x] All 13 tests passing (ai-shell-vuln.test.ts)
+
+# Make Attack Pipeline Run All Phases Completely
+
+- [x] Run real attack test to identify which phases fail/hang/skip
+- [x] Read and map all phases in unified-attack-pipeline.ts
+- [x] Fix all blocking issues:
+  - [x] GLOBAL_TIMEOUT: 15min → 45min
+  - [x] capTimeout minimum: 3s → 15s
+  - [x] RECON_TIME_BUDGET: 6min → 15min
+  - [x] shouldStop(): never return true on timeout (only on explicit abort)
+  - [x] canSkipPhase(): disabled — all phases must run
+  - [x] existingRedirectDetected gates: removed from recon phases
+  - [x] hasEnoughRedundancy breaks: removed from upload/credential loops
+  - [x] vulnScan fast-track timeout reduction: removed
+  - [x] raceWithAbort helper: added for proper AbortController cleanup
+- [x] Add AbortController to fullVulnScan Promise.race pattern
+- [ ] Run full end-to-end test verifying all phases complete (pending live test)
+- [ ] Checkpoint and deliver
