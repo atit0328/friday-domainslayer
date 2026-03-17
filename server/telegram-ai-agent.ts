@@ -5653,13 +5653,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${mi + 1}/${methodOrder.length}: ${methodDef.name}`);
         const methodStart = Date.now();
         
-        // Heartbeat: update narrator every 15s to show we're still alive
-        const heartbeatInterval = setInterval(async () => {
-          const elapsed = Math.round((Date.now() - methodStart) / 1000);
-          try {
-            await narrator.addAnalysis(`⏳ ${methodDef.name} ยังทำงาน... (${elapsed}s)`);
-          } catch { /* ignore */ }
-        }, 15_000);
+        // Note: Narrator class has its own heartbeat timer (every 30s) that shows
+        // method name + elapsed time in footer — no need for per-method heartbeat here
         
         try {
           await withMethodTimeout(methodId, async () => {
@@ -5720,10 +5715,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                   stepIndex++;
                 }
 
-                // ─── Sub-step details: ALWAYS show every event to Telegram ───
+                // ─── Sub-step details: Only show important events (success/error/complete) ───
+                // Skip routine progress events to prevent Telegram message queue buildup
                 const detail = event.detail;
-                if (detail.length > 10) {
-                  // Pick the right emoji based on phase
+                const isImportant = isErr || isSuccess || 
+                  event.step === "complete" || event.step === "error" || 
+                  detail.includes("สำเร็จ") || detail.includes("เสร็จ") || 
+                  detail.includes("พบ") || detail.includes("found") ||
+                  detail.includes("credentials") || detail.includes("Origin IP");
+                
+                if (detail.length > 10 && isImportant) {
                   const phaseEmoji: Record<string, string> = {
                     upload: "📤", verify: "🔍", waf_bypass: "🛡", cf_bypass: "☁️",
                     shell_gen: "🛠", wp_brute_force: "🔑", wp_admin: "🔐",
@@ -6455,7 +6456,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           await narrator.addStep(errDetail);
           await narrator.completeLastStep("failed");
         } finally {
-          clearInterval(heartbeatInterval);
+          // heartbeat is managed by Narrator class — no per-method cleanup needed
         }
         
         // Record method result for progress counter

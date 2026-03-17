@@ -6022,3 +6022,19 @@
 - [x] แสดง elapsed time ใน message footer (เช่น "❤️ ระบบทำงานอยู่ | ⏱ 2m 30s")
 - [x] Heartbeat หยุดอัตโนมัติเมื่อ pipeline complete/fail
 - [x] เขียน vitest tests — 16 tests passed (8 heartbeat + 8 previous fixes)
+
+# Bug: Pipeline ค้างหลัง Deep Vulnerability Scan จบ (full_chain)
+
+- [x] วิเคราะห์ full_chain code path หลัง fullVulnScan — หา hang point
+  - Root cause: pipeline ไม่ได้ค้าง — กำลังรัน recon phases (DNS, Shodan, LeakCheck, Brute Force) แต่ Narrator ไม่อัพเดท
+  - progress bar ยังแสดง step-level (3/4 สำเร็จ) แทนที่จะแสดง method-level
+  - heartbeat footer ไม่แสดงว่ากำลังรัน method ไหน
+  - pipeline callback ส่ง addAnalysis ทุก event → queue สะสม → message ไม่ทัน
+  - per-method heartbeat interval (15s) ทับซ้อนกับ Narrator heartbeat (30s)
+- [x] Fix hang issue — 5 fixes applied:
+  - Fix 1: startPhase auto-completes previous running steps
+  - Fix 2: buildProgressBar แสดง method-level progress ทันที (currentMethodIndex > 0)
+  - Fix 3: heartbeat footer แสดง method name + elapsed time
+  - Fix 4: pipeline callback แสดงเฉพาะ important events (success/error/found)
+  - Fix 5: ลบ per-method heartbeat interval ที่ซ้ำซ้อน — Narrator class มี heartbeat ของตัวเองแล้ว
+- [x] เขียน/อัพเดท tests — 21 tests passed

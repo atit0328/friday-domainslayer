@@ -417,6 +417,14 @@ export class TelegramNarrator {
     const phaseInfo = PHASE_LABELS[phase];
     const label = customLabel || `${phaseInfo.emoji} ${phaseInfo.thai}`;
     
+    // Auto-complete previous running steps to prevent accumulation
+    for (let i = this.steps.length - 1; i >= 0; i--) {
+      if (this.steps[i].status === "running") {
+        this.steps[i].status = "done";
+        break;
+      }
+    }
+    
     this.steps.push({
       label,
       status: "running",
@@ -630,25 +638,31 @@ export class TelegramNarrator {
   }
   private buildProgressBar(): string {
     // For full_chain: use method-level progress instead of step-level
-    if (this.config.totalMethods && this.methodResults.length > 0) {
+    // Show method-level progress as soon as totalMethods is set (even if first method is still running)
+    if (this.config.totalMethods && this.currentMethodIndex > 0) {
       const totalM = this.config.totalMethods;
       const tried = this.methodResults.length;
       const succeeded = this.methodResults.filter(r => r.success).length;
-      const pct = Math.round((tried / Math.max(totalM, 1)) * 100);
+      // Progress: count completed methods + partial progress for current running method
+      const progressFraction = tried + 0.5; // Current method counts as 0.5
+      const pct = Math.min(99, Math.round((progressFraction / Math.max(totalM, 1)) * 100));
       const barLen = 12;
       const filled = Math.round((pct / 100) * barLen);
       const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
       
       const spinner = buildSpinner(Date.now() - this.startTime);
-      let statusText = this.currentMethodIndex <= totalM
+      const isRunning = this.currentMethodIndex <= totalM && !this.isCompleted;
+      let statusText = isRunning
         ? `${spinner} กำลังโจมตี...`
         : (succeeded > 0 ? `✅ สำเร็จ ${succeeded} วิธี` : `❌ ล้มเหลวทั้งหมด`);
       
       // Mini summary of recent results
       const recent = this.methodResults.slice(-3);
-      const recentText = recent.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ");
+      const recentText = recent.length > 0 
+        ? `\nล่าสุด: ${recent.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ")}`
+        : "";
       
-      return `\n[█${bar}] ${pct}% | ลองแล้ว ${tried}/${totalM} ${statusText}\nล่าสุด: ${recentText}`;
+      return `\n[█${bar}] ${pct}% | วิธีที่ ${this.currentMethodIndex}/${totalM} ${statusText}${recentText}`;
     }
     
     // Default: step-level progress
@@ -780,7 +794,9 @@ export class TelegramNarrator {
     const phaseInfo = PHASE_LABELS[this.currentPhase];
     const activity = phaseInfo ? `${phaseInfo.emoji} ${phaseInfo.thai}` : "กำลังทำงาน";
     
-    return `\n\n────────────────────\n${pulse} ระบบทำงานอยู่ | ⏱ ${elapsedStr}`;
+    // Show current method name if in full_chain mode
+    const methodInfo = this.currentMethodName ? ` | ${this.currentMethodName}` : "";
+    return `\n\n────────────────────\n${pulse} ระบบทำงานอยู่${methodInfo} | ⏱ ${elapsedStr}`;
   }
 
   // ─── Telegram API ───

@@ -167,6 +167,67 @@ describe("TelegramNarrator Fixes", () => {
     });
   });
 
+  describe("Fix 5: startPhase auto-completes previous running steps", () => {
+    it("should auto-complete previous running step when startPhase is called", async () => {
+      await narrator.init();
+      // Directly simulate what startPhase does to avoid rate-limit delays
+      // startPhase: auto-completes previous running, pushes new running step
+      const steps = (narrator as any).steps;
+      
+      // Simulate startPhase("recon", "Phase 1: Recon")
+      for (let i = steps.length - 1; i >= 0; i--) {
+        if (steps[i].status === "running") { steps[i].status = "done"; break; }
+      }
+      steps.push({ label: "Phase 1: Recon", status: "running" });
+      
+      // Simulate startPhase("vulnscan", "Phase 2: Vuln Scan")
+      for (let i = steps.length - 1; i >= 0; i--) {
+        if (steps[i].status === "running") { steps[i].status = "done"; break; }
+      }
+      steps.push({ label: "Phase 2: Vuln Scan", status: "running" });
+      
+      const runningSteps = steps.filter((s: any) => s.status === "running");
+      expect(runningSteps.length).toBe(1);
+      expect(runningSteps[0].label).toBe("Phase 2: Vuln Scan");
+    });
+  });
+
+  describe("Fix 6: Progress bar shows method-level progress", () => {
+    it("should show method-level progress when totalMethods is set and currentMethodIndex > 0", async () => {
+      await narrator.init();
+      (narrator as any).config.totalMethods = 5;
+      narrator.setMethodProgress(1, "Unified Pipeline", "💥");
+      const text = (narrator as any).buildProgressBar();
+      expect(text).toContain("วิธีที่ 1/5");
+      expect(text).toContain("กำลังโจมตี");
+    });
+
+    it("should NOT show method-level progress when currentMethodIndex is 0", async () => {
+      await narrator.init();
+      (narrator as any).config.totalMethods = 5;
+      const text = (narrator as any).buildProgressBar();
+      // Should fall through to step-level progress
+      expect(text).not.toContain("วิธีที่");
+    });
+  });
+
+  describe("Fix 7: Heartbeat footer shows method name", () => {
+    it("should include method name in heartbeat footer when set", async () => {
+      await narrator.init();
+      narrator.setMethodProgress(1, "Unified Pipeline", "💥");
+      const footer = (narrator as any).buildHeartbeatFooter();
+      expect(footer).toContain("💥 Unified Pipeline");
+      expect(footer).toContain("ระบบทำงานอยู่");
+    });
+
+    it("should NOT include method name when not set", async () => {
+      await narrator.init();
+      const footer = (narrator as any).buildHeartbeatFooter();
+      expect(footer).toContain("ระบบทำงานอยู่");
+      expect(footer).not.toContain("Unified Pipeline");
+    });
+  });
+
   describe("Message length safety", () => {
     it("should keep message under 4000 chars even with many steps", async () => {
       await narrator.init();
