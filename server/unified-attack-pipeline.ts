@@ -998,7 +998,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 0+1: AI Target Analysis + Pre-screening (PARALLEL to save time) ───
   const reconStartTime = Date.now();
-  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.4, 4 * 60 * 1000); // Max 40% of total time or 4 min for recon
+  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.4, 6 * 60 * 1000); // Max 40% of total time or 6 min for recon (Shodan + LeakCheck + breach hunt)
   let aiTargetAnalysis: AiTargetAnalysis | null = null;
 
   loggedOnEvent({
@@ -1551,7 +1551,8 @@ export async function runUnifiedAttackPipeline(
   const detectedServer = (prescreen?.serverType || aiTargetAnalysis?.httpFingerprint?.serverType || vulnScan?.serverInfo?.server || "").toLowerCase();
   const isIIS = detectedServer.includes("iis") || detectedServer.includes("microsoft");
 
-  if (isWordPress && !shouldStop('wp_brute_force') && !hasSuccessfulRedirect()) {
+  // WP Brute Force is CREDENTIAL RECON — always try to find WP creds
+  if (isWordPress && !shouldStop('wp_brute_force')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       loggedOnEvent({
@@ -1662,7 +1663,8 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 2.5e: Breach Database Credential Hunt ───
   let breachHuntResult: BreachHuntResult | null = null;
 
-  if (!shouldStop('breach_hunt') && !hasSuccessfulRedirect()) {
+  // Breach Hunt is CREDENTIAL RECON — always search for breached creds
+  if (!shouldStop('breach_hunt')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       loggedOnEvent({
@@ -1818,7 +1820,8 @@ export async function runUnifiedAttackPipeline(
   // ─── Phase 2.5f: Shodan Port Intelligence ───
   let shodanIntel: PortIntelligence | null = null;
 
-  if (!shouldStop('shodan_scan') && !hasSuccessfulRedirect()) {
+  // Shodan is RECON — always run regardless of redirect status (intelligence gathering)
+  if (!shouldStop('shodan_scan')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "");
       loggedOnEvent({
@@ -1880,7 +1883,8 @@ export async function runUnifiedAttackPipeline(
   let wpVulnScanResult: WpScanResult | null = null;
   let aiExploitResults: Array<{ cveId: string | null; cms: string; component: string; vulnType: string; exploitType: string; success: boolean; uploadedUrl: string | null; }> = [];
 
-  if (!shouldStop('wp_vuln_scan') && !hasSuccessfulRedirect()) {
+  // WP Vuln Scan is RECON — always scan for vulnerabilities
+  if (!shouldStop('wp_vuln_scan')) {
     loggedOnEvent({
       phase: "wp_vuln_scan" as any,
       step: "start",
@@ -2105,8 +2109,9 @@ export async function runUnifiedAttackPipeline(
   let cmsScanResult: CmsScanResult | null = null;
   let dbCveMatches: Array<{ pluginSlug: string; cveId: string | null; title: string; vulnType: string | null; severity: string | null; }> = [];
 
-  if (shouldStop('cms_vuln_scan') || hasSuccessfulRedirect()) {
-    loggedOnEvent({ phase: "cms_vuln_scan" as any, step: "skipped", detail: `⏭️ CMS Vuln Scan skipped`, progress: 56 });
+  // CMS Vuln Scan is RECON — always scan for vulnerabilities
+  if (shouldStop('cms_vuln_scan')) {
+    loggedOnEvent({ phase: "cms_vuln_scan" as any, step: "skipped", detail: `⏭️ CMS Vuln Scan skipped (timeout)`, progress: 56 });
   } else {
     try {
       loggedOnEvent({
@@ -3805,7 +3810,8 @@ export async function runUnifiedAttackPipeline(
   let ftpUploadResult: FTPUploadResult | null = null;
   let sshUploadResult: SSHUploadResult | null = null;
 
-  if (!hasSuccessfulRedirect() && !shouldStop('leakcheck_cred')) {
+  // LeakCheck is CREDENTIAL RECON — always search for leaked creds regardless of redirect status
+  if (!shouldStop('leakcheck_cred')) {
     try {
       const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       loggedOnEvent({
