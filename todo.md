@@ -6154,3 +6154,16 @@
 - [x] Fixed cmsScanResult possibly null error
 - [x] Total: 40/41 Promise.race patterns now have proper timeout + cleanup
 - [x] Tests: 13/13 passed, TypeScript: 0 errors
+
+# Per-Method Progress in Telegram — Show "วิธีที่ 2/20", "3/20" during attack
+
+- [x] Read current Telegram narrator progress update logic
+- [x] Read the pipeline method loop to understand how methods are iterated
+- [x] Add per-method progress to full_chain mode (already had setMethodProgress + recordMethodResult + totalMethods)
+- [x] Add per-method progress to redirect_only mode — onProgress callback + setMethodProgress + recordMethodResult
+- [x] Add per-method progress to hijack_redirect mode — setMethodProgress via (methodIndex, totalMethods) callback
+- [x] Add per-method progress to agentic_auto mode — track targets attacked as method counter
+- [x] Add per-method progress to retry_all_failed mode — track domains as method counter
+- [x] Show method result (success/fail/timeout) via recordMethodResult in all modes
+- [x] TypeScript: 0 errors, Tests: passed
+- [x] Checkpoint saved
