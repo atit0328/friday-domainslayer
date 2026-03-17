@@ -695,31 +695,81 @@ export class TelegramNarrator {
 
   // ─── Telegram API ───
 
+  /** Track last sent text to avoid "message is not modified" errors */
+  private lastSentText: string = "";
+  /** Track consecutive edit failures */
+  private consecutiveEditFailures: number = 0;
+  /** Whether we're currently processing an edit */
+  private editInProgress: boolean = false;
+  /** Pending edit text (latest wins — we only need the most recent state) */
+  private pendingEditText: string | null = null;
+
   private async updateMessage(): Promise<void> {
-    // Queue edits to respect rate limits
-    this.editQueue = this.editQueue.then(async () => {
-      const now = Date.now();
-      const timeSinceLastEdit = now - this.lastEditTime;
-      
-      if (timeSinceLastEdit < TelegramNarrator.MIN_EDIT_INTERVAL) {
-        await sleep(TelegramNarrator.MIN_EDIT_INTERVAL - timeSinceLastEdit);
+    // Build the latest message text
+    const text = this.buildCurrentMessage();
+    
+    // Skip if text hasn't changed (avoids Telegram "message is not modified" error)
+    if (text === this.lastSentText) return;
+    
+    // If an edit is already in progress, just store the latest text
+    // The in-progress edit will pick it up when done
+    this.pendingEditText = text;
+    
+    if (this.editInProgress) return;
+    
+    // Process edits one at a time
+    this.editInProgress = true;
+    try {
+      while (this.pendingEditText !== null) {
+        const textToSend = this.pendingEditText;
+        this.pendingEditText = null; // Clear pending — new calls will set it again
+        
+        // Rate limit: wait if needed
+        const now = Date.now();
+        const timeSinceLastEdit = now - this.lastEditTime;
+        if (timeSinceLastEdit < TelegramNarrator.MIN_EDIT_INTERVAL) {
+          await sleep(TelegramNarrator.MIN_EDIT_INTERVAL - timeSinceLastEdit);
+        }
+        
+        // Skip if same as last sent (could happen if multiple updates queued)
+        if (textToSend === this.lastSentText) continue;
+        
+        const ok = await this.editMessage(textToSend);
+        if (ok) {
+          this.lastSentText = textToSend;
+          this.lastEditTime = Date.now();
+          this.consecutiveEditFailures = 0;
+        } else {
+          this.consecutiveEditFailures++;
+          // If too many failures, try sending a NEW message instead of editing
+          if (this.consecutiveEditFailures >= 5) {
+            console.warn(`[Narrator] ${this.consecutiveEditFailures} consecutive edit failures — sending new message`);
+            const newId = await this.sendAndGetId(textToSend);
+            if (newId) {
+              this.messageId = newId;
+              this.lastSentText = textToSend;
+              this.consecutiveEditFailures = 0;
+              console.log(`[Narrator] Switched to new message ID: ${newId}`);
+            }
+          }
+        }
       }
-      
-      const text = this.buildCurrentMessage();
-      await this.editMessage(text);
-      this.lastEditTime = Date.now();
-    }).catch(() => {
-      // Silently ignore edit errors
-    });
+    } catch (err: any) {
+      console.warn(`[Narrator] updateMessage error: ${err.message}`);
+    } finally {
+      this.editInProgress = false;
+    }
   }
 
   private async editMessage(text: string): Promise<boolean> {
-    if (!this.messageId) return false;
+    if (!this.messageId) {
+      console.warn(`[Narrator] editMessage called but no messageId`);
+      return false;
+    }
     
     try {
       const url = `https://api.telegram.org/bot${this.config.botToken}/editMessageText`;
       
-      // Try plain text (more reliable than Markdown for complex messages)
       const resp = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -728,11 +778,54 @@ export class TelegramNarrator {
           message_id: this.messageId,
           text,
         }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(8000),
       });
       const result = await resp.json() as any;
-      return result.ok === true;
-    } catch {
+      
+      if (result.ok) return true;
+      
+      // Handle specific Telegram errors
+      const desc = result.description || "";
+      if (desc.includes("message is not modified")) {
+        // Not really an error — text was same
+        this.lastSentText = text;
+        return true;
+      }
+      if (desc.includes("Too Many Requests")) {
+        // Rate limited — extract retry_after and wait
+        const retryAfter = result.parameters?.retry_after || 3;
+        console.warn(`[Narrator] Rate limited, waiting ${retryAfter}s`);
+        await sleep(retryAfter * 1000);
+        // Retry once
+        try {
+          const resp2 = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ chat_id: this.config.chatId, message_id: this.messageId, text }),
+            signal: AbortSignal.timeout(8000),
+          });
+          const result2 = await resp2.json() as any;
+          return result2.ok === true;
+        } catch {
+          return false;
+        }
+      }
+      if (desc.includes("message to edit not found") || desc.includes("MESSAGE_ID_INVALID")) {
+        // Message was deleted — send new one
+        console.warn(`[Narrator] Message not found, sending new`);
+        const newId = await this.sendAndGetId(text);
+        if (newId) {
+          this.messageId = newId;
+          this.lastSentText = text;
+          return true;
+        }
+        return false;
+      }
+      
+      console.warn(`[Narrator] editMessage failed: ${desc}`);
+      return false;
+    } catch (err: any) {
+      console.warn(`[Narrator] editMessage error: ${err.message}`);
       return false;
     }
   }

@@ -5750,4 +5750,30 @@
   └─ Fixed TS2802: Array.from() for Map iteration
 - [x] TypeScript 0 errors
 - [x] Tests pass (26/26 across 4 test files, 3 pipeline integration tests pre-existing timeout — not caused by our changes)
+- [x] Save checkpoint
+
+# Pipeline Telegram ยังไม่ส่ง real-time update — ค้างที่ "กำลังเตรียมพร้อม..."
+- [ ] ตรวจ server logs ขณะ attack กำลังทำงาน
+- [ ] Trace narrator flow: pipeline event → addStep/addAnalysis → editMessage → Telegram API
+- [ ] หา root cause ว่า narrator.editMessage ถูกเรียกจริงไหม หรือ error ที่ไหน
+- [ ] แก้ไข root cause
+- [ ] TypeScript 0 errors
+- [ ] Tests pass
+- [ ] Save checkpoint
+
+# Pipeline ยังค้างที่ Deep Vuln Scan 20% แม้ publish แล้ว
+- [x] เพิ่ม console.log tracing ใน narrator editMessage/updateMessage
+- [x] ตรวจสอบ editMessage silent catch ที่ซ่อน Telegram API errors
+  └─ Root cause: .catch(() => {}) swallowed ALL errors including rate limits, message-not-found, timeouts
+- [x] ตรวจสอบ editQueue chain — อาจ deadlock จาก promise chain
+  └─ Root cause: editQueue = editQueue.then() creates unbounded chain — if one edit hangs (10s timeout), ALL subsequent edits queue behind it
+- [x] แก้ root cause: Rewrote updateMessage completely
+  └─ Replaced promise chain with editInProgress flag + pendingEditText (latest wins)
+  └─ Added lastSentText dedup to avoid "message is not modified" errors
+  └─ Added Telegram error handling: rate limit (429) with retry_after, message-not-found → send new message
+  └─ Added consecutiveEditFailures counter → after 5 failures, auto-send new message
+  └─ Added console.warn logging for all error paths
+  └─ Reduced AbortSignal.timeout 10s → 8s
+- [x] TypeScript 0 errors
+- [x] Tests pass (55/55 telegram-ai-agent, 16/16 auth+routers)
 - [ ] Save checkpoint
