@@ -379,6 +379,12 @@ export class TelegramNarrator {
   private static MIN_EDIT_INTERVAL = 2000;
   /** Counter for unique analysis keys */
   private analysisCounter: number = 0;
+  
+  /** Heartbeat timer — auto-updates message every HEARTBEAT_INTERVAL ms */
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private static HEARTBEAT_INTERVAL = 30_000; // 30 seconds
+  private heartbeatCount: number = 0;
+  private isCompleted: boolean = false;
 
   constructor(config: NarratorConfig) {
     this.config = config;
@@ -388,7 +394,7 @@ export class TelegramNarrator {
 
   // ─── Public API ───
 
-  /** Initialize narrator — sends first message */
+  /** Initialize narrator — sends first message and starts heartbeat */
   async init(): Promise<number | null> {
     const header = this.buildHeader();
     const text = `${header}\n\n⏳ กำลังเตรียมพร้อม...`;
@@ -398,6 +404,10 @@ export class TelegramNarrator {
     } else {
       this.messageId = await this.sendAndGetId(text);
     }
+    
+    // Start heartbeat timer
+    this.startHeartbeat();
+    
     return this.messageId;
   }
 
@@ -491,6 +501,8 @@ export class TelegramNarrator {
 
   /** Mark attack as complete with final summary */
   async complete(success: boolean, summary: string): Promise<void> {
+    this.stopHeartbeat();
+    this.isCompleted = true;
     this.currentPhase = "complete";
     const elapsed = Date.now() - this.startTime;
     
@@ -505,6 +517,8 @@ export class TelegramNarrator {
 
   /** Mark attack as failed with error */
   async fail(error: string): Promise<void> {
+    this.stopHeartbeat();
+    this.isCompleted = true;
     this.currentPhase = "error";
     const elapsed = Date.now() - this.startTime;
     
@@ -667,8 +681,9 @@ export class TelegramNarrator {
     const header = this.buildHeader();
     const progress = this.buildProgressBar();
     const steps = this.buildStepsText();
+    const heartbeat = this.buildHeartbeatFooter();
     
-    let text = `${header}${progress}\n${steps}`;
+    let text = `${header}${progress}\n${steps}${heartbeat}`;
     
     // Trim to Telegram limit
     const maxLen = this.config.maxLength || 4000;
@@ -717,6 +732,55 @@ export class TelegramNarrator {
     }
     
     return text;
+  }
+
+  // ─── Heartbeat ───
+
+  /** Start heartbeat timer — auto-updates message every 30s to show pipeline is alive */
+  private startHeartbeat(): void {
+    if (this.heartbeatTimer) return; // Already running
+    
+    this.heartbeatTimer = setInterval(async () => {
+      if (this.isCompleted) {
+        this.stopHeartbeat();
+        return;
+      }
+      
+      this.heartbeatCount++;
+      
+      // Force message update by changing heartbeat count (changes the footer text)
+      try {
+        await this.updateMessage();
+      } catch {
+        // Heartbeat update failed — not critical, will retry next interval
+      }
+    }, TelegramNarrator.HEARTBEAT_INTERVAL);
+  }
+
+  /** Stop heartbeat timer */
+  stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  /** Build heartbeat footer line showing elapsed time and alive indicator */
+  private buildHeartbeatFooter(): string {
+    if (this.isCompleted) return "";
+    
+    const elapsed = Date.now() - this.startTime;
+    const elapsedStr = formatDurationThai(elapsed);
+    
+    // Animated pulse indicator that changes each heartbeat
+    const pulseFrames = ["❤️", "🧡", "💛", "💚", "💙", "💜"];
+    const pulse = pulseFrames[this.heartbeatCount % pulseFrames.length];
+    
+    // Activity description based on current phase
+    const phaseInfo = PHASE_LABELS[this.currentPhase];
+    const activity = phaseInfo ? `${phaseInfo.emoji} ${phaseInfo.thai}` : "กำลังทำงาน";
+    
+    return `\n\n────────────────────\n${pulse} ระบบทำงานอยู่ | ⏱ ${elapsedStr}`;
   }
 
   // ─── Telegram API ───

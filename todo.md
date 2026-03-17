@@ -6014,3 +6014,11 @@
 - [x] Fix 5: เปลี่ยน fullVulnScan callbacks ทุกจุด (6 จุด) จาก addStep → addAnalysis + stage dedup
 - [x] Fix 6: Truncate long analysis text (150 chars max) ป้องกัน message overflow
 - [x] เขียน vitest tests 8 tests — ทั้งหมดผ่าน
+
+# Feature: Heartbeat Indicator ใน TelegramNarrator
+
+- [x] ออกแบบ heartbeat mechanism — แสดงเวลาที่ผ่านไปทุก 30 วินาที
+- [x] Implement heartbeat timer ใน Narrator class (auto-update message ทุก 30s)
+- [x] แสดง elapsed time ใน message footer (เช่น "❤️ ระบบทำงานอยู่ | ⏱ 2m 30s")
+- [x] Heartbeat หยุดอัตโนมัติเมื่อ pipeline complete/fail
+- [x] เขียน vitest tests — 16 tests passed (8 heartbeat + 8 previous fixes)
