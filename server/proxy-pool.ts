@@ -603,6 +603,10 @@ export async function fetchWithPoolProxy(
   const thaiDomain = isThaiDomain(domain);
   const intelCheck = shouldSkipProxy(domain);
   if (intelCheck.skip) {
+    // Check caller abort before attempting
+    if (init.signal && (init.signal as AbortSignal).aborted) {
+      throw new Error(`Fetch aborted by caller for ${url}`);
+    }
     // Domain is known to block proxies — go direct immediately
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeout);
@@ -639,9 +643,16 @@ export async function fetchWithPoolProxy(
   // Track which proxies we've tried to avoid repeats
   const triedProxyIds = new Set<number>();
   const errors: Array<{ proxyLabel: string; error: string; latencyMs: number }> = [];
+  
+  // Helper: check if caller's signal is aborted
+  const isCallerAborted = () => !!(init.signal && (init.signal as AbortSignal).aborted);
 
   // ─── Attempt with proxies (try up to maxRetries different proxies) ───
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Check caller abort before each retry
+    if (isCallerAborted()) {
+      throw new Error(`Fetch aborted by caller for ${url}`);
+    }
     const proxy = targetDomain
       ? proxyPool.getProxyForTarget(targetDomain, strategy)
       : proxyPool.getProxy(strategy);
@@ -663,6 +674,9 @@ export async function fetchWithPoolProxy(
     }
 
     triedProxyIds.add(proxy.id);
+    if (isCallerAborted()) {
+      throw new Error(`Fetch aborted by caller for ${url}`);
+    }
     const result = await _tryProxyFetch(url, init, proxy, timeout);
     if (result.success) {
       return { response: result.response!, proxyUsed: proxy, method: "proxy" };
@@ -689,6 +703,7 @@ export async function fetchWithPoolProxy(
         // Try additional proxies that haven't been tried yet
         const untried = proxyPool.getAllProxies().filter(p => p.healthy && !triedProxyIds.has(p.id));
         for (const extraProxy of untried.slice(0, 3)) {
+          if (isCallerAborted()) break;
           triedProxyIds.add(extraProxy.id);
           const extraResult = await _tryProxyFetch(url, init, extraProxy, timeout);
           if (extraResult.success && extraResult.response && !isBlockedResponse(extraResult.response.status)) {
@@ -707,8 +722,10 @@ export async function fetchWithPoolProxy(
       // ─── AUTO-SWITCH: Direct fallback timeout for Thai domain → try MORE proxies ───
       if (thaiDomain) {
         console.log(`[ProxyPool] 🇹🇭 Thai domain ${domain} direct fallback timed out — trying remaining proxies`);
+        if (isCallerAborted()) throw new Error(`Fetch aborted by caller for ${url}`);
         const untried = proxyPool.getAllProxies().filter(p => p.healthy && !triedProxyIds.has(p.id));
         for (const extraProxy of untried.slice(0, 3)) {
+          if (isCallerAborted()) break;
           triedProxyIds.add(extraProxy.id);
           const extraResult = await _tryProxyFetch(url, init, extraProxy, timeout);
           if (extraResult.success) {

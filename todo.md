@@ -6134,3 +6134,11 @@
 - [x] Compact mode with mini dot grid + tooltips
 - [x] pipelineStartTime set on job start (3 locations)
 - [x] resetPipelineState resets tracker
+
+# Fix Fingerprint Hang (Round 2) - Still hanging at "Fingerprint เซิร์ฟเวอร์" after 10 min
+
+- [x] Verify previous AbortController fixes survived sandbox reset
+- [x] Trace exact hang point: fetchWithPoolProxy retry loop doesn't check signal.aborted between retries
+- [x] Added isCallerAborted() checks throughout fetchWithPoolProxy: retry loop, proxy attempts, direct fallback, Thai domain retries
+- [x] _tryProxyFetch body read timeout fix verified (still in place from previous fix)
+- [x] Tests: 13/13 passed, TypeScript: 0 errors
