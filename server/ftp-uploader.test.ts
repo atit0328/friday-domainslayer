@@ -134,7 +134,7 @@ describe("FTP Uploader", () => {
       expect(result.error).toContain("All FTP methods failed");
     });
 
-    it("should skip .htaccess upload when one already exists", async () => {
+    it("should smart overwrite .htaccess when one already exists", async () => {
       mockFtpClient.list
         .mockResolvedValueOnce([{ name: "index.php" }]) // web root detection
         .mockResolvedValueOnce([{ name: ".htaccess" }, { name: "index.php" }]); // .htaccess exists
@@ -152,8 +152,8 @@ describe("FTP Uploader", () => {
       });
 
       expect(result.success).toBe(true);
-      // Should mention skipping .htaccess
-      expect(progressMessages.some(m => m.includes(".htaccess exists"))).toBe(true);
+      // Should mention .htaccess handling (overwrite, created, or already_ours)
+      expect(progressMessages.some(m => m.includes(".htaccess"))).toBe(true);
     });
 
     it("should use custom filename when provided", async () => {

