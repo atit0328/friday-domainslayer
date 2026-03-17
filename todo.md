@@ -6050,3 +6050,7 @@
   - full_chain catch block ดึง partial results จาก collector แทน null
   - แสดง "ใช้ข้อมูลบางส่วน (N stages)" แทน "ไม่มีข้อมูล scan"
 - [x] ตรวจสอบ TypeScript และ tests — 21 tests passed
+
+# Config: เพิ่ม VULN_SCAN_TIMEOUT 90s → 120s
+
+- [x] เปลี่ยน VULN_SCAN_TIMEOUT ใน full_chain จาก 90s เป็น 120s

@@ -5325,7 +5325,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // Track last scan stage to avoid duplicate updates
       let lastScanStage = "";
-      const VULN_SCAN_TIMEOUT = 90_000; // 90s timeout for vuln scan in full_chain
+      const VULN_SCAN_TIMEOUT = 120_000; // 120s timeout for vuln scan in full_chain (increased from 90s to reduce timeout frequency)
       
       try {
         // Wrap fullVulnScan with timeout to prevent pipeline hang
