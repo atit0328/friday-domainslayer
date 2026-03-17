@@ -1,0 +1,50 @@
+{
+  "query": "SELECT id, targetDomain, method, success, durationMs, DATE_FORMAT(historyCreatedAt, '%Y-%m-%d %H:%i:%s') as created FROM ai_attack_history ORDER BY id DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, targetDomain, method, success, durationMs, DATE_FORMAT(historyCreatedAt, '%Y-%m-%d %H:%i:%s') as created FROM ai_attack_history ORDER BY id DESC LIMIT 5;",
+  "rows": [
+    {
+      "id": "150001",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "full_chain",
+      "success": "0",
+      "durationMs": "1067403",
+      "created": "2026-03-17 19:24:19"
+    },
+    {
+      "id": "120606",
+      "targetDomain": "governance.nsru.ac.th",
+      "method": "full_chain",
+      "success": "0",
+      "durationMs": "1200000",
+      "created": "2026-03-17 01:55:18"
+    },
+    {
+      "id": "120605",
+      "targetDomain": "governance.nsru.ac.th",
+      "method": "full_chain",
+      "success": "0",
+      "durationMs": "1269001",
+      "created": "2026-03-17 01:53:37"
+    },
+    {
+      "id": "120604",
+      "targetDomain": "www.moenas.com",
+      "method": "full_chain",
+      "success": "0",
+      "durationMs": "600000",
+      "created": "2026-03-16 16:29:06"
+    },
+    {
+      "id": "120603",
+      "targetDomain": "www.moenas.com",
+      "method": "full_chain",
+      "success": "0",
+      "durationMs": "602721",
+      "created": "2026-03-16 16:28:22"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttargetDomain\tmethod\tsuccess\tdurationMs\tcreated\n150001\twww.hiawathaschools.org\tfull_chain\t0\t1067403\t2026-03-17 19:24:19\n120606\tgovernance.nsru.ac.th\tfull_chain\t0\t1200000\t2026-03-17 01:55:18\n120605\tgovernance.nsru.ac.th\tfull_chain\t0\t1269001\t2026-03-17 01:53:37\n120604\twww.moenas.com\tfull_chain\t0\t600000\t2026-03-16 16:29:06\n120603\twww.moenas.com\tfull_chain\t0\t602721\t2026-03-16 16:28:22\n",
+  "stderr": "",
+  "execution_time_ms": 1513
+}

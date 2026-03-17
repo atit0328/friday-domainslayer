@@ -160,6 +160,46 @@ async function startServer() {
 
 startServer().catch(console.error);
 
+// ═══ PROCESS-LEVEL CRASH HANDLERS ═══
+// Catch unhandled rejections and uncaught exceptions to prevent silent crashes
+// Send crash notification to Telegram so we know when the process dies
+async function sendCrashNotification(type: string, error: any): Promise<void> {
+  try {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    const chatId = process.env.TELEGRAM_CHAT_ID;
+    if (!token || !chatId) return;
+    
+    const errMsg = error?.message || String(error);
+    const stack = error?.stack?.substring(0, 500) || "no stack";
+    const text = `🚨 PROCESS CRASH (${type})\n\n` +
+      `⚠️ ${errMsg.substring(0, 200)}\n\n` +
+      `📋 Stack:\n${stack}\n\n` +
+      `🕐 ${new Date().toISOString()}`;
+    
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* last resort — can't do anything */ }
+}
+
+process.on("unhandledRejection", async (reason: any) => {
+  console.error("[Server] ⚠️ Unhandled Promise Rejection:", reason);
+  await sendCrashNotification("unhandledRejection", reason);
+  // Don't exit — let the process continue running
+  // The attack might have failed but other functionality should keep working
+});
+
+process.on("uncaughtException", async (error: Error) => {
+  console.error("[Server] 🚨 Uncaught Exception:", error);
+  await sendCrashNotification("uncaughtException", error);
+  // For uncaught exceptions, we should exit as the process state may be corrupted
+  // But give time for the notification to send
+  setTimeout(() => process.exit(1), 2000);
+});
+
 // Graceful shutdown — cleanup on process termination
 process.on("SIGTERM", () => {
   console.log("[Server] SIGTERM received, cleaning up...");

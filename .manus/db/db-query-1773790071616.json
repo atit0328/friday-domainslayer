@@ -1,0 +1,9 @@
+{
+  "query": "SELECT id, targetDomain, solMethod, solSuccess, solErrorMessage, solDurationMs, DATE_FORMAT(solCreatedAt, '%Y-%m-%d %H:%i:%s') as created FROM strategy_outcome_logs WHERE targetDomain LIKE '%hiawatha%' ORDER BY id DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, targetDomain, solMethod, solSuccess, solErrorMessage, solDurationMs, DATE_FORMAT(solCreatedAt, '%Y-%m-%d %H:%i:%s') as created FROM strategy_outcome_logs WHERE targetDomain LIKE '%hiawatha%' ORDER BY id DESC LIMIT 5;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1540
+}

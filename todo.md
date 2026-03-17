@@ -6233,3 +6233,28 @@
 - [x] Fallback to scan-based ordering when no historical data exists
 - [x] TypeScript: 0 errors, Tests: passed
 - [x] Checkpoint saved
+
+# Feature: Production Test — Adaptive Method Ordering
+
+- [ ] Check production server status and Telegram bot connectivity
+- [ ] Trigger AAA (full_chain) attack via Telegram to test adaptive ordering
+- [ ] Verify methods are ordered by historical success rate
+- [ ] Verify domain-specific history is used when available
+- [ ] Verify parallel execution still works with new ordering
+- [ ] Verify progress display shows correct method numbers
+- [ ] Fix any issues found during testing
+- [ ] Checkpoint after successful test
+
+# Bug: AAA full_chain hangs at "สำรวจเป้าหมาย 50%" — never enters method loop
+
+- [x] Analyze full_chain code flow from scan to method loop
+- [x] Check production DB — confirmed NO attack log for 04:01 attack (process crashed silently)
+- [x] Root cause: No unhandledRejection handler + outer catch returns silently when signal aborted
+- [x] Fix 1: Added process-level crash handlers (unhandledRejection + uncaughtException) with Telegram notification
+- [x] Fix 2: Added MEGA TRY-CATCH around entire full_chain section — always sends error to Telegram
+- [x] Fix 3: Added 15s timeout to adaptive ordering call (prevents DB query hang)
+- [x] Fix 4: Made outer catch always log errors even when signal is aborted
+- [x] Fix 5: Added console.log at every phase transition for production debugging
+- [x] Fix 6: Wrapped all outer catch operations in try-catch to prevent cascading failures
+- [x] TypeScript: 0 errors, Tests: 26 adaptive + 1 auth passed
+- [ ] Save checkpoint and deploy

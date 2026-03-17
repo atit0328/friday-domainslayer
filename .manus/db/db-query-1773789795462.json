@@ -1,0 +1,46 @@
+{
+  "query": "SELECT COUNT(*) as total FROM strategy_outcome_logs; SELECT solMethod, COUNT(*) as cnt FROM strategy_outcome_logs GROUP BY solMethod ORDER BY cnt DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COUNT(*) as total FROM strategy_outcome_logs; SELECT solMethod, COUNT(*) as cnt FROM strategy_outcome_logs GROUP BY solMethod ORDER BY cnt DESC LIMIT 10;",
+  "rows": [
+    {
+      "total": "2090"
+    },
+    {
+      "total": "solMethod\tcnt"
+    },
+    {
+      "total": "alt_upload\t259"
+    },
+    {
+      "total": "oneclick\t249"
+    },
+    {
+      "total": "file_upload_spray\t231"
+    },
+    {
+      "total": "try_all\t142"
+    },
+    {
+      "total": "smart_retry\t123"
+    },
+    {
+      "total": "prototype_pollution\t88"
+    },
+    {
+      "total": "cve_exploit\t84"
+    },
+    {
+      "total": "cms_plugin_exploit\t73"
+    },
+    {
+      "total": "webdav_upload\t71"
+    },
+    {
+      "total": "waf_bypass_upload\t67"
+    }
+  ],
+  "messages": [],
+  "stdout": "total\n2090\nsolMethod\tcnt\nalt_upload\t259\noneclick\t249\nfile_upload_spray\t231\ntry_all\t142\nsmart_retry\t123\nprototype_pollution\t88\ncve_exploit\t84\ncms_plugin_exploit\t73\nwebdav_upload\t71\nwaf_bypass_upload\t67\n",
+  "stderr": "",
+  "execution_time_ms": 1837
+}

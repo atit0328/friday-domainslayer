@@ -5338,7 +5338,11 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       });
       await narrator.init();
       
+      // ═══ MEGA TRY-CATCH: Wrap entire full_chain to prevent silent crashes ═══
+      try {
+      
       // ===== PHASE 0: Get Redirect URL =====
+      console.log(`[TelegramAI] full_chain PHASE 0: Getting redirect URL for ${domain}`);
       await narrator.startPhase("recon", "🔍 เตรียมการโจมตี");
       const stepRedirect = await narrator.addStep("เลือก Redirect URL");
       const s1 = Date.now();
@@ -5349,6 +5353,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       stepIndex++;
       
       // ===== PHASE 1: Deep Vulnerability Scan (with timeout) =====
+      console.log(`[TelegramAI] full_chain PHASE 1: Starting vuln scan for ${domain}`);
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const scanStepServer = await narrator.addStep("🖥️ Fingerprint เซิร์ฟเวอร์");
       const scanStart = Date.now();
@@ -5654,7 +5659,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       
       // ═══ ADAPTIVE METHOD ORDERING: Multi-layer historical intelligence ═══
+      // Wrapped with 15s timeout to prevent hanging on DB queries
       try {
+        console.log(`[TelegramAI] Starting adaptive ordering for ${domain}...`);
         const detectedWaf = vulnScanResult?.serverInfo?.waf || null;
         const detectedServer = vulnScanResult?.serverInfo?.server || null;
         
@@ -5673,15 +5680,23 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           }
         }
         
-        const { getAdaptiveMethodOrdering } = await import("./adaptive-learning");
-        const adaptiveResult = await getAdaptiveMethodOrdering({
-          targetDomain: domain,
-          cms: detectedCms === "unknown" ? null : detectedCms,
-          waf: detectedWaf,
-          serverType: detectedServer,
-          methodIds: methodOrder,
-          scanScores: scanScoresMap.size > 0 ? scanScoresMap : undefined,
-        });
+        // Use Promise.race with 15s timeout to prevent hanging on DB queries
+        const adaptiveResult = await Promise.race([
+          (async () => {
+            const { getAdaptiveMethodOrdering } = await import("./adaptive-learning");
+            return await getAdaptiveMethodOrdering({
+              targetDomain: domain,
+              cms: detectedCms === "unknown" ? null : detectedCms,
+              waf: detectedWaf,
+              serverType: detectedServer,
+              methodIds: methodOrder,
+              scanScores: scanScoresMap.size > 0 ? scanScoresMap : undefined,
+            });
+          })(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("Adaptive ordering timeout (15s)")), 15_000)
+          ),
+        ]);
         
         // Apply adaptive ordering
         const beforeCount = methodOrder.length;
@@ -5692,7 +5707,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // Log adaptive results
         const skippedByHistory = beforeCount - methodOrder.length;
         if (adaptiveResult.narratorSummary) {
-          await narrator.addAnalysis(adaptiveResult.narratorSummary);
+          try {
+            await narrator.addAnalysis(adaptiveResult.narratorSummary);
+          } catch { /* narrator update non-critical */ }
         }
         
         if (skippedByHistory > 0) {
@@ -5701,6 +5718,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         console.log(`[TelegramAI] Adaptive order: ${methodOrder.slice(0, 5).join(", ")}...`);
       } catch (effErr: any) {
         console.warn(`[TelegramAI] Adaptive ordering error (non-fatal): ${effErr.message}`);
+        // Continue with scan-based or default ordering — adaptive is optional
       }
       
       // ═══ METHOD OUTCOME TRACKING: Track each method's result ═══
@@ -5725,6 +5743,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const MAX_CONSECUTIVE_FAILURES = 15; // Stop after 15 consecutive failures (run ALL systems before giving up)
       
       // ═══ GLOBAL METHOD LOOP TIMEOUT (20 min) ═══
+      console.log(`[TelegramAI] full_chain PHASE 2: Starting method loop with ${methodOrder.length} methods for ${domain}`);
       // Graceful shutdown: when this deadline is reached, stop trying new methods and send summary
       // Increased from 8 min to 20 min to allow all 20 methods to run (each ~3 min max)
       // This is separate from ATTACK_TIMEOUT_MS (30 min) which covers the entire attack including vuln scan + verify
@@ -7186,6 +7205,43 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }
       }
       
+      } catch (fullChainError: any) {
+        // ═══ MEGA CATCH: Catch ANY error in full_chain to prevent silent crash ═══
+        console.error(`[TelegramAI] 🚨 FULL_CHAIN CRASH: ${fullChainError.message}`);
+        console.error(`[TelegramAI] Stack: ${fullChainError.stack?.substring(0, 500)}`);
+        
+        // Always try to notify via Telegram
+        try {
+          narrator.stopHeartbeat();
+          await narrator.complete(false, `🚨 ระบบ crash: ${fullChainError.message?.substring(0, 100)}`);
+        } catch { /* narrator might be broken too */ }
+        
+        try {
+          await sendTelegramReply(config, chatId,
+            `🚨 Full Chain CRASH\n\n` +
+            `❌ ${domain}\n` +
+            `⚠️ ${fullChainError.message?.substring(0, 200)}\n\n` +
+            `📝 Stack: ${fullChainError.stack?.substring(0, 300)}\n\n` +
+            `💡 ลองส่งโดเมนใหม่อีกครั้ง`
+          );
+        } catch { /* Telegram might be down too */ }
+        
+        // Save crash log to DB
+        try {
+          await saveAttackLog({
+            targetDomain: domain,
+            method: "full_chain",
+            success: false,
+            errorMessage: `CRASH: ${fullChainError.message}`,
+            durationMs: Date.now() - attackStartTime,
+            aiReasoning: `Full chain crashed with unhandled error: ${fullChainError.stack?.substring(0, 500)}`,
+          });
+        } catch { /* DB might be down too */ }
+        
+        // Re-throw so the outer catch can also handle it
+        throw fullChainError;
+      }
+      
     } else if (method === "agentic_auto") {
       // ═══ NARRATED AGENTIC AUTO ═══
       const narrator = new TelegramNarrator({
@@ -8350,42 +8406,62 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
 
     }
   } catch (error: any) {
-    // Skip if already handled by timeout
+    const totalMs = Date.now() - attackStartTime;
+    console.error(`[TelegramAI] 🚨 OUTER CATCH: ${domain} (${method}) error after ${Math.round(totalMs/1000)}s: ${error.message}`);
+    console.error(`[TelegramAI] Stack: ${error.stack?.substring(0, 500)}`);
+    
+    // Even if signal is aborted, still log and notify (previously returned silently)
     if (attackEntry.abortController.signal.aborted) {
       clearTimeout(timeoutTimer);
+      console.log(`[TelegramAI] Signal was aborted, but still logging the error`);
+      // Save log even for aborted attacks
+      try {
+        await saveAttackLog({
+          targetDomain: domain,
+          method,
+          success: false,
+          errorMessage: `ABORTED+ERROR: ${error.message}`,
+          durationMs: totalMs,
+          aiReasoning: `Attack aborted and errored: ${error.message}`,
+        });
+      } catch { /* DB might be down */ }
       return;
     }
     
     timings.push({ step: `Error: ${error.message}`, ms: 0, ok: false });
-    await updateProgress("Failed", "failed");
-    
-    const totalMs = Date.now() - attackStartTime;
+    try { await updateProgress("Failed", "failed"); } catch { /* ignore */ }
     
     // Save failed attack log
-    await saveAttackLog({
-      targetDomain: domain,
-      method,
-      success: false,
-      errorMessage: error.message,
-      durationMs: totalMs,
-      aiReasoning: `Attack failed with error: ${error.message}`,
-    });
+    try {
+      await saveAttackLog({
+        targetDomain: domain,
+        method,
+        success: false,
+        errorMessage: error.message,
+        durationMs: totalMs,
+        aiReasoning: `Attack failed with error: ${error.message}`,
+      });
+    } catch { /* DB might be down */ }
     
     // Complete in registry
-    completeRunningAttack(attackEntry.id, false, totalMs);
+    try { completeRunningAttack(attackEntry.id, false, totalMs); } catch { /* ignore */ }
     
     // Send NEW failure notification
-    await sendTelegramReply(config, chatId,
-      `🔔 Attack ล้มเหลว\n\n` +
-      `❌ ${domain} (${method})\n` +
-      `⚠️ ${error.message.substring(0, 100)}\n` +
-      `⏱ ${formatDuration(totalMs)}`
-    );
+    try {
+      await sendTelegramReply(config, chatId,
+        `🔔 Attack ล้มเหลว\n\n` +
+        `❌ ${domain} (${method})\n` +
+        `⚠️ ${error.message.substring(0, 100)}\n` +
+        `⏱ ${formatDuration(totalMs)}`
+      );
+    } catch { /* Telegram might be down */ }
     
     // Send alternative suggestions on error
-    await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
-      errorMessage: error.message,
-    });
+    try {
+      await sendAlternativeAttackSuggestions(config, chatId, domain, method, {
+        errorMessage: error.message,
+      });
+    } catch { /* ignore */ }
   } finally {
     // Always clear timeout timer
     clearTimeout(timeoutTimer);

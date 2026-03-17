@@ -1,0 +1,100 @@
+{
+  "query": "SELECT id, logDomain, logPhase, logStep, logSeverity, logMethod, DATE_FORMAT(logCreatedAt, '%Y-%m-%d %H:%i:%s') as created FROM attack_logs WHERE logDomain LIKE '%hiawatha%' ORDER BY id DESC LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, logDomain, logPhase, logStep, logSeverity, logMethod, DATE_FORMAT(logCreatedAt, '%Y-%m-%d %H:%i:%s') as created FROM attack_logs WHERE logDomain LIKE '%hiawatha%' ORDER BY id DESC LIMIT 10;",
+  "rows": [
+    {
+      "id": "1322174",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "dns_attack",
+      "logStep": "dns_analysis",
+      "logSeverity": "info",
+      "logMethod": "dns_attack",
+      "created": "2026-03-17 19:55:01"
+    },
+    {
+      "id": "1322173",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "dns_attack",
+      "logStep": "subdomain_takeover",
+      "logSeverity": "info",
+      "logMethod": "dns_attack",
+      "created": "2026-03-17 19:55:01"
+    },
+    {
+      "id": "1322172",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "dns_attack",
+      "logStep": "dns_analysis",
+      "logSeverity": "info",
+      "logMethod": "dns_attack",
+      "created": "2026-03-17 19:55:01"
+    },
+    {
+      "id": "1322171",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "dns_attack",
+      "logStep": "subdomain_takeover",
+      "logSeverity": "info",
+      "logMethod": "dns_attack",
+      "created": "2026-03-17 19:55:01"
+    },
+    {
+      "id": "1322170",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "dns_attack",
+      "logStep": "scanning",
+      "logSeverity": "info",
+      "logMethod": "dns_attack",
+      "created": "2026-03-17 19:55:01"
+    },
+    {
+      "id": "1322169",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "config_exploit",
+      "logStep": "vcs",
+      "logSeverity": "info",
+      "logMethod": "config_exploit",
+      "created": "2026-03-17 19:54:24"
+    },
+    {
+      "id": "1322168",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "config_exploit",
+      "logStep": "vcs",
+      "logSeverity": "info",
+      "logMethod": "config_exploit",
+      "created": "2026-03-17 19:54:24"
+    },
+    {
+      "id": "1322167",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "config_exploit",
+      "logStep": "scanning",
+      "logSeverity": "info",
+      "logMethod": "config_exploit",
+      "created": "2026-03-17 19:54:23"
+    },
+    {
+      "id": "1322166",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "recon",
+      "logStep": "waf_error",
+      "logSeverity": "error",
+      "logMethod": "NULL",
+      "created": "2026-03-17 19:54:15"
+    },
+    {
+      "id": "1322165",
+      "logDomain": "www.hiawathaschools.org",
+      "logPhase": "world_update",
+      "logStep": "vulnscan_done",
+      "logSeverity": "info",
+      "logMethod": "NULL",
+      "created": "2026-03-17 19:54:00"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tlogDomain\tlogPhase\tlogStep\tlogSeverity\tlogMethod\tcreated\n1322174\twww.hiawathaschools.org\tdns_attack\tdns_analysis\tinfo\tdns_attack\t2026-03-17 19:55:01\n1322173\twww.hiawathaschools.org\tdns_attack\tsubdomain_takeover\tinfo\tdns_attack\t2026-03-17 19:55:01\n1322172\twww.hiawathaschools.org\tdns_attack\tdns_analysis\tinfo\tdns_attack\t2026-03-17 19:55:01\n1322171\twww.hiawathaschools.org\tdns_attack\tsubdomain_takeover\tinfo\tdns_attack\t2026-03-17 19:55:01\n1322170\twww.hiawathaschools.org\tdns_attack\tscanning\tinfo\tdns_attack\t2026-03-17 19:55:01\n1322169\twww.hiawathaschools.org\tconfig_exploit\tvcs\tinfo\tconfig_exploit\t2026-03-17 19:54:24\n1322168\twww.hiawathaschools.org\tconfig_exploit\tvcs\tinfo\tconfig_exploit\t2026-03-17 19:54:24\n1322167\twww.hiawathaschools.org\tconfig_exploit\tscanning\tinfo\tconfig_exploit\t2026-03-17 19:54:23\n1322166\twww.hiawathaschools.org\trecon\twaf_error\terror\tNULL\t2026-03-17 19:54:15\n1322165\twww.hiawathaschools.org\tworld_update\tvulnscan_done\tinfo\tNULL\t2026-03-17 19:54:00\n",
+  "stderr": "",
+  "execution_time_ms": 1604
+}
