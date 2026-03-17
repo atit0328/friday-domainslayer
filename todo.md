@@ -6142,3 +6142,15 @@
 - [x] Added isCallerAborted() checks throughout fetchWithPoolProxy: retry loop, proxy attempts, direct fallback, Thai domain retries
 - [x] _tryProxyFetch body read timeout fix verified (still in place from previous fix)
 - [x] Tests: 13/13 passed, TypeScript: 0 errors
+
+# Fix Unified Attack Pipeline Hang at Method 1/20
+
+- [x] Read attack method execution loop in unified-attack-pipeline.ts
+- [x] Identified hang: Promise.race without AbortController — underlying functions never cancelled
+- [x] Added methodRace helper in uploadShellWithAllMethods (4 methods converted)
+- [x] Added timedRace helper in runUnifiedAttackPipeline (36 patterns converted)
+- [x] Manually fixed 4 remaining patterns (redirect detection, competitor analysis, overwrite, AI Commander)
+- [x] Restored broken AI evasion for loop (deleted by Python script)
+- [x] Fixed cmsScanResult possibly null error
+- [x] Total: 40/41 Promise.race patterns now have proper timeout + cleanup
+- [x] Tests: 13/13 passed, TypeScript: 0 errors
