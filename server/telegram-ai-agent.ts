@@ -5318,9 +5318,10 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       await narrator.startPhase("vulnscan", "🔬 Deep Vulnerability Scan");
       const scanStepServer = await narrator.addStep("🖥️ Fingerprint เซิร์ฟเวอร์");
       const scanStart = Date.now();
-      const { fullVulnScan } = await import("./ai-vuln-analyzer");
+      const { fullVulnScan, createPartialScanCollector, buildResultFromPartial } = await import("./ai-vuln-analyzer");
       const { generateVulnScanAnalysis } = await import("./telegram-narrator");
       let vulnScanResult: Awaited<ReturnType<typeof fullVulnScan>> | null = null;
+      const scanCollector = createPartialScanCollector();
       
       // Track last scan stage to avoid duplicate updates
       let lastScanStage = "";
@@ -5345,7 +5346,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               narrator.addAnalysis(`${icon} ${detail.substring(0, 80)}`).catch(() => {});
             }
           } catch { /* ignore */ }
-        }, attackEntry.abortController.signal);
+        }, attackEntry.abortController.signal, undefined, scanCollector);
         
         vulnScanResult = await Promise.race([
           scanPromise,
@@ -5399,14 +5400,35 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       } catch (scanErr: any) {
         const scanMs = Date.now() - scanStart;
         const isTimeout = scanErr.message?.includes("VULN_SCAN_TIMEOUT") || scanErr.message?.includes("timed out");
-        const errMsg = isTimeout 
-          ? `⏰ Vuln Scan หมดเวลา (${Math.round(scanMs / 1000)}s) — ข้ามไป`
-          : `Scan error: ${scanErr.message?.substring(0, 60) || "unknown"}`;
-        await narrator.updateStep(scanStepServer, "failed", errMsg, scanMs);
-        await narrator.addAnalysis(isTimeout 
-          ? `⏰ Vuln Scan หมดเวลา — จะโจมตีต่อโดยไม่มีข้อมูล scan`
-          : `⚠️ Scan ล้มเหลว — จะโจมตีต่อโดยไม่มีข้อมูล scan`);
-        timings.push({ step: `Deep Vuln Scan ${isTimeout ? "timeout" : "failed"}: ${scanErr.message?.substring(0, 40)}`, ms: scanMs, ok: false });
+        
+        // ═══ PARTIAL RESULTS RECOVERY: Use data collected before timeout ═══
+        const completedStages = scanCollector.completedStages;
+        if (isTimeout && completedStages.length > 0) {
+          // Build partial result from whatever stages completed before timeout
+          vulnScanResult = buildResultFromPartial(scanCollector, domain, scanMs);
+          const partialInfo = [
+            scanCollector.serverInfo ? `Server: ${scanCollector.serverInfo.server}` : null,
+            scanCollector.cms ? `CMS: ${scanCollector.cms.type}` : null,
+            scanCollector.writablePaths.length > 0 ? `${scanCollector.writablePaths.length} writable` : null,
+            scanCollector.misconfigurations.length > 0 ? `${scanCollector.misconfigurations.length} misconfigs` : null,
+          ].filter(Boolean).join(", ");
+          
+          const errMsg = `⏰ Vuln Scan หมดเวลา (${Math.round(scanMs / 1000)}s) — ใช้ข้อมูลบางส่วน (${completedStages.length} stages)`;
+          await narrator.updateStep(scanStepServer, "done", errMsg, scanMs);
+          await narrator.addAnalysis(
+            `⏰ Scan หมดเวลาแต่ได้ข้อมูลบางส่วน: ${partialInfo || "basic info"} (${completedStages.join(", ")})`
+          );
+          timings.push({ step: `Deep Vuln Scan partial (${completedStages.length} stages): ${partialInfo}`, ms: scanMs, ok: true });
+        } else {
+          const errMsg = isTimeout 
+            ? `⏰ Vuln Scan หมดเวลา (${Math.round(scanMs / 1000)}s) — ข้ามไป`
+            : `Scan error: ${scanErr.message?.substring(0, 60) || "unknown"}`;
+          await narrator.updateStep(scanStepServer, "failed", errMsg, scanMs);
+          await narrator.addAnalysis(isTimeout 
+            ? `⏰ Vuln Scan หมดเวลา — ไม่มีข้อมูล scan`
+            : `⚠️ Scan ล้มเหลว — ไม่มีข้อมูล scan`);
+          timings.push({ step: `Deep Vuln Scan ${isTimeout ? "timeout" : "failed"}: ${scanErr.message?.substring(0, 40)}`, ms: scanMs, ok: false });
+        }
       }
       stepIndex++;
       

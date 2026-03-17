@@ -6038,3 +6038,15 @@
   - Fix 4: pipeline callback แสดงเฉพาะ important events (success/error/found)
   - Fix 5: ลบ per-method heartbeat interval ที่ซ้ำซ้อน — Narrator class มี heartbeat ของตัวเองแล้ว
 - [x] เขียน/อัพเดท tests — 21 tests passed
+
+# Bug: "ไม่มีข้อมูล scan" — fullVulnScan timeout ทำให้ไม่มีข้อมูลเพื่อ prioritize methods
+
+- [x] วิเคราะห์ code path ที่แสดง "ไม่มีข้อมูล scan — ใช้ลำดับเริ่มต้น"
+  - Root cause: Promise.race reject ทั้งหมดเมื่อ timeout → vulnScanResult = null → ไม่มีข้อมูลเพื่อ prioritize methods
+  - แต่ fullVulnScan ข้างในมี stages ที่ทำเสร็จแล้วก่อน timeout (fingerprint, CMS detect)
+- [x] Fix ให้ fullVulnScan ส่ง partial results แม้ timeout
+  - เพิ่ม PartialScanCollector interface + createPartialScanCollector() + buildResultFromPartial()
+  - fullVulnScan เขียนผลลัพธ์ลง collector ทุก stage
+  - full_chain catch block ดึง partial results จาก collector แทน null
+  - แสดง "ใช้ข้อมูลบางส่วน (N stages)" แทน "ไม่มีข้อมูล scan"
+- [x] ตรวจสอบ TypeScript และ tests — 21 tests passed

@@ -961,11 +961,65 @@ Respond in JSON format with this schema:
 
 const FULL_SCAN_TIMEOUT = 60_000; // 60s max for entire scan (reduced from 180s — scan should be fast)
 
+/**
+ * Partial scan results collector — populated incrementally as each stage completes.
+ * Pass this to fullVulnScan and read it even if the scan times out.
+ */
+export interface PartialScanCollector {
+  serverInfo: ServerInfo | null;
+  cms: CmsDetection | null;
+  writablePaths: WritablePath[];
+  uploadEndpoints: UploadEndpoint[];
+  exposedPanels: ExposedPanel[];
+  misconfigurations: Misconfiguration[];
+  attackVectors: RankedAttackVector[];
+  aiAnalysis: string;
+  completedStages: string[];
+}
+
+export function createPartialScanCollector(): PartialScanCollector {
+  return {
+    serverInfo: null,
+    cms: null,
+    writablePaths: [],
+    uploadEndpoints: [],
+    exposedPanels: [],
+    misconfigurations: [],
+    attackVectors: [],
+    aiAnalysis: "",
+    completedStages: [],
+  };
+}
+
+/** Build a VulnScanResult from partial data (for use when scan times out) */
+export function buildResultFromPartial(collector: PartialScanCollector, targetDomain: string, scanDuration: number): VulnScanResult {
+  return {
+    target: targetDomain,
+    serverInfo: collector.serverInfo || {
+      ip: "", server: "unknown", poweredBy: "", os: "linux", phpVersion: "",
+      headers: {}, waf: null, cdn: null, ssl: true, httpMethods: ["GET", "POST"],
+    },
+    cms: collector.cms || {
+      type: "unknown" as const, version: "", plugins: [], themes: [],
+      vulnerableComponents: [], adminUrl: "", loginUrl: "", apiEndpoints: [],
+    },
+    writablePaths: collector.writablePaths,
+    uploadEndpoints: collector.uploadEndpoints,
+    exposedPanels: collector.exposedPanels,
+    misconfigurations: collector.misconfigurations,
+    attackVectors: collector.attackVectors,
+    aiAnalysis: collector.aiAnalysis || `Partial scan (${collector.completedStages.join(", ")})`,
+    scanDuration,
+    timestamp: Date.now(),
+  };
+}
+
 export async function fullVulnScan(
   targetDomain: string,
   onProgress: ScanProgressCallback = () => {},
   abortSignal?: AbortSignal,
   originIp?: string,
+  collector?: PartialScanCollector,
 ): Promise<VulnScanResult> {
   const start = Date.now();
   const baseUrl = ensureUrl(targetDomain);
@@ -1023,6 +1077,7 @@ export async function fullVulnScan(
     ip: "", server: "unknown", poweredBy: "", os: "linux", phpVersion: "",
     headers: {}, waf: null, cdn: null, ssl: baseUrl.startsWith("https"), httpMethods: ["GET", "POST"],
   }, 12_000);
+  if (collector) { collector.serverInfo = serverInfo; collector.completedStages.push("fingerprint"); }
   checkTimeout();
 
   // ═══ CLOUDFLARE EARLY EXIT: If strong WAF detected, skip expensive stages (unless we have origin IP) ═══
@@ -1039,6 +1094,7 @@ export async function fullVulnScan(
     type: "unknown" as const, version: "", plugins: [], themes: [],
     vulnerableComponents: [], adminUrl: "", loginUrl: "", apiEndpoints: [],
   }, 15_000);
+  if (collector) { collector.cms = cms; collector.completedStages.push("cms_detect"); }
   checkTimeout();
 
   // Stage 3: Writable path discovery (15s max — SKIP if strong WAF detected, UNLESS we have origin IP)
@@ -1046,23 +1102,27 @@ export async function fullVulnScan(
   const writablePaths = (hasStrongWaf && !canBypassWaf)
     ? [] // WAF will block all PUT/POST attempts — don't waste time
     : await runStage("writable_paths", () => discoverWritablePaths(scanUrl, cms, serverInfo, onProgress), [], 15_000);
+  if (collector) { collector.writablePaths = writablePaths; collector.completedStages.push("writable_paths"); }
   if (!(hasStrongWaf && !canBypassWaf)) checkTimeout();
 
   // Stage 4: Upload endpoint discovery (10s max — SKIP if strong WAF, UNLESS we have origin IP)
   const uploadEndpoints = (hasStrongWaf && !canBypassWaf)
     ? []
     : await runStage("upload_endpoints", () => discoverUploadEndpoints(scanUrl, cms, onProgress), [], 10_000);
+  if (collector) { collector.uploadEndpoints = uploadEndpoints; collector.completedStages.push("upload_endpoints"); }
   if (!(hasStrongWaf && !canBypassWaf)) checkTimeout();
 
   // Stage 5: Exposed panels & misconfigurations (10s max each — parallel requests)
   const exposedPanels = await runStage("panels", () => scanExposedPanels(baseUrl, onProgress), [], 10_000);
   const misconfigurations = await runStage("misconfig", () => scanMisconfigurations(baseUrl, serverInfo, onProgress), [], 10_000);
+  if (collector) { collector.exposedPanels = exposedPanels; collector.misconfigurations = misconfigurations; collector.completedStages.push("panels", "misconfig"); }
   checkTimeout();
 
   // Stage 6: AI attack vector ranking (20s max — LLM call)
   const { vectors, analysis } = await runStage("ai_analysis", () => aiRankAttackVectors(
     baseUrl, serverInfo, cms, writablePaths, uploadEndpoints, exposedPanels, misconfigurations, onProgress,
   ), { vectors: [], analysis: "AI analysis timed out" }, 20_000);
+  if (collector) { collector.attackVectors = vectors; collector.aiAnalysis = analysis; collector.completedStages.push("ai_analysis"); }
 
   const result: VulnScanResult = {
     target: baseUrl,
