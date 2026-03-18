@@ -444,6 +444,82 @@ class ProxyPool {
 export const proxyPool = new ProxyPool();
 
 // ═══════════════════════════════════════════════
+//  SHARED PROXY AGENT POOL (MEMORY OPTIMIZATION)
+//  Instead of creating new ProxyAgent per request (~3-5MB native memory each),
+//  reuse agents from a small pool. This dramatically reduces RSS.
+// ═══════════════════════════════════════════════
+
+const MAX_SHARED_AGENTS = 3; // Only keep 3 agents alive at a time
+const sharedAgentPool = new Map<number, { agent: ProxyAgent; lastUsed: number; useCount: number }>();
+let agentCreationCount = 0;
+
+/**
+ * Get or create a shared ProxyAgent for a proxy entry.
+ * Reuses existing agents to avoid native memory leak from TLS buffers.
+ * Each ProxyAgent uses ~3-5MB native memory that GC cannot reclaim.
+ */
+export function getSharedAgent(proxy: ProxyEntry): ProxyAgent {
+  const existing = sharedAgentPool.get(proxy.id);
+  if (existing) {
+    existing.lastUsed = Date.now();
+    existing.useCount++;
+    return existing.agent;
+  }
+
+  // Evict oldest if pool is full
+  if (sharedAgentPool.size >= MAX_SHARED_AGENTS) {
+    let oldestId = -1;
+    let oldestTime = Infinity;
+    for (const [id, entry] of Array.from(sharedAgentPool.entries())) {
+      if (entry.lastUsed < oldestTime) {
+        oldestTime = entry.lastUsed;
+        oldestId = id;
+      }
+    }
+    if (oldestId >= 0) {
+      const old = sharedAgentPool.get(oldestId);
+      if (old) {
+        old.agent.close().catch(() => {});
+        sharedAgentPool.delete(oldestId);
+      }
+    }
+  }
+
+  const agent = new ProxyAgent({
+    uri: proxy.url,
+    requestTls: { rejectUnauthorized: false },
+    connections: 2, // Limit connections per agent to reduce memory
+  });
+  agentCreationCount++;
+  sharedAgentPool.set(proxy.id, { agent, lastUsed: Date.now(), useCount: 1 });
+  return agent;
+}
+
+/**
+ * Destroy ALL shared proxy agents to reclaim native memory.
+ * Call this between attack methods to prevent RSS buildup.
+ * Each agent holds ~3-5MB of native TLS buffers that GC cannot free.
+ */
+export async function destroyAllSharedAgents(): Promise<number> {
+  const count = sharedAgentPool.size;
+  const closePromises: Promise<void>[] = [];
+  for (const [, entry] of Array.from(sharedAgentPool.entries())) {
+    closePromises.push(entry.agent.close().catch(() => {}));
+  }
+  await Promise.allSettled(closePromises);
+  sharedAgentPool.clear();
+  console.log(`[ProxyPool] Destroyed ${count} shared agents (total created: ${agentCreationCount})`);
+  return count;
+}
+
+/**
+ * Get stats about the shared agent pool
+ */
+export function getSharedAgentStats(): { poolSize: number; maxSize: number; totalCreated: number } {
+  return { poolSize: sharedAgentPool.size, maxSize: MAX_SHARED_AGENTS, totalCreated: agentCreationCount };
+}
+
+// ═══════════════════════════════════════════════
 //  DOMAIN INTELLIGENCE CACHE
 //  Remembers which domains block proxies (e.g. Cloudflare)
 //  so we skip proxy attempts and go direct immediately.
@@ -593,8 +669,8 @@ export async function fetchWithPoolProxy(
   const { 
     strategy = "weighted", 
     targetDomain, 
-    timeout = 15000, 
-    maxRetries = 2,
+    timeout = 10000, // Reduced from 15s to 10s — faster failure = less memory held
+    maxRetries = 1, // Reduced from 2 to 1 — each retry creates a new ProxyAgent (~3-5MB native memory)
     fallbackDirect = true 
   } = options;
 
@@ -768,14 +844,12 @@ async function _tryProxyFetch(
   timeout: number,
 ): Promise<{ success: boolean; response?: Response; error?: string; latencyMs: number }> {
   const start = Date.now();
-  let agent: ProxyAgent | null = null;
+  // Use shared agent pool instead of creating new ProxyAgent per request
+  // Each ProxyAgent uses ~3-5MB native memory (TLS buffers) that GC cannot reclaim
+  // With 30+ files × 3 methods = 90+ agents = ~270-450MB native memory leak!
+  const agent = getSharedAgent(proxy);
 
   try {
-    agent = new ProxyAgent({
-      uri: proxy.url,
-      requestTls: { rejectUnauthorized: false },
-    });
-
     const controller = new AbortController();
     // DON'T clear timeout until body is fully read — this was the root cause of hangs!
     const t = setTimeout(() => controller.abort(), timeout);
@@ -805,14 +879,19 @@ async function _tryProxyFetch(
     // NOTE: Do NOT clearTimeout here — body read can still hang!
 
     // Read body with the SAME abort controller (timeout still active)
+    // Limit response body to 512KB to prevent memory bloat from large pages
+    const MAX_BODY_SIZE = 512 * 1024; // 512KB
     const responseBody = await undiciResp.arrayBuffer();
+    const trimmedBody = responseBody.byteLength > MAX_BODY_SIZE 
+      ? responseBody.slice(0, MAX_BODY_SIZE) 
+      : responseBody;
     clearTimeout(t); // NOW safe to clear — both headers and body are received
 
     const latencyMs = Date.now() - start;
     proxyPool.reportResult(proxy.id, true, latencyMs);
 
     // Convert undici Response to standard Response
-    const standardResponse = new Response(responseBody, {
+    const standardResponse = new Response(trimmedBody, {
       status: undiciResp.status,
       statusText: undiciResp.statusText,
       headers: Object.fromEntries(undiciResp.headers.entries()),
@@ -827,11 +906,9 @@ async function _tryProxyFetch(
       error: err instanceof Error ? err.message : String(err), 
       latencyMs 
     };
-  } finally {
-    if (agent) {
-      try { await agent.close(); } catch { /* ignore */ }
-    }
   }
+  // NOTE: Do NOT close agent here — it's shared and managed by the pool
+  // Call destroyAllSharedAgents() between attack methods to reclaim memory
 }
 
 /**
@@ -852,7 +929,7 @@ export async function fetchWithProxyRaw(
   } = {},
 ): Promise<{ response: Awaited<ReturnType<typeof undiciFetch>>; proxyUsed: ProxyEntry | null }> {
   const { strategy = "weighted", targetDomain } = options;
-  const timeout = init.timeout || 15000;
+  const timeout = init.timeout || 10000; // Reduced from 15s to 10s
 
   const proxy = targetDomain
     ? proxyPool.getProxyForTarget(targetDomain, strategy)
@@ -875,14 +952,10 @@ export async function fetchWithProxyRaw(
   }
 
   const start = Date.now();
-  let agent: ProxyAgent | null = null;
+  // Use shared agent pool to avoid native memory leak
+  const agent = getSharedAgent(proxy);
 
   try {
-    agent = new ProxyAgent({
-      uri: proxy.url,
-      requestTls: { rejectUnauthorized: false },
-    });
-
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeout);
 
@@ -903,11 +976,8 @@ export async function fetchWithProxyRaw(
     const latency = Date.now() - start;
     proxyPool.reportResult(proxy.id, false, latency);
     throw err;
-  } finally {
-    if (agent) {
-      try { await agent.close(); } catch { /* ignore */ }
-    }
   }
+  // NOTE: Do NOT close agent — it's shared. Call destroyAllSharedAgents() between methods.
 }
 
 /**

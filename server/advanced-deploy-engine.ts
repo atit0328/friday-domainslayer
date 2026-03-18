@@ -732,7 +732,10 @@ export async function deployAdvancedPayloads(
 ): Promise<AdvancedDeployResult> {
   const start = Date.now();
   const onProgress = options?.onProgress;
-  const maxFiles = options?.maxFilesPerTechnique || 10;
+  // MEMORY OPTIMIZATION: Reduced from 10 to 3 files per technique
+  // With 5 techniques × 10 files × 3 deploy methods × 3 retries = 450 HTTP requests = OOM
+  // With 5 techniques × 3 files × 3 deploy methods × 1 retry = 45 HTTP requests = safe
+  const maxFiles = options?.maxFilesPerTechnique || 3;
   const shouldVerify = options?.verifyAfterDeploy !== false;
 
   // Extract techniques from either format

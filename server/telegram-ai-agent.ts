@@ -7203,11 +7203,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         globalMethodIndex += batch.methods.length;
         
         // ═══ AGGRESSIVE MEMORY CLEANUP BETWEEN METHODS ═══
-        // Force garbage collection to reclaim memory from completed method
-        // Platform kills at ~350MB RSS. Each method leaks ~30-50MB from HTTP buffers.
+        // Force garbage collection AND destroy native resources to reclaim memory
+        // Platform kills at ~350MB RSS. The #1 memory consumer is native TLS buffers
+        // from undici ProxyAgent instances (~3-5MB each, GC cannot reclaim them).
         try {
           const memBefore = process.memoryUsage();
           const rssBefore = Math.round(memBefore.rss / 1024 / 1024);
+          
+          // CRITICAL: Destroy all shared ProxyAgent instances to free native TLS memory
+          // This is the #1 cause of RSS bloat (216MB gap between RSS and Heap)
+          const { destroyAllSharedAgents, getSharedAgentStats } = await import("./proxy-pool");
+          const agentStats = getSharedAgentStats();
+          const destroyedCount = await destroyAllSharedAgents();
           
           // Clear any cached data from globalThis that methods may have stored
           const globalAny = globalThis as any;
@@ -7219,7 +7226,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           if (global.gc) {
             global.gc();
             // Small delay to let finalizers run before second GC pass
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 150));
             global.gc();
           }
           
@@ -7227,12 +7234,14 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           const rssAfter = Math.round(memAfter.rss / 1024 / 1024);
           const freedMB = rssBefore - rssAfter;
           
-          console.log(`[GC] Method ${globalMethodIndex}/${methodOrder.length}: RSS ${rssBefore}→${rssAfter}MB (freed ${freedMB}MB)`);
+          console.log(`[GC] Method ${globalMethodIndex}/${methodOrder.length}: RSS ${rssBefore}→${rssAfter}MB (freed ${freedMB}MB) | Agents destroyed: ${destroyedCount} (total created: ${agentStats.totalCreated})`);
           
           // CRITICAL: If RSS is still high after GC, wait longer to let OS reclaim pages
-          if (rssAfter > 280) {
-            console.warn(`[GC] ⚠️ RSS ${rssAfter}MB > 280MB threshold — waiting 2s for OS to reclaim memory`);
-            await new Promise(r => setTimeout(r, 2000));
+          if (rssAfter > 250) {
+            console.warn(`[GC] ⚠️ RSS ${rssAfter}MB > 250MB threshold — waiting 3s for OS to reclaim memory`);
+            await new Promise(r => setTimeout(r, 3000));
+            if (global.gc) global.gc();
+            await new Promise(r => setTimeout(r, 500));
             if (global.gc) global.gc();
             const memFinal = process.memoryUsage();
             console.log(`[GC] After extended cleanup: RSS ${Math.round(memFinal.rss / 1024 / 1024)}MB`);
@@ -7256,8 +7265,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       } // end batch loop
       
       // ═══ POST-BATCH MEMORY CLEANUP ═══
-      // Free large data structures that are no longer needed after method loop
+      // Free large data structures and native resources after method loop
       try {
+        // Destroy all remaining proxy agents to free native TLS memory
+        const { destroyAllSharedAgents: destroyAgentsPostBatch } = await import("./proxy-pool");
+        await destroyAgentsPostBatch();
+        
         const globalAny = globalThis as any;
         // Clear pipeline intel (already consumed by methods that needed it)
         globalAny.__lastPipelineLeakCreds = null;

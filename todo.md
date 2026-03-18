@@ -6374,3 +6374,12 @@
 - [x] ปรับ attack resume ให้ทำงานจริง — เพิ่ม targetUrl field ใน pendingAttacks schema + PendingAttackState + savePendingAttack + resumeContext + __attackState
 - [x] ลด max-old-space-size: dev 400→300MB, prod 400→256MB เพื่อ trigger GC เร็วขึ้นก่อนถึง platform limit
 - [x] TypeScript: 0 errors, Tests: 60+ passed (pipeline-timeout 14, attack-progress 19, method-priority 10, narrator-fixes 21, etc.)
+
+# Critical Bug: SIGTERM ยังเกิดที่ 9/20 — RSS 311MB, Heap 95MB (native memory leak)
+
+- [x] วิเคราะห์ native memory leak: Root cause = ทุก fetchWithPoolProxy สร้าง new ProxyAgent() ทุกครั้ง (~3-5MB native TLS ต่อตัว) ที่ GC ไม่ช่วย + Advanced Deploy 30 files × 3 methods = 90+ agents = 270-450MB
+- [x] เพิ่ม Shared ProxyAgent Pool: MAX_SHARED_AGENTS=3, getSharedAgent() reuse, destroyAllSharedAgents() ระหว่าง method + post-batch
+- [x] ลด concurrent connections: ProxyAgent connections=2, maxRetries 2→1, default timeout 15s→10s
+- [x] ลด maxFiles per technique: 10→3 (450 HTTP requests → 45)
+- [x] เพิ่ม response body limit: 512KB max per response ป้องกัน memory bloat จากหน้าเว็บใหญ่
+- [x] TypeScript: 0 errors, Tests: 64 passed (pipeline-timeout 14, attack-progress 19, method-priority 10, narrator-fixes 21)
