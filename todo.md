@@ -6269,3 +6269,21 @@
 - [x] Fix 5: sendAndGetMessageId truncates text to 4000 chars as safety net
 - [x] TypeScript: 0 errors, Tests: 27 passed
 - [x] Save checkpoint
+
+# Bug: AAA attack hangs at 80% "Exploit ช่องโหว่" for 15+ minutes — no progress update
+
+- [x] Checked DB: attack has NO record — process crashed silently (OOM kill suspected)
+- [x] Root cause: likely OOM kill (SIGKILL can't be caught) or platform container restart
+- [x] Fix: Added memory monitoring, SIGTERM notification, heartbeat activity display
+- [x] Test and save checkpoint
+
+# Feature: Periodic progress updates during method execution
+
+- [x] Analyzed: heartbeat works but shows no activity detail during method execution
+- [x] Added setActivity() + setLatestProgress() to narrator for real-time activity tracking
+- [x] Heartbeat footer now shows: current method name, elapsed time, memory usage (💾 xxxMB), latest progress detail
+- [x] Pipeline callback always calls setLatestProgress for ALL events (not just important ones)
+- [x] Added memory monitoring: 60s interval logging + Telegram warning when RSS > 400MB
+- [x] Enhanced SIGTERM/SIGINT handlers to send Telegram notification before exit
+- [x] TypeScript: 0 errors, Tests: 27 passed
+- [x] Save checkpoint

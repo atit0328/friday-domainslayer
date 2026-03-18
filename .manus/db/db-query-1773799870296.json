@@ -1,0 +1,61 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ai_attack_history' AND ORDINAL_POSITION > 20 ORDER BY ORDINAL_POSITION",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ai_attack_history' AND ORDINAL_POSITION > 20 ORDER BY ORDINAL_POSITION",
+  "rows": [
+    {
+      "COLUMN_NAME": "httpMethod"
+    },
+    {
+      "COLUMN_NAME": "bypassTechnique"
+    },
+    {
+      "COLUMN_NAME": "payloadType"
+    },
+    {
+      "COLUMN_NAME": "success"
+    },
+    {
+      "COLUMN_NAME": "statusCode"
+    },
+    {
+      "COLUMN_NAME": "errorMessage"
+    },
+    {
+      "COLUMN_NAME": "fileVerified"
+    },
+    {
+      "COLUMN_NAME": "redirectVerified"
+    },
+    {
+      "COLUMN_NAME": "uploadedUrl"
+    },
+    {
+      "COLUMN_NAME": "durationMs"
+    },
+    {
+      "COLUMN_NAME": "aiReasoning"
+    },
+    {
+      "COLUMN_NAME": "aiConfidence"
+    },
+    {
+      "COLUMN_NAME": "iteration"
+    },
+    {
+      "COLUMN_NAME": "preAnalysisData"
+    },
+    {
+      "COLUMN_NAME": "pipelineType"
+    },
+    {
+      "COLUMN_NAME": "sessionId"
+    },
+    {
+      "COLUMN_NAME": "historyCreatedAt"
+    }
+  ],
+  "messages": [],
+  "stdout": "COLUMN_NAME\nhttpMethod\nbypassTechnique\npayloadType\nsuccess\nstatusCode\nerrorMessage\nfileVerified\nredirectVerified\nuploadedUrl\ndurationMs\naiReasoning\naiConfidence\niteration\npreAnalysisData\npipelineType\nsessionId\nhistoryCreatedAt\n",
+  "stderr": "",
+  "execution_time_ms": 1563
+}

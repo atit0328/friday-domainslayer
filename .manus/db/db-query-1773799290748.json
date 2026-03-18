@@ -1,0 +1,55 @@
+{
+  "query": "SELECT id, targetDomain, method, success, errorMessage, durationMs, historyCreatedAt FROM ai_attack_history WHERE targetDomain LIKE '%hiawatha%' ORDER BY id DESC LIMIT 5",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, targetDomain, method, success, errorMessage, durationMs, historyCreatedAt FROM ai_attack_history WHERE targetDomain LIKE '%hiawatha%' ORDER BY id DESC LIMIT 5",
+  "rows": [
+    {
+      "id": "150001",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "All methods failed: Unified Attack Pipeline (⏰ Timeout (496s))",
+      "durationMs": "1067403",
+      "historyCreatedAt": "2026-03-17 19:24:19"
+    },
+    {
+      "id": "120594",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "redirect_only",
+      "success": "0",
+      "errorMessage": "All 0 redirect methods failed",
+      "durationMs": "185400",
+      "historyCreatedAt": "2026-03-16 05:28:10"
+    },
+    {
+      "id": "120398",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "Timeout after 600s",
+      "durationMs": "600000",
+      "historyCreatedAt": "2026-03-15 00:02:15"
+    },
+    {
+      "id": "120397",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "Pipeline failed: AI Target Analysis failed: AI analysis timeout (90s), Vuln scan failed: vuln scan timeout, Config exploit failed: config exploit timeout",
+      "durationMs": "605012",
+      "historyCreatedAt": "2026-03-15 00:02:13"
+    },
+    {
+      "id": "120347",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "Pipeline failed: AI Target Analysis failed: AI analysis timeout (90s), Pre-screen failed: prescreen timeout, Vuln scan failed: vuln scan timeout",
+      "durationMs": "605685",
+      "historyCreatedAt": "2026-03-14 17:55:46"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttargetDomain\tmethod\tsuccess\terrorMessage\tdurationMs\thistoryCreatedAt\n150001\twww.hiawathaschools.org\tfull_chain\t0\tAll methods failed: Unified Attack Pipeline (⏰ Timeout (496s))\t1067403\t2026-03-17 19:24:19\n120594\twww.hiawathaschools.org\tredirect_only\t0\tAll 0 redirect methods failed\t185400\t2026-03-16 05:28:10\n120398\twww.hiawathaschools.org\tfull_chain\t0\tTimeout after 600s\t600000\t2026-03-15 00:02:15\n120397\twww.hiawathaschools.org\tfull_chain\t0\tPipeline failed: AI Target Analysis failed: AI analysis timeout (90s), Vuln scan failed: vuln scan timeout, Config exploit failed: config exploit timeout\t605012\t2026-03-15 00:02:13\n120347\twww.hiawathaschools.org\tfull_chain\t0\tPipeline failed: AI Target Analysis failed: AI analysis timeout (90s), Pre-screen failed: prescreen timeout, Vuln scan failed: vuln scan timeout\t605685\t2026-03-14 17:55:46\n",
+  "stderr": "",
+  "execution_time_ms": 1629
+}

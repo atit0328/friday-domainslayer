@@ -201,15 +201,54 @@ process.on("uncaughtException", async (error: Error) => {
 });
 
 // Graceful shutdown — cleanup on process termination
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   console.log("[Server] SIGTERM received, cleaning up...");
-  stopTelegramPolling(); // Also stops webhook health tracking
-  stopDailySummaryScheduler();
-  process.exit(0);
-});
-process.on("SIGINT", () => {
-  console.log("[Server] SIGINT received, cleaning up...");
+  await sendCrashNotification("SIGTERM", new Error("Process received SIGTERM — platform restart or deployment"));
   stopTelegramPolling();
   stopDailySummaryScheduler();
-  process.exit(0);
+  setTimeout(() => process.exit(0), 2000);
 });
+process.on("SIGINT", async () => {
+  console.log("[Server] SIGINT received, cleaning up...");
+  await sendCrashNotification("SIGINT", new Error("Process received SIGINT"));
+  stopTelegramPolling();
+  stopDailySummaryScheduler();
+  setTimeout(() => process.exit(0), 2000);
+});
+
+// ═══ MEMORY MONITORING ═══
+// Log memory usage every 60s and warn when approaching limits
+let lastMemWarningTime = 0;
+setInterval(async () => {
+  const mem = process.memoryUsage();
+  const heapUsedMB = Math.round(mem.heapUsed / 1024 / 1024);
+  const heapTotalMB = Math.round(mem.heapTotal / 1024 / 1024);
+  const rssMB = Math.round(mem.rss / 1024 / 1024);
+  const externalMB = Math.round(mem.external / 1024 / 1024);
+  
+  // Log memory stats periodically
+  console.log(`[Memory] RSS: ${rssMB}MB | Heap: ${heapUsedMB}/${heapTotalMB}MB | External: ${externalMB}MB`);
+  
+  // Warn when RSS exceeds 400MB (typical container limit is 512MB)
+  if (rssMB > 400 && Date.now() - lastMemWarningTime > 300_000) {
+    lastMemWarningTime = Date.now();
+    console.warn(`[Memory] ⚠️ HIGH MEMORY: RSS ${rssMB}MB`);
+    try {
+      const token = process.env.TELEGRAM_BOT_TOKEN;
+      const chatId = process.env.TELEGRAM_CHAT_ID;
+      if (token && chatId) {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `⚠️ Memory Warning\n\nRSS: ${rssMB}MB\nHeap: ${heapUsedMB}/${heapTotalMB}MB\nExternal: ${externalMB}MB\n\n📝 Process may be killed by OOM soon`,
+          }),
+          signal: AbortSignal.timeout(5000),
+        });
+      }
+    } catch {}
+    // Try to free memory
+    if (global.gc) global.gc();
+  }
+}, 60_000);

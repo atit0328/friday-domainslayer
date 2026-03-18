@@ -374,6 +374,14 @@ export class TelegramNarrator {
   private currentMethodIndex: number = 0;
   private currentMethodName: string = "";
   private methodResults: Array<{ name: string; icon: string; success: boolean }> = [];
+  /** Latest activity description for heartbeat display */
+  private currentActivity: string = "";
+  /** Timestamp of last activity update */
+  private lastActivityTime: number = 0;
+  /** Last non-important event detail for periodic display */
+  private lastProgressDetail: string = "";
+  private lastProgressPhase: string = "";
+  private lastProgressTime: number = 0;
   
   /** Minimum interval between edits (ms) to avoid Telegram rate limits */
   private static MIN_EDIT_INTERVAL = 1500; // Reduced from 2000 to allow faster heartbeat updates
@@ -562,6 +570,19 @@ export class TelegramNarrator {
   setMethodProgress(index: number, name: string, icon: string): void {
     this.currentMethodIndex = index;
     this.currentMethodName = `${icon} ${name}`;
+  }
+
+  /** Set current activity description — shown in heartbeat footer */
+  setActivity(activity: string): void {
+    this.currentActivity = activity;
+    this.lastActivityTime = Date.now();
+  }
+
+  /** Store latest progress detail (even non-important ones) for periodic heartbeat display */
+  setLatestProgress(phase: string, detail: string): void {
+    this.lastProgressDetail = detail;
+    this.lastProgressPhase = phase;
+    this.lastProgressTime = Date.now();
   }
 
   /** Record method result for summary display */
@@ -783,6 +804,17 @@ export class TelegramNarrator {
         this.heartbeatSkips = 0;
       }
       
+      // If a step has been running for a while without updates, add a running indicator
+      const runningStep = this.steps.find(s => s.status === "running");
+      if (runningStep) {
+        const stepAge = Date.now() - (this.lastActivityTime || this.startTime);
+        if (stepAge > 25_000) {
+          // Update the running step label to show elapsed time
+          const stepElapsed = formatDurationThai(Date.now() - this.startTime);
+          // Don't modify the step label, just ensure heartbeat triggers a message update
+        }
+      }
+      
       // Force message update by changing heartbeat count (changes the footer text)
       try {
         await this.updateMessage();
@@ -811,13 +843,27 @@ export class TelegramNarrator {
     const pulseFrames = ["❤️", "🧡", "💛", "💚", "💙", "💜"];
     const pulse = pulseFrames[this.heartbeatCount % pulseFrames.length];
     
-    // Activity description based on current phase
-    const phaseInfo = PHASE_LABELS[this.currentPhase];
-    const activity = phaseInfo ? `${phaseInfo.emoji} ${phaseInfo.thai}` : "กำลังทำงาน";
-    
     // Show current method name if in full_chain mode
     const methodInfo = this.currentMethodName ? ` | ${this.currentMethodName}` : "";
-    return `\n\n────────────────────\n${pulse} ระบบทำงานอยู่${methodInfo} | ⏱ ${elapsedStr}`;
+    
+    // Show latest activity or progress detail
+    let activityLine = "";
+    if (this.currentActivity && (Date.now() - this.lastActivityTime) < 120_000) {
+      // Show explicit activity set by code
+      activityLine = `\n${this.currentActivity}`;
+    } else if (this.lastProgressDetail && (Date.now() - this.lastProgressTime) < 120_000) {
+      // Show latest progress event from pipeline callback
+      const truncDetail = this.lastProgressDetail.length > 80 ? this.lastProgressDetail.substring(0, 77) + "..." : this.lastProgressDetail;
+      activityLine = `\n📋 ${truncDetail}`;
+    }
+    
+    // Memory info for debugging OOM issues
+    const mem = process.memoryUsage();
+    const rssMB = Math.round(mem.rss / 1024 / 1024);
+    const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
+    const memInfo = ` | 💾 ${rssMB}MB`;
+    
+    return `\n\n────────────────────\n${pulse} ระบบทำงานอยู่${methodInfo} | ⏱ ${elapsedStr}${memInfo}${activityLine}`;
   }
 
   // ─── Telegram API ───

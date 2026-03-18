@@ -5938,10 +5938,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           if (!isParallel) {
             // Solo method: show normal progress
             narrator.setMethodProgress(globalMethodIndex + 1, methodDef.name, methodDef.icon);
+            narrator.setActivity(`${methodDef.icon} กำลังรัน ${methodDef.name}...`);
             await narrator.startPhase(methodDef.phase, `${methodDef.icon} วิธีที่ ${globalMethodIndex + 1}/${methodOrder.length}: ${methodDef.name}`);
           } else {
             // Parallel method: show combined progress
-            narrator.setMethodProgress(globalMethodIndex + 1, `${batch.methods.map(m => m.def.name).join(" + ")} ⚡`, methodDef.icon);
+            const parallelNames = batch.methods.map(m => m.def.name).join(" + ");
+            narrator.setMethodProgress(globalMethodIndex + 1, `${parallelNames} ⚡`, methodDef.icon);
+            narrator.setActivity(`⚡ รันพร้อมกัน: ${parallelNames}`);
           }
           
           const methodStart = Date.now();
@@ -6005,9 +6008,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                   stepIndex++;
                 }
 
-                // ─── Sub-step details: Only show important events (success/error/complete) ───
-                // Skip routine progress events to prevent Telegram message queue buildup
+                // ─── Sub-step details ───
+                // Always store latest progress for heartbeat display
                 const detail = event.detail;
+                narrator.setLatestProgress(event.phase, `${detail.substring(0, 100)} (${elapsed}s)`);
+                
+                // Show important events immediately as narrator analysis
                 const isImportant = isErr || isSuccess || 
                   event.step === "complete" || event.step === "error" || 
                   detail.includes("สำเร็จ") || detail.includes("เสร็จ") || 
