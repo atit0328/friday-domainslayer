@@ -6153,8 +6153,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // With 20 methods, we need each to finish fast and GC between them.
       // 20 methods × 2 min = 40 min max, most finish in 30-60s
       const METHOD_TIMEOUTS: Record<string, number> = {
-        pipeline: 3 * 60 * 1000,       // 3 min — unified pipeline (has its own internal globalTimeout)
-        agentic_auto: 3 * 60 * 1000,   // 3 min — AI autonomous session
+        pipeline: 8 * 60 * 1000,       // 8 min — unified pipeline is the MAIN method, needs time for LeakCheck + FTP/SSH + all phases
+        agentic_auto: 5 * 60 * 1000,   // 5 min — AI autonomous session needs time for multi-step reasoning
         hijack: 2 * 60 * 1000,         // 2 min — credential hunt + brute force
         advanced: 2 * 60 * 1000,       // 2 min — advanced techniques
         cloaking: 2 * 60 * 1000,       // 2 min — PHP cloaking injection
@@ -6319,7 +6319,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 3 * 60 * 1000, // 3 min — pipeline is 1 of 20 methods, must respect time budget
+                globalTimeout: 7 * 60 * 1000, // 7 min — pipeline is the MAIN method, needs time for all phases including LeakCheck + FTP/SSH
                 ...(discoveredOriginIp ? { originIp: discoveredOriginIp } : {}),
               },
               async (event) => {
