@@ -1,0 +1,1 @@
+ALTER TABLE `pending_attacks` ADD `paTargetUrl` varchar(512);

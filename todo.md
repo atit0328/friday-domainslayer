@@ -6364,3 +6364,13 @@
 - [x] ส่ง target URL path ให้ทุก method ใช้ (pipeline, cloaking, hijack, redirect, advanced, agentic)
 - [x] TypeScript: 0 errors, Tests: 48 passed
 - [x] Save checkpoint
+
+# Critical Bug: SIGTERM ที่ method 3/20 — RSS 355MB ทำให้ platform kill process
+
+- [x] วิเคราะห์ทำไม RSS 355MB หลังแค่ 3 methods — Root cause: pipeline shouldStop ไม่ return true หลัง globalTimeout + per-method timeout 929s เพราะ capTimeout min 15s ทำให้ pipeline ไม่หยุด + HTTP response buffers ไม่ถูก free
+- [x] ลด memory footprint ต่อ method — ลด per-method timeout (pipeline 3min, default 90s, max 2min), ลด VULN_SCAN_TIMEOUT 180→90s, ลด CF bypass 120→60s, ลด brute force 300→90s, ลด breach hunt 180→60s
+- [x] แก้ per-method timeout ที่ 929s — Fixed shouldStop to return true after globalTimeout, reduced capTimeout minimum from 15s to 5s, reduced RECON_TIME_BUDGET from 40% to 25%
+- [x] เพิ่ม aggressive GC และ memory cleanup หลังทุก method — Double GC pass with 100ms delay, RSS>280MB threshold triggers 2s extended cleanup + triple GC
+- [x] ปรับ attack resume ให้ทำงานจริง — เพิ่ม targetUrl field ใน pendingAttacks schema + PendingAttackState + savePendingAttack + resumeContext + __attackState
+- [x] ลด max-old-space-size: dev 400→300MB, prod 400→256MB เพื่อ trigger GC เร็วขึ้นก่อนถึง platform limit
+- [x] TypeScript: 0 errors, Tests: 60+ passed (pipeline-timeout 14, attack-progress 19, method-priority 10, narrator-fixes 21, etc.)

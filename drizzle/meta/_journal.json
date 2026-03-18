@@ -330,6 +330,13 @@
       "when": 1773808099133,
       "tag": "0046_absent_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "5",
+      "when": 1773822320064,
+      "tag": "0047_breezy_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

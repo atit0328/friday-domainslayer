@@ -2045,6 +2045,8 @@ export const pendingAttacks = mysqlTable("pending_attacks", {
   serverType: varchar("paServerType", { length: 128 }),
   // Abort reason
   abortReason: varchar("paAbortReason", { length: 255 }),
+  // Target URL (full path like /events for URL path support)
+  targetUrl: varchar("paTargetUrl", { length: 512 }),
   // Progress tracking
   totalMethods: int("paTotalMethods").default(0),
   completedMethods: int("paCompletedMethods").default(0),

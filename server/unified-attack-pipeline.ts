@@ -989,10 +989,12 @@ export async function runUnifiedAttackPipeline(
   const GLOBAL_TIMEOUT = config.globalTimeout || 45 * 60 * 1000; // 45 minutes — enough time for ALL phases to complete
   const deadline = startTime + GLOBAL_TIMEOUT;
   const pipelineAbort = new AbortController();
-  /** Returns ms remaining until pipeline deadline, minimum 15s to avoid instant-reject */
-  const pipelineRemainingMs = () => Math.max(deadline - Date.now(), 15000);
-  /** Cap a phase timeout to never exceed remaining pipeline time, minimum 15s */
-  const capTimeout = (desiredMs: number) => Math.max(Math.min(desiredMs, pipelineRemainingMs()), 15000);
+  /** Returns ms remaining until pipeline deadline, minimum 3s for cleanup */
+  const pipelineRemainingMs = () => Math.max(deadline - Date.now(), 3000);
+  /** Cap a phase timeout to never exceed remaining pipeline time, minimum 3s */
+  const capTimeout = (desiredMs: number) => Math.max(Math.min(desiredMs, pipelineRemainingMs()), 3000);
+  /** Check if pipeline time budget is exhausted */
+  const isOverDeadline = () => Date.now() > deadline;
 
   /**
    * Race a promise against a timeout, with proper AbortController cleanup.
@@ -1093,16 +1095,22 @@ export async function runUnifiedAttackPipeline(
     attackLogger.log(event).catch(() => {});
   };
 
-  /** Check if pipeline should stop — ONLY when explicitly aborted, NOT on timeout.
-   *  We want ALL phases to run to completion regardless of time. */
+  /** Check if pipeline should stop — stops on abort OR timeout.
+   *  Pipeline is just 1 of 20 methods, so it MUST respect its time budget.
+   *  Letting it run forever causes background memory leaks and SIGTERM. */
   function shouldStop(reason?: string): boolean {
     if (pipelineAbort.signal.aborted) return true;
-    // Log timeout warning but DON'T stop — let all phases run
-    if (Date.now() > deadline && !errors.includes(`global_timeout_warning_${reason || 'unknown'}`)) {
-      loggedOnEvent({ phase: "error", step: "global_timeout", detail: `⏰ Global timeout (${GLOBAL_TIMEOUT / 60000}min) exceeded during ${reason || 'unknown'} — continuing anyway (all phases must run)`, progress: 99 });
-      errors.push(`global_timeout_warning_${reason || 'unknown'}`);
+    // STOP after globalTimeout — critical to prevent memory leaks from background HTTP requests
+    if (isOverDeadline()) {
+      if (!errors.includes(`global_timeout_stop_${reason || 'unknown'}`)) {
+        loggedOnEvent({ phase: "error", step: "global_timeout", detail: `⏰ Pipeline timeout (${Math.round(GLOBAL_TIMEOUT / 60000)}min) — stopping ${reason || 'current phase'} to free memory`, progress: 99 });
+        errors.push(`global_timeout_stop_${reason || 'unknown'}`);
+        // Abort the pipeline to cancel all pending HTTP requests
+        pipelineAbort.abort();
+      }
+      return true;
     }
-    return false; // NEVER stop — all phases must run
+    return false;
   }
 
   /** Check if we have at least one verified redirect */
@@ -1140,7 +1148,7 @@ export async function runUnifiedAttackPipeline(
 
   // ─── Phase 0+1: AI Target Analysis + Pre-screening (PARALLEL to save time) ───
   const reconStartTime = Date.now();
-  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.4, 15 * 60 * 1000); // Max 40% of total time or 15 min for recon (all phases must complete)
+  const RECON_TIME_BUDGET = Math.min(GLOBAL_TIMEOUT * 0.25, 60 * 1000); // Max 25% of total time or 60s for recon (pipeline is just 1 of 20 methods)
   let aiTargetAnalysis: AiTargetAnalysis | null = null;
 
   loggedOnEvent({
@@ -1896,9 +1904,9 @@ export async function runUnifiedAttackPipeline(
         progress: 44,
       });
 
-      // Calculate remaining time for brute force (max 5 min or remaining pipeline time, whichever is less)
-      const remainingMs = Math.max(deadline - Date.now(), 60000);
-      const bruteForceTimeout = Math.min(300000, remainingMs);
+      // Calculate remaining time for brute force (max 90s or remaining pipeline time, whichever is less)
+      const remainingMs = Math.max(deadline - Date.now(), 30000);
+      const bruteForceTimeout = Math.min(90000, remainingMs); // 90s max — pipeline is 1 of 20 methods
 
       wpBruteForceResult = await timedRace(
         () => wpBruteForce({
@@ -2017,8 +2025,8 @@ export async function runUnifiedAttackPipeline(
         }
       }
 
-      const remainingMs = Math.max(deadline - Date.now(), 60000);
-      const breachTimeout = Math.min(180000, remainingMs); // Max 3 min
+      const remainingMs = Math.max(deadline - Date.now(), 15000);
+      const breachTimeout = Math.min(60000, remainingMs); // Max 60s — pipeline is 1 of 20 methods
 
       breachHuntResult = await timedRace(
         () => executeBreachHunt({
