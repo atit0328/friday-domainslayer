@@ -6480,3 +6480,14 @@
 ## Testing
 - [x] Test TypeScript compilation (0 errors)
 - [x] Run tests passed
+
+# Feature: Attack Result Summary
+
+- [x] สร้าง attack-result-summary.ts — buildAttackSummary() + buildTop3Summary()
+- [x] แสดง success/fail count, method breakdown, redirect links, server/CMS/WAF info
+- [x] แสดง timing (เวลาที่ใช้ทั้งหมด, เวลาแต่ละ method, progress bar)
+- [x] เพิ่มใน executeAttackWithProgress full_chain — beautiful summary + fallback
+- [x] เพิ่มใน run_top3 handler — Top 3 summary with result tracking
+- [x] inline keyboard: โจมตีอีกครั้ง / Full Chain / ยกเลิก
+- [x] Test TypeScript compilation (0 errors)
+- [x] Run tests passed

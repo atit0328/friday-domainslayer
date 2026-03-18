@@ -7639,29 +7639,70 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         })
       );
       
-      // ===== SUMMARY =====
+      // ===== BEAUTIFUL SUMMARY =====
       const totalMs = Date.now() - s1;
       const methodResults = narrator.getMethodResults();
-      const resultsLine = methodResults.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ");
       
-      if (fullChainSuccess) {
-        await narrator.addAnalysis(
-          `🏆 โจมตีสำเร็จด้วยวิธี ${successMethod}!\n` +
-          `📊 ลองทั้งหมด ${failedMethods.length + 1} วิธี (ล้มเหลว: ${failedMethods.length})\n` +
-          `📈 ผล: ${resultsLine}`
-        );
-      } else {
-        await narrator.addAnalysis(
-          `📊 ลองแล้วทั้งหมด ${failedMethods.length} วิธี ไม่สำเร็จ\n` +
-          `📈 ผล: ${resultsLine}\n` +
-          `แนะนำ: ลองส่ง domain อื่น หรือ /scan ${domain} เพื่อวิเคราะห์ใหม่`
+      // Build beautiful summary
+      try {
+        const { buildAttackSummary } = await import("./attack-result-summary");
+        const summaryOutcomes = methodOutcomes.map(o => {
+          const def = ALL_METHODS.find(m => m.id === o.methodId);
+          return {
+            name: o.methodName,
+            icon: def?.icon || "•",
+            success: o.success,
+            durationMs: o.durationMs,
+            detail: o.errorMessage?.replace(/^.+?\(/, "").replace(/\)$/, "") || undefined,
+            redirectUrl: o.success ? successUrl : undefined,
+          };
+        });
+        
+        const summary = buildAttackSummary({
+          domain,
+          targetUrl: effectiveTargetUrl,
+          overallSuccess: fullChainSuccess,
+          successMethod: successMethod || undefined,
+          successUrl: successUrl || undefined,
+          redirectDestination: redirectUrl,
+          totalDurationMs: totalMs,
+          methodOutcomes: summaryOutcomes,
+          failedMethods,
+          serverInfo: vulnScanResult?.serverInfo?.server,
+          cms: vulnScanResult?.cms?.type,
+          waf: vulnScanResult?.serverInfo?.waf || undefined,
+          breachCredsFound: undefined,
+          shodanPortsOpen: (globalThis as any).__lastShodanPorts?.length || undefined,
+          mode: "full_chain",
+        });
+        
+        await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: summary.text,
+            reply_markup: summary.keyboard,
+          }),
+          signal: AbortSignal.timeout(15000),
+        }, { timeout: 15000 });
+      } catch (summaryErr: any) {
+        console.warn(`[TelegramAI] Failed to send beautiful summary: ${summaryErr.message}`);
+        // Fallback to simple summary
+        const resultsLine = methodResults.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ");
+        await sendTelegramReply(config, chatId,
+          fullChainSuccess
+            ? `🏆 สำเร็จด้วย ${successMethod}! ${resultsLine}`
+            : `❌ ลองแล้ว ${failedMethods.length} วิธี ไม่สำเร็จ ${resultsLine}`
         );
       }
       
+      // Update narrator
+      const resultsLine = methodResults.map(r => `${r.success ? "✅" : "❌"}${r.icon}`).join(" ");
       await narrator.complete(fullChainSuccess,
         fullChainSuccess
-          ? `สำเร็จด้วย ${successMethod} หลังลอง ${failedMethods.length + 1} วิธี`
-          : `ลองแล้ว ${failedMethods.length} วิธี ไม่สำเร็จ`
+          ? `สำเร็จด้วย ${successMethod} หลังลอง ${failedMethods.length + 1} วิธี | ${resultsLine}`
+          : `ลองแล้ว ${failedMethods.length} วิธี ไม่สำเร็จ | ${resultsLine}`
       );
       
       // Save attack log
@@ -9711,23 +9752,71 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           const convState = getConversationState(chatId);
           const storedTargetUrl = (convState?.targetDomain === domain && convState?.targetUrl) ? convState.targetUrl : undefined;
           
-          // Handle "run_top3" — run 3 AI-recommended methods sequentially
+          // Handle "run_top3" — run 3 AI-recommended methods sequentially with beautiful summary
           if (method === "run_top3" && parts[3]) {
             const methodIds = parts[3].split(",").filter(Boolean);
             console.log(`[TelegramAI] atk_confirm run_top3: domain=${domain}, methods=${methodIds.join(",")}, targetUrl=${storedTargetUrl || 'default'}`);
-            await sendTelegramReply(config, chatId, `\u{1F525} \u0e40\u0e23\u0e34\u0e48\u0e21\u0e23\u0e31\u0e19\u0e17\u0e31\u0e49\u0e07 ${methodIds.length} \u0e27\u0e34\u0e18\u0e35\u0e15\u0e32\u0e21\u0e25\u0e33\u0e14\u0e31\u0e1a...\n\u0e27\u0e34\u0e18\u0e35: ${methodIds.join(" → ")}`);
-            // Fire and forget — run sequentially
+            await sendTelegramReply(config, chatId, `\u{1F525} \u0e40\u0e23\u0e34\u0e48\u0e21\u0e23\u0e31\u0e19\u0e17\u0e31\u0e49\u0e07 ${methodIds.length} \u0e27\u0e34\u0e18\u0e35\u0e15\u0e32\u0e21\u0e25\u0e33\u0e14\u0e31\u0e1a...\n\u0e27\u0e34\u0e18\u0e35: ${methodIds.join(" \u2192 ")}`);
+            // Fire and forget — run sequentially with result tracking
             (async () => {
+              const top3Start = Date.now();
+              const methodResults: Array<{ methodId: string; methodName: string; success: boolean; durationMs: number; successUrl?: string; error?: string }> = [];
+              
               for (let i = 0; i < methodIds.length; i++) {
+                const mStart = Date.now();
                 try {
-                  await sendTelegramReply(config, chatId, `\u{25B6}\u{FE0F} \u0e27\u0e34\u0e18\u0e35\u0e17\u0e35\u0e48 ${i + 1}/${methodIds.length}: ${methodIds[i]}...`);
+                  await sendTelegramReply(config, chatId, `\u25b6\ufe0f \u0e27\u0e34\u0e18\u0e35\u0e17\u0e35\u0e48 ${i + 1}/${methodIds.length}: ${methodIds[i]}...`);
                   await executeAttackWithProgress(config, chatId, domain, methodIds[i], storedTargetUrl);
+                  // Check if attack succeeded by looking at globalThis state
+                  const attackState = (globalThis as any)[`__attackState_${domain}`];
+                  const succeeded = attackState?.succeededMethods?.includes(methodIds[i]) || false;
+                  methodResults.push({
+                    methodId: methodIds[i],
+                    methodName: methodIds[i],
+                    success: succeeded,
+                    durationMs: Date.now() - mStart,
+                    successUrl: succeeded ? attackState?.successUrl : undefined,
+                  });
                 } catch (err: any) {
                   console.error(`[TelegramAI] run_top3 method ${methodIds[i]} error: ${err.message}`);
-                  await sendTelegramReply(config, chatId, `\u274C \u0e27\u0e34\u0e18\u0e35 ${methodIds[i]} \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27: ${err.message?.substring(0, 100)}`);
+                  methodResults.push({
+                    methodId: methodIds[i],
+                    methodName: methodIds[i],
+                    success: false,
+                    durationMs: Date.now() - mStart,
+                    error: err.message?.substring(0, 100),
+                  });
                 }
               }
-              await sendTelegramReply(config, chatId, `\u2705 \u0e23\u0e31\u0e19\u0e04\u0e23\u0e1a\u0e17\u0e31\u0e49\u0e07 ${methodIds.length} \u0e27\u0e34\u0e18\u0e35\u0e41\u0e25\u0e49\u0e27!`);
+              
+              // Send beautiful Top 3 summary
+              try {
+                const { buildTop3Summary } = await import("./attack-result-summary");
+                const { pickRedirectUrl } = await import("./agentic-attack-engine");
+                const redirectDest = await pickRedirectUrl().catch(() => undefined);
+                const top3Summary = buildTop3Summary({
+                  domain,
+                  targetUrl: storedTargetUrl || `https://${domain}/`,
+                  methods: methodResults,
+                  totalDurationMs: Date.now() - top3Start,
+                  redirectDestination: redirectDest,
+                });
+                
+                await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    chat_id: chatId,
+                    text: top3Summary.text,
+                    reply_markup: top3Summary.keyboard,
+                  }),
+                  signal: AbortSignal.timeout(15000),
+                }, { timeout: 15000 });
+              } catch (summaryErr: any) {
+                console.warn(`[TelegramAI] Top3 summary error: ${summaryErr.message}`);
+                const successCount = methodResults.filter(r => r.success).length;
+                await sendTelegramReply(config, chatId, `\u2705 \u0e23\u0e31\u0e19\u0e04\u0e23\u0e1a ${methodIds.length} \u0e27\u0e34\u0e18\u0e35! \u0e2a\u0e33\u0e40\u0e23\u0e47\u0e08: ${successCount}/${methodIds.length}`);
+              }
             })();
             return;
           }
