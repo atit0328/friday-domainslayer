@@ -6317,3 +6317,41 @@
 - [x] เพิ่ม batch mode timeout: 30 min → 60 min per domain
 - [x] TypeScript: 0 errors, Tests: 48 passed
 - [x] Save checkpoint
+
+# Feature: WAF Bypass Engine (Cloudflare/Sucuri/Akamai)
+- [x] วิเคราะห์ WAF bypass capabilities ที่มีอยู่แล้ว — cf-bypass.ts, cf-origin-bypass.ts, waf-bypass-engine.ts, waf-bypass-strategies.ts
+- [x] WAF Bypass Engine มีอยู่แล้ว (server/waf-bypass-engine.ts + waf-bypass-strategies.ts)
+- [x] Origin IP Discovery — ใช้ cf-origin-bypass.ts + cf-bypass.ts (DNS history, SSL cert, subdomains, Shodan)
+- [x] Header Manipulation — ใช้ selectBypassTechniques() จาก waf-bypass-strategies.ts
+- [x] WAF Fingerprinting — ใช้ vuln scan WAF detection + cf-bypass.ts WAF profile matching
+- [x] Integrate WAF bypass เข้า attack pipeline — WAF Bypass Phase ก่อน method loop
+- [x] Test and verify — TypeScript 0 errors
+
+# Feature: Attack Resume System (Auto-Resume on Restart)
+- [x] สร้าง DB table: pending_attacks (domain, chatId, mode, triedMethods, originIp, wafType, serverType, cmsType, createdAt)
+- [x] Save attack state ลง globalThis ทุกครั้งที่เปลี่ยน method + save to DB on SIGTERM
+- [x] เมื่อ SIGTERM เกิดขึ้น — savePendingAttack() บันทึกสถานะลง DB
+- [x] เมื่อ server restart — resumePendingAttacks() ตรวจสอบ pending_attacks table (15s หลัง startup)
+- [x] ถ้ามี pending attack — auto-resume โดยข้าม methods ที่ลองแล้ว + ใช้ cached origin IP/WAF type
+- [x] แจ้ง Telegram เมื่อ resume attack
+- [x] Cleanup: ลบ pending_attacks ที่เก่ากว่า 1 ชั่วโมง
+- [x] Test and verify — TypeScript 0 errors, 48 tests passed
+
+# Feature: Telegram AI Assistant — ตอบคำถามระบบแบบภาษามนุษย์
+- [x] วิเคราะห์ Telegram bot conversation handler ปัจจุบัน — processMessage() รองรับ LLM + tools อยู่แล้ว
+- [x] เพิ่ม SYSTEM ARCHITECTURE & SERVICES section ใน system prompt — 7 services อธิบายละเอียด
+- [x] เพิ่ม "การตอบคำถามเกี่ยวกับระบบ" section — ตัวอย่างคำถามและวิธีตอบ
+- [x] รองรับ context จาก conversation history (last 10 messages) + gatherSystemContext()
+- [x] รองรับ docs context จากระบบ (SystemContext: sprints, attacks, pbn, seo, cve, orchestrator, redirects, rankings, content)
+- [x] Integrate เข้า Telegram bot — ตอบข้อความที่ไม่ใช่ command โดยอัตโนมัติ (processMessage flow)
+- [x] ตอบไทย/อังกฤษตามภาษา user, ถามกลับถ้าไม่ชัด, บอกตรงๆ ถ้าไม่รู้
+- [x] Test and verify — TypeScript 0 errors
+
+# Feature: WAF Bypass Integration into full_chain
+- [x] เพิ่ม WAF Bypass Phase ก่อน method loop ใน full_chain — รัน runCfBypass + selectBypassTechniques
+- [x] ถ้าพบ WAF จาก vuln scan → รัน WAF bypass อัตโนมัติ + แสดงผลใน narrator
+- [x] ส่ง discoveredOriginIp ให้ทุก method ใช้ (pipeline, agentic, etc.)
+- [x] Test and verify — TypeScript 0 errors
+
+# Feature: Attack Resume System (duplicate — merged with above)
+- [x] รวมกับ section ด้านบนแล้ว

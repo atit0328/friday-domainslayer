@@ -18,7 +18,7 @@ import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
 import { startSeoOrchestrator } from "../seo-orchestrator";
-import { registerTelegramWebhook, setupTelegramWebhook, startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler, getRunningAttacks, abortAllRunningAttacks } from "../telegram-ai-agent";
+import { registerTelegramWebhook, setupTelegramWebhook, startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler, getRunningAttacks, abortAllRunningAttacks, resumePendingAttacks } from "../telegram-ai-agent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -148,6 +148,15 @@ async function startServer() {
           
           startDailySummaryScheduler();
           console.log("[Server] 📅 Daily Summary Scheduler initialized");
+          
+          // Resume any pending attacks that were interrupted by SIGTERM
+          setTimeout(async () => {
+            try {
+              await resumePendingAttacks();
+            } catch (e: any) {
+              console.warn(`[Server] ⚠️ Attack resume check failed: ${e.message}`);
+            }
+          }, 15_000); // Wait 15s after startup before checking
           
           console.log("[Server] ✅ All production services started successfully");
         } catch (err: any) {

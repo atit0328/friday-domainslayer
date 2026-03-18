@@ -1,0 +1,22 @@
+CREATE TABLE `pending_attacks` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`paDomain` varchar(255) NOT NULL,
+	`paMethod` varchar(128) NOT NULL,
+	`paChatId` varchar(64) NOT NULL,
+	`paRedirectUrl` varchar(512),
+	`paStatus` enum('pending','running','completed','failed','aborted') NOT NULL DEFAULT 'pending',
+	`paTriedMethods` json,
+	`paSucceededMethods` json,
+	`paCachedScanData` json,
+	`paOriginIp` varchar(64),
+	`paWafType` varchar(64),
+	`paCmsType` varchar(64),
+	`paServerType` varchar(128),
+	`paAbortReason` varchar(255),
+	`paTotalMethods` int DEFAULT 0,
+	`paCompletedMethods` int DEFAULT 0,
+	`paStartedAt` timestamp NOT NULL DEFAULT (now()),
+	`paLastUpdatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	`paCompletedAt` timestamp,
+	CONSTRAINT `pending_attacks_id` PRIMARY KEY(`id`)
+);

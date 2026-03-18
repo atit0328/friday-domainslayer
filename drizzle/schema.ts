@@ -2018,3 +2018,40 @@ export const attackMethodStats = mysqlTable("attack_method_stats", {
 });
 export type AttackMethodStatsRow = typeof attackMethodStats.$inferSelect;
 export type InsertAttackMethodStats = typeof attackMethodStats.$inferInsert;
+
+
+// ═══════════════════════════════════════════════
+//  PENDING ATTACKS — Resume interrupted attacks after restart
+// ═══════════════════════════════════════════════
+export const pendingAttacks = mysqlTable("pending_attacks", {
+  id: int("id").autoincrement().primaryKey(),
+  domain: varchar("paDomain", { length: 255 }).notNull(),
+  method: varchar("paMethod", { length: 128 }).notNull(),
+  chatId: varchar("paChatId", { length: 64 }).notNull(),
+  redirectUrl: varchar("paRedirectUrl", { length: 512 }),
+  // Attack state
+  status: mysqlEnum("paStatus", ["pending", "running", "completed", "failed", "aborted"]).default("pending").notNull(),
+  // Which methods were already tried (JSON array of method IDs)
+  triedMethods: json("paTriedMethods").$type<string[]>(),
+  // Which methods succeeded (JSON array of method IDs)
+  succeededMethods: json("paSucceededMethods").$type<string[]>(),
+  // Scan data (cached from vuln scan so we don't need to re-scan)
+  cachedScanData: json("paCachedScanData"),
+  // Origin IP if discovered
+  originIp: varchar("paOriginIp", { length: 64 }),
+  // WAF info
+  wafType: varchar("paWafType", { length: 64 }),
+  cmsType: varchar("paCmsType", { length: 64 }),
+  serverType: varchar("paServerType", { length: 128 }),
+  // Abort reason
+  abortReason: varchar("paAbortReason", { length: 255 }),
+  // Progress tracking
+  totalMethods: int("paTotalMethods").default(0),
+  completedMethods: int("paCompletedMethods").default(0),
+  // Timing
+  startedAt: timestamp("paStartedAt").defaultNow().notNull(),
+  lastUpdatedAt: timestamp("paLastUpdatedAt").defaultNow().onUpdateNow().notNull(),
+  completedAt: timestamp("paCompletedAt"),
+});
+export type PendingAttackRow = typeof pendingAttacks.$inferSelect;
+export type InsertPendingAttack = typeof pendingAttacks.$inferInsert;

