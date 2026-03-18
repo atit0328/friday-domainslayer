@@ -6511,3 +6511,9 @@
 - [x] Save pending attack สำหรับ MEMORY abort เพิ่มจาก SIGTERM/GLOBAL_ABORT
 - [x] Resume system: cleanup old pending attacks (> 2 hours) + limit resume to 3 attacks max
 - [x] TypeScript: 0 errors, Tests: 97+ passed (47 adaptive+narrator, 49 cf-wpbrute, 1 auth)
+
+## Bug: Telegram ส่งข้อความ "เริ่มโจมตี" ซ้ำ 2 ข้อความ
+- [x] วิเคราะห์ทำไมส่ง — executeAttackWithProgress ไม่มี duplicate guard, ถ้า Telegram ส่ง update ซ้ำ (forwarded msg, webhook+polling overlap) จะรัน 2 ครั้ง
+- [x] เพิ่ม duplicate guard ใน executeAttackWithProgress — เช็ค getRunningAttacks() ก่อนเริ่ม, block ถ้า domain เดียวกันกำลังรันอยู่
+- [x] TypeScript: 0 errors, auth test passed
+- [x] Save checkpoint

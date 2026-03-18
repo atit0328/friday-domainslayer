@@ -5142,6 +5142,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   // If not provided, falls back to https://${domain}
   const effectiveTargetUrl = targetUrl || `https://${domain}`;
   console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}, targetUrl=${effectiveTargetUrl}`);
+  
+  // ─── Duplicate guard: prevent 2 attacks on same domain simultaneously ───
+  // This catches cases where the same message triggers multiple code paths
+  // (e.g., forwarded messages, webhook+polling overlap, or shortcut + LLM both firing)
+  const running = getRunningAttacks();
+  const existingAttack = running.find(a => a.domain === domain);
+  if (existingAttack) {
+    const elapsed = Math.round((Date.now() - existingAttack.startedAt) / 1000);
+    console.warn(`[TelegramAI] ⚠️ DUPLICATE BLOCKED: ${domain} already has running attack (${existingAttack.method}, ${elapsed}s old, id=${existingAttack.id})`);
+    // Don't send a message — the first attack is already sending progress updates
+    return;
+  }
   const eta = getMethodEta(method);
   const attackId = `${domain}:${method}:${Date.now()}`;
   const stopKeyboard = {
