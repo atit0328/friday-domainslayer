@@ -6287,3 +6287,19 @@
 - [x] Enhanced SIGTERM/SIGINT handlers to send Telegram notification before exit
 - [x] TypeScript: 0 errors, Tests: 27 passed
 - [x] Save checkpoint
+
+# Optimization: Memory usage reduction to prevent SIGTERM/OOM during attacks
+- [x] Analyze memory hotspots — identified unified-attack-pipeline (5917 lines), 164 dynamic imports, globalThis data accumulation
+- [x] Reduce parallel method execution — changed to fully sequential (1 at a time) to minimize memory peaks
+- [x] Force garbage collection between method batches — GC call after each method with freed MB logging
+- [x] Clean up globalThis data between methods (__lastPipelineLeakCreds, __lastShodanPorts, __lastVulnScanResult)
+- [x] Post-batch cleanup — trim vulnScanResult heavy arrays (writablePaths, uploadEndpoints, exposedPanels, aiAnalysis)
+- [x] Narrator memory optimization — prune steps array to max 50 entries (display only shows last 8)
+- [x] Proactive GC at 300MB RSS threshold (every 60s monitoring cycle)
+- [x] Lowered memory warning threshold from 400MB to 350MB with 2-min cooldown
+- [x] Reduced max-old-space-size from 450MB to 400MB (production + dev)
+- [x] Added --expose-gc to dev mode (NODE_OPTIONS) for consistent behavior
+- [x] Enhanced SIGTERM handler — aborts all running attacks gracefully, saves partial results to DB, includes memory stats in notification
+- [x] Added abortAllRunningAttacks() export for graceful shutdown coordination
+- [x] TypeScript: 0 errors, Tests: 48 passed (26 adaptive + 21 narrator + 1 auth)
+- [x] Save checkpoint

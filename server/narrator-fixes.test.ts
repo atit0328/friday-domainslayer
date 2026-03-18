@@ -104,8 +104,8 @@ describe("TelegramNarrator Fixes", () => {
   });
 
   describe("Fix 3: MIN_EDIT_INTERVAL", () => {
-    it("should have MIN_EDIT_INTERVAL set to 2000ms", () => {
-      expect((TelegramNarrator as any).MIN_EDIT_INTERVAL).toBe(2000);
+    it("should have MIN_EDIT_INTERVAL set to 1500ms (reduced for faster heartbeat)", () => {
+      expect((TelegramNarrator as any).MIN_EDIT_INTERVAL).toBe(1500);
     });
   });
 

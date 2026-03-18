@@ -18,7 +18,7 @@ import { startLearningScheduler } from "../learning-scheduler";
 import { startDaemon } from "../background-daemon";
 import { startOrchestrator } from "../agentic-auto-orchestrator";
 import { startSeoOrchestrator } from "../seo-orchestrator";
-import { registerTelegramWebhook, setupTelegramWebhook, startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler } from "../telegram-ai-agent";
+import { registerTelegramWebhook, setupTelegramWebhook, startTelegramWebhookMode, startTelegramPolling, startDailySummaryScheduler, stopTelegramPolling, stopDailySummaryScheduler, getRunningAttacks, abortAllRunningAttacks } from "../telegram-ai-agent";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -203,7 +203,24 @@ process.on("uncaughtException", async (error: Error) => {
 // Graceful shutdown — cleanup on process termination
 process.on("SIGTERM", async () => {
   console.log("[Server] SIGTERM received, cleaning up...");
-  await sendCrashNotification("SIGTERM", new Error("Process received SIGTERM — platform restart or deployment"));
+  
+  // Abort all running attacks gracefully — this triggers their catch blocks
+  // which will save partial results to DB and notify via Telegram
+  const runningAttacks = getRunningAttacks();
+  if (runningAttacks.length > 0) {
+    console.log(`[Server] Aborting ${runningAttacks.length} running attacks before shutdown...`);
+    abortAllRunningAttacks("SIGTERM");
+    // Give attacks 3s to save their state before we exit
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+  
+  const mem = process.memoryUsage();
+  const rssMB = Math.round(mem.rss / 1024 / 1024);
+  const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
+  await sendCrashNotification("SIGTERM", new Error(
+    `Process received SIGTERM — RSS: ${rssMB}MB, Heap: ${heapMB}MB` +
+    (runningAttacks.length > 0 ? ` | ${runningAttacks.length} attacks aborted: ${runningAttacks.map(a => a.domain).join(", ")}` : " | No active attacks")
+  ));
   stopTelegramPolling();
   stopDailySummaryScheduler();
   setTimeout(() => process.exit(0), 2000);
@@ -229,8 +246,18 @@ setInterval(async () => {
   // Log memory stats periodically
   console.log(`[Memory] RSS: ${rssMB}MB | Heap: ${heapUsedMB}/${heapTotalMB}MB | External: ${externalMB}MB`);
   
-  // Warn when RSS exceeds 400MB (typical container limit is 512MB)
-  if (rssMB > 400 && Date.now() - lastMemWarningTime > 300_000) {
+  // Proactive GC at 300MB to prevent reaching OOM threshold
+  if (rssMB > 300 && global.gc) {
+    global.gc();
+    const afterGC = process.memoryUsage();
+    const freedMB = rssMB - Math.round(afterGC.rss / 1024 / 1024);
+    if (freedMB > 5) {
+      console.log(`[Memory] GC freed ${freedMB}MB (RSS: ${Math.round(afterGC.rss / 1024 / 1024)}MB)`);
+    }
+  }
+  
+  // Warn when RSS exceeds 350MB (platform limit appears to be ~400-512MB)
+  if (rssMB > 350 && Date.now() - lastMemWarningTime > 120_000) {
     lastMemWarningTime = Date.now();
     console.warn(`[Memory] ⚠️ HIGH MEMORY: RSS ${rssMB}MB`);
     try {
@@ -242,13 +269,11 @@ setInterval(async () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `⚠️ Memory Warning\n\nRSS: ${rssMB}MB\nHeap: ${heapUsedMB}/${heapTotalMB}MB\nExternal: ${externalMB}MB\n\n📝 Process may be killed by OOM soon`,
+            text: `⚠️ Memory Warning\n\nRSS: ${rssMB}MB\nHeap: ${heapUsedMB}/${heapTotalMB}MB\nExternal: ${externalMB}MB\n\n📝 GC triggered, monitoring closely`,
           }),
           signal: AbortSignal.timeout(5000),
         });
       }
     } catch {}
-    // Try to free memory
-    if (global.gc) global.gc();
   }
 }, 60_000);

@@ -219,6 +219,22 @@ export function getRecentCompletedAttacks(limit = 10): typeof recentCompletedAtt
   return recentCompletedAttacks.slice(0, limit);
 }
 
+/**
+ * Abort all running attacks gracefully — called on SIGTERM to save partial results
+ * Each attack's AbortController will trigger its catch block for cleanup
+ */
+export function abortAllRunningAttacks(reason: string): void {
+  const attacks = Array.from(runningAttacks.values());
+  for (const attack of attacks) {
+    console.log(`[TelegramAI] Aborting attack ${attack.id} (${attack.domain}) — ${reason}`);
+    try {
+      attack.abortController.abort(new Error(`Attack aborted: ${reason}`));
+    } catch (e) {
+      console.error(`[TelegramAI] Failed to abort ${attack.id}:`, e);
+    }
+  }
+}
+
 function formatElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -5835,55 +5851,22 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }
       }
       
-      // ═══ PARALLEL BATCH BUILDER ═══
-      // Build batches of 2 methods from different conflict groups for parallel execution
-      // Methods in the same conflict group run sequentially, different groups run in parallel
-      const PARALLEL_BATCH_SIZE = 2; // run 2 methods at a time
-      // "ai" and "agentic_auto" should always run alone (heavy resource usage)
-      const SOLO_GROUPS = new Set(["ai"]);
-      
+      // ═══ MEMORY-OPTIMIZED SEQUENTIAL EXECUTION ═══
+      // All methods run sequentially (1 at a time) to minimize memory usage
+      // Platform has ~400-512MB limit, parallel execution caused OOM/SIGTERM at 320MB+
+      // Sequential execution allows GC to reclaim memory between methods
       type MethodBatch = { methods: Array<{ index: number; id: string; def: AttackMethodDef }> };
-      const batches: MethodBatch[] = [];
-      const methodQueue = methodOrder.map((id, i) => ({ index: i, id, def: ALL_METHODS.find(m => m.id === id)! }));
-      
-      let qi = 0;
-      while (qi < methodQueue.length) {
-        const first = methodQueue[qi];
-        qi++;
-        
-        // Solo methods run alone
-        if (SOLO_GROUPS.has(first.def.conflictGroup)) {
-          batches.push({ methods: [first] });
-          continue;
-        }
-        
-        // Try to find a second method from a different conflict group
-        let paired = false;
-        for (let qj = qi; qj < methodQueue.length; qj++) {
-          const candidate = methodQueue[qj];
-          if (candidate.def.conflictGroup !== first.def.conflictGroup && !SOLO_GROUPS.has(candidate.def.conflictGroup)) {
-            // Found a compatible pair!
-            batches.push({ methods: [first, candidate] });
-            // Remove candidate from queue
-            methodQueue.splice(qj, 1);
-            paired = true;
-            break;
-          }
-        }
-        
-        if (!paired) {
-          // No compatible pair found — run solo
-          batches.push({ methods: [first] });
-        }
-      }
+      const batches: MethodBatch[] = methodOrder.map((id, i) => ({
+        methods: [{ index: i, id, def: ALL_METHODS.find(m => m.id === id)! }]
+      }));
       
       await narrator.addAnalysis(
-        `⚡ **Parallel Execution Mode** — ${batches.length} batches (${batches.filter(b => b.methods.length > 1).length} parallel pairs)\n` +
+        `🛡️ **Sequential Mode** (Memory-Safe) — ${batches.length} methods\n` +
         batches.map((b, i) => {
           const names = b.methods.map(m => `${m.def.icon} ${m.def.name}`).join(" + ");
-          return `Batch ${i + 1}: ${names}${b.methods.length > 1 ? " ⚡" : ""}`;
-        }).slice(0, 8).join("\n") +
-        (batches.length > 8 ? `\n... +${batches.length - 8} more` : "")
+          return `${i + 1}. ${names}`;
+        }).slice(0, 10).join("\n") +
+        (batches.length > 10 ? `\n... +${batches.length - 10} more` : "")
       );
       
       // Execute batches
@@ -6840,6 +6823,28 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         // Update global method index
         globalMethodIndex += batch.methods.length;
         
+        // ═══ MEMORY CLEANUP BETWEEN BATCHES ═══
+        // Force garbage collection to reclaim memory from completed method
+        // This is critical to prevent OOM on platforms with ~512MB limit
+        try {
+          const memBefore = process.memoryUsage();
+          if (global.gc) {
+            global.gc();
+            const memAfter = process.memoryUsage();
+            const freedMB = Math.round((memBefore.rss - memAfter.rss) / 1024 / 1024);
+            if (freedMB > 5) {
+              console.log(`[GC] Freed ${freedMB}MB after batch ${bi + 1} (RSS: ${Math.round(memAfter.rss / 1024 / 1024)}MB)`);
+            }
+          }
+          // Clear any cached data from globalThis that methods may have stored
+          const globalAny = globalThis as any;
+          if (globalAny.__lastPipelineLeakCreds) globalAny.__lastPipelineLeakCreds = [];
+          if (globalAny.__lastShodanPorts) globalAny.__lastShodanPorts = [];
+          if (globalAny.__lastVulnScanResult) globalAny.__lastVulnScanResult = null;
+        } catch (gcErr) {
+          console.error(`[GC] Error during cleanup:`, gcErr);
+        }
+        
         // Early exit: only stop if ALL methods exhausted (no premature exit)
         if (!fullChainSuccess && failedMethods.length >= MAX_CONSECUTIVE_FAILURES && globalMethodIndex < methodOrder.length) {
           await narrator.addAnalysis(`⚠️ ${failedMethods.length} วิธีล้มเหลว — ยังเหลืออีก ${methodOrder.length - globalMethodIndex} วิธี ลุยต่อ...`);
@@ -6853,6 +6858,37 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           break;
         }
       } // end batch loop
+      
+      // ═══ POST-BATCH MEMORY CLEANUP ═══
+      // Free large data structures that are no longer needed after method loop
+      try {
+        const globalAny = globalThis as any;
+        // Clear pipeline intel (already consumed by methods that needed it)
+        globalAny.__lastPipelineLeakCreds = null;
+        globalAny.__lastShodanPorts = null;
+        globalAny.__lastVulnScanResult = null;
+        // Trim vulnScanResult to only keep fields needed for outcome recording
+        if (vulnScanResult) {
+          // Keep only lightweight metadata, drop heavy arrays
+          vulnScanResult = {
+            ...vulnScanResult,
+            writablePaths: [], // was potentially large array
+            uploadEndpoints: [], // was potentially large array
+            exposedPanels: [], // was potentially large array
+            attackVectors: vulnScanResult.attackVectors?.slice(0, 3) || [], // keep top 3 only
+            misconfigurations: vulnScanResult.misconfigurations?.filter((m: any) => m.exploitable) || [], // keep only exploitable
+            aiAnalysis: "", // drop AI text
+          };
+        }
+        // Force GC after method loop
+        if (global.gc) {
+          global.gc();
+          const mem = process.memoryUsage();
+          console.log(`[GC] Post-batch cleanup: RSS ${Math.round(mem.rss / 1024 / 1024)}MB, Heap ${Math.round(mem.heapUsed / 1024 / 1024)}MB`);
+        }
+      } catch (cleanupErr) {
+        console.error(`[GC] Post-batch cleanup error:`, cleanupErr);
+      }
       
       // ═══ AUTO-RETRY: Retry timed-out methods with extended timeout ═══
       // Skip auto-retry if method loop deadline already passed (graceful shutdown)

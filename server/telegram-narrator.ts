@@ -454,6 +454,16 @@ export class TelegramNarrator {
         break; // Only complete the most recent running step
       }
     }
+    
+    // Memory optimization: prune old completed steps to prevent unbounded growth
+    // Keep only the last MAX_STEPS_IN_MEMORY steps (display only shows last 8 anyway)
+    const MAX_STEPS_IN_MEMORY = 50;
+    if (this.steps.length > MAX_STEPS_IN_MEMORY) {
+      // Remove oldest completed steps, keeping running ones
+      const excess = this.steps.length - MAX_STEPS_IN_MEMORY;
+      this.steps.splice(0, excess);
+    }
+    
     const idx = this.steps.length;
     this.steps.push({ label, status });
     await this.updateMessage();
