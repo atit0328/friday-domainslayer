@@ -6405,3 +6405,12 @@
 - [x] วิเคราะห์ shellless attacks: mu_plugins, db_siteurl, gtm_inject ทำงานจริงแต่ต้องมี WP credentials ก่อน
 - [x] TypeScript: 0 errors, Tests: 64 passed
 - [x] Save checkpoint
+
+# Feature: cPanel Login + WP REST API Exploit
+
+- [x] เพิ่ม cPanel Login (port 2083) ด้วย breach credentials ใน Phase 2.5e2
+- [x] เพิ่ม WP REST API exploit — ค้นหา admin username ผ่าน /wp-json/wp/v2/users
+- [x] Brute force WP login ด้วย breach passwords + discovered admin username
+- [x] เพิ่มเป็น method ใหม่ใน ALL_METHODS หรือรวมใน pipeline
+- [x] Test TypeScript compilation (0 errors)
+- [x] Run tests and save checkpoint
