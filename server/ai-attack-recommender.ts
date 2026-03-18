@@ -265,6 +265,50 @@ export async function getAttackRecommendations(
 ): Promise<RecommendationResult> {
   const start = Date.now();
   
+  // ── Fetch historical success rates from adaptive-learning ──
+  let historicalRates: Array<{ method: string; attempts: number; successes: number; successRate: number }> = [];
+  let historicalSummary = "";
+  try {
+    const { calculateMethodSuccessRates, queryHistoricalPatterns } = await import("./adaptive-learning");
+    
+    // Get overall method success rates
+    const allRates = await calculateMethodSuccessRates();
+    if (allRates.length > 0) historicalRates = allRates;
+    
+    // Get CMS-specific rates if CMS is known
+    if (recon.cms !== "unknown") {
+      const cmsRates = await calculateMethodSuccessRates({ cms: recon.cms, minAttempts: 1 });
+      if (cmsRates.length > 0) {
+        historicalSummary += `\nCMS-specific (${recon.cms}) success rates:\n`;
+        for (const r of cmsRates.slice(0, 10)) {
+          historicalSummary += `  ${r.method}: ${r.successRate}% (${r.successes}/${r.attempts})\n`;
+        }
+      }
+    }
+    
+    // Get WAF-specific rates if WAF detected
+    if (recon.waf) {
+      const wafRates = await calculateMethodSuccessRates({ waf: recon.waf, minAttempts: 1 });
+      if (wafRates.length > 0) {
+        historicalSummary += `\nWAF-specific (${recon.waf}) success rates:\n`;
+        for (const r of wafRates.slice(0, 10)) {
+          historicalSummary += `  ${r.method}: ${r.successRate}% (${r.successes}/${r.attempts})\n`;
+        }
+      }
+    }
+    
+    // Get overall historical patterns (no domain-specific filter available)
+    const allPatterns = await queryHistoricalPatterns({ limit: 15 });
+    if (allPatterns.length > 0 && !historicalSummary) {
+      historicalSummary += `\nOverall method performance:\n`;
+      for (const h of allPatterns.slice(0, 8)) {
+        historicalSummary += `  ${h.method}: ${h.successRate}% success (${h.totalSuccesses}/${h.totalAttempts}, avg ${Math.round(h.avgDuration / 1000)}s)\n`;
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[AIRecommender] Historical data fetch failed: ${err.message}`);
+  }
+  
   // ── Build context for AI ──
   const reconSummary = [
     `Domain: ${domain}`,
@@ -295,12 +339,12 @@ export async function getAttackRecommendations(
     return false;
   });
   
-  // ── Adjust confidence based on recon ──
+  // ── Adjust confidence based on recon + historical data ──
   for (const m of applicableMethods) {
     // WAF penalty
     if (recon.waf) {
       if (m.id !== "hijack" && m.id !== "agentic_auto" && m.id !== "cpanel_full") {
-        m.baseConfidence -= 15; // WAF blocks most upload/inject methods
+        m.baseConfidence -= 15;
       }
     }
     // CMS match bonus
@@ -312,10 +356,21 @@ export async function getAttackRecommendations(
       if (m.id === "hijack" || m.id === "cpanel_full") m.baseConfidence += 15;
       if (m.id === "db_siteurl" && recon.exposedPanels.some(p => p.includes("phpMyAdmin"))) m.baseConfidence += 20;
     }
-    // Old PHP bonus (more likely vulnerable)
+    // Old PHP bonus
     if (recon.phpVersion && parseFloat(recon.phpVersion) < 8.0) {
       m.baseConfidence += 5;
     }
+    
+    // ── Historical success rate adjustment ──
+    const histRate = historicalRates.find(r => r.method === m.id || m.keywords.some(k => r.method.includes(k)));
+    if (histRate && histRate.attempts >= 3) {
+      // Blend historical rate with base confidence (weight: 40% history, 60% base)
+      const historicalWeight = Math.min(0.4, histRate.attempts / 50); // More data = more weight, max 40%
+      m.baseConfidence = Math.round(
+        m.baseConfidence * (1 - historicalWeight) + histRate.successRate * historicalWeight
+      );
+    }
+    
     // Clamp
     m.baseConfidence = Math.max(5, Math.min(95, m.baseConfidence));
   }
@@ -354,7 +409,7 @@ export async function getAttackRecommendations(
           },
           {
             role: "user",
-            content: `ข้อมูล Recon:\n${reconSummary}\n\nวิธีโจมตีที่ใช้ได้:\n${methodList}\n\nเลือก 3 วิธีที่ดีที่สุด:`
+            content: `ข้อมูล Recon:\n${reconSummary}\n\nวิธีโจมตีที่ใช้ได้:\n${methodList}${historicalSummary ? `\n\n=== Historical Attack Data (จากการโจมตีจริงในอดีต) ===\n${historicalSummary}\n\nให้น้ำหนักกับ historical data มาก — วิธีที่เคยสำเร็จบ่อยควรได้ confidence สูงกว่า` : ""}\n\nเลือก 3 วิธีที่ดีที่สุด:`
           }
         ],
         response_format: {
@@ -519,9 +574,15 @@ export function buildRecommendationKeyboard(
     }]);
   }
   
-  // Add "run all" and "cancel" row
+  // Add "run all 3" row
+  keyboard.push([{
+    text: "🔥 รันทั้ง 3 วิธี",
+    callback_data: `atk_confirm:${domain}:run_top3:${recommendations.map(r => r.id).join(",")}`,
+  }]);
+  
+  // Add "Quick Attack (full chain)" and "cancel" row
   keyboard.push([
-    { text: "⚡ รันทั้ง 3 วิธี", callback_data: `atk_confirm:${domain}:full_chain` },
+    { text: "⚡ Quick Attack (20 วิธี)", callback_data: `atk_confirm:${domain}:full_chain` },
     { text: "❌ ยกเลิก", callback_data: "atk_cancel" },
   ]);
   

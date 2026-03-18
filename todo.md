@@ -6458,3 +6458,25 @@
 - [x] Fallback 3 paths: recon timeout → full_chain, AI timeout → full_chain, error → full_chain
 - [x] Test TypeScript compilation (0 errors)
 - [x] Run tests and save checkpoint
+
+# Feature: Quick Attack Button + Attack History
+
+## Quick Attack Button
+- [x] เพิ่มปุ่ม "⚡ Quick Attack (20 วิธี)" ใน AI recommendation inline keyboard
+- [x] เพิ่ม "🔥 รันทั้ง 3 วิธี" button — รัน top 3 methods ตามลำดับ
+- [x] เพิ่ม run_top3 callback handler — รัน 3 methods sequentially พร้อม progress report
+- [x] เพิ่ม full_chain callback — ข้าม AI recommendation รัน full_chain ทันที
+
+## Attack History DB + Recording
+- [x] DB tables มีอยู่แล้ว: ai_attack_history, attack_logs, strategy_outcome_logs
+- [x] recordAttackOutcome() ใน adaptive-learning.ts บันทึกผลทุกครั้งอยู่แล้ว
+- [x] tRPC router + dashboard มีอยู่แล้ว
+
+## AI Learning from History
+- [x] ดึง calculateMethodSuccessRates() + queryHistoricalPatterns() เมื่อ AI วิเคราะห์ target ใหม่
+- [x] ปรับ confidence score ตาม historical success rate (blend 40% history + 60% base)
+- [x] ส่ง historical data ให้ AI ใน prompt (CMS-specific, WAF-specific, overall patterns)
+
+## Testing
+- [x] Test TypeScript compilation (0 errors)
+- [x] Run tests passed

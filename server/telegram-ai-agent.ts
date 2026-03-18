@@ -9710,6 +9710,28 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           // Retrieve targetUrl from conversation state (preserves path like /about/)
           const convState = getConversationState(chatId);
           const storedTargetUrl = (convState?.targetDomain === domain && convState?.targetUrl) ? convState.targetUrl : undefined;
+          
+          // Handle "run_top3" — run 3 AI-recommended methods sequentially
+          if (method === "run_top3" && parts[3]) {
+            const methodIds = parts[3].split(",").filter(Boolean);
+            console.log(`[TelegramAI] atk_confirm run_top3: domain=${domain}, methods=${methodIds.join(",")}, targetUrl=${storedTargetUrl || 'default'}`);
+            await sendTelegramReply(config, chatId, `\u{1F525} \u0e40\u0e23\u0e34\u0e48\u0e21\u0e23\u0e31\u0e19\u0e17\u0e31\u0e49\u0e07 ${methodIds.length} \u0e27\u0e34\u0e18\u0e35\u0e15\u0e32\u0e21\u0e25\u0e33\u0e14\u0e31\u0e1a...\n\u0e27\u0e34\u0e18\u0e35: ${methodIds.join(" → ")}`);
+            // Fire and forget — run sequentially
+            (async () => {
+              for (let i = 0; i < methodIds.length; i++) {
+                try {
+                  await sendTelegramReply(config, chatId, `\u{25B6}\u{FE0F} \u0e27\u0e34\u0e18\u0e35\u0e17\u0e35\u0e48 ${i + 1}/${methodIds.length}: ${methodIds[i]}...`);
+                  await executeAttackWithProgress(config, chatId, domain, methodIds[i], storedTargetUrl);
+                } catch (err: any) {
+                  console.error(`[TelegramAI] run_top3 method ${methodIds[i]} error: ${err.message}`);
+                  await sendTelegramReply(config, chatId, `\u274C \u0e27\u0e34\u0e18\u0e35 ${methodIds[i]} \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27: ${err.message?.substring(0, 100)}`);
+                }
+              }
+              await sendTelegramReply(config, chatId, `\u2705 \u0e23\u0e31\u0e19\u0e04\u0e23\u0e1a\u0e17\u0e31\u0e49\u0e07 ${methodIds.length} \u0e27\u0e34\u0e18\u0e35\u0e41\u0e25\u0e49\u0e27!`);
+            })();
+            return;
+          }
+          
           console.log(`[TelegramAI] atk_confirm: domain=${domain}, method=${method}, targetUrl=${storedTargetUrl || 'default'}`);
           // Run attack with real-time progress (non-blocking)
           executeAttackWithProgress(config, chatId, domain, method, storedTargetUrl).catch(err => {
