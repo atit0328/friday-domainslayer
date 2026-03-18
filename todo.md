@@ -6421,3 +6421,11 @@
 - [x] เพิ่ม Plesk Login (port 8443) ด้วย breach credentials ใน Phase 2.5e2
 - [x] Test TypeScript compilation (0 errors)
 - [x] Run tests and save checkpoint (76 passed)
+
+# Feature: WHM Reseller + Webmin + Smart Panel Detection
+
+- [x] เพิ่ม Smart Hosting Panel Detection — ใช้ Shodan port data เลือกลอง panel ที่เปิดจริงเท่านั้น (+ webminOpen ใน PortIntelligence)
+- [x] เพิ่ม WHM/cPanel Reseller Login (port 2087) ด้วย breach credentials (Phase 2.5e2f)
+- [x] เพิ่ม Webmin Login (port 10000) ด้วย breach credentials (Phase 2.5e2g)
+- [x] Test TypeScript compilation (0 errors)
+- [x] Run tests and save checkpoint (76 passed)

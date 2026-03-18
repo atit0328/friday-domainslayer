@@ -63,6 +63,8 @@ export interface PortIntelligence {
   mysqlOpen: boolean;
   /** Is phpMyAdmin common ports open? */
   phpMyAdminLikely: boolean;
+  /** Is Webmin (10000) open? */
+  webminOpen: boolean;
   /** Is SMTP (25/587) open? */
   smtpOpen: boolean;
   /** All open ports */
@@ -246,6 +248,7 @@ export async function scanDomainPorts(
     pleskOpen: ports.includes(8443) || ports.includes(8880),
     mysqlOpen: ports.includes(3306),
     phpMyAdminLikely: ports.includes(80) || ports.includes(443) || ports.includes(8080),
+    webminOpen: ports.includes(10000),
     smtpOpen: ports.includes(25) || ports.includes(587) || ports.includes(465),
     allPorts: ports,
     serverType,
@@ -266,6 +269,7 @@ export async function scanDomainPorts(
   if (intelligence.directAdminOpen) openServices.push("DirectAdmin:2222");
   if (intelligence.pleskOpen) openServices.push("Plesk:8443");
   if (intelligence.mysqlOpen) openServices.push("MySQL:3306");
+  if (intelligence.webminOpen) openServices.push("Webmin:10000");
   if (intelligence.smtpOpen) openServices.push("SMTP");
 
   onProgress?.(`✅ Shodan scan: ${ports.length} ports open — ${openServices.join(", ") || "none relevant"}`);
@@ -310,6 +314,7 @@ export function formatShodanForTelegram(intel: PortIntelligence): string {
     [intel.directAdminOpen, "✅ DirectAdmin (2222)"],
     [intel.pleskOpen, "✅ Plesk (8443)"],
     [intel.mysqlOpen, "✅ MySQL (3306)"],
+    [intel.webminOpen, "✅ Webmin (10000)"],
     [intel.smtpOpen, "✅ SMTP"],
   ];
 

