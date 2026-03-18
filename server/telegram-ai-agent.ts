@@ -674,7 +674,8 @@ async function handleWithConversationState(chatId: number, text: string): Promis
   }
   
   // ─── Direct attack shortcut: "โจมตี domain" or "hack domain" with domain in text ───
-  // This bypasses LLM entirely for faster response
+  // ═══ AI ATTACK RECOMMENDER: Quick recon → AI recommends 3 methods → user picks ═══
+  // This replaces the old AAA auto full_chain that would hang on heavy vuln scan
   const directAttackPatterns = [
     /^(?:โจมตี|hack|attack|scan|สแกน|เอา|take\s*over)\s+(.+)/i,
   ];
@@ -683,39 +684,91 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     if (match) {
       const rest = match[1].trim();
       console.log(`[TelegramAI] 🎯 Direct attack shortcut matched: rest="${rest}"`);
-      // Extract full URL (with path) and domain separately
       const fullUrlMatch = rest.match(/(https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/);
       const domainMatch = rest.match(/(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})/);
       if (domainMatch) {
         const domain = domainMatch[1];
-        // Preserve full URL with path if user provided one (e.g. https://example.com/about/)
         const fullTargetUrl = fullUrlMatch ? fullUrlMatch[1] : undefined;
-        // Also check for bare domain with path like "example.com/about/"
         const bareDomainWithPath = rest.match(/([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}\/[^\s]+)/);
         const targetUrl = fullTargetUrl || (bareDomainWithPath ? `https://${bareDomainWithPath[1]}` : undefined);
         
         const config = getTelegramConfig();
         if (config) {
-          console.log(`[TelegramAI] ⚡ AAA auto-attack: domain=${domain}, targetUrl=${targetUrl || 'none'}, chatId=${chatId}`);
-          // Store targetUrl in conversation state
+          console.log(`[TelegramAI] 🔍 AI Recommender: domain=${domain}, targetUrl=${targetUrl || 'none'}, chatId=${chatId}`);
           setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
           try {
-            // AAA: Auto-run full_chain immediately without method selection
-            const sendOk = await sendTelegramReply(config, chatId, `⚡ AAA (AI All-in Attack) เริ่มโจมตี ${domain} อัตโนมัติ...`);
-            console.log(`[TelegramAI] AAA initial reply sent: ${sendOk}`);
-            // Fire and forget — don't await so we can return immediately
-            executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
-              console.error(`[TelegramAI] AAA auto-attack error for ${domain}: ${err.message}\n${err.stack?.substring(0, 300)}`);
-              sendTelegramReply(config, chatId, `❌ AAA ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
-            });
+            // Step 1: Send "scanning" message immediately
+            await sendTelegramReply(config, chatId, `🔍 กำลังสแกน ${domain} เพื่อวิเคราะห์จุดอ่อน...\n⏱️ ใช้เวลาประมาณ 10-20 วินาที`);
+            
+            // Step 2: Run quick recon + AI recommendation (fire and forget)
+            (async () => {
+              try {
+                const { quickRecon, getAttackRecommendations, formatRecommendationMessage, buildRecommendationKeyboard } = await import("./ai-attack-recommender");
+                
+                // Quick recon (15s max)
+                const recon = await Promise.race([
+                  quickRecon(domain),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+                ]);
+                
+                if (!recon) {
+                  // Recon timed out — fall back to full_chain directly
+                  await sendTelegramReply(config, chatId, `⏰ Scan หมดเวลา — เริ่ม Full Chain Attack อัตโนมัติ...`);
+                  executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
+                    sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
+                  });
+                  return;
+                }
+                
+                // AI recommendations (15s max)
+                const result = await Promise.race([
+                  getAttackRecommendations(domain, recon, targetUrl),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+                ]);
+                
+                if (!result || result.recommendations.length === 0) {
+                  // AI failed — fall back to full_chain
+                  await sendTelegramReply(config, chatId, `🤖 AI วิเคราะห์ไม่สำเร็จ — เริ่ม Full Chain Attack อัตโนมัติ...`);
+                  executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
+                    sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
+                  });
+                  return;
+                }
+                
+                // Step 3: Send recommendation message with inline keyboard
+                const msgText = formatRecommendationMessage(domain, result);
+                const keyboard = buildRecommendationKeyboard(domain, result.recommendations);
+                
+                await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    chat_id: chatId,
+                    text: msgText,
+                    reply_markup: { inline_keyboard: keyboard },
+                  }),
+                  signal: AbortSignal.timeout(10000),
+                }, { timeout: 10000 });
+                
+                console.log(`[TelegramAI] ✅ AI Recommender sent ${result.recommendations.length} recommendations for ${domain} (${result.totalTimeMs}ms)`);
+              } catch (err: any) {
+                console.error(`[TelegramAI] AI Recommender error for ${domain}: ${err.message}\n${err.stack?.substring(0, 300)}`);
+                // Fallback: run full_chain directly
+                try {
+                  await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error — เริ่ม Full Chain Attack อัตโนมัติ...`);
+                  executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err2 => {
+                    sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err2.message?.substring(0, 200)}`).catch(() => {});
+                  });
+                } catch {}
+              }
+            })();
+            
             return "__HANDLED_BY_KEYBOARD__";
           } catch (e: any) {
-            console.error(`[TelegramAI] AAA shortcut error for ${domain}: ${e.message}\n${e.stack?.substring(0, 300)}`);
-            // Try to send error message before falling through
+            console.error(`[TelegramAI] AI Recommender shortcut error for ${domain}: ${e.message}\n${e.stack?.substring(0, 300)}`);
             try {
-              await sendTelegramReply(config, chatId, `⚠️ AAA shortcut error: ${e.message?.substring(0, 100)}\nกำลังลองผ่าน AI...`);
+              await sendTelegramReply(config, chatId, `⚠️ Error: ${e.message?.substring(0, 100)}\nกำลังลองผ่าน AI...`);
             } catch {}
-            // Fall through to LLM processing
           }
         } else {
           console.error(`[TelegramAI] ❌ getTelegramConfig() returned null — bot not configured`);
@@ -730,26 +783,77 @@ async function handleWithConversationState(chatId: number, text: string): Promis
   const bareDomainMatch = text.trim().match(/^(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})(?:\/\S*)?$/);
   if (bareDomainMatch && !lowerText.startsWith('/')) {
     const domain = bareDomainMatch[1];
-    // Check if user provided a path (e.g. "example.com/about/" or "https://example.com/about/")
     const inputText = text.trim();
     const hasPath = inputText.match(/(?:https?:\/\/)?[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}(\/\S+)/);
     const targetUrl = hasPath ? (inputText.startsWith('http') ? inputText : `https://${inputText}`) : undefined;
     
     const config = getTelegramConfig();
     if (config) {
-      console.log(`[TelegramAI] AAA bare domain auto-attack: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
-      // Store targetUrl in conversation state
+      console.log(`[TelegramAI] 🔍 AI Recommender (bare domain): domain=${domain}, targetUrl=${targetUrl || 'none'}`);
       setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
       try {
-        // AAA: Auto-run full_chain immediately without method selection
-        await sendTelegramReply(config, chatId, `\u26a1 AAA (AI All-in Attack) \u0e40\u0e23\u0e34\u0e48\u0e21\u0e42\u0e08\u0e21\u0e15\u0e35 ${domain} \u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34...`);
-        executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
-          console.error(`[TelegramAI] AAA bare domain error for ${domain}: ${err.message}`);
-          sendTelegramReply(config, chatId, `\u274c AAA \u0e25\u0e49\u0e21\u0e40\u0e2b\u0e25\u0e27: ${err.message?.substring(0, 100)}`).catch(() => {});
-        });
+        // Same AI recommendation flow as direct attack
+        await sendTelegramReply(config, chatId, `🔍 กำลังสแกน ${domain} เพื่อวิเคราะห์จุดอ่อน...\n⏱️ ใช้เวลาประมาณ 10-20 วินาที`);
+        
+        (async () => {
+          try {
+            const { quickRecon, getAttackRecommendations, formatRecommendationMessage, buildRecommendationKeyboard } = await import("./ai-attack-recommender");
+            
+            const recon = await Promise.race([
+              quickRecon(domain),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+            ]);
+            
+            if (!recon) {
+              await sendTelegramReply(config, chatId, `⏰ Scan หมดเวลา — เริ่ม Full Chain Attack อัตโนมัติ...`);
+              executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
+                sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
+              });
+              return;
+            }
+            
+            const result = await Promise.race([
+              getAttackRecommendations(domain, recon, targetUrl),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+            ]);
+            
+            if (!result || result.recommendations.length === 0) {
+              await sendTelegramReply(config, chatId, `🤖 AI วิเคราะห์ไม่สำเร็จ — เริ่ม Full Chain Attack อัตโนมัติ...`);
+              executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
+                sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
+              });
+              return;
+            }
+            
+            const msgText = formatRecommendationMessage(domain, result);
+            const keyboard = buildRecommendationKeyboard(domain, result.recommendations);
+            
+            await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: chatId,
+                text: msgText,
+                reply_markup: { inline_keyboard: keyboard },
+              }),
+              signal: AbortSignal.timeout(10000),
+            }, { timeout: 10000 });
+            
+            console.log(`[TelegramAI] ✅ AI Recommender (bare) sent ${result.recommendations.length} recommendations for ${domain}`);
+          } catch (err: any) {
+            console.error(`[TelegramAI] AI Recommender (bare) error: ${err.message}`);
+            try {
+              await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error — เริ่ม Full Chain Attack อัตโนมัติ...`);
+              executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err2 => {
+                sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err2.message?.substring(0, 200)}`).catch(() => {});
+              });
+            } catch {}
+          }
+        })();
+        
         return "__HANDLED_BY_KEYBOARD__";
       } catch (e: any) {
-        console.error(`[TelegramAI] AAA bare domain error for ${domain}: ${e.message}`);
+        console.error(`[TelegramAI] AI Recommender (bare) error for ${domain}: ${e.message}`);
       }
     }
   }

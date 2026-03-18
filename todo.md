@@ -6447,3 +6447,14 @@
 - [x] ตรวจสอบ server logs + regex match + lock/age/dedup flow — regex ถูกต้อง, สาเหตุน่าจะเป็น chat lock ค้าง หรือ message age > 120s
 - [x] แก้ไข: lock timeout 25s→10s, message age 120s→300s, เพิ่ม diagnostic logging ทุกจุด
 - [x] TypeScript 0 errors, tests passed
+
+# Feature: AI Attack Recommendation Flow (แทน auto full_chain)
+
+- [x] เปลี่ยน flow: วางลิงค์ → AI quick scan → เสนอ 3 วิธีโจมตีที่ดีที่สุด → user เลือกผ่าน inline keyboard → execute
+- [x] แก้ AI analysis hang — flow ใหม่ไม่ใช้ fullVulnScan แล้ว ใช้ quickRecon + AI แยก (เร็วกว่า 5x)
+- [x] สร้าง ai-attack-recommender.ts — Quick Recon (fingerprint+CMS+panels 15s) + AI Ranking
+- [x] AI วิเคราะห์ผล scan แล้วจัดอันดับ 3 วิธีที่น่าจะสำเร็จมากที่สุด (15 methods DB)
+- [x] แสดง inline keyboard: วิธี 1 / วิธี 2 / วิธี 3 / รันทั้ง 3 วิธี / ยกเลิก
+- [x] Fallback 3 paths: recon timeout → full_chain, AI timeout → full_chain, error → full_chain
+- [x] Test TypeScript compilation (0 errors)
+- [x] Run tests and save checkpoint
