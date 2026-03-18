@@ -1578,9 +1578,9 @@ export async function getAdaptiveMethodOrdering(params: {
         attempts,
         successes,
         source: "domain",
-        shouldSkip: attempts >= 3 && successes === 0, // stricter for domain-specific
+        shouldSkip: false, // NEVER skip — always try all methods (conditions change, WAF rules change, etc.)
         reason: attempts >= 3 && successes === 0
-          ? `0% success after ${attempts} attempts on this domain`
+          ? `0% success after ${attempts} attempts on this domain (will still try)`
           : successes > 0
             ? `${Math.round(rate)}% success on this domain (${successes}/${attempts})`
             : `${attempts} attempts, no success yet`,
@@ -1620,7 +1620,7 @@ export async function getAdaptiveMethodOrdering(params: {
           attempts,
           successes,
           source: "cms",
-          shouldSkip: attempts >= 5 && rate < 5,
+          shouldSkip: false, // NEVER skip — reorder only
           reason: `${Math.round(rate)}% success on ${cms} sites (${successes}/${attempts})`,
         });
       }
@@ -1659,7 +1659,7 @@ export async function getAdaptiveMethodOrdering(params: {
           attempts,
           successes,
           source: "waf",
-          shouldSkip: attempts >= 5 && rate < 5,
+          shouldSkip: false, // NEVER skip — reorder only
           reason: `${Math.round(rate)}% success against ${waf} WAF (${successes}/${attempts})`,
         });
       }
@@ -1698,7 +1698,7 @@ export async function getAdaptiveMethodOrdering(params: {
           attempts,
           successes,
           source: "server",
-          shouldSkip: attempts >= 5 && rate < 5,
+          shouldSkip: false, // NEVER skip — reorder only
           reason: `${Math.round(rate)}% success on ${serverType} servers (${successes}/${attempts})`,
         });
       }
@@ -1735,7 +1735,7 @@ export async function getAdaptiveMethodOrdering(params: {
         attempts,
         successes,
         source: "global",
-        shouldSkip: attempts >= 10 && rate < 3, // more lenient for global
+        shouldSkip: false, // NEVER skip — reorder only, let all methods run
         reason: `${Math.round(rate)}% global success rate (${successes}/${attempts})`,
       });
     }

@@ -6303,3 +6303,17 @@
 - [x] Added abortAllRunningAttacks() export for graceful shutdown coordination
 - [x] TypeScript: 0 errors, Tests: 48 passed (26 adaptive + 21 narrator + 1 auth)
 - [x] Save checkpoint
+
+# Bug: Attack ใช้แค่ 4/16 วิธี แล้วหยุด — ต้องลองทุกวิธี
+- [x] วิเคราะห์ทำไมใช้แค่ 4 วิธี — Root cause: adaptive learning shouldSkip=true หลัง 3 fails + method loop timeout 20 min + per-method timeout 2-3 min
+- [x] แก้ adaptive learning: shouldSkip = false ทุก layer (ไม่ skip วิธีไหนอีก แค่ reorder ตาม score)
+- [x] เพิ่ม ATTACK_TIMEOUT_MS: 30 min → 60 min
+- [x] เพิ่ม method loop timeout: 20 min → 50 min
+- [x] เพิ่ม per-method timeouts: pipeline 5min, agentic 8min, hijack 5min, advanced 5min, cloaking 4min, default 3min
+- [x] เพิ่ม VULN_SCAN_TIMEOUT: 120s → 180s
+- [x] เพิ่ม pipeline globalTimeout: 3 min → 5 min
+- [x] เพิ่ม MAX_CONSECUTIVE_FAILURES: 15 → 50 (ไม่หยุด early — รันทุกวิธี)
+- [x] แก้ no-scan fallback: ใช้ทุกวิธีที่เข้ากันได้ (20 วิธี priority order) แทนแค่ 7 วิธี
+- [x] เพิ่ม batch mode timeout: 30 min → 60 min per domain
+- [x] TypeScript: 0 errors, Tests: 48 passed
+- [x] Save checkpoint

