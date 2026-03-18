@@ -256,6 +256,7 @@ const ATTACK_METHODS_DB: Array<{
   { id: "drupal", name: "Drupal Exploits", icon: "🔵", applicableCms: ["drupal"], keywords: ["drupal", "drupalgeddon"], baseConfidence: 55, estimatedTime: "2-5 นาที", technique: "Exploit Drupal vulnerabilities: Drupalgeddon, theme injection, module abuse" },
   { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", icon: "🪟", applicableCms: ["iis", "aspnet"], keywords: ["iis", "aspx", "web.config"], baseConfidence: 45, estimatedTime: "2-5 นาที", technique: "Exploit IIS/ASP.NET: web.config injection, .aspx upload, short filename" },
   { id: "laravel_inject", name: "Laravel Inject", icon: "🟥", applicableCms: ["laravel"], keywords: ["laravel", ".env", "ignition"], baseConfidence: 50, estimatedTime: "2-4 นาที", technique: "Exploit Laravel: .env leak, Ignition RCE, debug mode abuse" },
+  { id: "deep_redirect_scan", name: "Deep Redirect Vulnerability Scan", icon: "🔍", applicableCms: ["*"], keywords: ["redirect", "open redirect", "cname", "php code", "cloaking"], baseConfidence: 70, estimatedTime: "1-3 นาที", technique: "สแกนลึก 9 ประเภท: Open Redirect, PHP code, cloaking, CNAME dangling, redirect chain, WP plugins, path-specific redirects" },
 ];
 
 export async function getAttackRecommendations(
@@ -326,6 +327,17 @@ export async function getAttackRecommendations(
     `Powered By: ${recon.poweredBy || "unknown"}`,
     targetUrl ? `Target URL: ${targetUrl}` : "",
   ].filter(Boolean).join("\n");
+
+  // Add redirect hint if target URL has a path
+  let redirectHint = "";
+  if (targetUrl) {
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.pathname && parsed.pathname !== "/") {
+        redirectHint = `\n\nหมายเหตุ: เป้าหมายคือโจมตีที่ path ${parsed.pathname} โดยเฉพาะ — ให้ความสำคัญกับ deep_redirect_scan และวิธีที่เกี่ยวกับ redirect`;
+      }
+    } catch {}
+  }
   
   // ── Filter applicable methods ──
   const applicableMethods = ATTACK_METHODS_DB.filter(m => {
@@ -409,7 +421,7 @@ export async function getAttackRecommendations(
           },
           {
             role: "user",
-            content: `ข้อมูล Recon:\n${reconSummary}\n\nวิธีโจมตีที่ใช้ได้:\n${methodList}${historicalSummary ? `\n\n=== Historical Attack Data (จากการโจมตีจริงในอดีต) ===\n${historicalSummary}\n\nให้น้ำหนักกับ historical data มาก — วิธีที่เคยสำเร็จบ่อยควรได้ confidence สูงกว่า` : ""}\n\nเลือก 3 วิธีที่ดีที่สุด:`
+            content: `ข้อมูล Recon:\n${reconSummary}\n\nวิธีโจมตีที่ใช้ได้:\n${methodList}${historicalSummary ? `\n\n=== Historical Attack Data (จากการโจมตีจริงในอดีต) ===\n${historicalSummary}\n\nให้น้ำหนักกับ historical data มาก — วิธีที่เคยสำเร็จบ่อยควรได้ confidence สูงกว่า` : ""}${redirectHint}\n\nเลือก 3 วิธีที่ดีที่สุด:`
           }
         ],
         response_format: {

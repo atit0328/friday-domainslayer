@@ -5513,6 +5513,136 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         },
       });
       
+    } else if (method === "deep_redirect_scan") {
+      // ═══ DEEP REDIRECT VULNERABILITY SCAN (9 types) ═══
+      const narrator = new TelegramNarrator({
+        domain,
+        method: "deep_redirect_scan",
+        botToken: config.botToken,
+        chatId,
+        messageId: progressMsgId,
+      });
+      await narrator.init();
+      const scanStart = Date.now();
+
+      // Phase 1: Run deep redirect scan
+      await narrator.startPhase("recon", "🔍 Deep Redirect Vulnerability Scan");
+      const scanStep = await narrator.addStep(`สแกน 9 ประเภท: Open Redirect, PHP code, cloaking, CNAME, redirect chain, WP plugins, path-specific${effectiveTargetUrl !== `https://${domain}` ? ` (🎯 ${effectiveTargetUrl})` : ""}`);
+
+      let deepScanResult: any = null;
+      try {
+        const { runDeepRedirectScan, formatDeepRedirectScanForTelegram } = await import("./deep-redirect-scanner");
+
+        const scanOutcome = await runStepWithTimeout("vulnscan", narrator, async () => {
+          return runDeepRedirectScan(domain, (phase, msg) => {
+            narrator.addAnalysis(`🔎 ${msg.substring(0, 80)}`).catch(() => {});
+          }, effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined);
+        }, { heartbeatLabel: "Deep Redirect Scan" });
+
+        if (scanOutcome.ok) {
+          deepScanResult = scanOutcome.result;
+          const scanMs = Date.now() - scanStart;
+          const critCount = deepScanResult.vulnerabilities.filter((v: any) => v.severity === "critical").length;
+          const highCount = deepScanResult.vulnerabilities.filter((v: any) => v.severity === "high").length;
+          const exploitCount = deepScanResult.vulnerabilities.filter((v: any) => v.exploitable).length;
+
+          await narrator.updateStep(scanStep, "done",
+            `พบ ${deepScanResult.vulnerabilities.length} ช่องโหว่ (🔴${critCount} 🟠${highCount}) | Exploitable: ${exploitCount} | PHP: ${deepScanResult.phpCodeFindings?.length || 0} patterns`,
+            scanMs
+          );
+          timings.push({ step: `Deep Redirect Scan: ${deepScanResult.vulnerabilities.length} vulns`, ms: scanMs, ok: true });
+
+          // Show formatted results
+          const formattedMsg = formatDeepRedirectScanForTelegram(deepScanResult);
+          await narrator.addAnalysis(formattedMsg.substring(0, 1500));
+
+          // Phase 2: PHP Code Analysis
+          if (deepScanResult.phpCodeFindings && deepScanResult.phpCodeFindings.length > 0) {
+            await narrator.startPhase("exploit", "🐘 PHP Code Analysis");
+            const phpStep = await narrator.addStep(`พบ ${deepScanResult.phpCodeFindings.length} PHP patterns`);
+            let phpSummary = "";
+            for (const f of deepScanResult.phpCodeFindings.slice(0, 5)) {
+              phpSummary += `• [${f.severity.toUpperCase()}] ${f.pattern} at ${f.foundAt}\n  ${f.analysis}\n`;
+            }
+            await narrator.addAnalysis(phpSummary);
+            await narrator.updateStep(phpStep, "done", `${deepScanResult.phpCodeFindings.length} patterns analyzed`);
+            stepIndex++;
+          }
+
+          // Phase 3: Path-specific results
+          if (deepScanResult.pathRedirects && deepScanResult.pathRedirects.length > 0) {
+            await narrator.startPhase("inject", "📍 Path-Specific Redirect Analysis");
+            const pathStep = await narrator.addStep(`วิเคราะห์ ${deepScanResult.pathRedirects.length} paths`);
+            for (const pr of deepScanResult.pathRedirects) {
+              let pathMsg = `Path: ${pr.path}\n`;
+              pathMsg += pr.isRedirecting ? `  🔀 Redirect: ${pr.redirectType} → ${pr.destination}\n` : `  ✅ ไม่ redirect\n`;
+              if (pr.hasGamblingContent) pathMsg += `  🎰 Gambling content พบ!\n`;
+              if (pr.phpCodeFound.length > 0) pathMsg += `  🐘 PHP: ${pr.phpCodeFound.map((f: any) => f.pattern).join(", ")}\n`;
+              await narrator.addAnalysis(pathMsg);
+            }
+            await narrator.updateStep(pathStep, "done");
+            stepIndex++;
+          }
+
+          // Phase 4: Exploitation Strategies
+          if (deepScanResult.strategies && deepScanResult.strategies.length > 0) {
+            await narrator.startPhase("hijack", "🏆 Exploitation Strategies");
+            const stratStep = await narrator.addStep(`${deepScanResult.strategies.length} strategies`);
+            let stratMsg = "";
+            for (const s of deepScanResult.strategies.slice(0, 5)) {
+              const emoji = s.successProbability >= 80 ? "🟢" : s.successProbability >= 50 ? "🟡" : "🔴";
+              stratMsg += `${emoji} ${s.name} (~${s.successProbability}%)\n`;
+              stratMsg += `  ${s.description}\n`;
+              stratMsg += `  Access: ${s.requiredAccess}\n\n`;
+            }
+            await narrator.addAnalysis(stratMsg);
+            await narrator.updateStep(stratStep, "done");
+            stepIndex++;
+          }
+
+        } else {
+          const errMsg = scanOutcome.timedOut ? "⏰ Deep Redirect Scan หมดเวลา" : `Scan error: ${scanOutcome.error?.substring(0, 60)}`;
+          await narrator.updateStep(scanStep, "failed", errMsg, Date.now() - scanStart);
+          timings.push({ step: "Deep Redirect Scan failed", ms: Date.now() - scanStart, ok: false });
+        }
+      } catch (err: any) {
+        await narrator.updateStep(scanStep, "failed", `Error: ${err.message?.substring(0, 60)}`, Date.now() - scanStart);
+        timings.push({ step: "Deep Redirect Scan error", ms: Date.now() - scanStart, ok: false });
+      }
+      stepIndex++;
+
+      // Complete
+      const totalMs = Date.now() - scanStart;
+      const vulnCount = deepScanResult?.vulnerabilities?.length || 0;
+      const phpCount = deepScanResult?.phpCodeFindings?.length || 0;
+      const stratCount = deepScanResult?.strategies?.length || 0;
+
+      await narrator.complete(vulnCount > 0,
+        `Deep Redirect Scan เสร็จ (${(totalMs / 1000).toFixed(1)}s) | Vulns: ${vulnCount} | PHP: ${phpCount} | Strategies: ${stratCount}`
+      );
+
+      // Save log
+      await saveAttackLog({
+        targetDomain: domain,
+        method: "deep_redirect_scan",
+        success: vulnCount > 0,
+        durationMs: totalMs,
+        aiReasoning: `Deep Redirect Scan: ${vulnCount} vulns, ${phpCount} PHP patterns, ${stratCount} strategies` +
+          (deepScanResult?.topStrategy ? ` | Top: ${deepScanResult.topStrategy.name} (~${deepScanResult.topStrategy.successProbability}%)` : ""),
+        preAnalysisData: deepScanResult ? {
+          vulnerabilities: deepScanResult.vulnerabilities.slice(0, 10).map((v: any) => ({ type: v.type, severity: v.severity, location: v.location })),
+          phpCodeFindings: deepScanResult.phpCodeFindings?.slice(0, 5).map((f: any) => ({ type: f.type, pattern: f.pattern })),
+          strategies: deepScanResult.strategies?.slice(0, 3).map((s: any) => ({ name: s.name, prob: s.successProbability })),
+          isRedirecting: deepScanResult.isCurrentlyRedirecting,
+          redirectDest: deepScanResult.currentRedirectDestination,
+        } : null,
+      });
+
+      // Complete in registry
+      clearTimeout(timeoutTimer);
+      completeRunningAttack(attackEntry.id, vulnCount > 0, totalMs);
+      return;
+
     } else if (method === "redirect_only") {
       // ═══ NARRATED REDIRECT TAKEOVER ═══
       const narrator = new TelegramNarrator({
