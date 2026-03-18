@@ -162,6 +162,7 @@ interface RunningAttack {
   progressMsgId: number;
   abortController: AbortController;
   lastUpdate: string;
+  abortReason?: "user" | "sigterm" | "timeout" | "memory";
 }
 
 const runningAttacks = new Map<string, RunningAttack>();
@@ -228,6 +229,8 @@ export function abortAllRunningAttacks(reason: string): void {
   for (const attack of attacks) {
     console.log(`[TelegramAI] Aborting attack ${attack.id} (${attack.domain}) — ${reason}`);
     try {
+      // Tag the abort reason so downstream code can distinguish SIGTERM from user stop
+      attack.abortReason = reason.includes("SIGTERM") ? "sigterm" : (reason.includes("MEMORY") || reason.includes("memory")) ? "memory" : "sigterm";
       attack.abortController.abort(new Error(`Attack aborted: ${reason}`));
     } catch (e) {
       console.error(`[TelegramAI] Failed to abort ${attack.id}:`, e);
@@ -291,10 +294,17 @@ export async function resumePendingAttacks(): Promise<void> {
     const { pendingAttacks } = await import("../drizzle/schema");
     const { eq } = await import("drizzle-orm");
     
+    // Cleanup: delete old pending attacks (> 2 hours old)
+    try {
+      const { lt } = await import("drizzle-orm");
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+      await db.delete(pendingAttacks).where(lt(pendingAttacks.startedAt, twoHoursAgo));
+    } catch { /* best effort cleanup */ }
+    
     // Find attacks that were aborted (not completed/failed)
     const abortedAttacks = await db.select().from(pendingAttacks)
       .where(eq(pendingAttacks.status, "aborted"))
-      .limit(5); // Max 5 pending attacks to resume
+      .limit(3); // Max 3 pending attacks to resume (memory constraint)
     
     if (abortedAttacks.length === 0) {
       console.log("[AttackResume] No pending attacks to resume");
@@ -5193,6 +5203,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   
   // Setup timeout protection (10 minutes)
   const timeoutTimer = setTimeout(async () => {
+    attackEntry.abortReason = "timeout";
     attackEntry.abortController.abort();
     attackEntry.lastUpdate = "TIMEOUT";
     console.log(`[TelegramAI] Attack timeout: ${domain} (${method}) after ${ATTACK_TIMEOUT_MS / 1000}s`);
@@ -6359,9 +6370,20 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       for (let bi = 0; bi < batches.length && !fullChainSuccess; bi++) {
         const batch = batches[bi];
         
-        // Check if user pressed stop button
+        // Check if attack was aborted (user stop OR SIGTERM OR memory pressure)
         if (attackEntry.abortController.signal.aborted) {
-          await narrator.addAnalysis(`⏹ ผู้ใช้กดหยุดโจมตี — หยุดที่ batch ${bi + 1}/${batches.length}`);
+          const reason = attackEntry.abortReason || "unknown";
+          if (reason === "sigterm") {
+            await narrator.addAnalysis(`🔄 Platform restart (SIGTERM) — หยุดที่ batch ${bi + 1}/${batches.length}\nจะ resume อัตโนมัติหลัง restart`);
+          } else if (reason === "memory") {
+            await narrator.addAnalysis(`⚠️ Memory สูงเกินไป — หยุดที่ batch ${bi + 1}/${batches.length}\nจะ resume อัตโนมัติหลัง restart`);
+          } else if (reason === "timeout") {
+            await narrator.addAnalysis(`⏰ Attack timeout — หยุดที่ batch ${bi + 1}/${batches.length}`);
+          } else if (reason === "user") {
+            await narrator.addAnalysis(`⏹ ผู้ใช้กดหยุดโจมตี — หยุดที่ batch ${bi + 1}/${batches.length}`);
+          } else {
+            await narrator.addAnalysis(`⏹ โจมตีถูกหยุด (${reason}) — หยุดที่ batch ${bi + 1}/${batches.length}`);
+          }
           break;
         }
         
@@ -7895,8 +7917,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           });
         } catch { /* DB might be down too */ }
         
-        // Save pending attack for resume if it was a SIGTERM/GLOBAL_ABORT
-        const isAbort = fullChainError.message?.includes("GLOBAL_ABORT") || fullChainError.message?.includes("SIGTERM") || fullChainError.message?.includes("aborted");
+        // Save pending attack for resume if it was a SIGTERM/GLOBAL_ABORT/MEMORY
+        const isAbort = fullChainError.message?.includes("GLOBAL_ABORT") || fullChainError.message?.includes("SIGTERM") || fullChainError.message?.includes("MEMORY") || fullChainError.message?.includes("aborted");
         if (isAbort) {
           try {
             // Variables from inside try block are not in scope here,
@@ -9103,18 +9125,32 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     // Even if signal is aborted, still log and notify (previously returned silently)
     if (attackEntry.abortController.signal.aborted) {
       clearTimeout(timeoutTimer);
-      console.log(`[TelegramAI] Signal was aborted, but still logging the error`);
+      const abortReason = attackEntry.abortReason || "unknown";
+      console.log(`[TelegramAI] Signal was aborted (reason: ${abortReason}), logging the error`);
       // Save log even for aborted attacks
       try {
         await saveAttackLog({
           targetDomain: domain,
           method,
           success: false,
-          errorMessage: `ABORTED+ERROR: ${error.message}`,
+          errorMessage: `ABORTED(${abortReason})+ERROR: ${error.message}`,
           durationMs: totalMs,
-          aiReasoning: `Attack aborted and errored: ${error.message}`,
+          aiReasoning: `Attack aborted (${abortReason}) and errored: ${error.message}`,
         });
       } catch { /* DB might be down */ }
+      
+      // Send appropriate message based on abort reason
+      if (abortReason === "sigterm" || abortReason === "memory") {
+        try {
+          const reasonText = abortReason === "sigterm" ? "Platform restart (SIGTERM)" : "Memory limit reached";
+          await sendTelegramReply(config, chatId,
+            `🔄 ${reasonText}\n\n` +
+            `🎯 ${domain} (ลองแล้ว ${timings.length} ขั้นตอน)\n` +
+            `⏱ ใช้เวลา: ${formatDuration(totalMs)}\n\n` +
+            `♻️ จะ resume อัตโนมัติหลัง server restart ภายใน 15 วินาที`
+          );
+        } catch { /* Telegram might be down during SIGTERM */ }
+      }
       return;
     }
     
@@ -9430,6 +9466,7 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           
           if (matchingAttacks.length > 0) {
             for (const atk of matchingAttacks) {
+              atk.abortReason = "user";
               atk.abortController.abort();
               atk.lastUpdate = "STOPPED BY USER";
             }

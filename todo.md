@@ -6491,3 +6491,23 @@
 - [x] inline keyboard: โจมตีอีกครั้ง / Full Chain / ยกเลิก
 - [x] Test TypeScript compilation (0 errors)
 - [x] Run tests passed
+
+# Bug: "ผู้ใช้กดหยุดโจมตี" triggered automatically (false abort)
+
+- [ ] หาสาเหตุ GLOBAL_ABORT + "ผู้ใช้กดหยุดโจมตี" ที่ trigger เอง
+- [ ] แก้ไข false abort mechanism
+- [ ] Test TypeScript compilation
+- [ ] Run tests and save checkpoint
+
+# Fix: SIGTERM abort messaging + Memory optimization + Resume improvement
+
+- [x] แยก abort messages — แยก SIGTERM vs Memory vs User Stop vs Timeout ด้วย abortReason field ใน RunningAttack interface
+- [x] abortAllRunningAttacks() ตั้ง abortReason ตาม reason string (SIGTERM → "sigterm", MEMORY → "memory")
+- [x] stop_attack callback ตั้ง abortReason = "user" ก่อน abort
+- [x] timeout handler ตั้ง abortReason = "timeout" ก่อน abort
+- [x] Batch loop abort message แสดงข้อความที่ถูกต้องตาม reason (🔄 Platform restart / ⚠️ Memory สูงเกินไป / ⏰ Timeout / ⏹ ผู้ใช้กดหยุด)
+- [x] Error catch block แสดง abort reason ใน log และส่ง Telegram message ที่ถูกต้อง (ไม่ใช่ "ผู้ใช้กดหยุด" ทุกกรณี)
+- [x] Proactive memory abort ที่ 300MB RSS — abort attacks ก่อน platform SIGTERM ที่ ~350MB
+- [x] Save pending attack สำหรับ MEMORY abort เพิ่มจาก SIGTERM/GLOBAL_ABORT
+- [x] Resume system: cleanup old pending attacks (> 2 hours) + limit resume to 3 attacks max
+- [x] TypeScript: 0 errors, Tests: 97+ passed (47 adaptive+narrator, 49 cf-wpbrute, 1 auth)

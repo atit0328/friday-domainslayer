@@ -287,6 +287,19 @@ setInterval(async () => {
     }
   }
   
+  // ═══ PROACTIVE ABORT AT 300MB RSS ═══
+  // If RSS > 300MB and attacks are running, abort them gracefully BEFORE platform SIGTERM
+  // This gives us time to save state and send proper messages instead of being killed
+  if (rssMB > 300) {
+    const running = getRunningAttacks();
+    if (running.length > 0) {
+      console.warn(`[Memory] 🚨 RSS ${rssMB}MB > 300MB with ${running.length} active attacks — proactive abort to prevent SIGTERM`);
+      abortAllRunningAttacks("MEMORY_PRESSURE");
+      // Give attacks 2s to save state
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+  
   // Warn when RSS exceeds 280MB (lower threshold for earlier warning)
   if (rssMB > 280 && Date.now() - lastMemWarningTime > 120_000) {
     lastMemWarningTime = Date.now();
