@@ -4550,23 +4550,43 @@ async function editTelegramMessage(config: TelegramConfig, chatId: number, messa
 }
 
 async function sendAndGetMessageId(config: TelegramConfig, chatId: number, text: string, replyMarkup?: any): Promise<number | null> {
+  const startMs = Date.now();
   try {
     const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-    const payload: any = { chat_id: chatId, text };
+    const payload: any = { chat_id: chatId, text: text.substring(0, 4000) }; // Ensure under Telegram limit
     if (replyMarkup) payload.reply_markup = replyMarkup;
+    console.log(`[TelegramAI] sendAndGetMessageId: chatId=${chatId}, textLen=${text.length}, hasKeyboard=${!!replyMarkup}`);
     const { response } = await telegramFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(15000),
-    }, { timeout: 15000 });
+      signal: AbortSignal.timeout(20000),
+    }, { timeout: 20000 });
     const result = await response.json() as any;
+    const elapsed = Date.now() - startMs;
     if (!result.ok) {
-      console.error(`[TelegramAI] sendAndGetMessageId FAILED: status=${response.status}, error_code=${result.error_code}, description=${result.description}, chatId=${chatId}`);
+      console.error(`[TelegramAI] sendAndGetMessageId FAILED (${elapsed}ms): status=${response.status}, error_code=${result.error_code}, description=${result.description}, chatId=${chatId}`);
+      // If rate limited, wait and retry once
+      if (result.description?.includes('Too Many Requests')) {
+        const retryAfter = Math.min(result.parameters?.retry_after || 3, 10);
+        console.warn(`[TelegramAI] Rate limited, waiting ${retryAfter}s before retry`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        try {
+          const { response: r2 } = await telegramFetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(20000),
+          }, { timeout: 20000 });
+          const res2 = await r2.json() as any;
+          if (res2.ok) return res2.result.message_id;
+        } catch { /* retry failed */ }
+      }
     }
     return result.ok ? result.result.message_id : null;
   } catch (err: any) {
-    console.error(`[TelegramAI] sendAndGetMessageId EXCEPTION: ${err.name}: ${err.message}, chatId=${chatId}`);
+    const elapsed = Date.now() - startMs;
+    console.error(`[TelegramAI] sendAndGetMessageId EXCEPTION (${elapsed}ms): ${err.name}: ${err.message}, chatId=${chatId}`);
     return null;
   }
 }
@@ -4788,9 +4808,34 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   }
   
   if (!progressMsgId) {
-    console.error(`[TelegramAI] Progress message failed after 3 attempts for ${domain}`);
-    await sendTelegramReply(config, chatId, "\u274C ส่งข้อความ progress ไม่ได้ (3 attempts failed) — ลอง /reset แล้วสั่งใหม่");
-    return;
+    console.warn(`[TelegramAI] Progress message failed after 3 attempts for ${domain} — will try plain message and continue attack`);
+    // Don't abort! Try sending a plain text message as fallback
+    try {
+      const fallbackText = `⚔️ โจมตี ${domain} (${method})\n⏳ กำลังเริ่ม... (progress display unavailable)`;
+      const { response: fbResp } = await telegramFetch(
+        `https://api.telegram.org/bot${config.botToken}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, text: fallbackText }),
+          signal: AbortSignal.timeout(10000),
+        },
+        { timeout: 10000 }
+      );
+      const fbResult = await fbResp.json() as any;
+      if (fbResult.ok) {
+        progressMsgId = fbResult.result.message_id;
+        console.log(`[TelegramAI] Fallback message sent OK, msgId=${progressMsgId}`);
+      }
+    } catch (fbErr: any) {
+      console.error(`[TelegramAI] Fallback message also failed: ${fbErr.message}`);
+    }
+    
+    // If still no message ID, use a dummy ID and continue without progress display
+    if (!progressMsgId) {
+      console.error(`[TelegramAI] All message attempts failed for ${domain} — running attack WITHOUT progress display`);
+      progressMsgId = -1; // Dummy ID — narrator will fail silently on edits
+    }
   }
   
   // Register in running attacks registry
@@ -7217,13 +7262,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         } catch { /* narrator might be broken too */ }
         
         try {
-          await sendTelegramReply(config, chatId,
-            `🚨 Full Chain CRASH\n\n` +
+          // Keep crash notification SHORT to avoid Telegram 4096 char limit
+          const crashMsg = `🚨 Full Chain CRASH\n\n` +
             `❌ ${domain}\n` +
-            `⚠️ ${fullChainError.message?.substring(0, 200)}\n\n` +
-            `📝 Stack: ${fullChainError.stack?.substring(0, 300)}\n\n` +
-            `💡 ลองส่งโดเมนใหม่อีกครั้ง`
-          );
+            `⚠️ ${fullChainError.message?.substring(0, 150)}\n\n` +
+            `💡 ลองส่งโดเมนใหม่อีกครั้ง`;
+          await sendTelegramReply(config, chatId, crashMsg.substring(0, 3900));
         } catch { /* Telegram might be down too */ }
         
         // Save crash log to DB
@@ -7232,14 +7276,22 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             targetDomain: domain,
             method: "full_chain",
             success: false,
-            errorMessage: `CRASH: ${fullChainError.message}`,
+            errorMessage: `CRASH: ${fullChainError.message?.substring(0, 200)}`,
             durationMs: Date.now() - attackStartTime,
-            aiReasoning: `Full chain crashed with unhandled error: ${fullChainError.stack?.substring(0, 500)}`,
+            aiReasoning: `Full chain crashed: ${fullChainError.stack?.substring(0, 500)}`,
           });
         } catch { /* DB might be down too */ }
         
-        // Re-throw so the outer catch can also handle it
-        throw fullChainError;
+        // Complete the attack in registry
+        try {
+          completeRunningAttack(attackEntry.id, false, Date.now() - attackStartTime);
+        } catch { /* registry might be broken */ }
+        
+        // Clear timeout timer
+        clearTimeout(timeoutTimer);
+        
+        // DON'T re-throw — we've handled it completely here
+        return;
       }
       
     } else if (method === "agentic_auto") {

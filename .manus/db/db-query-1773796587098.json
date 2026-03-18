@@ -1,0 +1,34 @@
+{
+  "query": "SELECT id, targetDomain, method, success, errorMessage, durationMs FROM ai_attack_history ORDER BY id DESC LIMIT 3",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT id, targetDomain, method, success, errorMessage, durationMs FROM ai_attack_history ORDER BY id DESC LIMIT 3",
+  "rows": [
+    {
+      "id": "150001",
+      "targetDomain": "www.hiawathaschools.org",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "All methods failed: Unified Attack Pipeline (⏰ Timeout (496s))",
+      "durationMs": "1067403"
+    },
+    {
+      "id": "120606",
+      "targetDomain": "governance.nsru.ac.th",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "Timeout after 1200s",
+      "durationMs": "1200000"
+    },
+    {
+      "id": "120605",
+      "targetDomain": "governance.nsru.ac.th",
+      "method": "full_chain",
+      "success": "0",
+      "errorMessage": "All methods failed: Pipeline (AI Target Analysis failed: AI analysis timeout (20s))",
+      "durationMs": "1269001"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\ttargetDomain\tmethod\tsuccess\terrorMessage\tdurationMs\n150001\twww.hiawathaschools.org\tfull_chain\t0\tAll methods failed: Unified Attack Pipeline (⏰ Timeout (496s))\t1067403\n120606\tgovernance.nsru.ac.th\tfull_chain\t0\tTimeout after 1200s\t1200000\n120605\tgovernance.nsru.ac.th\tfull_chain\t0\tAll methods failed: Pipeline (AI Target Analysis failed: AI analysis timeout (20s))\t1269001\n",
+  "stderr": "",
+  "execution_time_ms": 1520
+}

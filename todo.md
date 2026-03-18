@@ -6257,4 +6257,15 @@
 - [x] Fix 5: Added console.log at every phase transition for production debugging
 - [x] Fix 6: Wrapped all outer catch operations in try-catch to prevent cascading failures
 - [x] TypeScript: 0 errors, Tests: 26 adaptive + 1 auth passed
-- [ ] Save checkpoint and deploy
+- [x] Save checkpoint and deploy
+
+# Bug: Telegram narrator message too long — "ส่งข้อความ progress ไม่ได้ (3 attempts failed)"
+
+- [x] Analyzed: sendAndGetMessageId fails 3 times → attack aborts entirely (never starts)
+- [x] Fix 1: Don't abort attack when progress message fails — send plain fallback, use dummy ID if needed
+- [x] Fix 2: Truncate MEGA CATCH crash notification to stay under 4096 chars (was sending stack trace)
+- [x] Fix 3: MEGA CATCH now handles cleanup completely (registry, timer) and doesn't re-throw
+- [x] Fix 4: sendAndGetMessageId now handles rate limits with auto-retry + better logging
+- [x] Fix 5: sendAndGetMessageId truncates text to 4000 chars as safety net
+- [x] TypeScript: 0 errors, Tests: 27 passed
+- [x] Save checkpoint

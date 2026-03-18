@@ -1,0 +1,9 @@
+{
+  "query": "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ai_attack_history' AND COLUMN_NAME LIKE '%creat%' OR (TABLE_NAME = 'ai_attack_history' AND COLUMN_NAME LIKE '%time%') OR (TABLE_NAME = 'ai_attack_history' AND COLUMN_NAME LIKE '%date%')",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ai_attack_history' AND COLUMN_NAME LIKE '%creat%' OR (TABLE_NAME = 'ai_attack_history' AND COLUMN_NAME LIKE '%time%') OR (TABLE_NAME = 'ai_attack_history' AND COLUMN_NAME LIKE '%date%')",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1692
+}
