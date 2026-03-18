@@ -6125,6 +6125,19 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ METHOD OUTCOME TRACKING: Track each method's result ═══
       const methodOutcomes: Array<{ methodId: string; methodName: string; success: boolean; durationMs: number; errorMessage?: string; attemptNumber: number }> = [];
       
+      // ═══ SAFETY NET: If methodOrder is empty, force include ALL methods ═══
+      // This prevents the "ลองแล้ว: 0 วิธี" bug where adaptive/resume filtering removes everything
+      if (methodOrder.length === 0) {
+        console.warn(`[TelegramAI] ⚠️ SAFETY NET: methodOrder is EMPTY after filtering! Forcing ALL ${ALL_METHODS.length} methods`);
+        methodOrder = ALL_METHODS.map(m => m.id);
+        try {
+          await narrator.addAnalysis(
+            `⚠️ **Safety Net Activated** — ไม่มีวิธีที่เหลือหลัง filtering\n` +
+            `🔄 Force include ทุกวิธี (${methodOrder.length} วิธี) เพื่อไม่ให้ข้ามการโจมตี`
+          );
+        } catch { /* non-critical */ }
+      }
+      
       // Set totalMethods for progress counter display
       (narrator as any).config.totalMethods = methodOrder.length;
       
