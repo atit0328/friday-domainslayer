@@ -242,8 +242,8 @@ process.on("SIGINT", async () => {
   setTimeout(() => process.exit(0), 2000);
 });
 
-// ═══ MEMORY MONITORING ═══
-// Log memory usage every 60s and warn when approaching limits
+// ═══ MEMORY MONITORING + AUTO-CLEANUP WATCHDOG ═══
+// Log memory usage every 60s, auto-destroy native resources when RSS is high
 let lastMemWarningTime = 0;
 setInterval(async () => {
   const mem = process.memoryUsage();
@@ -255,18 +255,40 @@ setInterval(async () => {
   // Log memory stats periodically
   console.log(`[Memory] RSS: ${rssMB}MB | Heap: ${heapUsedMB}/${heapTotalMB}MB | External: ${externalMB}MB`);
   
-  // Proactive GC at 300MB to prevent reaching OOM threshold
-  if (rssMB > 300 && global.gc) {
-    global.gc();
-    const afterGC = process.memoryUsage();
-    const freedMB = rssMB - Math.round(afterGC.rss / 1024 / 1024);
-    if (freedMB > 5) {
-      console.log(`[Memory] GC freed ${freedMB}MB (RSS: ${Math.round(afterGC.rss / 1024 / 1024)}MB)`);
+  // ═══ AGGRESSIVE MEMORY RELIEF AT 180MB RSS ═══
+  // Platform kills at ~350MB. The #1 memory consumer is native TLS buffers
+  // from undici ProxyAgent instances that GC cannot reclaim.
+  // We must destroy them proactively even when no attack is running.
+  // Lowered from 220 to 180 because baseline RSS is already ~200MB from 5.6MB bundle
+  if (rssMB > 180) {
+    try {
+      const { destroyAllSharedAgents, getSharedAgentStats } = await import("../proxy-pool");
+      const stats = getSharedAgentStats();
+      if (stats.poolSize > 0) {
+        const destroyed = await destroyAllSharedAgents();
+        console.log(`[Memory] 🧹 Auto-destroyed ${destroyed} shared agents (RSS: ${rssMB}MB)`);
+      }
+    } catch (e) {
+      // proxy-pool may not be loaded yet
+    }
+    
+    // Force GC after destroying agents
+    if (global.gc) {
+      global.gc();
+      await new Promise(r => setTimeout(r, 200));
+      global.gc();
+    }
+    
+    const afterCleanup = process.memoryUsage();
+    const afterRSS = Math.round(afterCleanup.rss / 1024 / 1024);
+    const freedMB = rssMB - afterRSS;
+    if (freedMB > 2) {
+      console.log(`[Memory] Cleanup freed ${freedMB}MB (RSS: ${afterRSS}MB)`);
     }
   }
   
-  // Warn when RSS exceeds 350MB (platform limit appears to be ~400-512MB)
-  if (rssMB > 350 && Date.now() - lastMemWarningTime > 120_000) {
+  // Warn when RSS exceeds 280MB (lower threshold for earlier warning)
+  if (rssMB > 280 && Date.now() - lastMemWarningTime > 120_000) {
     lastMemWarningTime = Date.now();
     console.warn(`[Memory] ⚠️ HIGH MEMORY: RSS ${rssMB}MB`);
     try {
@@ -278,11 +300,11 @@ setInterval(async () => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: chatId,
-            text: `⚠️ Memory Warning\n\nRSS: ${rssMB}MB\nHeap: ${heapUsedMB}/${heapTotalMB}MB\nExternal: ${externalMB}MB\n\n📝 GC triggered, monitoring closely`,
+            text: `⚠️ Memory Warning\n\nRSS: ${rssMB}MB\nHeap: ${heapUsedMB}/${heapTotalMB}MB\nExternal: ${externalMB}MB\n\n🧹 Auto-cleanup triggered: destroyed shared agents + forced GC`,
           }),
           signal: AbortSignal.timeout(5000),
         });
       }
     } catch {}
   }
-}, 60_000);
+}, 30_000); // Check every 30s instead of 60s for faster memory relief

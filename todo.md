@@ -6383,3 +6383,12 @@
 - [x] ลด maxFiles per technique: 10→3 (450 HTTP requests → 45)
 - [x] เพิ่ม response body limit: 512KB max per response ป้องกัน memory bloat จากหน้าเว็บใหญ่
 - [x] TypeScript: 0 errors, Tests: 64 passed (pipeline-timeout 14, attack-progress 19, method-priority 10, narrator-fixes 21)
+
+# Critical Bug: SIGTERM ที่ 302MB RSS แม้ไม่มี active attack — baseline memory สูงเกินไป
+
+- [x] วิเคราะห์ baseline memory: Root cause = 5.6MB bundle (200K lines) loaded at startup through chain: index.ts → autonomous-sse → unified-attack-pipeline (49 imports) + oneclick-sse → stealth-browser (puppeteer)
+- [x] Lazy-load heavy modules: autonomous-sse ใช้ dynamic import() สำหรับ unified-attack-pipeline, oneclick-sse + autonomous-engine ใช้ dynamic import() สำหรับ stealth-browser
+- [x] ลด proxy pool startup: delay health check 30s, reduce sample 5→2, force GC after health check
+- [x] เพิ่ม memory watchdog: auto-destroy agents + double GC ทุก 30s เมื่อ RSS > 180MB (ลดจาก 220MB)
+- [x] ลด max-old-space-size: dev 200MB, prod 180MB
+- [x] TypeScript: 0 errors, Tests: 64 passed

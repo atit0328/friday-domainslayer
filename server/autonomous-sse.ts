@@ -16,7 +16,10 @@ import {
   type AutonomousCallback,
 } from "./autonomous-engine";
 import { AIAutonomousBrain } from "./ai-autonomous-brain";
-import { runUnifiedAttackPipeline, type PipelineConfig, type PipelineResult, type PipelineEvent } from "./unified-attack-pipeline";
+// LAZY IMPORT: unified-attack-pipeline is 5925 lines with 49 static imports
+// Loading it at startup adds ~100MB+ native memory from all attack engines
+// Instead, we import it only when actually needed (when a deploy is triggered)
+import type { PipelineConfig, PipelineResult, PipelineEvent } from "./unified-attack-pipeline";
 import { getDb } from "./db";
 import { autonomousDeploys, autonomousBatches } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -343,6 +346,8 @@ async function runSingleTarget(
 
   let pipelineResult: PipelineResult | null = null;
   try {
+    // Lazy import to avoid loading 49 attack modules at startup
+    const { runUnifiedAttackPipeline } = await import("./unified-attack-pipeline");
     pipelineResult = await Promise.race([
       runUnifiedAttackPipeline(pipelineConfig, (event: PipelineEvent) => {
         // Bridge PipelineEvent → AutonomousEvent

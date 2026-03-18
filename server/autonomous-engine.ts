@@ -30,7 +30,8 @@ import {
   generateMultiPlatformShells,
   detectServerPlatform,
 } from "./enhanced-upload-engine";
-import { stealthVerifyBatch, stealthBypassWaf, closeBrowser, isBrowserAvailable } from "./stealth-browser";
+// LAZY IMPORT: stealth-browser loads puppeteer (~50MB+ native memory)
+// import { stealthVerifyBatch, stealthBypassWaf, closeBrowser, isBrowserAvailable } from "./stealth-browser";
 import { invokeLLM } from "./_core/llm";
 import { AIAutonomousBrain, type AIStrategy, type AIDecision } from "./ai-autonomous-brain";
 
@@ -1017,6 +1018,7 @@ export class AttackLoop {
     // Stealth verification if available
     if (this.config.useStealth && verified.length === 0 && failed.length > 0) {
       try {
+        const { isBrowserAvailable, stealthVerifyBatch } = await import("./stealth-browser");
         if (await isBrowserAvailable()) {
           const stealthResults = await stealthVerifyBatch(
             this.world.state.shellUrls.concat(this.world.state.deployedFiles)

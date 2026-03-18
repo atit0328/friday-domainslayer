@@ -1043,17 +1043,21 @@ export function stopProxyHealthScheduler(): void {
 // Auto-start scheduler
 startProxyHealthScheduler();
 
-// Run startup health check immediately (sample 5 proxies)
-// This ensures we know which proxies are alive BEFORE any attack
-(async () => {
+// Delay startup health check by 30s to reduce initial memory spike
+// Each health check creates a ProxyAgent (~3-5MB native memory) that needs time to be GC'd
+setTimeout(async () => {
   try {
-    console.log("[ProxyPool] Running startup health check (5 proxy sample)...");
-    const result = await proxyPool.healthCheckAll(5);
+    console.log("[ProxyPool] Running delayed startup health check (2 proxy sample)...");
+    const result = await proxyPool.healthCheckAll(2);
     console.log(`[ProxyPool] Startup check: ${result.healthy}/${result.checked} healthy`);
     if (result.healthy === 0) {
       console.warn("[ProxyPool] WARNING: No healthy proxies detected! All requests will use direct fetch fallback.");
     }
+    // Force GC after health check to reclaim ProxyAgent memory
+    if (global.gc) {
+      global.gc();
+    }
   } catch (err) {
     console.error("[ProxyPool] Startup health check failed:", err);
   }
-})();
+}, 30_000);

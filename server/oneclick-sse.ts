@@ -19,7 +19,9 @@ import { preScreenTarget, type PreScreenResult } from "./ai-prescreening";
 import { runAiTargetAnalysis, type AiTargetAnalysis, type AnalysisStep } from "./ai-target-analysis";
 import { tryAllUploadMethods } from "./alt-upload-methods";
 import { smartRetryUpload, multiVectorParallelUpload, type ParallelUploadConfig } from "./enhanced-upload-engine";
-import { stealthVerifyBatch, stealthBypassWaf, closeBrowser, isBrowserAvailable } from "./stealth-browser";
+// LAZY IMPORT: stealth-browser loads puppeteer (~50MB+ native memory)
+// Only import when actually needed at runtime
+// import { stealthVerifyBatch, stealthBypassWaf, closeBrowser, isBrowserAvailable } from "./stealth-browser";
 import { getDb } from "./db";
 import { deployHistory } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
@@ -657,7 +659,11 @@ export function registerOneClickSSE(app: Express) {
 
       // ─── WAF Bypass via Stealth Browser ───
       let stealthCookies = "";
-      const browserAvailable = isBrowserAvailable();
+      let browserAvailable = false;
+      try {
+        const sb = await import("./stealth-browser");
+        browserAvailable = sb.isBrowserAvailable();
+      } catch {}
       if (enableStealthBrowser !== false && preScreenResult?.wafDetected && browserAvailable) {
         stealthBrowserUsed = true;
         sendEventWithLog({
@@ -667,6 +673,7 @@ export function registerOneClickSSE(app: Express) {
           detail: `🕵️ Stealth Browser bypassing ${preScreenResult.wafDetected} WAF...`,
         });
         try {
+          const { stealthBypassWaf } = await import("./stealth-browser");
           const wafResult = await stealthBypassWaf(`https://${targetDomain}`);
           stealthCookies = wafResult.cookies;
           sendEventWithLog({
@@ -1104,6 +1111,7 @@ export function registerOneClickSSE(app: Express) {
             detail: `🕵️ Stealth Browser verifying ${verifyUrls.length} deployed files...`,
           });
           try {
+            const { stealthVerifyBatch } = await import("./stealth-browser");
             const verifyResults = await stealthVerifyBatch(verifyUrls, (url, vResult) => {
               sendEventWithLog({
                 type: "step_detail",
@@ -1136,7 +1144,7 @@ export function registerOneClickSSE(app: Express) {
             });
           }
           // Cleanup browser — safe
-          try { await closeBrowser(); } catch { /* ignore */ }
+          try { const { closeBrowser } = await import("./stealth-browser"); await closeBrowser(); } catch { /* ignore */ }
         }
       }
 
