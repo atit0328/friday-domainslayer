@@ -6441,3 +6441,9 @@
 - [x] Redirect Hijack: attack redirect destination domain (chain attack — 5 strategies: expired domain, dangling CNAME, WP vuln, open redirect, full pipeline)
 - [x] Test TypeScript compilation (0 errors)
 - [x] Run tests and save checkpoint
+
+# Bug: Telegram bot ไม่ตอบคำสั่งโจมตี
+
+- [x] ตรวจสอบ server logs + regex match + lock/age/dedup flow — regex ถูกต้อง, สาเหตุน่าจะเป็น chat lock ค้าง หรือ message age > 120s
+- [x] แก้ไข: lock timeout 25s→10s, message age 120s→300s, เพิ่ม diagnostic logging ทุกจุด
+- [x] TypeScript 0 errors, tests passed

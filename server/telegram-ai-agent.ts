@@ -399,16 +399,20 @@ function formatElapsed(ms: number): string {
 } 
 
 function acquireLock(chatId: number): boolean {
-  if (chatLocks.get(chatId)) return false;
+  if (chatLocks.get(chatId)) {
+    console.log(`[TelegramAI] 🔒 Lock blocked for chat ${chatId} — another message is being processed`);
+    return false;
+  }
   chatLocks.set(chatId, true);
-  // Auto-release lock after 25 seconds to prevent deadlocks
-  // Reduced from 45s — most operations complete in <15s, and stale locks cause silent failures
+  // Auto-release lock after 10 seconds to prevent deadlocks
+  // Short timeout because the lock is only for the initial message handling phase
+  // The actual attack runs asynchronously (fire-and-forget) so it doesn't hold the lock
   setTimeout(() => {
     if (chatLocks.get(chatId)) {
       chatLocks.delete(chatId);
-      console.warn(`[TelegramAI] Auto-released stale lock for chat ${chatId} after 25s`);
+      console.warn(`[TelegramAI] Auto-released stale lock for chat ${chatId} after 10s`);
     }
-  }, 25_000);
+  }, 10_000);
   return true;
 }
 
@@ -678,6 +682,7 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     const match = text.match(pattern);
     if (match) {
       const rest = match[1].trim();
+      console.log(`[TelegramAI] 🎯 Direct attack shortcut matched: rest="${rest}"`);
       // Extract full URL (with path) and domain separately
       const fullUrlMatch = rest.match(/(https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/);
       const domainMatch = rest.match(/(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})/);
@@ -691,23 +696,32 @@ async function handleWithConversationState(chatId: number, text: string): Promis
         
         const config = getTelegramConfig();
         if (config) {
-          console.log(`[TelegramAI] AAA auto-attack: domain=${domain}, targetUrl=${targetUrl || 'none'}`);
+          console.log(`[TelegramAI] ⚡ AAA auto-attack: domain=${domain}, targetUrl=${targetUrl || 'none'}, chatId=${chatId}`);
           // Store targetUrl in conversation state
           setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
           try {
             // AAA: Auto-run full_chain immediately without method selection
-            await sendTelegramReply(config, chatId, `⚡ AAA (AI All-in Attack) เริ่มโจมตี ${domain} อัตโนมัติ...`);
+            const sendOk = await sendTelegramReply(config, chatId, `⚡ AAA (AI All-in Attack) เริ่มโจมตี ${domain} อัตโนมัติ...`);
+            console.log(`[TelegramAI] AAA initial reply sent: ${sendOk}`);
             // Fire and forget — don't await so we can return immediately
             executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
-              console.error(`[TelegramAI] AAA auto-attack error for ${domain}: ${err.message}`);
-              sendTelegramReply(config, chatId, `❌ AAA ล้มเหลว: ${err.message?.substring(0, 100)}`).catch(() => {});
+              console.error(`[TelegramAI] AAA auto-attack error for ${domain}: ${err.message}\n${err.stack?.substring(0, 300)}`);
+              sendTelegramReply(config, chatId, `❌ AAA ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
             });
             return "__HANDLED_BY_KEYBOARD__";
           } catch (e: any) {
-            console.error(`[TelegramAI] AAA shortcut error for ${domain}: ${e.message}`);
+            console.error(`[TelegramAI] AAA shortcut error for ${domain}: ${e.message}\n${e.stack?.substring(0, 300)}`);
+            // Try to send error message before falling through
+            try {
+              await sendTelegramReply(config, chatId, `⚠️ AAA shortcut error: ${e.message?.substring(0, 100)}\nกำลังลองผ่าน AI...`);
+            } catch {}
             // Fall through to LLM processing
           }
+        } else {
+          console.error(`[TelegramAI] ❌ getTelegramConfig() returned null — bot not configured`);
         }
+      } else {
+        console.log(`[TelegramAI] Direct attack: no domain found in rest="${rest}"`);
       }
     }
   }
@@ -3082,13 +3096,14 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     return;
   }
   
-  // Skip messages older than 120 seconds (prevents replaying old messages after server restart)
-  // Increased from 30s to 120s to avoid dropping messages during tsx watch restarts
+  // Skip messages older than 300 seconds (prevents replaying old messages after server restart)
+  // Increased to 300s to avoid dropping messages during deploy/restart cycles
   const messageAge = Date.now() / 1000 - msg.date;
-  if (messageAge > 120) {
+  if (messageAge > 300) {
     console.log(`[TelegramAI] Skipping old message (${Math.round(messageAge)}s old): ${msg.message_id}`);
     return;
   }
+  console.log(`[TelegramAI] 📨 Message accepted (age: ${Math.round(messageAge)}s, id: ${msg.message_id}, chat: ${msg.chat.id})`);
   
   // Message deduplication — prevent double replies
   const dedupeText = msg.text || msg.document?.file_name || "";
@@ -3099,7 +3114,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
   
   // Chat-level lock — prevent concurrent processing for same chat
   if (!acquireLock(msg.chat.id)) {
-    console.log(`[TelegramAI] Chat ${msg.chat.id} is busy, queuing message...`);
+    console.log(`[TelegramAI] 🔒 Chat ${msg.chat.id} is busy, queuing message: "${(msg.text || '').substring(0, 50)}"`);
     queueMessage(msg.chat.id, msg, config);
     // Send typing indicator so user knows we received their message
     try {
@@ -3112,6 +3127,7 @@ export async function handleTelegramWebhook(update: TelegramUpdate): Promise<voi
     } catch {}
     return;
   }
+  console.log(`[TelegramAI] 🔓 Lock acquired for chat ${msg.chat.id}, processing: "${(msg.text || '').substring(0, 60)}"`);
   
   try {
     // ═══ Handle document uploads (.txt files for batch attack) ═══
@@ -4151,11 +4167,12 @@ export function registerTelegramWebhook(app: any): void {
     // Telegram webhook is protected by obscure URL + allowed_updates filter
     const updateType = req.body?.callback_query ? 'callback_query' : req.body?.message ? 'message' : 'unknown';
     const updatePreview = updateType === 'message' 
-      ? req.body?.message?.text?.substring(0, 50) 
+      ? req.body?.message?.text?.substring(0, 80) 
       : updateType === 'callback_query'
         ? req.body?.callback_query?.data
         : 'N/A';
-    console.log(`[TelegramAI] Webhook: update_id=${req.body?.update_id} type=${updateType} preview="${updatePreview}"`);
+    const msgAge = req.body?.message?.date ? Math.round(Date.now() / 1000 - req.body.message.date) : -1;
+    console.log(`[TelegramAI] 📩 Webhook received: update_id=${req.body?.update_id} type=${updateType} age=${msgAge}s preview="${updatePreview}"`);
     
     try {
       // Respond immediately to Telegram (they expect fast 200)
