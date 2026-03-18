@@ -75,9 +75,11 @@ async function quickFetch(url: string, options: RequestInit = {}, timeoutMs = 60
   }
 }
 
-export async function quickRecon(domain: string): Promise<QuickReconResult> {
+export async function quickRecon(domain: string, targetUrl?: string): Promise<QuickReconResult> {
   const start = Date.now();
   const baseUrl = `https://${domain}`;
+  // If user specified a full URL with path, also scan that path
+  const hasSpecificPath = targetUrl && targetUrl !== baseUrl && targetUrl !== `${baseUrl}/`;
   
   const result: QuickReconResult = {
     server: "unknown",
@@ -222,6 +224,41 @@ export async function quickRecon(domain: string): Promise<QuickReconResult> {
       result.exposedPanels.push(panelNames[i]);
     }
   });
+  
+  // ── Path-specific redirect check (if user specified a path like /events or /menus) ──
+  if (hasSpecificPath) {
+    try {
+      const pathResp = await quickFetch(targetUrl!, { redirect: "manual" }, 5000);
+      if (pathResp) {
+        const status = pathResp.status;
+        const location = pathResp.headers.get("location") || "";
+        if (status >= 300 && status < 400 && location) {
+          result.interestingHeaders["path_redirect_status"] = String(status);
+          result.interestingHeaders["path_redirect_location"] = location;
+          result.interestingHeaders["path_redirect_target"] = targetUrl!;
+        } else if (status === 200) {
+          // Check for meta/JS redirect in body
+          try {
+            const body = await pathResp.text();
+            const metaRedirect = body.match(/meta\s+http-equiv=["']refresh["'][^>]*content=["']\d+;\s*url=([^"']+)/i);
+            const jsRedirect = body.match(/(?:window\.location|location\.href|location\.replace)\s*[=\(]\s*["']([^"']+)/i);
+            if (metaRedirect || jsRedirect) {
+              result.interestingHeaders["path_redirect_type"] = metaRedirect ? "meta_refresh" : "javascript";
+              result.interestingHeaders["path_redirect_dest"] = (metaRedirect?.[1] || jsRedirect?.[1] || "").substring(0, 200);
+              result.interestingHeaders["path_redirect_target"] = targetUrl!;
+            }
+            // Check for gambling/casino content at path
+            const gamblingKeywords = ["casino", "slot", "poker", "betting", "gambling", "หวย", "บาคาร่า", "สล็อต", "แทงหวย"];
+            const bodyLower = body.toLowerCase();
+            const foundGambling = gamblingKeywords.filter(kw => bodyLower.includes(kw));
+            if (foundGambling.length >= 2) {
+              result.interestingHeaders["path_gambling_content"] = foundGambling.join(",");
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
   
   result.scanDurationMs = Date.now() - start;
   return result;

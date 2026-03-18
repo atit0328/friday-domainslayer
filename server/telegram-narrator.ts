@@ -26,6 +26,8 @@ export interface NarratorStep {
 export interface NarratorConfig {
   /** Target domain */
   domain: string;
+  /** Full target URL with path (e.g. https://example.com/events) — shown in display when path matters */
+  targetUrl?: string;
   /** Attack method name */
   method: string;
   /** Telegram bot token */
@@ -403,6 +405,15 @@ export class TelegramNarrator {
     this.startTime = Date.now();
   }
 
+  /** Display target: shows full URL with path if available, otherwise just domain */
+  private get displayTarget(): string {
+    if (this.config.targetUrl) {
+      // Strip protocol for cleaner display: https://www.moenas.com/menus -> www.moenas.com/menus
+      return this.config.targetUrl.replace(/^https?:\/\//, "");
+    }
+    return this.config.domain;
+  }
+
   // ─── Public API ───
 
   /** Initialize narrator — sends first message and starts heartbeat */
@@ -540,7 +551,7 @@ export class TelegramNarrator {
     
     // Send separate notification (edit doesn't trigger push)
     const notifIcon = success ? "✅" : "❌";
-    const notifText = `🔔 ${success ? "สำเร็จ" : "ล้มเหลว"}!\n\n${notifIcon} ${this.config.domain}\n📋 ${summary}\n⏱ ${formatDurationThai(elapsed)}`;
+    const notifText = `🔔 ${success ? "สำเร็จ" : "ล้มเหลว"}!\n\n${notifIcon} ${this.displayTarget}\n📋 ${summary}\n⏱ ${formatDurationThai(elapsed)}`;
     await this.sendMessage(notifText);
   }
 
@@ -562,7 +573,7 @@ export class TelegramNarrator {
     await this.editMessage(finalText);
     
     await this.sendMessage(
-      `🔔 โจมตีล้มเหลว\n\n❌ ${this.config.domain}\n⚠️ ${error.substring(0, 100)}\n⏱ ${formatDurationThai(elapsed)}`
+      `🔔 โจมตีล้มเหลว\n\n❌ ${this.displayTarget}\n⚠️ ${error.substring(0, 100)}\n⏱ ${formatDurationThai(elapsed)}`
     );
   }
 
@@ -610,7 +621,7 @@ export class TelegramNarrator {
   private buildHeader(): string {
     const phaseInfo = PHASE_LABELS[this.currentPhase];
     const elapsed = Date.now() - this.startTime;
-    let header = `⚔️ โจมตี: ${this.config.domain}\n${phaseInfo.emoji} ${phaseInfo.thai} | ⏱ ${formatDurationThai(elapsed)}`;
+    let header = `⚔️ โจมตี: ${this.displayTarget}\n${phaseInfo.emoji} ${phaseInfo.thai} | ⏱ ${formatDurationThai(elapsed)}`;
     
     // Show method counter for full_chain
     if (this.config.totalMethods && this.currentMethodIndex > 0) {
@@ -756,7 +767,7 @@ export class TelegramNarrator {
     const icon = success ? "✅" : "❌";
     const statusText = success ? "สำเร็จ" : "ล้มเหลว";
     
-    let text = `${icon} โจมตี${statusText}: ${this.config.domain}\n`;
+    let text = `${icon} โจมตี${statusText}: ${this.displayTarget}\n`;
     text += `📋 Method: ${this.config.method}\n`;
     text += `⏱ รวมเวลา: ${formatDurationThai(elapsed)}\n`;
     text += `\n━━━━━━━━━━━━━━━━━━━━\n`;
