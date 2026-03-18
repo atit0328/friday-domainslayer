@@ -6414,3 +6414,10 @@
 - [x] เพิ่มเป็น method ใหม่ใน ALL_METHODS หรือรวมใน pipeline
 - [x] Test TypeScript compilation (0 errors)
 - [x] Run tests and save checkpoint
+
+# Feature: DirectAdmin Login + Plesk Login
+
+- [x] เพิ่ม DirectAdmin Login (port 2222) ด้วย breach credentials ใน Phase 2.5e2
+- [x] เพิ่ม Plesk Login (port 8443) ด้วย breach credentials ใน Phase 2.5e2
+- [x] Test TypeScript compilation (0 errors)
+- [x] Run tests and save checkpoint (76 passed)

