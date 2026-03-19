@@ -295,7 +295,8 @@ async function leakCheckSearch(
     );
     
     if (!response.ok) return [];
-    const data = await response.json() as any;
+    let data: any;
+    try { data = await response.json(); } catch { return []; }
     if (!data.success || !data.result) return [];
     
     return data.result

