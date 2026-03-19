@@ -571,12 +571,17 @@ export async function getAttackRecommendations(
 export function formatRecommendationMessage(
   domain: string,
   result: RecommendationResult,
+  targetUrl?: string,
 ): string {
   const { recon, recommendations, aiAnalysis } = result;
   
   const confidenceEmoji: Record<string, string> = { high: "🟢", medium: "🟡", low: "🔴" };
   
-  let msg = `🔍 Quick Recon: ${domain}\n`;
+  // Show full URL with path if user specified one, otherwise just domain
+  const displayTarget = targetUrl && targetUrl !== `https://${domain}` && targetUrl !== `https://${domain}/`
+    ? targetUrl.replace(/^https?:\/\//, "")
+    : domain;
+  let msg = `🔍 Quick Recon: ${displayTarget}\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `🖥️ Server: ${recon.server}\n`;
   if (recon.waf) msg += `🛡️ WAF: ${recon.waf}\n`;
@@ -584,6 +589,15 @@ export function formatRecommendationMessage(
   if (recon.phpVersion) msg += `🐘 PHP: ${recon.phpVersion}\n`;
   if (recon.ip) msg += `🌐 IP: ${recon.ip}\n`;
   if (recon.exposedPanels.length > 0) msg += `🚪 Panels: ${recon.exposedPanels.join(", ")}\n`;
+  // Show path-specific redirect findings if present
+  if (recon.interestingHeaders["path_redirect_location"]) {
+    msg += `🎯 Path Redirect: ${recon.interestingHeaders["path_redirect_status"]} → ${recon.interestingHeaders["path_redirect_location"].substring(0, 80)}\n`;
+  } else if (recon.interestingHeaders["path_redirect_dest"]) {
+    msg += `🎯 Path Redirect (${recon.interestingHeaders["path_redirect_type"]}): ${recon.interestingHeaders["path_redirect_dest"].substring(0, 80)}\n`;
+  }
+  if (recon.interestingHeaders["path_gambling_content"]) {
+    msg += `🎰 Gambling: ${recon.interestingHeaders["path_gambling_content"]}\n`;
+  }
   msg += `⏱️ Scan: ${(recon.scanDurationMs / 1000).toFixed(1)}s\n`;
   msg += `\n`;
   msg += `🤖 AI วิเคราะห์:\n${aiAnalysis}\n`;

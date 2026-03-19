@@ -836,7 +836,7 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                 }
                 
                 // Step 3: Send recommendation message with inline keyboard
-                const msgText = formatRecommendationMessage(domain, result);
+                const msgText = formatRecommendationMessage(domain, result, targetUrl);
                 const keyboard = buildRecommendationKeyboard(domain, result.recommendations);
                 
                 await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
@@ -972,7 +972,7 @@ async function handleWithConversationState(chatId: number, text: string): Promis
               return;
             }
             
-            const msgText = formatRecommendationMessage(domain, result);
+            const msgText = formatRecommendationMessage(domain, result, targetUrl);
             const keyboard = buildRecommendationKeyboard(domain, result.recommendations);
             
             await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
