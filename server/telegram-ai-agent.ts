@@ -683,6 +683,40 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     }
   }
   
+  // ─── Deep Redirect Scan shortcut: "สแกน redirect URL" or "scan redirect URL" ───
+  const deepRedirectScanPatterns = [
+    /^(?:สแกน\s*redirect|สแกน\s*รีไดเร็ก|scan\s*redirect|deep\s*redirect|redirect\s*scan|หาช่องโหว่\s*redirect)\s+(.+)/i,
+  ];
+  for (const pattern of deepRedirectScanPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const rest = match[1].trim();
+      console.log(`[TelegramAI] 🔍 Deep redirect scan shortcut matched: rest="${rest}"`);
+      const fullUrlMatch = rest.match(/(https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,}(?:\/[^\s]*)?)/);
+      const domainMatch = rest.match(/(?:https?:\/\/)?([a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)*\.[a-zA-Z]{2,})/);
+      if (domainMatch) {
+        const domain = domainMatch[1];
+        const targetUrl = fullUrlMatch ? fullUrlMatch[1] : `https://${domain}`;
+        const config = getTelegramConfig();
+        if (config) {
+          // Fire-and-forget deep redirect scan
+          (async () => {
+            try {
+              await executeAttackWithProgress(
+                config, chatId, domain,
+                "deep_redirect_scan",
+                targetUrl  // preserve full URL with path
+              );
+            } catch (err) {
+              console.error(`[TelegramAI] Deep redirect scan error:`, err);
+            }
+          })();
+          return "__HANDLED_BY_KEYBOARD__";
+        }
+      }
+    }
+  }
+
   // ─── Direct attack shortcut: "โจมตี domain" or "hack domain" with domain in text ───
   // ═══ AI ATTACK RECOMMENDER: Quick recon → AI recommends 3 methods → user picks ═══
   // This replaces the old AAA auto full_chain that would hang on heavy vuln scan
@@ -1215,8 +1249,8 @@ const AI_TOOLS: Tool[] = [
           redirectUrl: { type: "string", description: "URL ที่จะ redirect ไป (ถ้าไม่ระบุจะใช้จาก pool)" },
           method: { 
             type: "string", 
-            enum: ["full_chain", "redirect_only", "scan_only", "agentic_auto", "cloaking_inject", "hijack_redirect"],
-            description: "วิธีโจมตี: full_chain=โจมตีเต็มรูปแบบ, redirect_only=วาง redirect อย่างเดียว, scan_only=สแกนช่องโหว่อย่างเดียว, agentic_auto=AI เลือกวิธีเอง, cloaking_inject=ฝัง PHP cloaking แบบ Accept-Language, hijack_redirect=ยึด redirect ที่มีอยู่แล้ว (XMLRPC brute + PMA + MySQL + FTP + cPanel)" 
+            enum: ["full_chain", "redirect_only", "scan_only", "agentic_auto", "cloaking_inject", "hijack_redirect", "deep_redirect_scan"],
+            description: "วิธีโจมตี: full_chain=โจมตีเต็มรูปแบบ, redirect_only=วาง redirect อย่างเดียว, scan_only=สแกนช่องโหว่อย่างเดียว, agentic_auto=AI เลือกวิธีเอง, cloaking_inject=ฝัง PHP cloaking แบบ Accept-Language, hijack_redirect=ยึด redirect ที่มีอยู่แล้ว (XMLRPC brute + PMA + MySQL + FTP + cPanel), deep_redirect_scan=สแกน redirect ช่องโหว่อย่างละเอียด (Open Redirect, PHP code, cloaking, CNAME, redirect chain, WP plugins, path-specific)" 
           },
         },
         required: ["targetDomain"],
@@ -2661,6 +2695,7 @@ function buildSystemPrompt(context: SystemContext): string {
 - "สแกนพอร์ต" / "scan port" / "shodan" / "ดูพอร์ต" / "เปิดอะไรบ้าง" + domain → เรียก shodan_scan
 - "ssh" / "sftp" / "อัพผ่าน ssh" / "ssh upload" / "ssh key" + host/user/pass หรือ private key → เรียก ssh_upload (รองรับทั้ง password และ private key auth)
 - "ftp" / "อัพผ่าน ftp" / "ftp upload" + host/user/pass → เรียก ftp_upload
+- "สแกน redirect" / "scan redirect" / "deep redirect" / "หาช่องโหว่ redirect" + URL → เรียก attack_website ด้วย method: "deep_redirect_scan" (สแกน 9 ประเภท: Open Redirect, PHP code, cloaking, CNAME, redirect chain, WP plugins, path-specific)
 - "วิเคราะห์ redirect" / "หา redirect คู่แข่ง" / "competitor" / "takeover redirect" / "สแกนไฟล์" / "deep scan" + domain/user/pass → เรียก analyze_competitor_redirect
 - "cloudflare" / "cf takeover" / "ยึด cloudflare" / "cf redirect" / "page rule" / "redirect rule" / "worker redirect" + domain → เรียก cf_takeover
 - "registrar" / "whois" / "nameserver" / "godaddy" / "namecheap" / "ยึด registrar" / "dns takeover" + domain → เรียก registrar_takeover
@@ -7799,6 +7834,80 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         } catch (verifyErr: any) {
           // Can't verify — keep the success status but warn
           await narrator.addAnalysis(`⚠️ ไม่สามารถตรวจสอบ redirect ได้ (${verifyErr.message?.substring(0, 40)}) — กรุณาตรวจสอบด้วยตัวเอง`);
+        }
+      }
+      
+      // ===== PATH-SPECIFIC REDIRECT VERIFICATION =====
+      // If user targeted a specific path (e.g. /events, /menus), verify that PATH also redirects to us
+      const hasTargetPath = effectiveTargetUrl !== `https://${domain}` && effectiveTargetUrl !== `https://${domain}/`;
+      let pathRedirectVerified = false;
+      let pathVerifyDetails = "";
+      
+      if (hasTargetPath) {
+        const pathVerifyStep = await narrator.addStep(`ตรวจสอบ redirect ที่ path เป้าหมาย`);
+        try {
+          const redirectDomain = new URL(redirectUrl).hostname;
+          const userAgents = [
+            { name: "Desktop Chrome", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" },
+            { name: "Googlebot", ua: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+            { name: "Mobile", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
+          ];
+          
+          const pathResults: { ua: string; redirectWorks: boolean; finalUrl: string }[] = [];
+          
+          for (const { name: uaName, ua } of userAgents) {
+            try {
+              // Try with Google referer to trigger cloaking
+              const resp = await fetch(effectiveTargetUrl, {
+                method: "GET",
+                redirect: "follow",
+                signal: AbortSignal.timeout(12_000),
+                headers: {
+                  "User-Agent": ua,
+                  "Referer": "https://www.google.com/search?q=test",
+                  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+              });
+              const finalUrl = resp.url;
+              const body = await resp.text().catch(() => "");
+              const bodyLower = body.toLowerCase().substring(0, 10000);
+              
+              const redirectWorks = finalUrl.includes(redirectDomain) ||
+                bodyLower.includes(redirectDomain) ||
+                bodyLower.includes('window.location') ||
+                bodyLower.includes('meta http-equiv="refresh"') ||
+                bodyLower.includes('.location.href') ||
+                bodyLower.includes('location.replace');
+              
+              pathResults.push({ ua: uaName, redirectWorks, finalUrl });
+            } catch {
+              pathResults.push({ ua: uaName, redirectWorks: false, finalUrl: "error" });
+            }
+          }
+          
+          const workingUAs = pathResults.filter(r => r.redirectWorks);
+          pathRedirectVerified = workingUAs.length > 0;
+          
+          // Build details
+          const pathUrl = effectiveTargetUrl.replace(/^https?:\/\/[^/]+/, "");
+          if (pathRedirectVerified) {
+            const uaList = workingUAs.map(r => r.ua).join(", ");
+            pathVerifyDetails = `✅ Path ${pathUrl} redirect ทำงาน! (${uaList})`;
+            if (workingUAs.length < pathResults.length) {
+              const failedUAs = pathResults.filter(r => !r.redirectWorks).map(r => r.ua).join(", ");
+              pathVerifyDetails += `\n⚠️ ไม่ทำงานกับ: ${failedUAs}`;
+            }
+          } else {
+            pathVerifyDetails = `❌ Path ${pathUrl} ยังไม่ redirect ไปที่เรา — อาจต้องโจมตีที่ path นี้โดยเฉพาะ`;
+            // Provide actionable suggestion
+            pathVerifyDetails += `\n💡 แนะนำ: ลอง deep_redirect_scan หรือ redirect_only ที่ URL เต็ม`;
+          }
+          
+          await narrator.updateStep(pathVerifyStep, pathRedirectVerified ? "done" : "failed", pathVerifyDetails);
+          await narrator.addAnalysis(pathVerifyDetails);
+        } catch (pathVerifyErr: any) {
+          pathVerifyDetails = `⚠️ ไม่สามารถตรวจสอบ path ได้: ${pathVerifyErr.message?.substring(0, 50)}`;
+          await narrator.updateStep(pathVerifyStep, "failed", pathVerifyDetails);
         }
       }
       
