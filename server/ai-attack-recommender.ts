@@ -303,45 +303,38 @@ export async function getAttackRecommendations(
 ): Promise<RecommendationResult> {
   const start = Date.now();
   
-  // ── Fetch historical success rates from adaptive-learning ──
+  // ── Fetch historical success rates from adaptive-learning (5s max) ──
   let historicalRates: Array<{ method: string; attempts: number; successes: number; successRate: number }> = [];
   let historicalSummary = "";
   try {
-    const { calculateMethodSuccessRates, queryHistoricalPatterns } = await import("./adaptive-learning");
-    
-    // Get overall method success rates
-    const allRates = await calculateMethodSuccessRates();
-    if (allRates.length > 0) historicalRates = allRates;
-    
-    // Get CMS-specific rates if CMS is known
-    if (recon.cms !== "unknown") {
-      const cmsRates = await calculateMethodSuccessRates({ cms: recon.cms, minAttempts: 1 });
-      if (cmsRates.length > 0) {
-        historicalSummary += `\nCMS-specific (${recon.cms}) success rates:\n`;
-        for (const r of cmsRates.slice(0, 10)) {
-          historicalSummary += `  ${r.method}: ${r.successRate}% (${r.successes}/${r.attempts})\n`;
+    const histResult = await Promise.race([
+      (async () => {
+        const { calculateMethodSuccessRates, queryHistoricalPatterns } = await import("./adaptive-learning");
+        const rates: typeof historicalRates = [];
+        let summary = "";
+        
+        // Get overall method success rates
+        const allRates = await calculateMethodSuccessRates();
+        if (allRates.length > 0) rates.push(...allRates);
+        
+        // Get CMS-specific rates if CMS is known (single query, skip if unknown)
+        if (recon.cms !== "unknown") {
+          const cmsRates = await calculateMethodSuccessRates({ cms: recon.cms, minAttempts: 1 });
+          if (cmsRates.length > 0) {
+            summary += `CMS (${recon.cms}): ` + cmsRates.slice(0, 5).map(r => `${r.method}:${r.successRate}%`).join(", ");
+          }
         }
-      }
-    }
+        
+        return { rates, summary };
+      })(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5_000)),
+    ]);
     
-    // Get WAF-specific rates if WAF detected
-    if (recon.waf) {
-      const wafRates = await calculateMethodSuccessRates({ waf: recon.waf, minAttempts: 1 });
-      if (wafRates.length > 0) {
-        historicalSummary += `\nWAF-specific (${recon.waf}) success rates:\n`;
-        for (const r of wafRates.slice(0, 10)) {
-          historicalSummary += `  ${r.method}: ${r.successRate}% (${r.successes}/${r.attempts})\n`;
-        }
-      }
-    }
-    
-    // Get overall historical patterns (no domain-specific filter available)
-    const allPatterns = await queryHistoricalPatterns({ limit: 15 });
-    if (allPatterns.length > 0 && !historicalSummary) {
-      historicalSummary += `\nOverall method performance:\n`;
-      for (const h of allPatterns.slice(0, 8)) {
-        historicalSummary += `  ${h.method}: ${h.successRate}% success (${h.totalSuccesses}/${h.totalAttempts}, avg ${Math.round(h.avgDuration / 1000)}s)\n`;
-      }
+    if (histResult) {
+      historicalRates = histResult.rates;
+      historicalSummary = histResult.summary;
+    } else {
+      console.warn(`[AIRecommender] Historical data fetch timed out (5s) — skipping`);
     }
   } catch (err: any) {
     console.warn(`[AIRecommender] Historical data fetch failed: ${err.message}`);
@@ -424,7 +417,7 @@ export async function getAttackRecommendations(
     m.baseConfidence = Math.max(5, Math.min(95, m.baseConfidence));
   }
   
-  // ── Ask AI to rank and explain (with 15s timeout) ──
+  // ── Ask AI to rank and explain (with 10s timeout) ──
   let aiAnalysis = "";
   let aiRanking: string[] = [];
   
@@ -486,7 +479,7 @@ export async function getAttackRecommendations(
           },
         },
       }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 10_000)),
     ]);
     
     if (aiResponse && aiResponse.choices?.[0]?.message?.content) {

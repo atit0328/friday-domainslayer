@@ -785,10 +785,10 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                   return;
                 }
                 
-                // AI recommendations (30s max — includes historical data fetch + LLM 15s)
+                // AI recommendations (20s max — includes historical data 5s + LLM 10s + overhead)
                 const result = await Promise.race([
                   getAttackRecommendations(domain, recon, targetUrl),
-                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
                 ]);
                 
                 if (!result || result.recommendations.length === 0) {
@@ -896,10 +896,10 @@ async function handleWithConversationState(chatId: number, text: string): Promis
               return;
             }
             
-            // AI recommendations (30s max — includes historical data fetch + LLM 15s)
+            // AI recommendations (20s max — includes historical data 5s + LLM 10s + overhead)
             const result = await Promise.race([
               getAttackRecommendations(domain, recon, targetUrl),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
             ]);
             
             if (!result || result.recommendations.length === 0) {
