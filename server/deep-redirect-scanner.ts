@@ -3,7 +3,7 @@
  * 
  * เป้าหมายสูงสุด: ค้นหาทุกช่องโหว่ redirect บนเว็บเป้าหมาย เพื่อเปลี่ยน redirect เดิมให้ชี้มาที่เรา
  * 
- * สแกน 8 ประเภท:
+ * สแกน 10 ประเภท:
  * 1. Open Redirect Parameters — สแกน ?url=, ?redirect=, ?next= ฯลฯ บน common paths
  * 2. Redirect Chain Analysis — follow 301/302/307 chains หา weak links
  * 3. WP Redirect Plugin Detection — ตรวจหา Redirection, 301 Redirects, Safe Redirect Manager
@@ -12,11 +12,13 @@
  * 6. DNS CNAME / Subdomain Dangling — หา dangling CNAME ที่ claim ได้
  * 7. Expired Domain in Redirect Chain — หา domain ที่หมดอายุใน chain
  * 8. OAuth / Login Redirect Abuse — หา redirect_uri ที่ไม่ validate
+ * 9. Reverse Proxy / CDN Misconfiguration — หา proxy misconfig
+ * 10. Geo-Cloaking Detection — ตรวจจับ GeoIP/UA cloaking ด้วย Thai proxy pool (50 IPs)
  * 
  * ผลลัพธ์: รายงาน vulnerability ทั้งหมด + recommended exploitation strategy
  */
 
-import { fetchWithPoolProxy } from "./proxy-pool";
+import { fetchWithPoolProxy, fetchWithThaiProxy, thaiProxyPool } from "./proxy-pool";
 
 // ═══════════════════════════════════════════════════════
 //  TYPES
@@ -1625,6 +1627,76 @@ async function scanGeoCloaking(
     });
   }
 
+  // ── Step 3.5: Test with THAI residential proxies (detect GeoIP cloaking for Thai IPs) ──
+  // This is the KEY step — sites like empleos.uncp.edu.pe redirect ONLY Thai IPs to gambling
+  const thaiProxyCount = thaiProxyPool.healthyCount;
+  if (thaiProxyCount > 0) {
+    const thaiTestAgents = [
+      { name: "thai_proxy_chrome", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" },
+      { name: "thai_proxy_mobile", ua: "Mozilla/5.0 (Linux; Android 14; SM-A156B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36" },
+      { name: "thai_proxy_iphone", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1" },
+    ];
+
+    for (const ta of thaiTestAgents) {
+      const thaiResult = await fetchWithThaiProxy(scanUrl, {
+        redirect: "manual",
+        headers: {
+          "User-Agent": ta.ua,
+          "Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+        },
+      }, { timeout: 10000, maxRetries: 2 });
+
+      if (!thaiResult) {
+        cloakedResponses.push({
+          method: ta.name,
+          statusCode: 0,
+          bodyLength: 0,
+          hasGambling: false,
+          redirectTo: null,
+          bodyDiffPercent: 0,
+        });
+        continue;
+      }
+
+      const resp = thaiResult.response;
+      const redirectTo = getRedirectTarget(resp);
+      let body = "";
+      let gambling = { has: false, keywords: [] as string[] };
+
+      if (resp.status === 200) {
+        try { body = await resp.text(); } catch {}
+        gambling = checkGambling(body);
+        allGamblingKeywords.push(...gambling.keywords);
+      } else if (resp.status >= 300 && resp.status < 400 && redirectTo) {
+        // Follow redirect using Thai proxy too
+        const followResult = await fetchWithThaiProxy(redirectTo, {
+          headers: {
+            "User-Agent": ta.ua,
+            "Accept-Language": "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7",
+          },
+        }, { timeout: 10000, maxRetries: 1 });
+        if (followResult && followResult.response.status === 200) {
+          try { body = await followResult.response.text(); } catch {}
+          gambling = checkGambling(body);
+          allGamblingKeywords.push(...gambling.keywords);
+        }
+      }
+
+      const bodyDiffPercent = normalBody.length > 0 && body.length > 0
+        ? Math.abs(normalBody.length - body.length) / Math.max(normalBody.length, body.length) * 100
+        : (body.length > 0 && normalBody.length === 0 ? 100 : 0);
+
+      cloakedResponses.push({
+        method: ta.name,
+        statusCode: resp.status,
+        bodyLength: body.length,
+        hasGambling: gambling.has,
+        redirectTo,
+        bodyDiffPercent,
+      });
+    }
+  }
+
   // ── Step 4: Analyze results ──
   const uniqueGamblingKeywords = Array.from(new Set(allGamblingKeywords));
   
@@ -1637,17 +1709,22 @@ async function scanGeoCloaking(
   const detected = hasCloakedRedirect || hasCloakedGambling || (hasSignificantDiff && hasDifferentStatus);
 
   // Determine cloaking type
+  const thaiIpCloaked = cloakedResponses.filter(r =>
+    r.method.includes("thai_proxy") && (r.hasGambling || r.redirectTo)
+  ).length > 0;
+  
   let cloakingType: GeoCloakingResult["cloakingType"] = "none";
   if (detected) {
     const uaCloaked = cloakedResponses.filter(r => 
       r.method.includes("bot") && (r.hasGambling || r.redirectTo)
     ).length > 0;
     const ipCloaked = cloakedResponses.filter(r => 
-      r.method.includes("proxy") && (r.hasGambling || r.redirectTo)
+      (r.method.includes("proxy") || r.method.includes("thai_proxy")) && (r.hasGambling || r.redirectTo)
     ).length > 0;
     
     if (uaCloaked && ipCloaked) cloakingType = "combined";
     else if (uaCloaked) cloakingType = "user_agent";
+    else if (thaiIpCloaked) cloakingType = "geo_ip"; // Thai proxy confirmed GeoIP
     else if (ipCloaked) cloakingType = "geo_ip";
     else cloakingType = "combined";
   }
@@ -1677,7 +1754,7 @@ async function scanGeoCloaking(
       exploitStrategy: cloakingType === "user_agent"
         ? `เว็บใช้ User-Agent cloaking — แสดง gambling content เฉพาะ bot/crawler. เปลี่ยน cloaking code ให้ redirect ไปที่เรา`
         : cloakingType === "geo_ip"
-        ? `เว็บใช้ GeoIP cloaking — redirect เฉพาะ IP ไทย. แก้ไข PHP/JS cloaking code เปลี่ยน destination`
+        ? `เว็บใช้ GeoIP cloaking — redirect เฉพาะ IP ไทย${thaiIpCloaked ? " (ยืนยันจาก Thai proxy)" : ""}. แก้ไข PHP/JS cloaking code เปลี่ยน destination`
         : `เว็บใช้ combined cloaking (UA + GeoIP). แก้ไข cloaking logic ให้ redirect ไปที่เรา`,
       confidence: 85,
       evidence,
@@ -2094,7 +2171,11 @@ export async function runDeepRedirectScan(
     }
   }
   if (geoCloaking && geoCloaking.detected) {
+    const thaiHits = geoCloaking.cloakedResponses.filter(r => r.method.includes("thai_proxy") && (r.hasGambling || r.redirectTo));
     summary += `🌏 Geo-Cloaking: ${geoCloaking.cloakingType} detected!`;
+    if (thaiHits.length > 0) {
+      summary += ` 🇹🇭 Thai proxy ยืนยัน! (${thaiHits.length}/${geoCloaking.cloakedResponses.filter(r => r.method.includes("thai_proxy")).length})`;
+    }
     if (geoCloaking.gamblingKeywordsFound.length > 0) {
       summary += ` 🎰 Keywords: ${geoCloaking.gamblingKeywordsFound.slice(0, 3).join(", ")}`;
     }
@@ -2189,8 +2270,9 @@ export function formatDeepRedirectScanForTelegram(result: DeepRedirectScanResult
     msg += `\n`;
     for (const cr of result.geoCloaking.cloakedResponses) {
       const isDifferent = cr.bodyDiffPercent > 30 || cr.hasGambling || cr.redirectTo !== result.geoCloaking.normalResponse.redirectTo;
+      const isThaiProxy = cr.method.includes("thai_proxy");
       if (isDifferent) {
-        msg += `   🔀 ${cr.method}: status ${cr.statusCode}, ${cr.bodyLength} bytes`;
+        msg += `   ${isThaiProxy ? "🇹🇭" : "🔀"} ${cr.method}: status ${cr.statusCode}, ${cr.bodyLength} bytes`;
         if (cr.hasGambling) msg += ` 🎰`;
         if (cr.redirectTo) msg += ` → ${cr.redirectTo}`;
         msg += `\n`;
