@@ -255,12 +255,13 @@ setInterval(async () => {
   // Log memory stats periodically
   console.log(`[Memory] RSS: ${rssMB}MB | Heap: ${heapUsedMB}/${heapTotalMB}MB | External: ${externalMB}MB`);
   
-  // ═══ AGGRESSIVE MEMORY RELIEF AT 180MB RSS ═══
-  // Platform kills at ~350MB. The #1 memory consumer is native TLS buffers
-  // from undici ProxyAgent instances that GC cannot reclaim.
-  // We must destroy them proactively even when no attack is running.
-  // Lowered from 220 to 180 because baseline RSS is already ~200MB from 5.6MB bundle
-  if (rssMB > 180) {
+  // ═══ AGGRESSIVE MEMORY RELIEF AT 150MB RSS ═══
+  // Platform kills at ~350MB. Multiple memory consumers:
+  // 1. undici ProxyAgent TLS buffers (~3-5MB each, GC cannot reclaim)
+  // 2. In-memory caches (historyCache, conversationState, processedMessages)
+  // 3. Dynamic import module cache
+  // Lowered threshold from 180 to 150 for earlier intervention
+  if (rssMB > 150) {
     try {
       const { destroyAllSharedAgents, getSharedAgentStats } = await import("../proxy-pool");
       const stats = getSharedAgentStats();
@@ -270,6 +271,17 @@ setInterval(async () => {
       }
     } catch (e) {
       // proxy-pool may not be loaded yet
+    }
+    
+    // ═══ FLUSH IN-MEMORY CACHES IN TELEGRAM-AI-AGENT ═══
+    try {
+      const { flushMemoryCaches } = await import("../telegram-ai-agent");
+      const flushed = flushMemoryCaches(rssMB > 250);
+      if (flushed > 0) {
+        console.log(`[Memory] 🧹 Flushed ${flushed} in-memory cache entries (RSS: ${rssMB}MB)`);
+      }
+    } catch (e) {
+      // telegram-ai-agent may not be loaded yet
     }
     
     // Force GC after destroying agents

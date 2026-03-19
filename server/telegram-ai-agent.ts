@@ -785,17 +785,25 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                   return;
                 }
                 
-                // AI recommendations (15s max)
+                // AI recommendations (30s max — includes historical data fetch + LLM 15s)
                 const result = await Promise.race([
                   getAttackRecommendations(domain, recon, targetUrl),
-                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
                 ]);
                 
                 if (!result || result.recommendations.length === 0) {
-                  // AI failed — fall back to full_chain
-                  await sendTelegramReply(config, chatId, `🤖 AI วิเคราะห์ไม่สำเร็จ — เริ่ม Full Chain Attack อัตโนมัติ...`);
-                  executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
-                    sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
+                  // AI timed out or returned empty — smart fallback based on recon data
+                  console.warn(`[TelegramAI] AI Recommender timeout/empty for ${domain} — using recon-based fallback`);
+                  const smartMethod = recon.hasWordPress ? 'full_chain' 
+                    : recon.exposedPanels.length > 0 ? 'hijack_redirect'
+                    : targetUrl && targetUrl !== `https://${domain}` ? 'deep_redirect_scan'
+                    : 'full_chain';
+                  await sendTelegramReply(config, chatId, 
+                    `🤖 AI วิเคราะห์ไม่ทัน (timeout) — ใช้ recon data เลือกวิธีโจมตี\n` +
+                    `CMS: ${recon.cms} | WAF: ${recon.waf || 'none'} | Panels: ${recon.exposedPanels.length}\n` +
+                    `➡️ เริ่ม ${smartMethod} อัตโนมัติ...`);
+                  executeAttackWithProgress(config, chatId, domain, smartMethod, targetUrl).catch(err => {
+                    sendTelegramReply(config, chatId, `❌ ${smartMethod} ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
                   });
                   return;
                 }
@@ -820,7 +828,7 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                 console.error(`[TelegramAI] AI Recommender error for ${domain}: ${err.message}\n${err.stack?.substring(0, 300)}`);
                 // Fallback: run full_chain directly
                 try {
-                  await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error — เริ่ม Full Chain Attack อัตโนมัติ...`);
+                  await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error: ${err.message?.substring(0, 80)}\n➡️ เริ่ม Full Chain Attack อัตโนมัติ...`);
                   executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err2 => {
                     sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err2.message?.substring(0, 200)}`).catch(() => {});
                   });
@@ -888,15 +896,25 @@ async function handleWithConversationState(chatId: number, text: string): Promis
               return;
             }
             
+            // AI recommendations (30s max — includes historical data fetch + LLM 15s)
             const result = await Promise.race([
               getAttackRecommendations(domain, recon, targetUrl),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 30_000)),
             ]);
             
             if (!result || result.recommendations.length === 0) {
-              await sendTelegramReply(config, chatId, `🤖 AI วิเคราะห์ไม่สำเร็จ — เริ่ม Full Chain Attack อัตโนมัติ...`);
-              executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
-                sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
+              // Smart fallback based on recon data
+              console.warn(`[TelegramAI] AI Recommender (bare) timeout/empty for ${domain}`);
+              const smartMethod2 = recon.hasWordPress ? 'full_chain' 
+                : recon.exposedPanels.length > 0 ? 'hijack_redirect'
+                : targetUrl && targetUrl !== `https://${domain}` ? 'deep_redirect_scan'
+                : 'full_chain';
+              await sendTelegramReply(config, chatId, 
+                `🤖 AI วิเคราะห์ไม่ทัน (timeout) — ใช้ recon data เลือกวิธีโจมตี\n` +
+                `CMS: ${recon.cms} | WAF: ${recon.waf || 'none'} | Panels: ${recon.exposedPanels.length}\n` +
+                `➡️ เริ่ม ${smartMethod2} อัตโนมัติ...`);
+              executeAttackWithProgress(config, chatId, domain, smartMethod2, targetUrl).catch(err => {
+                sendTelegramReply(config, chatId, `❌ ${smartMethod2} ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
               });
               return;
             }
@@ -917,9 +935,9 @@ async function handleWithConversationState(chatId: number, text: string): Promis
             
             console.log(`[TelegramAI] ✅ AI Recommender (bare) sent ${result.recommendations.length} recommendations for ${domain}`);
           } catch (err: any) {
-            console.error(`[TelegramAI] AI Recommender (bare) error: ${err.message}`);
+            console.error(`[TelegramAI] AI Recommender (bare) error: ${err.message}\n${err.stack?.substring(0, 300)}`);
             try {
-              await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error — เริ่ม Full Chain Attack อัตโนมัติ...`);
+              await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error: ${err.message?.substring(0, 80)}\n➡️ เริ่ม Full Chain Attack อัตโนมัติ...`);
               executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err2 => {
                 sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err2.message?.substring(0, 200)}`).catch(() => {});
               });
@@ -3241,6 +3259,89 @@ export function resetDedupState(): void {
   conversationState.clear();
   attackStartingLock.clear();
   reconInProgress.clear();
+}
+
+/**
+ * Flush in-memory caches to reduce memory usage.
+ * Called by memory watchdog in server/_core/index.ts when RSS is high.
+ * @param aggressive - if true, flush ALL caches (when RSS > 250MB)
+ * @returns number of entries flushed
+ */
+export function flushMemoryCaches(aggressive: boolean = false): number {
+  let flushed = 0;
+  
+  // 1. Flush old processedMessages (keep only last 30s)
+  const now = Date.now();
+  const cutoff = now - (aggressive ? 10_000 : 30_000);
+  for (const [key, ts] of Array.from(processedMessages.entries())) {
+    if (ts < cutoff) {
+      processedMessages.delete(key);
+      flushed++;
+    }
+  }
+  
+  // 2. Flush old reconInProgress entries
+  for (const [key, ts] of Array.from(reconInProgress.entries())) {
+    if (ts < now - 15_000) {
+      reconInProgress.delete(key);
+      flushed++;
+    }
+  }
+  
+  // 3. Clear attackStartingLock (stale locks)
+  if (attackStartingLock.size > 0) {
+    flushed += attackStartingLock.size;
+    attackStartingLock.clear();
+  }
+  
+  // 4. Flush conversation history cache (most memory-heavy)
+  if (aggressive) {
+    // Aggressive: clear all history cache (will be re-fetched from DB on next message)
+    flushed += historyCache.size;
+    historyCache.clear();
+  } else {
+    // Normal: trim each chat to last 5 messages
+    for (const [chatId, messages] of Array.from(historyCache.entries())) {
+      if (messages.length > 5) {
+        const removed = messages.length - 5;
+        messages.splice(0, removed);
+        flushed += removed;
+      }
+    }
+  }
+  
+  // 5. Clear expired conversation states
+  for (const [chatId, state] of Array.from(conversationState.entries())) {
+    if ((state as any).updatedAt && now - (state as any).updatedAt > STATE_TTL_MS) {
+      conversationState.delete(chatId);
+      flushed++;
+    }
+  }
+  
+  // 6. Trim processedUpdateIds
+  if (processedUpdateIds.size > 100) {
+    const sorted = Array.from(processedUpdateIds).sort((a, b) => a - b);
+    const toRemove = sorted.length - 50;
+    for (let i = 0; i < toRemove; i++) {
+      processedUpdateIds.delete(sorted[i]);
+      flushed++;
+    }
+  }
+  
+  // 7. Clear message queue (stale queued messages)
+  if (aggressive && messageQueue.size > 0) {
+    flushed += messageQueue.size;
+    messageQueue.clear();
+  }
+  
+  // 8. Trim recentCompletedAttacks to last 5
+  if (recentCompletedAttacks.length > 5) {
+    const removed = recentCompletedAttacks.length - 5;
+    recentCompletedAttacks.splice(5);
+    flushed += removed;
+  }
+  
+  return flushed;
 }
 
 function isUpdateProcessed(updateId: number): boolean {
