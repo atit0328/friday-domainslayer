@@ -4504,6 +4504,15 @@ export function resetPollingHealth(): void {
 // ═══════════════════════════════════════════════════════
 
 export function registerTelegramWebhook(app: any): void {
+  // Mark as connected immediately when webhook endpoint is registered
+  // This ensures handleTelegramWebhook can process messages even if
+  // setupTelegramWebhook hasn't been called yet (e.g., during deploy)
+  if (!healthStats.startedAt) {
+    healthStats.startedAt = Date.now();
+    healthStats.status = "connected";
+    console.log("[TelegramAI] ✅ healthStats set to connected (webhook endpoint registered)");
+  }
+  
   app.post("/api/telegram/webhook", async (req: any, res: any) => {
     // Note: Secret token verification disabled for reliability (v2 - force deploy)
     // Telegram webhook is protected by obscure URL + allowed_updates filter
@@ -4515,6 +4524,13 @@ export function registerTelegramWebhook(app: any): void {
         : 'N/A';
     const msgAge = req.body?.message?.date ? Math.round(Date.now() / 1000 - req.body.message.date) : -1;
     console.log(`[TelegramAI] 📩 Webhook received: update_id=${req.body?.update_id} type=${updateType} age=${msgAge}s preview="${updatePreview}"`);
+    
+    // Auto-heal: if healthStats is stopped but we're receiving webhooks, fix it
+    if (healthStats.status !== "connected") {
+      healthStats.status = "connected";
+      healthStats.startedAt = healthStats.startedAt || Date.now();
+      console.log("[TelegramAI] 🔧 Auto-healed healthStats to connected (webhook received while stopped)");
+    }
     
     try {
       // Respond immediately to Telegram (they expect fast 200)
