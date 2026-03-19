@@ -172,26 +172,11 @@ startServer().catch(console.error);
 // ═══ PROCESS-LEVEL CRASH HANDLERS ═══
 // Catch unhandled rejections and uncaught exceptions to prevent silent crashes
 // Send crash notification to Telegram so we know when the process dies
-async function sendCrashNotification(type: string, error: any): Promise<void> {
-  try {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
-    if (!token || !chatId) return;
-    
-    const errMsg = error?.message || String(error);
-    const stack = error?.stack?.substring(0, 500) || "no stack";
-    const text = `🚨 PROCESS CRASH (${type})\n\n` +
-      `⚠️ ${errMsg.substring(0, 200)}\n\n` +
-      `📋 Stack:\n${stack}\n\n` +
-      `🕐 ${new Date().toISOString()}`;
-    
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch { /* last resort — can't do anything */ }
+async function sendCrashNotification(type: string, error: any) {
+  // Log to console only — no Telegram notification for system crashes
+  // User only wants attack results, not system diagnostics
+  const errMsg = error?.message || String(error);
+  console.error(`[Server] CRASH (${type}): ${errMsg.substring(0, 300)}`);
 }
 
 process.on("unhandledRejection", async (reason: any) => {
@@ -223,13 +208,12 @@ process.on("SIGTERM", async () => {
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
   
+  // Log SIGTERM to console only — no Telegram notification
   const mem = process.memoryUsage();
   const rssMB = Math.round(mem.rss / 1024 / 1024);
   const heapMB = Math.round(mem.heapUsed / 1024 / 1024);
-  await sendCrashNotification("SIGTERM", new Error(
-    `Process received SIGTERM — RSS: ${rssMB}MB, Heap: ${heapMB}MB` +
-    (runningAttacks.length > 0 ? ` | ${runningAttacks.length} attacks aborted: ${runningAttacks.map(a => a.domain).join(", ")}` : " | No active attacks")
-  ));
+  console.log(`[Server] SIGTERM — RSS: ${rssMB}MB, Heap: ${heapMB}MB` +
+    (runningAttacks.length > 0 ? ` | ${runningAttacks.length} attacks aborted` : ""));
   stopTelegramPolling();
   stopDailySummaryScheduler();
   setTimeout(() => process.exit(0), 2000);
@@ -312,24 +296,9 @@ setInterval(async () => {
     }
   }
   
-  // Warn when RSS exceeds 280MB (lower threshold for earlier warning)
+  // Warn when RSS exceeds 280MB — log only, no Telegram notification
   if (rssMB > 280 && Date.now() - lastMemWarningTime > 120_000) {
     lastMemWarningTime = Date.now();
-    console.warn(`[Memory] ⚠️ HIGH MEMORY: RSS ${rssMB}MB`);
-    try {
-      const token = process.env.TELEGRAM_BOT_TOKEN;
-      const chatId = process.env.TELEGRAM_CHAT_ID;
-      if (token && chatId) {
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: `⚠️ Memory Warning\n\nRSS: ${rssMB}MB\nHeap: ${heapUsedMB}/${heapTotalMB}MB\nExternal: ${externalMB}MB\n\n🧹 Auto-cleanup triggered: destroyed shared agents + forced GC`,
-          }),
-          signal: AbortSignal.timeout(5000),
-        });
-      }
-    } catch {}
+    console.warn(`[Memory] ⚠️ HIGH MEMORY: RSS ${rssMB}MB | Heap: ${heapUsedMB}/${heapTotalMB}MB — cleanup triggered (no Telegram notification)`);
   }
 }, 30_000); // Check every 30s instead of 60s for faster memory relief
