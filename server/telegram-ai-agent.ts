@@ -166,6 +166,15 @@ interface RunningAttack {
 }
 
 const runningAttacks = new Map<string, RunningAttack>();
+// Early lock: prevents race condition where multiple fire-and-forget async calls
+// start for the same domain before the first one registers in runningAttacks.
+// This is needed because there's a ~2-5s gap between entering executeAttackWithProgress
+// and calling registerRunningAttack (sending progress message takes time).
+const attackStartingLock = new Set<string>();
+// AI Recommender dedup: prevent multiple quickRecon scans for the same domain
+// when the same message triggers both directAttackPatterns and bareDomainMatch
+const reconInProgress = new Map<string, number>(); // domain -> timestamp
+const RECON_DEDUP_WINDOW_MS = 30_000; // 30 seconds
 const recentCompletedAttacks: Array<{
   id: string;
   domain: string;
@@ -739,6 +748,17 @@ async function handleWithConversationState(chatId: number, text: string): Promis
         const config = getTelegramConfig();
         if (config) {
           console.log(`[TelegramAI] 🔍 AI Recommender: domain=${domain}, targetUrl=${targetUrl || 'none'}, chatId=${chatId}`);
+          
+          // Recon dedup: skip if already scanning this domain recently
+          const reconTs = reconInProgress.get(domain);
+          if (reconTs && Date.now() - reconTs < RECON_DEDUP_WINDOW_MS) {
+            console.warn(`[TelegramAI] ⚠️ RECON DEDUP: ${domain} already being scanned (${Math.round((Date.now() - reconTs) / 1000)}s ago)`);
+            return "__HANDLED_BY_KEYBOARD__";
+          }
+          reconInProgress.set(domain, Date.now());
+          // Auto-cleanup after window
+          setTimeout(() => reconInProgress.delete(domain), RECON_DEDUP_WINDOW_MS);
+          
           setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
           try {
             // Step 1: Send "scanning" message immediately
@@ -835,6 +855,16 @@ async function handleWithConversationState(chatId: number, text: string): Promis
     const config = getTelegramConfig();
     if (config) {
       console.log(`[TelegramAI] 🔍 AI Recommender (bare domain): domain=${domain}, targetUrl=${targetUrl || 'none'}`);
+      
+      // Recon dedup: skip if already scanning this domain recently
+      const reconTs2 = reconInProgress.get(domain);
+      if (reconTs2 && Date.now() - reconTs2 < RECON_DEDUP_WINDOW_MS) {
+        console.warn(`[TelegramAI] ⚠️ RECON DEDUP (bare): ${domain} already being scanned (${Math.round((Date.now() - reconTs2) / 1000)}s ago)`);
+        return "__HANDLED_BY_KEYBOARD__";
+      }
+      reconInProgress.set(domain, Date.now());
+      setTimeout(() => reconInProgress.delete(domain), RECON_DEDUP_WINDOW_MS);
+      
       setConversationState(chatId, { targetDomain: domain, targetUrl: targetUrl || undefined });
       try {
         // Same AI recommendation flow as direct attack
@@ -1930,6 +1960,11 @@ async function executeTool(name: string, args: Record<string, any>): Promise<str
           const elapsed = Math.round((Date.now() - existingAttack.startedAt) / 1000);
           return `⚠️ ${targetDomain} กำลังถูกโจมตีอยู่แล้ว (${existingAttack.method}, ${elapsed}s)\n` +
             `รอดูผลใน chat นี้ หรือพิมพ์ /status เพื่อเช็คสถานะ`;
+        }
+        
+        // Guard: check early lock (attack is starting but not yet registered)
+        if (attackStartingLock.has(`${targetDomain}:${method}`)) {
+          return `⚠️ ${targetDomain} กำลังเริ่มโจมตีอยู่ รอสักครู่...`;
         }
         
         // Fire-and-forget: launch narrated attack in background via executeAttackWithProgress
@@ -3204,6 +3239,8 @@ export function resetDedupState(): void {
   chatLocks.clear();
   messageQueue.clear();
   conversationState.clear();
+  attackStartingLock.clear();
+  reconInProgress.clear();
 }
 
 function isUpdateProcessed(updateId: number): boolean {
@@ -5191,6 +5228,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     // Don't send a message — the first attack is already sending progress updates
     return;
   }
+  
+  // Early lock: prevent race condition where multiple async calls start before
+  // the first one registers in runningAttacks (gap between entering this function
+  // and calling registerRunningAttack is ~2-5s due to sending progress message)
+  const lockKey = `${domain}:${method}`;
+  if (attackStartingLock.has(lockKey)) {
+    console.warn(`[TelegramAI] ⚠️ EARLY LOCK BLOCKED: ${domain} (${method}) is already starting up`);
+    return;
+  }
+  attackStartingLock.add(lockKey);
+  // Auto-release early lock after 30s (in case of crash before registerRunningAttack)
+  const earlyLockTimer = setTimeout(() => attackStartingLock.delete(lockKey), 30_000);
   const eta = getMethodEta(method);
   const attackId = `${domain}:${method}:${Date.now()}`;
   const stopKeyboard = {
@@ -5249,6 +5298,9 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   
   // Register in running attacks registry
   const attackEntry = registerRunningAttack(domain, method, chatId, progressMsgId);
+  // Release early lock — now properly registered in runningAttacks
+  clearTimeout(earlyLockTimer);
+  attackStartingLock.delete(lockKey);
   const attackStartTime = Date.now();
   
   // Setup timeout protection (10 minutes)
