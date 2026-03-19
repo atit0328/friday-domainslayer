@@ -25,9 +25,10 @@ import { recordAttackOutcome, getMethodEffectiveness, type AttackOutcome } from 
 async function telegramFetch(
   url: string,
   init: RequestInit & { signal?: AbortSignal } = {},
-  options: { timeout?: number } = {},
+  options: { timeout?: number; throwOnApiError?: boolean } = {},
 ): Promise<{ response: Response }> {
   const timeout = options.timeout || 15000;
+  const throwOnApiError = options.throwOnApiError !== false; // default true
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
@@ -35,6 +36,22 @@ async function telegramFetch(
       ...init,
       signal: init.signal || controller.signal,
     });
+    // Check Telegram API response body for errors (e.g., BUTTON_DATA_INVALID)
+    if (throwOnApiError && url.includes("api.telegram.org")) {
+      try {
+        const cloned = response.clone();
+        const body = await cloned.json();
+        if (body && body.ok === false) {
+          const desc = body.description || "Unknown Telegram API error";
+          console.error(`[telegramFetch] Telegram API error: ${desc} (error_code: ${body.error_code})`);
+          throw new Error(`Telegram API: ${desc}`);
+        }
+      } catch (parseErr: any) {
+        // If it's our own thrown error, re-throw it
+        if (parseErr.message?.startsWith("Telegram API:")) throw parseErr;
+        // Otherwise ignore JSON parse errors
+      }
+    }
     return { response };
   } finally {
     clearTimeout(timer);
@@ -3152,7 +3169,7 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(15000),
-        }, { timeout: 15000 });
+        }, { timeout: 15000, throwOnApiError: false });
         
         const result = await response.json() as any;
         if (result.ok) {
@@ -3179,7 +3196,7 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(plainBody),
             signal: AbortSignal.timeout(15000),
-          }, { timeout: 15000 });
+          }, { timeout: 15000, throwOnApiError: false });
           
           const plainResult = await plainResp.json() as any;
           if (plainResult.ok) {
@@ -3202,7 +3219,7 @@ async function sendTelegramReply(config: TelegramConfig, chatId: number, text: s
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chat_id: chatId, text: truncated }),
             signal: AbortSignal.timeout(15000),
-          }, { timeout: 15000 });
+          }, { timeout: 15000, throwOnApiError: false });
           const lastResult = await lastResp.json() as any;
           if (lastResult.ok) {
             sent = true;
@@ -10606,6 +10623,44 @@ async function handleCallbackQuery(cbq: NonNullable<TelegramUpdate["callback_que
           const domain = parts[1];
           const method = parts[2];
           await sendAttackConfirmKeyboard(config, chatId, domain, method);
+          return;
+        }
+        
+        // atk_top3:<domain>:<methods> — run top 3 methods (new shorter format)
+        if (data.startsWith("atk_top3:")) {
+          const parts = data.split(":");
+          const domain = parts[1];
+          const methodIds = (parts[2] || "full_chain").split(",").filter(Boolean);
+          const convState = getConversationState(chatId);
+          const storedTargetUrl = (convState?.targetDomain === domain && convState?.targetUrl) ? convState.targetUrl : undefined;
+          console.log(`[TelegramAI] atk_top3: domain=${domain}, methods=${methodIds.join(",")}, targetUrl=${storedTargetUrl || 'default'}`);
+          await sendTelegramReply(config, chatId, `\u{1F525} เริ่มรันทั้ง ${methodIds.length} วิธีตามลำดับ...\nวิธี: ${methodIds.join(" → ")}`);
+          (async () => {
+            const top3Start = Date.now();
+            const methodResults: Array<{ methodId: string; methodName: string; success: boolean; durationMs: number; successUrl?: string; error?: string }> = [];
+            for (let i = 0; i < methodIds.length; i++) {
+              const mStart = Date.now();
+              try {
+                await sendTelegramReply(config, chatId, `\u25b6\ufe0f วิธีที่ ${i + 1}/${methodIds.length}: ${methodIds[i]}...`);
+                await executeAttackWithProgress(config, chatId, domain, methodIds[i], storedTargetUrl);
+                const attackState = (globalThis as any)[`__attackState_${domain}`];
+                const succeeded = attackState?.succeededMethods?.includes(methodIds[i]) || false;
+                methodResults.push({ methodId: methodIds[i], methodName: methodIds[i], success: succeeded, durationMs: Date.now() - mStart, successUrl: succeeded ? attackState?.successUrl : undefined });
+              } catch (err: any) {
+                methodResults.push({ methodId: methodIds[i], methodName: methodIds[i], success: false, durationMs: Date.now() - mStart, error: err.message?.substring(0, 100) });
+              }
+            }
+            try {
+              const { buildTop3Summary } = await import("./attack-result-summary");
+              const { pickRedirectUrl } = await import("./agentic-attack-engine");
+              const redirectDest = await pickRedirectUrl().catch(() => undefined);
+              const top3Summary = buildTop3Summary({ domain, targetUrl: storedTargetUrl || `https://${domain}/`, methods: methodResults, totalDurationMs: Date.now() - top3Start, redirectDestination: redirectDest });
+              await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text: top3Summary.text, reply_markup: top3Summary.keyboard }), signal: AbortSignal.timeout(15000) }, { timeout: 15000 });
+            } catch (summaryErr: any) {
+              const successCount = methodResults.filter(r => r.success).length;
+              await sendTelegramReply(config, chatId, `\u2705 รันครบ ${methodIds.length} วิธี! สำเร็จ: ${successCount}/${methodIds.length}`);
+            }
+          })();
           return;
         }
         

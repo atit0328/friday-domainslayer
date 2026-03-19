@@ -608,23 +608,34 @@ export function buildRecommendationKeyboard(
   
   const keyboard: Array<Array<{ text: string; callback_data: string }>> = [];
   
+  // Telegram callback_data limit = 64 bytes
+  // Truncate domain if needed to keep callback_data under limit
+  const maxDomainLen = 30;
+  const shortDomain = domain.length > maxDomainLen ? domain.substring(0, maxDomainLen) : domain;
+  
   // Each recommendation gets its own row
   for (const rec of recommendations) {
+    const cbData = `atk_confirm:${shortDomain}:${rec.id}`;
+    // Safety: ensure under 64 bytes
     keyboard.push([{
       text: `${rec.icon} ${rec.name} ${confidenceEmoji[rec.confidence]} ${rec.confidencePercent}%`,
-      callback_data: `atk_confirm:${domain}:${rec.id}`,
+      callback_data: cbData.length <= 64 ? cbData : cbData.substring(0, 64),
     }]);
   }
   
-  // Add "run all 3" row
+  // Add "run all 3" row — use short method IDs to stay under 64 bytes
+  // Format: atk_top3:domain:m1,m2,m3 (shorter prefix)
+  const methodIds = recommendations.map(r => r.id).join(",");
+  const top3CbData = `atk_top3:${shortDomain}:${methodIds}`;
   keyboard.push([{
     text: "🔥 รันทั้ง 3 วิธี",
-    callback_data: `atk_confirm:${domain}:run_top3:${recommendations.map(r => r.id).join(",")}`,
+    callback_data: top3CbData.length <= 64 ? top3CbData : `atk_top3:${shortDomain}:full_chain`,
   }]);
   
   // Add "Quick Attack (full chain)" and "cancel" row
+  const fcCbData = `atk_confirm:${shortDomain}:full_chain`;
   keyboard.push([
-    { text: "⚡ Quick Attack (20 วิธี)", callback_data: `atk_confirm:${domain}:full_chain` },
+    { text: "⚡ Quick Attack (20 วิธี)", callback_data: fcCbData.length <= 64 ? fcCbData : fcCbData.substring(0, 64) },
     { text: "❌ ยกเลิก", callback_data: "atk_cancel" },
   ]);
   
