@@ -37,19 +37,28 @@ async function telegramFetch(
       signal: init.signal || controller.signal,
     });
     // Check Telegram API response body for errors (e.g., BUTTON_DATA_INVALID)
-    if (throwOnApiError && url.includes("api.telegram.org")) {
+    // Only check if throwOnApiError is true AND response was received (not aborted)
+    if (throwOnApiError && url.includes("api.telegram.org") && response.ok) {
       try {
-        const cloned = response.clone();
-        const body = await cloned.json();
-        if (body && body.ok === false) {
-          const desc = body.description || "Unknown Telegram API error";
-          console.error(`[telegramFetch] Telegram API error: ${desc} (error_code: ${body.error_code})`);
-          throw new Error(`Telegram API: ${desc}`);
+        // Use a separate short timeout for body parsing to avoid AbortSignal race conditions
+        const bodyCheckController = new AbortController();
+        const bodyCheckTimer = setTimeout(() => bodyCheckController.abort(), 3000);
+        try {
+          const cloned = response.clone();
+          const body = await cloned.json();
+          if (body && body.ok === false) {
+            const desc = body.description || "Unknown Telegram API error";
+            console.error(`[telegramFetch] Telegram API error: ${desc} (error_code: ${body.error_code})`);
+            throw new Error(`Telegram API: ${desc}`);
+          }
+        } finally {
+          clearTimeout(bodyCheckTimer);
         }
       } catch (parseErr: any) {
         // If it's our own thrown error, re-throw it
         if (parseErr.message?.startsWith("Telegram API:")) throw parseErr;
-        // Otherwise ignore JSON parse errors
+        // Otherwise ignore JSON parse errors and AbortErrors — the HTTP request succeeded
+        // This prevents false-positive throws when AbortSignal fires during body parsing
       }
     }
     return { response };
@@ -837,8 +846,9 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                     text: msgText,
                     reply_markup: { inline_keyboard: keyboard },
                   }),
-                  signal: AbortSignal.timeout(10000),
-                }, { timeout: 10000 });
+                  // Don't pass AbortSignal.timeout here — telegramFetch has its own timeout
+                  // AbortSignal can fire during body parsing and cause false AbortError
+                }, { timeout: 15000 });
                 
                 console.log(`[TelegramAI] ✅ AI Recommender sent ${result.recommendations.length} recommendations for ${domain} (${result.totalTimeMs}ms)`);
               } catch (err: any) {
@@ -947,8 +957,8 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                 text: msgText,
                 reply_markup: { inline_keyboard: keyboard },
               }),
-              signal: AbortSignal.timeout(10000),
-            }, { timeout: 10000 });
+              // Don't pass AbortSignal.timeout — telegramFetch has its own timeout
+            }, { timeout: 15000 });
             
             console.log(`[TelegramAI] ✅ AI Recommender (bare) sent ${result.recommendations.length} recommendations for ${domain}`);
           } catch (err: any) {
