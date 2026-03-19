@@ -52,6 +52,7 @@ export type NarratorPhase =
   | "inject"       // inject code
   | "hijack"       // hijack redirect
   | "verify"       // ตรวจสอบผล
+  | "intel"        // Takeover Intelligence
   | "complete"     // เสร็จสิ้น
   | "error";       // ข้อผิดพลาด
 
@@ -69,6 +70,7 @@ const PHASE_LABELS: Record<NarratorPhase, { emoji: string; thai: string }> = {
   inject:     { emoji: "💊", thai: "Inject โค้ด" },
   hijack:     { emoji: "🔓", thai: "Hijack Redirect" },
   verify:     { emoji: "✅", thai: "ตรวจสอบผลลัพธ์" },
+  intel:      { emoji: "🕵️", thai: "Takeover Intelligence" },
   complete:   { emoji: "🏁", thai: "เสร็จสิ้น" },
   error:      { emoji: "❌", thai: "ข้อผิดพลาด" },
 };

