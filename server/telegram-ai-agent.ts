@@ -5812,14 +5812,18 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // Map vulnerability types to attack methods
             const vulnTypes = new Set(exploitableVulns.map((v: any) => v.type));
             const hasOpenRedirect = vulnTypes.has("open_redirect_param") || vulnTypes.has("open_redirect_path") || vulnTypes.has("login_redirect_abuse") || vulnTypes.has("oauth_redirect_abuse");
-            const hasPhpBackdoor = vulnTypes.has("php_code_injection") || vulnTypes.has("php_backdoor") || vulnTypes.has("php_cloaking");
+            const hasPhpBackdoor = vulnTypes.has("php_code_injection") || vulnTypes.has("php_backdoor") || vulnTypes.has("php_cloaking") || vulnTypes.has("geo_cloaking");
             const hasWpPlugin = vulnTypes.has("wp_redirect_plugin") || vulnTypes.has("wp_rest_redirect");
             const hasServerConfig = vulnTypes.has("htaccess_redirect") || vulnTypes.has("webconfig_redirect") || vulnTypes.has("server_misconfiguration");
             const hasDanglingCname = vulnTypes.has("dangling_cname") || vulnTypes.has("expired_domain_in_chain");
             const hasContentInjection = vulnTypes.has("content_injection") || vulnTypes.has("header_redirect") || vulnTypes.has("meta_refresh_redirect") || vulnTypes.has("js_redirect");
 
             // Strategy selection logic for primary method
-            if (hasPhpBackdoor || hasWpPlugin || hasServerConfig) {
+            const hasGeoCloaking = vulnTypes.has("geo_cloaking");
+            if (hasGeoCloaking) {
+              primaryMethod = "hijack_redirect";
+              primaryReason = "Geo-cloaking detected — site already has cloaking code, hijack to change destination";
+            } else if (hasPhpBackdoor || hasWpPlugin || hasServerConfig) {
               primaryMethod = "hijack_redirect";
               primaryReason = hasPhpBackdoor ? "PHP backdoor/injection detected" : hasWpPlugin ? "WP redirect plugin accessible" : "Server config exploitable";
             } else if (hasOpenRedirect) {

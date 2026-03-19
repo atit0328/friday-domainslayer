@@ -63,7 +63,8 @@ export type RedirectVulnType =
   | "php_code_injection"        // PHP malicious code found in index/page
   | "path_specific_redirect"    // Redirect only on specific path (e.g. /menus)
   | "php_backdoor"              // PHP backdoor/shell found
-  | "php_cloaking";             // PHP cloaking code (User-Agent/GeoIP based redirect)
+  | "php_cloaking"              // PHP cloaking code (User-Agent/GeoIP based redirect)
+  | "geo_cloaking";             // Geo-based cloaking (redirect only for specific country IPs)
 
 export interface PhpCodeFinding {
   /** Type of PHP code found */
@@ -78,6 +79,28 @@ export interface PhpCodeFinding {
   severity: "critical" | "high" | "medium" | "low";
   /** Analysis */
   analysis: string;
+}
+
+export interface GeoCloakingResult {
+  /** Was geo-cloaking detected? */
+  detected: boolean;
+  /** What type of cloaking */
+  cloakingType: "user_agent" | "geo_ip" | "referer" | "combined" | "none";
+  /** Normal response summary */
+  normalResponse: { statusCode: number; bodyLength: number; hasGambling: boolean; redirectTo: string | null };
+  /** Cloaked response summary (different UA/proxy) */
+  cloakedResponses: Array<{
+    method: string; // e.g. "googlebot", "thai_mobile", "proxy_residential"
+    statusCode: number;
+    bodyLength: number;
+    hasGambling: boolean;
+    redirectTo: string | null;
+    bodyDiffPercent: number;
+  }>;
+  /** Gambling keywords found in cloaked response */
+  gamblingKeywordsFound: string[];
+  /** Evidence summary */
+  evidence: string;
 }
 
 export interface PathRedirectInfo {
@@ -127,6 +150,8 @@ export interface DeepRedirectScanResult {
   pathRedirects: PathRedirectInfo[];
   /** Target URL that was scanned (if full URL provided) */
   targetUrl: string | null;
+  /** Geo-cloaking detection results */
+  geoCloaking: GeoCloakingResult | null;
 }
 
 export interface RedirectChainHop {
@@ -1432,6 +1457,254 @@ async function scanPathSpecificRedirects(
 }
 
 // ═══════════════════════════════════════════════════════
+//  SCAN 10: GEO-CLOAKING DETECTION
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Detect geo-cloaking: sites that show different content based on
+ * User-Agent (Googlebot vs normal) or IP geolocation (Thai IP vs foreign).
+ * 
+ * Strategy: Send multiple requests with different User-Agents and compare responses.
+ * If response differs significantly (redirect vs no redirect, gambling content vs clean),
+ * it's cloaking.
+ */
+async function scanGeoCloaking(
+  baseUrl: string,
+  domain: string,
+  targetUrl?: string,
+): Promise<{ result: GeoCloakingResult; vulns: RedirectVulnerability[] }> {
+  const vulns: RedirectVulnerability[] = [];
+  const scanUrl = targetUrl || baseUrl;
+  
+  const gamblingKeywords = [
+    "สล็อต", "บาคาร่า", "คาสิโน", "หวย", "แทงบอล", "เครดิตฟรี",
+    "slot", "casino", "baccarat", "lottery", "betting",
+    "เว็บตรง", "ไม่ผ่านเอเย่นต์", "ฝากถอน", "โบนัส", "PG SLOT",
+    "pgslot", "joker", "สมัครสมาชิก", "ฝากขั้นต่ำ", "เว็บสล็อต",
+    "แทงหวย", "หวยออนไลน์", "คาสิโนออนไลน์", "เว็บพนัน",
+  ];
+
+  const checkGambling = (body: string): { has: boolean; keywords: string[] } => {
+    const found = gamblingKeywords.filter(kw => body.toLowerCase().includes(kw.toLowerCase()));
+    return { has: found.length >= 3, keywords: found };
+  };
+
+  const getRedirectTarget = (resp: Response): string | null => {
+    if (resp.status >= 300 && resp.status < 400) {
+      return resp.headers.get("location") || null;
+    }
+    return null;
+  };
+
+  // ── Step 1: Normal request (baseline) ──
+  const normalResp = await directFetch(scanUrl, { redirect: "manual" }, 8000);
+  let normalBody = "";
+  let normalStatus = 0;
+  let normalRedirect: string | null = null;
+  let normalGambling = { has: false, keywords: [] as string[] };
+  
+  if (normalResp) {
+    normalStatus = normalResp.status;
+    normalRedirect = getRedirectTarget(normalResp);
+    if (normalResp.status === 200) {
+      try { normalBody = await normalResp.text(); } catch {}
+      normalGambling = checkGambling(normalBody);
+    }
+  }
+
+  // ── Step 2: Test with different User-Agents ──
+  const testAgents = [
+    { name: "googlebot", ua: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+    { name: "googlebot_mobile", ua: "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+    { name: "thai_mobile", ua: "Mozilla/5.0 (Linux; Android 13; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36" },
+    { name: "bingbot", ua: "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)" },
+  ];
+
+  const cloakedResponses: GeoCloakingResult["cloakedResponses"] = [];
+  let allGamblingKeywords: string[] = [];
+
+  for (const agent of testAgents) {
+    // Try with proxy (different IP)
+    const resp = await safeFetch(scanUrl, {
+      redirect: "manual",
+      headers: { "User-Agent": agent.ua },
+    }, 8000);
+
+    if (!resp) {
+      cloakedResponses.push({
+        method: agent.name,
+        statusCode: 0,
+        bodyLength: 0,
+        hasGambling: false,
+        redirectTo: null,
+        bodyDiffPercent: 0,
+      });
+      continue;
+    }
+
+    const redirectTo = getRedirectTarget(resp);
+    let body = "";
+    let gambling = { has: false, keywords: [] as string[] };
+
+    if (resp.status === 200) {
+      try { body = await resp.text(); } catch {}
+      gambling = checkGambling(body);
+      allGamblingKeywords.push(...gambling.keywords);
+    } else if (resp.status >= 300 && resp.status < 400 && redirectTo) {
+      // Follow the redirect to check final destination
+      const followResp = await safeFetch(redirectTo, {
+        headers: { "User-Agent": agent.ua },
+      }, 8000);
+      if (followResp && followResp.status === 200) {
+        try { body = await followResp.text(); } catch {}
+        gambling = checkGambling(body);
+        allGamblingKeywords.push(...gambling.keywords);
+      }
+    }
+
+    // Calculate body difference
+    const bodyDiffPercent = normalBody.length > 0 && body.length > 0
+      ? Math.abs(normalBody.length - body.length) / Math.max(normalBody.length, body.length) * 100
+      : (body.length > 0 && normalBody.length === 0 ? 100 : 0);
+
+    cloakedResponses.push({
+      method: agent.name,
+      statusCode: resp.status,
+      bodyLength: body.length,
+      hasGambling: gambling.has,
+      redirectTo,
+      bodyDiffPercent,
+    });
+  }
+
+  // ── Step 3: Also test with proxy + normal UA (detect IP-based cloaking) ──
+  // Use multiple proxies to increase chance of hitting different geo
+  const proxyTests = [
+    { name: "proxy_residential_1", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" },
+    { name: "proxy_residential_2", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
+  ];
+
+  for (const pt of proxyTests) {
+    const resp = await safeFetch(scanUrl, {
+      redirect: "manual",
+      headers: { "User-Agent": pt.ua },
+    }, 8000);
+
+    if (!resp) continue;
+
+    const redirectTo = getRedirectTarget(resp);
+    let body = "";
+    let gambling = { has: false, keywords: [] as string[] };
+
+    if (resp.status === 200) {
+      try { body = await resp.text(); } catch {}
+      gambling = checkGambling(body);
+      allGamblingKeywords.push(...gambling.keywords);
+    } else if (resp.status >= 300 && resp.status < 400 && redirectTo) {
+      const followResp = await safeFetch(redirectTo, {
+        headers: { "User-Agent": pt.ua },
+      }, 8000);
+      if (followResp && followResp.status === 200) {
+        try { body = await followResp.text(); } catch {}
+        gambling = checkGambling(body);
+        allGamblingKeywords.push(...gambling.keywords);
+      }
+    }
+
+    const bodyDiffPercent = normalBody.length > 0 && body.length > 0
+      ? Math.abs(normalBody.length - body.length) / Math.max(normalBody.length, body.length) * 100
+      : (body.length > 0 && normalBody.length === 0 ? 100 : 0);
+
+    cloakedResponses.push({
+      method: pt.name,
+      statusCode: resp.status,
+      bodyLength: body.length,
+      hasGambling: gambling.has,
+      redirectTo,
+      bodyDiffPercent,
+    });
+  }
+
+  // ── Step 4: Analyze results ──
+  const uniqueGamblingKeywords = Array.from(new Set(allGamblingKeywords));
+  
+  // Detect cloaking: any response has gambling content or redirect that normal doesn't
+  const hasCloakedRedirect = cloakedResponses.some(r => r.redirectTo && !normalRedirect);
+  const hasCloakedGambling = cloakedResponses.some(r => r.hasGambling && !normalGambling.has);
+  const hasSignificantDiff = cloakedResponses.some(r => r.bodyDiffPercent > 50);
+  const hasDifferentStatus = cloakedResponses.some(r => r.statusCode !== normalStatus && r.statusCode > 0);
+  
+  const detected = hasCloakedRedirect || hasCloakedGambling || (hasSignificantDiff && hasDifferentStatus);
+
+  // Determine cloaking type
+  let cloakingType: GeoCloakingResult["cloakingType"] = "none";
+  if (detected) {
+    const uaCloaked = cloakedResponses.filter(r => 
+      r.method.includes("bot") && (r.hasGambling || r.redirectTo)
+    ).length > 0;
+    const ipCloaked = cloakedResponses.filter(r => 
+      r.method.includes("proxy") && (r.hasGambling || r.redirectTo)
+    ).length > 0;
+    
+    if (uaCloaked && ipCloaked) cloakingType = "combined";
+    else if (uaCloaked) cloakingType = "user_agent";
+    else if (ipCloaked) cloakingType = "geo_ip";
+    else cloakingType = "combined";
+  }
+
+  // Build evidence
+  const evidenceParts: string[] = [];
+  for (const r of cloakedResponses) {
+    if (r.hasGambling || r.redirectTo) {
+      evidenceParts.push(`${r.method}: status=${r.statusCode}${r.redirectTo ? ` redirect→${r.redirectTo}` : ""}${r.hasGambling ? " [GAMBLING]" : ""} diff=${r.bodyDiffPercent.toFixed(0)}%`);
+    }
+  }
+
+  const evidence = detected 
+    ? `Geo-cloaking detected (${cloakingType}): normal=${normalStatus}${normalGambling.has ? " [GAMBLING]" : ""} vs ${evidenceParts.join("; ")}`
+    : "No cloaking detected";
+
+  // Create vulnerability if cloaking detected
+  if (detected) {
+    const cloakedRedirectTarget = cloakedResponses.find(r => r.redirectTo)?.redirectTo || null;
+    vulns.push({
+      type: "geo_cloaking",
+      severity: "critical",
+      location: `Geo-cloaking (${cloakingType})`,
+      vulnerableUrl: scanUrl,
+      currentDestination: cloakedRedirectTarget,
+      exploitable: true,
+      exploitStrategy: cloakingType === "user_agent"
+        ? `เว็บใช้ User-Agent cloaking — แสดง gambling content เฉพาะ bot/crawler. เปลี่ยน cloaking code ให้ redirect ไปที่เรา`
+        : cloakingType === "geo_ip"
+        ? `เว็บใช้ GeoIP cloaking — redirect เฉพาะ IP ไทย. แก้ไข PHP/JS cloaking code เปลี่ยน destination`
+        : `เว็บใช้ combined cloaking (UA + GeoIP). แก้ไข cloaking logic ให้ redirect ไปที่เรา`,
+      confidence: 85,
+      evidence,
+      details: `Cloaking type: ${cloakingType}. Normal: status=${normalStatus}, gambling=${normalGambling.has}. ` +
+        `Cloaked: ${cloakedResponses.filter(r => r.hasGambling || r.redirectTo).map(r => `${r.method}=${r.statusCode}`).join(", ")}. ` +
+        `Gambling keywords: ${uniqueGamblingKeywords.slice(0, 10).join(", ")}`,
+    });
+  }
+
+  const result: GeoCloakingResult = {
+    detected,
+    cloakingType,
+    normalResponse: {
+      statusCode: normalStatus,
+      bodyLength: normalBody.length,
+      hasGambling: normalGambling.has,
+      redirectTo: normalRedirect,
+    },
+    cloakedResponses,
+    gamblingKeywordsFound: uniqueGamblingKeywords,
+    evidence,
+  };
+
+  return { result, vulns };
+}
+
+// ═══════════════════════════════════════════════════════
 //  STRATEGY BUILDER
 // ═══════════════════════════════════════════════════════
 
@@ -1586,6 +1859,25 @@ function buildExploitationStrategies(
     });
   }
 
+  // Strategy 8: Geo-Cloaking Takeover (site already has cloaking code — replace destination)
+  const geoCloakingVulns = vulns.filter(v => v.type === "geo_cloaking");
+  if (geoCloakingVulns.length > 0) {
+    strategies.push({
+      id: "geo_cloaking_takeover",
+      name: "Geo-Cloaking Redirect Takeover",
+      description: `เว็บมี cloaking code อยู่แล้ว (ถูกคนอื่น exploit) — เปลี่ยน redirect destination ให้ชี้มาที่เรา`,
+      exploitsVulns: geoCloakingVulns.map((_, i) => vulns.indexOf(geoCloakingVulns[i])),
+      successProbability: 80,
+      steps: [
+        "หา access ผ่าน credential hunt (breach DB, brute force, FTP/SSH/cPanel)",
+        "หาไฟล์ cloaking code (มักอยู่ใน index.php, .htaccess, wp-config.php)",
+        "แก้ไข redirect destination URL ใน cloaking code ให้ชี้มาที่เรา",
+        "Verify: ทดสอบด้วย Thai IP + Googlebot UA ว่า redirect ไปที่เราแล้ว",
+      ],
+      requiredAccess: "medium",
+    });
+  }
+
   // Sort by success probability
   strategies.sort((a, b) => b.successProbability - a.successProbability);
   return strategies;
@@ -1628,7 +1920,7 @@ export async function runDeepRedirectScan(
     } catch {}
   }
 
-  progress("scan", `📡 สแกน 9 ประเภทพร้อมกัน...${targetPaths.length > 0 ? ` (+ path: ${targetPaths.join(", ")})` : ""}`);
+  progress("scan", `📡 สแกน 10 ประเภทพร้อมกัน...${targetPaths.length > 0 ? ` (+ path: ${targetPaths.join(", ")})` : ""}`);
 
   const [
     chainResult,
@@ -1640,6 +1932,7 @@ export async function runDeepRedirectScan(
     oauthVulns,
     phpResult,
     pathResult,
+    geoCloakingResult,
   ] = await Promise.allSettled([
     // Scan 1: Redirect chain (do first — gives us current redirect info)
     (async () => {
@@ -1687,6 +1980,11 @@ export async function runDeepRedirectScan(
       progress("path", `📍 สแกน redirect เฉพาะ path: ${targetPaths.join(", ")}...`);
       return scanPathSpecificRedirects(baseUrl, domain, targetPaths);
     })(),
+    // Scan 10: Geo-cloaking detection
+    (async () => {
+      progress("geo_cloaking", "🌏 สแกน Geo-Cloaking (UA/GeoIP)...");
+      return scanGeoCloaking(baseUrl, domain, targetUrl);
+    })(),
   ]);
 
   // Collect results
@@ -1719,6 +2017,13 @@ export async function runDeepRedirectScan(
   if (pathResult.status === "fulfilled") {
     pathRedirects = pathResult.value.pathRedirects;
     allVulns.push(...pathResult.value.vulns);
+  }
+
+  // Collect geo-cloaking results
+  let geoCloaking: GeoCloakingResult | null = null;
+  if (geoCloakingResult.status === "fulfilled") {
+    geoCloaking = geoCloakingResult.value.result;
+    allVulns.push(...geoCloakingResult.value.vulns);
   }
 
   // Deduplicate by location + type
@@ -1788,6 +2093,13 @@ export async function runDeepRedirectScan(
       }
     }
   }
+  if (geoCloaking && geoCloaking.detected) {
+    summary += `🌏 Geo-Cloaking: ${geoCloaking.cloakingType} detected!`;
+    if (geoCloaking.gamblingKeywordsFound.length > 0) {
+      summary += ` 🎰 Keywords: ${geoCloaking.gamblingKeywordsFound.slice(0, 3).join(", ")}`;
+    }
+    summary += `\n`;
+  }
   if (topStrategy) {
     summary += `\n🏆 Top Strategy: ${topStrategy.name}\n`;
     summary += `   ${topStrategy.description}\n`;
@@ -1813,6 +2125,7 @@ export async function runDeepRedirectScan(
     phpCodeFindings,
     pathRedirects,
     targetUrl: targetUrl || null,
+    geoCloaking,
   };
 }
 
@@ -1862,6 +2175,29 @@ export function formatDeepRedirectScanForTelegram(result: DeepRedirectScanResult
       if (pr.phpCodeFound.length > 0) {
         msg += `   🐘 PHP code: ${pr.phpCodeFound.map(f => f.pattern).join(", ")}\n`;
       }
+    }
+    msg += `\n`;
+  }
+
+  // Geo-Cloaking section
+  if (result.geoCloaking && result.geoCloaking.detected) {
+    msg += `🌏 **Geo-Cloaking Detection:**\n`;
+    msg += `   ⚠️ ตรวจพบ ${result.geoCloaking.cloakingType}!\n`;
+    msg += `   📱 Normal: status ${result.geoCloaking.normalResponse.statusCode}, ${result.geoCloaking.normalResponse.bodyLength} bytes`;
+    if (result.geoCloaking.normalResponse.hasGambling) msg += ` 🎰`;
+    if (result.geoCloaking.normalResponse.redirectTo) msg += ` → ${result.geoCloaking.normalResponse.redirectTo}`;
+    msg += `\n`;
+    for (const cr of result.geoCloaking.cloakedResponses) {
+      const isDifferent = cr.bodyDiffPercent > 30 || cr.hasGambling || cr.redirectTo !== result.geoCloaking.normalResponse.redirectTo;
+      if (isDifferent) {
+        msg += `   🔀 ${cr.method}: status ${cr.statusCode}, ${cr.bodyLength} bytes`;
+        if (cr.hasGambling) msg += ` 🎰`;
+        if (cr.redirectTo) msg += ` → ${cr.redirectTo}`;
+        msg += `\n`;
+      }
+    }
+    if (result.geoCloaking.gamblingKeywordsFound.length > 0) {
+      msg += `   🎰 Keywords: ${result.geoCloaking.gamblingKeywordsFound.slice(0, 5).join(", ")}\n`;
     }
     msg += `\n`;
   }

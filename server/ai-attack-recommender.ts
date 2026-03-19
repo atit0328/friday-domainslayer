@@ -293,7 +293,7 @@ const ATTACK_METHODS_DB: Array<{
   { id: "drupal", name: "Drupal Exploits", icon: "🔵", applicableCms: ["drupal"], keywords: ["drupal", "drupalgeddon"], baseConfidence: 55, estimatedTime: "2-5 นาที", technique: "Exploit Drupal vulnerabilities: Drupalgeddon, theme injection, module abuse" },
   { id: "iis_aspnet", name: "IIS/ASP.NET Exploits", icon: "🪟", applicableCms: ["iis", "aspnet"], keywords: ["iis", "aspx", "web.config"], baseConfidence: 45, estimatedTime: "2-5 นาที", technique: "Exploit IIS/ASP.NET: web.config injection, .aspx upload, short filename" },
   { id: "laravel_inject", name: "Laravel Inject", icon: "🟥", applicableCms: ["laravel"], keywords: ["laravel", ".env", "ignition"], baseConfidence: 50, estimatedTime: "2-4 นาที", technique: "Exploit Laravel: .env leak, Ignition RCE, debug mode abuse" },
-  { id: "deep_redirect_scan", name: "Deep Redirect Vulnerability Scan", icon: "🔍", applicableCms: ["*"], keywords: ["redirect", "open redirect", "cname", "php code", "cloaking"], baseConfidence: 70, estimatedTime: "1-3 นาที", technique: "สแกนลึก 9 ประเภท: Open Redirect, PHP code, cloaking, CNAME dangling, redirect chain, WP plugins, path-specific redirects" },
+  { id: "deep_redirect_scan", name: "Deep Redirect Vulnerability Scan", icon: "🔍", applicableCms: ["*"], keywords: ["redirect", "open redirect", "cname", "php code", "cloaking", "geo-cloaking", "gambling"], baseConfidence: 70, estimatedTime: "1-3 นาที", technique: "สแกนลึก 10 ประเภท: Open Redirect, PHP code, cloaking, CNAME dangling, redirect chain, WP plugins, path-specific redirects, Geo-Cloaking (UA/GeoIP detection)" },
 ];
 
 export async function getAttackRecommendations(
