@@ -361,7 +361,7 @@ export async function retryDomain(domain: string, method?: string): Promise<Retr
       };
 
     } else if (method === "agentic_auto") {
-      const { startAgenticSession, pickRedirectUrl } = await import("./agentic-attack-engine");
+      const { startAgenticSession, pickRedirectUrl, getAgenticSessionStatus } = await import("./agentic-attack-engine");
       const redirectUrl = await pickRedirectUrl();
       const session = await startAgenticSession({
         userId: 1,
@@ -372,11 +372,49 @@ export async function retryDomain(domain: string, method?: string): Promise<Retr
         mode: "full_auto",
         customDorks: [`site:${domain}`],
       });
-      result = {
-        domain, method, success: true,
-        durationMs: Date.now() - startTime,
-        details: `Agentic session #${session.sessionId} started in background`,
-      };
+      
+      // Poll for real results instead of reporting success immediately
+      // Wait up to 5 minutes (300s) for session to complete, checking every 15s
+      const MAX_POLL_MS = 300_000;
+      const POLL_INTERVAL_MS = 15_000;
+      const pollStart = Date.now();
+      let finalStatus: any = null;
+      
+      while (Date.now() - pollStart < MAX_POLL_MS) {
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+        const status = await getAgenticSessionStatus(session.sessionId);
+        if (!status) break;
+        
+        // Session finished (completed, error, or stopped)
+        if (!status.isRunning || status.status === "completed" || status.status === "error" || status.status === "stopped") {
+          finalStatus = status;
+          break;
+        }
+      }
+      
+      if (finalStatus) {
+        const succeeded = (finalStatus.targetsSucceeded as number) || 0;
+        const attacked = (finalStatus.targetsAttacked as number) || 0;
+        const discovered = (finalStatus.targetsDiscovered as number) || 0;
+        result = {
+          domain, method,
+          success: succeeded > 0,
+          durationMs: Date.now() - startTime,
+          details: succeeded > 0
+            ? `Agentic session #${session.sessionId}: ${succeeded}/${attacked} targets succeeded (${discovered} discovered)`
+            : `Agentic session #${session.sessionId}: 0/${attacked} targets succeeded (${discovered} discovered) — status: ${finalStatus.status}`,
+          error: succeeded === 0 ? `Agentic session completed but no targets succeeded` : undefined,
+        };
+      } else {
+        // Timed out waiting for session — report as pending, not success
+        result = {
+          domain, method,
+          success: false,
+          durationMs: Date.now() - startTime,
+          details: `Agentic session #${session.sessionId} still running after 5min — check /status ${session.sessionId}`,
+          error: "Session still running — results pending",
+        };
+      }
 
     } else if (method === "deploy_advanced" || method.startsWith("advanced_")) {
       const { generateAndDeployAdvanced } = await import("./advanced-deploy-engine");

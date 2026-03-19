@@ -796,15 +796,16 @@ async function handleWithConversationState(chatId: number, text: string): Promis
               try {
                 const { quickRecon, getAttackRecommendations, formatRecommendationMessage, buildRecommendationKeyboard } = await import("./ai-attack-recommender");
                 
-                // Quick recon (15s max)
+                // Quick recon (45s max — needs time for HTTP probes, CMS detection, panel scan)
                 const recon = await Promise.race([
                   quickRecon(domain, targetUrl),
-                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 20_000)),
+                  new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000)),
                 ]);
                 
                 if (!recon) {
-                  // Recon timed out — fall back to full_chain directly
-                  await sendTelegramReply(config, chatId, `⏰ Scan หมดเวลา — เริ่ม Full Chain Attack อัตโนมัติ...`);
+                  // Recon timed out — fall back to deep_redirect_scan or full_chain
+                  const smartFallback = targetUrl && targetUrl !== `https://${domain}` ? 'deep_redirect_scan' : 'full_chain';
+                  await sendTelegramReply(config, chatId, `⏰ Quick Recon หมดเวลา (45s) — เริ่ม ${smartFallback} อัตโนมัติ...`);
                   executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err => {
                     sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err.message?.substring(0, 200)}`).catch(() => {});
                   });
@@ -853,13 +854,38 @@ async function handleWithConversationState(chatId: number, text: string): Promis
                 console.log(`[TelegramAI] ✅ AI Recommender sent ${result.recommendations.length} recommendations for ${domain} (${result.totalTimeMs}ms)`);
               } catch (err: any) {
                 console.error(`[TelegramAI] AI Recommender error for ${domain}: ${err.message}\n${err.stack?.substring(0, 300)}`);
-                // Fallback: run full_chain directly
+                // Don't auto-start Full Chain — let user choose
                 try {
-                  await sendTelegramReply(config, chatId, `⚠️ AI วิเคราะห์ error: ${err.message?.substring(0, 80)}\n➡️ เริ่ม Full Chain Attack อัตโนมัติ...`);
-                  executeAttackWithProgress(config, chatId, domain, 'full_chain', targetUrl).catch(err2 => {
-                    sendTelegramReply(config, chatId, `❌ Full Chain ล้มเหลว: ${err2.message?.substring(0, 200)}`).catch(() => {});
-                  });
-                } catch {}
+                  await telegramFetch(`https://api.telegram.org/bot${config.botToken}/sendMessage`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      chat_id: chatId,
+                      text: `⚠️ AI วิเคราะห์ error: ${err.message?.substring(0, 80)}\n\n🔧 เลือกวิธีโจมตี:`,
+                      reply_markup: {
+                        inline_keyboard: [
+                          [
+                            { text: "⚡ Full Chain", callback_data: `atk_confirm:${domain.substring(0, 40)}:full_chain` },
+                            { text: "🔓 Hijack Redirect", callback_data: `atk_confirm:${domain.substring(0, 40)}:hijack_redirect` },
+                          ],
+                          [
+                            { text: "🔍 Deep Scan", callback_data: `atk_confirm:${domain.substring(0, 30)}:deep_redirect_scan` },
+                            { text: "🤖 AI Auto", callback_data: `atk_confirm:${domain.substring(0, 40)}:agentic_auto` },
+                          ],
+                          [
+                            { text: "❌ ยกเลิก", callback_data: `atk_cancel:${domain.substring(0, 50)}` },
+                          ],
+                        ],
+                      },
+                    }),
+                  }, { timeout: 15000 });
+                } catch (sendErr: any) {
+                  // If even the keyboard fails, send plain text
+                  await sendTelegramReply(config, chatId, 
+                    `⚠️ AI วิเคราะห์ error: ${err.message?.substring(0, 80)}\n` +
+                    `พิมพ์ "โจมตี ${domain}" เพื่อลองใหม่`
+                  ).catch(() => {});
+                }
               }
             })();
             
@@ -5498,16 +5524,16 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
     // ═══ Shared: per-step timeout + heartbeat helper ═══
     // Use this to wrap any long-running step in any mode
     const STEP_TIMEOUTS: Record<string, number> = {
-      vulnscan: 90 * 1000,              // 1.5 min for vuln scan (reduced from 3)
-      redirect_takeover: 90 * 1000,     // 1.5 min for redirect methods (reduced from 3)
-      cloaking_inject: 2 * 60 * 1000,   // 2 min for PHP injection (reduced from 4)
-      credential_hunt: 2 * 60 * 1000,   // 2 min for credential hunting (reduced from 5)
-      hijack_engine: 2 * 60 * 1000,     // 2 min for hijack engine (reduced from 5)
-      advanced_attack: 2 * 60 * 1000,   // 2 min for advanced techniques (reduced from 5)
-      agentic_session: 4 * 60 * 1000,   // 4 min for AI session (reduced from 8)
-      auto_exploit: 3 * 60 * 1000,       // 3 min for auto-exploit after deep scan
+      vulnscan: 3 * 60 * 1000,           // 3 min for vuln scan (10 scan types need more time, especially Geo-Cloaking with 9 UA tests)
+      redirect_takeover: 2 * 60 * 1000,  // 2 min for redirect methods
+      cloaking_inject: 2 * 60 * 1000,    // 2 min for PHP injection
+      credential_hunt: 2 * 60 * 1000,    // 2 min for credential hunting
+      hijack_engine: 3 * 60 * 1000,      // 3 min for hijack engine (port scan + brute force)
+      advanced_attack: 2 * 60 * 1000,    // 2 min for advanced techniques
+      agentic_session: 5 * 60 * 1000,    // 5 min for AI session
+      auto_exploit: 4 * 60 * 1000,       // 4 min for auto-exploit after deep scan
     };
-    const DEFAULT_STEP_TIMEOUT = 90 * 1000; // 1.5 min default (reduced from 3)
+    const DEFAULT_STEP_TIMEOUT = 2 * 60 * 1000; // 2 min default
     
     type StepTimeoutResult<T> = { ok: true; result: T } | { ok: false; error: string; timedOut: boolean };
     
@@ -9067,24 +9093,36 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
         }
       }
       
-      // If session didn't complete within heartbeat window
+      // If session didn't complete within heartbeat window — report as incomplete, NOT success
       if (!sessionCompleted && !attackEntry.abortController.signal.aborted) {
         const agenticDuration = Date.now() - s1;
-        timings.push({ step: "Session still running in background", ms: agenticDuration, ok: true });
+        timings.push({ step: "Session still running — no confirmed success", ms: agenticDuration, ok: false });
         stepIndex++;
         
-        await narrator.addAnalysis(`🔔 Session ยังทำงานอยู่ใน background — ใช้ /status เพื่อเช็ค`);
-        await narrator.complete(true, `Session #${session.sessionId} ยังทำงานอยู่`);
+        await narrator.addAnalysis(`🔔 Session ยังทำงานอยู่ใน background — ยังไม่มี redirect สำเร็จ`);
+        await narrator.complete(false, `Session #${session.sessionId} ยังทำงานอยู่ — ยังไม่มี redirect สำเร็จ`);
         
         await saveAttackLog({
           targetDomain: domain,
           method: "agentic_auto",
-          success: true,
+          success: false,
           durationMs: agenticDuration,
           redirectUrl,
           sessionId: String(session.sessionId),
-          aiReasoning: `Agentic session #${session.sessionId} still running after ${formatDuration(agenticDuration)}`,
+          aiReasoning: `Agentic session #${session.sessionId} still running after ${formatDuration(agenticDuration)} — no confirmed success yet`,
         });
+        
+        // Send failure summary since no confirmed success
+        sendFailureSummaryAlert({
+          domain,
+          mode: "agentic_auto",
+          totalDurationMs: agenticDuration,
+          methods: [{
+            name: `AI Auto Attack (Session #${session.sessionId})`,
+            status: "timeout" as any,
+            reason: `Session ยังทำงานอยู่หลัง ${formatDuration(agenticDuration)} — ยังไม่มี redirect สำเร็จ`,
+          }],
+        }).catch(err => console.warn(`[TelegramAI] Failure summary alert failed: ${err}`));
       }
       
     } else if (method === "cloaking_inject") {
