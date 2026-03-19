@@ -674,8 +674,19 @@ export async function fetchWithPoolProxy(
     fallbackDirect = true 
   } = options;
 
-  // ─── Domain Intelligence: skip proxy if domain is known to block them ───
+  // ─── Thai Proxy Preference: route through Thai proxy if domain has geo-cloaking ───
   const domain = options.targetDomain || new URL(url).hostname;
+  if (prefersThaiProxy(domain)) {
+    console.log(`[ProxyPool] 🇹🇭 Domain ${domain} prefers Thai proxy — routing through Thai proxy pool`);
+    const thaiResult = await fetchWithThaiProxy(url, init, { timeout, maxRetries });
+    if (thaiResult) {
+      return { response: thaiResult.response, proxyUsed: thaiResult.proxyUsed, method: "proxy" as const };
+    }
+    // Thai proxy failed — fall through to regular proxy pool
+    console.log(`[ProxyPool] 🇹🇭 Thai proxy failed for ${domain} — falling back to regular proxy pool`);
+  }
+
+  // ─── Domain Intelligence: skip proxy if domain is known to block them ───
   const thaiDomain = isThaiDomain(domain);
   const intelCheck = shouldSkipProxy(domain);
   if (intelCheck.skip) {
@@ -1332,6 +1343,73 @@ export function getThaiPoolStats(): { total: number; healthy: number; dead: numb
     dead: stats.unhealthy,
     avgSuccessRate: stats.successRate / 100,
   };
+}
+
+// ═══════════════════════════════════════════════
+//  THAI PROXY PREFERENCE REGISTRY
+// ═══════════════════════════════════════════════
+
+/**
+ * Registry of domains that should use Thai proxy for ALL requests.
+ * When a domain is registered here, fetchWithPoolProxy will automatically
+ * route through Thai proxy instead of the regular EU proxy pool.
+ * 
+ * Used when geo-cloaking is detected — the target site only shows
+ * gambling content to Thai IPs, so we need Thai proxy for exploit requests.
+ */
+const thaiProxyPreferredDomains = new Map<string, { registeredAt: number; reason: string }>();
+
+/**
+ * Register a domain to prefer Thai proxy for all requests.
+ * This makes fetchWithPoolProxy automatically use Thai proxy for this domain.
+ * Expires after 30 minutes (attack should be done by then).
+ */
+export function setPreferThaiProxy(domain: string, reason: string = "geo_cloaking"): void {
+  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "").toLowerCase();
+  thaiProxyPreferredDomains.set(cleanDomain, { registeredAt: Date.now(), reason });
+  console.log(`[ThaiProxy] 🇹🇭 Registered ${cleanDomain} for Thai proxy preference (reason: ${reason})`);
+  
+  // Auto-expire after 30 minutes
+  setTimeout(() => {
+    thaiProxyPreferredDomains.delete(cleanDomain);
+    console.log(`[ThaiProxy] 🇹🇭 Expired Thai proxy preference for ${cleanDomain}`);
+  }, 30 * 60 * 1000);
+}
+
+/**
+ * Check if a domain prefers Thai proxy.
+ */
+export function prefersThaiProxy(domain: string): boolean {
+  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "").toLowerCase();
+  const pref = thaiProxyPreferredDomains.get(cleanDomain);
+  if (!pref) return false;
+  // Check if expired (30 min)
+  if (Date.now() - pref.registeredAt > 30 * 60 * 1000) {
+    thaiProxyPreferredDomains.delete(cleanDomain);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Clear Thai proxy preference for a domain.
+ */
+export function clearThaiProxyPreference(domain: string): void {
+  const cleanDomain = domain.replace(/^https?:\/\//, "").replace(/[\/:].*$/, "").toLowerCase();
+  thaiProxyPreferredDomains.delete(cleanDomain);
+}
+
+/**
+ * Get all domains currently preferring Thai proxy.
+ */
+export function getThaiProxyPreferredDomains(): Array<{ domain: string; reason: string; registeredAt: number }> {
+  const result: Array<{ domain: string; reason: string; registeredAt: number }> = [];
+  thaiProxyPreferredDomains.forEach((pref, domain) => {
+    if (Date.now() - pref.registeredAt <= 30 * 60 * 1000) {
+      result.push({ domain, reason: pref.reason, registeredAt: pref.registeredAt });
+    }
+  });
+  return result;
 }
 
 // ═══════════════════════════════════════════════

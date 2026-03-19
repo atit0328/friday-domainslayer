@@ -5345,6 +5345,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
   const effectiveTargetUrl = targetUrl || `https://${domain}`;
   console.log(`[TelegramAI] executeAttackWithProgress called: domain=${domain}, method=${method}, targetUrl=${effectiveTargetUrl}`);
   
+  // ─── Thai Proxy Check: log if domain has Thai proxy preference active ───
+  const { prefersThaiProxy: checkThaiPref } = await import("./proxy-pool");
+  if (checkThaiPref(domain)) {
+    console.log(`[TelegramAI] 🇹🇭 Thai proxy active for ${domain} — all fetchWithPoolProxy calls will route through Thai residential IP`);
+  }
+  
   // ─── Duplicate guard: prevent 2 attacks on same domain simultaneously ───
   // This catches cases where the same message triggers multiple code paths
   // (e.g., forwarded messages, webhook+polling overlap, or shortcut + LLM both firing)
@@ -5848,8 +5854,12 @@ async function executeAttackWithProgress(config: TelegramConfig, chatId: number,
             // Strategy selection logic for primary method
             const hasGeoCloaking = vulnTypes.has("geo_cloaking");
             if (hasGeoCloaking) {
+              // 🇹🇭 Register domain for Thai proxy preference — all exploit requests will route through Thai IP
+              const { setPreferThaiProxy } = await import("./proxy-pool");
+              setPreferThaiProxy(domain, "geo_cloaking_auto_exploit");
+              await narrator.addAnalysis(`🇹🇭 Geo-Cloaking detected! เปิดใช้ Thai Proxy สำหรับทุก request โจมตี ${domain}`);
               primaryMethod = "hijack_redirect";
-              primaryReason = "Geo-cloaking detected — site already has cloaking code, hijack to change destination";
+              primaryReason = "Geo-cloaking detected — Thai proxy enabled, hijack to change destination";
             } else if (hasPhpBackdoor || hasWpPlugin || hasServerConfig) {
               primaryMethod = "hijack_redirect";
               primaryReason = hasPhpBackdoor ? "PHP backdoor/injection detected" : hasWpPlugin ? "WP redirect plugin accessible" : "Server config exploitable";
