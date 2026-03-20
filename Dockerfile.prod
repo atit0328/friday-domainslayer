@@ -1,0 +1,15 @@
+FROM node:22-slim
+WORKDIR /app
+
+# Copy pre-built dist and dependencies info
+COPY package.json pnpm-lock.yaml ./
+COPY dist ./dist
+COPY drizzle ./drizzle
+
+# Install pnpm and production deps
+RUN npm install -g pnpm && pnpm install --prod --frozen-lockfile 2>/dev/null || pnpm install --prod
+
+EXPOSE 3000
+ENV NODE_ENV=production
+ENV PORT=3000
+CMD ["node", "--max-old-space-size=512", "dist/index.js"]
