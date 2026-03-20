@@ -4,16 +4,17 @@ WORKDIR /app
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm and ALL dependencies including devDependencies
-# NODE_ENV must not be production during install to get devDeps
-ENV NODE_ENV=development
-RUN npm install -g pnpm && pnpm install
-ENV NODE_ENV=production
+# Install pnpm
+RUN npm install -g pnpm
+
+# Force install ALL dependencies including dev (vite is needed at runtime for SSR)
+RUN NODE_ENV=development pnpm install --dev
 
 # Copy built files
 COPY dist ./dist
 COPY drizzle ./drizzle
 
 EXPOSE 3000
+ENV NODE_ENV=production
 ENV PORT=3000
 CMD ["node", "--max-old-space-size=512", "dist/index.js"]
