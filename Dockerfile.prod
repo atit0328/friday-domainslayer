@@ -5,8 +5,8 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 COPY patches ./patches
 
-# Install pnpm and production deps
-RUN npm install -g pnpm && pnpm install --prod --frozen-lockfile 2>/dev/null || pnpm install --prod
+# Install pnpm and ALL dependencies (vite needed at runtime for SSR)
+RUN npm install -g pnpm && pnpm install --frozen-lockfile 2>/dev/null || pnpm install
 
 # Copy built files
 COPY dist ./dist
