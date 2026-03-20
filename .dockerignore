@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.manus
+.manus-logs
+.env
+.env.local
+*.md
+*.log
+.DS_Store
+.vscode
+.idea

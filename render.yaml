@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: aaa-domainslayer
+    runtime: node
+    plan: free
+    buildCommand: pnpm install && pnpm run build
+    startCommand: node --expose-gc --max-old-space-size=512 dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DEV_BYPASS_AUTH
+        value: true
