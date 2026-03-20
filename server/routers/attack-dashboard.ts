@@ -412,4 +412,47 @@ export const attackDashboardRouter = router({
       const deleted = await resetMethodStats(input?.methodId);
       return { deleted, methodId: input?.methodId || "all" };
     }),
+
+  // ═══ Continuous Reporting (real-time attack progress) ═══
+  activeReports: protectedProcedure.query(async () => {
+    try {
+      const { getActiveReports } = await import("../attack-logger");
+      return getActiveReports();
+    } catch {
+      return [];
+    }
+  }),
+
+  allReports: protectedProcedure
+    .input(z.object({ limit: z.number().default(50) }).optional())
+    .query(async ({ input }) => {
+      try {
+        const { getAllReports } = await import("../attack-logger");
+        return getAllReports(input?.limit || 50);
+      } catch {
+        return [];
+      }
+    }),
+
+  reportByDeploy: protectedProcedure
+    .input(z.object({ deployId: z.number() }))
+    .query(async ({ input }) => {
+      try {
+        const { getContinuousReport } = await import("../attack-logger");
+        return getContinuousReport(input.deployId);
+      } catch {
+        return null;
+      }
+    }),
+
+  reportByDomain: protectedProcedure
+    .input(z.object({ domain: z.string() }))
+    .query(async ({ input }) => {
+      try {
+        const { getContinuousReport } = await import("../attack-logger");
+        return getContinuousReport(undefined, input.domain);
+      } catch {
+        return null;
+      }
+    }),
 });

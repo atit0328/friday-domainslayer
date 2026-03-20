@@ -87,6 +87,7 @@ export interface DaemonConfig {
 
 interface RunningTaskState {
   taskId: number;
+  taskType: string;
   abortController: AbortController;
   startedAt: number;
   lastHeartbeat: number;
@@ -363,6 +364,7 @@ async function executeTask(task: DaemonTask) {
   const abortController = new AbortController();
   const state: RunningTaskState = {
     taskId: task.id,
+    taskType: task.taskType,
     abortController,
     startedAt: Date.now(),
     lastHeartbeat: Date.now(),
@@ -642,9 +644,10 @@ function emitDaemonEvent(event: { type: DaemonEventType; taskId?: number; data?:
 
 function countRunningByType(taskType: string): number {
   let count = 0;
-  // We need to check the actual task type from DB, but for performance we track in-memory
-  // For now, count all running tasks (simplified)
-  return runningTasks.size; // TODO: track by type in RunningTaskState
+  for (const [, state] of Array.from(runningTasks.entries())) {
+    if (state.taskType === taskType) count++;
+  }
+  return count;
 }
 
 async function updateTaskStatus(

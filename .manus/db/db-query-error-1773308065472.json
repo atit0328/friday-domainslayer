@@ -1,8 +1,0 @@
-{
-  "query": "SELECT 'domain_scans' as tbl, id, domain, status FROM domain_scans WHERE domain LIKE '%huaykhonthai%' OR domain LIKE '%ppixxie%' UNION ALL SELECT 'seo_projects', id, domain, 'n/a' FROM seo_projects WHERE domain LIKE '%huaykhonthai%' OR domain LIKE '%ppixxie%' UNION ALL SELECT 'pbn_sites', id, domain, 'n/a' FROM pbn_sites WHERE domain LIKE '%huaykhonthai%' OR domain LIKE '%ppixxie%';",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute SELECT 'domain_scans' as tbl, id, domain, status FROM domain_scans WHERE domain LIKE '%huaykhonthai%' OR domain LIKE '%ppixxie%' UNION ALL SELECT 'seo_projects', id, domain, 'n/a' FROM seo_projects WHERE domain LIKE '%huaykhonthai%' OR domain LIKE '%ppixxie%' UNION ALL SELECT 'pbn_sites', id, domain, 'n/a' FROM pbn_sites WHERE domain LIKE '%huaykhonthai%' OR domain LIKE '%ppixxie%';",
-  "returncode": 1,
-  "logs": [
-    "ERROR 1054 (42S22) at line 1: Unknown column 'domain' in 'where clause'"
-  ]
-}

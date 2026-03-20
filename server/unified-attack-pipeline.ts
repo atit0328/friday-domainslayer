@@ -37,7 +37,7 @@ import { runComprehensiveAttackVectors, type AttackVectorResult, type AttackVect
 import { findOriginIP, fetchViaOriginIP, type OriginIPResult } from "./cf-origin-bypass";
 import { runCfBypass, fetchWithCfBypass, generateEvasionVariants, type CfBypassResult } from "./cf-bypass";
 import { wpBruteForce, wpAuthenticatedUpload, type BruteForceResult, type WPCredentials } from "./wp-brute-force";
-import { createAttackLogger, type AttackLogger } from "./attack-logger";
+import { createAttackLogger, updateContinuousReport, type AttackLogger } from "./attack-logger";
 import { buildTargetProfile, shouldSkipUploads, generateFallbackPlan, getOptimalRetryCount, formatFallbackPlan, type TargetProfile, type FallbackPlan } from "./smart-fallback";
 import { runWpVulnScan, executeExploit, type WpScanResult, type WpVulnerability } from "./wp-vuln-scanner";
 import { runCmsVulnScan, executeCmsExploit, detectCms, type CmsScanResult, type CmsVulnerability } from "./cms-vuln-scanner";
@@ -1088,11 +1088,13 @@ export async function runUnifiedAttackPipeline(
   let targetProfile: TargetProfile | null = null;
   let fallbackPlan: FallbackPlan | null = null;
 
-  // Wrap onEvent to also log
+  // Wrap onEvent to also log + continuous reporting
   const originalOnEvent = onEvent;
   const loggedOnEvent: EventCallback = (event) => {
     originalOnEvent(event);
     attackLogger.log(event).catch(() => {});
+    // Update continuous report for real-time dashboard
+    try { updateContinuousReport(targetDomain, attackLogger.deployId, event); } catch {}
   };
 
   /** Check if pipeline should stop — stops on abort OR timeout.

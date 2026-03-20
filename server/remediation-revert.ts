@@ -642,8 +642,8 @@ async function executeRevert(
   // ─── Fallback: No specific revert logic ───
   return {
     success: false,
-    action: "revert_not_implemented",
-    detail: `No specific revert logic for action "${action}" in category "${category}". Manual revert may be required.`,
+    action: "revert_no_auto_handler",
+    detail: `No automatic revert handler for action "${action}" in category "${category}". Manual revert may be required.`,
   };
 }
 

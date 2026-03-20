@@ -176,12 +176,69 @@ export const seoAgentRouter = router({
       return db.getProjectContent(input.projectId, input.limit);
     }),
 
-  // Publish content to WordPress
+  // Publish content to WordPress via REST API
   publishContent: protectedProcedure
     .input(z.object({ contentId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const contents = await db.getProjectContent(0, 1);
-      throw new Error("Not implemented yet — use WP integration directly");
+      // Get content from database
+      const database = await db.getDb();
+      if (!database) throw new Error("Database not available");
+      
+      const contents = await db.getProjectContent(0, 100);
+      const content = contents.find((c: any) => c.id === input.contentId);
+      if (!content) throw new Error("Content not found");
+      
+      // Get project to find WP credentials
+      const project = await db.getSeoProjectById(content.projectId || 0);
+      if (!project) throw new Error("Project not found");
+      if (project.userId !== ctx.user.id && ctx.user.role !== "admin") {
+        throw new Error("Access denied");
+      }
+      
+      const wpUrl = (project as any).wpUrl || (project as any).domain;
+      const wpUser = (project as any).wpUsername || "admin";
+      const wpAppPass = (project as any).wpAppPassword || (project as any).wpPassword;
+      
+      if (!wpUrl || !wpAppPass) {
+        throw new Error("WordPress credentials not configured for this project. Set wpUrl and wpAppPassword.");
+      }
+      
+      const baseUrl = wpUrl.startsWith("http") ? wpUrl : `https://${wpUrl}`;
+      const auth = Buffer.from(`${wpUser}:${wpAppPass}`).toString("base64");
+      
+      // Publish via WP REST API
+      const response = await fetch(`${baseUrl}/wp-json/wp/v2/posts`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: (content as any).title || "Untitled",
+          content: (content as any).content || (content as any).body || "",
+          excerpt: (content as any).excerpt || "",
+          slug: (content as any).slug || "",
+          status: "publish",
+          meta: {
+            yoast_wpseo_title: (content as any).seoTitle || (content as any).title || "",
+            yoast_wpseo_metadesc: (content as any).metaDescription || "",
+            yoast_wpseo_focuskw: (content as any).focusKeyword || "",
+          },
+        }),
+      });
+      
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`WP API error ${response.status}: ${text.substring(0, 200)}`);
+      }
+      
+      const data = await response.json();
+      return {
+        success: true,
+        postId: data.id,
+        url: data.link,
+        detail: `Published: ${data.link}`,
+      };
     }),
 
   // ═══ Progress Dashboard ═══

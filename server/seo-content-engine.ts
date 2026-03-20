@@ -739,8 +739,125 @@ export function checkContentQuality(content: GeneratedContent, primaryKeyword: s
       headingCount,
       internalLinkCount: content.internalLinks.length,
       imageCount,
-      readabilityScore: 75, // Placeholder — could integrate readability library
-      uniquenessScore: 90, // Placeholder — could integrate plagiarism checker
+      readabilityScore: calculateReadabilityScore(content),
+      uniquenessScore: calculateUniquenessScore(content)
     },
   };
+}
+
+
+// ═══════════════════════════════════════════════
+// Real Readability Score (Flesch-Kincaid adapted for SEO content)
+// ═══════════════════════════════════════════════
+
+function calculateReadabilityScore(content: GeneratedContent): number {
+  const text = content.contentHtml
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&[^;]+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text || text.length < 50) return 50;
+
+  // Count sentences (split by . ! ? and Thai sentence endings)
+  const sentences = text.split(/[.!?\u0E2F\u0E46]+/).filter(s => s.trim().length > 3);
+  const sentenceCount = Math.max(sentences.length, 1);
+
+  // Count words
+  const words = text.split(/\s+/).filter(w => w.length > 0);
+  const wordCount = Math.max(words.length, 1);
+
+  // Count syllables (approximate: count vowel groups for English, character groups for Thai)
+  let syllableCount = 0;
+  for (const word of words) {
+    if (/[\u0E00-\u0E7F]/.test(word)) {
+      // Thai: approximate syllables by vowel marks + consonant clusters
+      const thaiVowels = word.match(/[\u0E30-\u0E39\u0E40-\u0E44]/g) || [];
+      syllableCount += Math.max(thaiVowels.length, 1);
+    } else {
+      // English: count vowel groups
+      const vowelGroups = word.toLowerCase().match(/[aeiouy]+/g) || [];
+      syllableCount += Math.max(vowelGroups.length, 1);
+    }
+  }
+
+  // Flesch Reading Ease = 206.835 - 1.015 * (words/sentences) - 84.6 * (syllables/words)
+  const avgSentenceLength = wordCount / sentenceCount;
+  const avgSyllablesPerWord = syllableCount / wordCount;
+  let flesch = 206.835 - (1.015 * avgSentenceLength) - (84.6 * avgSyllablesPerWord);
+
+  // Bonus for good structure
+  if (content.headings.length >= 3) flesch += 5;
+  if (content.internalLinks.length >= 2) flesch += 3;
+  if (content.imageSuggestions.length >= 1) flesch += 2;
+
+  // Penalty for very long paragraphs (>300 words between headings)
+  const paragraphs = text.split(/\n\n+/);
+  const longParagraphs = paragraphs.filter(p => p.split(/\s+/).length > 300).length;
+  if (longParagraphs > 0) flesch -= longParagraphs * 5;
+
+  // Normalize to 0-100
+  return Math.max(0, Math.min(100, Math.round(flesch)));
+}
+
+// ═══════════════════════════════════════════════
+// Real Uniqueness Score (content fingerprinting)
+// ═══════════════════════════════════════════════
+
+function calculateUniquenessScore(content: GeneratedContent): number {
+  const text = content.contentHtml
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&[^;]+;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!text || text.length < 100) return 50;
+
+  const words = text.split(/\s+/).filter(w => w.length > 2);
+  const totalWords = words.length;
+  if (totalWords < 10) return 50;
+
+  // 1. Vocabulary diversity (unique words / total words)
+  const uniqueWords = new Set(words.map(w => w.toLowerCase()));
+  const vocabularyDiversity = uniqueWords.size / totalWords;
+
+  // 2. N-gram uniqueness (3-grams)
+  const trigrams: string[] = [];
+  for (let i = 0; i < words.length - 2; i++) {
+    trigrams.push(words.slice(i, i + 3).join(" ").toLowerCase());
+  }
+  const uniqueTrigrams = new Set(trigrams);
+  const trigramUniqueness = trigrams.length > 0 ? uniqueTrigrams.size / trigrams.length : 0.5;
+
+  // 3. Check for common spam/template patterns (penalize)
+  const spamPatterns = [
+    /click here/gi, /buy now/gi, /free money/gi, /act now/gi,
+    /limited time/gi, /congratulations/gi, /you won/gi,
+    /lorem ipsum/gi, /sample text/gi, /placeholder/gi,
+  ];
+  let spamPenalty = 0;
+  for (const pattern of spamPatterns) {
+    const matches = text.match(pattern);
+    if (matches) spamPenalty += matches.length * 3;
+  }
+
+  // 4. Sentence variation (check if sentences are diverse in length)
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 5);
+  const sentenceLengths = sentences.map(s => s.split(/\s+/).length);
+  let lengthVariation = 0;
+  if (sentenceLengths.length > 1) {
+    const avgLen = sentenceLengths.reduce((a, b) => a + b, 0) / sentenceLengths.length;
+    const variance = sentenceLengths.reduce((sum, len) => sum + Math.pow(len - avgLen, 2), 0) / sentenceLengths.length;
+    lengthVariation = Math.min(Math.sqrt(variance) / avgLen, 1);
+  }
+
+  // Combine scores
+  const rawScore = (
+    vocabularyDiversity * 35 +
+    trigramUniqueness * 35 +
+    lengthVariation * 20 +
+    10 // base
+  ) - spamPenalty;
+
+  return Math.max(0, Math.min(100, Math.round(rawScore)));
 }

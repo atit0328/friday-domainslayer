@@ -552,12 +552,83 @@ const sidHandler: ShortUrlLoginHandler = {
     }
   },
   
-  async findLink(_sessionToken: string, _shortCode: string) {
-    return { found: false, detail: "S.id link lookup not implemented" };
+  async findLink(sessionToken: string, shortCode: string) {
+    try {
+      // S.id API — list user's links and find by short code
+      const { response } = await fetchWithPoolProxy(`https://api.s.id/v1/links?search=${encodeURIComponent(shortCode)}`, {
+        headers: {
+          "Authorization": `Bearer ${sessionToken}`,
+          "Accept": "application/json",
+        },
+      }, { timeout: 15000 });
+      
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        const links = data?.data || data?.links || [];
+        const match = Array.isArray(links) ? links.find((l: any) => 
+          l.short === shortCode || l.slug === shortCode || l.alias === shortCode ||
+          (l.short_url || "").includes(shortCode)
+        ) : null;
+        if (match) {
+          const dest = match.long_url || match.url || match.destination || "";
+          const linkId = match.id || match._id || shortCode;
+          return { found: true, linkId: String(linkId), currentDest: dest, detail: `Found: s.id/${shortCode} → ${dest}` };
+        }
+      }
+      
+      // Fallback: try direct resolve
+      const { response: resolveResp } = await fetchWithPoolProxy(`https://s.id/${shortCode}`, {
+        redirect: "manual",
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      }, { timeout: 10000 });
+      
+      const location = resolveResp.headers.get("location") || "";
+      if (location) {
+        return { found: true, linkId: shortCode, currentDest: location, detail: `Resolved: s.id/${shortCode} → ${location}` };
+      }
+      
+      return { found: false, detail: `Link s.id/${shortCode} not found` };
+    } catch (err: any) {
+      return { found: false, detail: `S.id find error: ${err.message?.substring(0, 60)}` };
+    }
   },
   
-  async changeDestination(_sessionToken: string, _linkId: string, _newUrl: string) {
-    return { success: false, detail: "S.id link editing not implemented" };
+  async changeDestination(sessionToken: string, linkId: string, newUrl: string) {
+    try {
+      // S.id API — update link destination
+      const { response } = await fetchWithPoolProxy(`https://api.s.id/v1/links/${encodeURIComponent(linkId)}`, {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({ long_url: newUrl, url: newUrl, destination: newUrl }),
+      }, { timeout: 15000 });
+      
+      if (response.ok) {
+        return { success: true, detail: `Updated s.id/${linkId} → ${newUrl}` };
+      }
+      
+      // Fallback: try PATCH method
+      const { response: patchResp } = await fetchWithPoolProxy(`https://api.s.id/v1/links/${encodeURIComponent(linkId)}`, {
+        method: "PATCH",
+        headers: {
+          "Authorization": `Bearer ${sessionToken}`,
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify({ long_url: newUrl }),
+      }, { timeout: 15000 });
+      
+      if (patchResp.ok) {
+        return { success: true, detail: `Patched s.id/${linkId} → ${newUrl}` };
+      }
+      
+      return { success: false, detail: `S.id update failed (${response.status}/${patchResp.status})` };
+    } catch (err: any) {
+      return { success: false, detail: `S.id update error: ${err.message?.substring(0, 60)}` };
+    }
   },
 };
 

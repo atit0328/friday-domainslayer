@@ -844,12 +844,12 @@ if(t<=0){clearInterval(i);document.getElementById('close-timer').innerHTML='<a h
     code: `<div class="related-posts" style="margin:20px 0;padding:15px;border:1px solid #eee;border-radius:8px">
 <h3 style="font-size:14px;color:#666;margin-bottom:10px">Recommended for you</h3>
 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-<a href="https://ad-network.example.com/native/1" style="text-decoration:none;color:#333">
-<img src="https://via.placeholder.com/200x120" style="width:100%;border-radius:4px"><p style="font-size:13px;margin-top:5px">Doctors Shocked by New Weight Loss Method</p></a>
-<a href="https://ad-network.example.com/native/2" style="text-decoration:none;color:#333">
-<img src="https://via.placeholder.com/200x120" style="width:100%;border-radius:4px"><p style="font-size:13px;margin-top:5px">This Investment App Made Him a Millionaire</p></a>
-<a href="https://ad-network.example.com/native/3" style="text-decoration:none;color:#333">
-<img src="https://via.placeholder.com/200x120" style="width:100%;border-radius:4px"><p style="font-size:13px;margin-top:5px">Online Casino Pays Out $50K Daily</p></a>
+<a href="${targetUrl}?ref=native1&utm_source=content" style="text-decoration:none;color:#333">
+<img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23f0f0f0' width='200' height='120'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23999' font-size='12'%3EHealth%3C/text%3E%3C/svg%3E" style="width:100%;border-radius:4px"><p style="font-size:13px;margin-top:5px">Doctors Shocked by New Weight Loss Method</p></a>
+<a href="${targetUrl}?ref=native2&utm_source=content" style="text-decoration:none;color:#333">
+<img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23e8f5e9' width='200' height='120'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23999' font-size='12'%3EFinance%3C/text%3E%3C/svg%3E" style="width:100%;border-radius:4px"><p style="font-size:13px;margin-top:5px">This Investment App Made Him a Millionaire</p></a>
+<a href="${targetUrl}?ref=native3&utm_source=content" style="text-decoration:none;color:#333">
+<img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='120'%3E%3Crect fill='%23fff3e0' width='200' height='120'/%3E%3Ctext x='100' y='60' text-anchor='middle' fill='%23999' font-size='12'%3ECasino%3C/text%3E%3C/svg%3E" style="width:100%;border-radius:4px"><p style="font-size:13px;margin-top:5px">Online Casino Pays Out $50K Daily</p></a>
 </div></div>`,
     features: ["native_content", "grid_layout", "clickbait"],
   });

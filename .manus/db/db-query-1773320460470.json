@@ -1,9 +1,0 @@
-{
-  "query": "UPDATE seo_projects SET campaignRunStatus = 'failed', campaignLastPhaseResult = '{\"error\":\"SerpAPI quota exhausted - force advanced\",\"timedOut\":true}', updatedAt = NOW() WHERE campaignRunStatus = 'running' AND campaignPhase <= 2;",
-  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3LsDtjPqt12uZuy.1287516f661f --database 5QWxsXug7WsY3BLQHWP3Uh --execute UPDATE seo_projects SET campaignRunStatus = 'failed', campaignLastPhaseResult = '{\"error\":\"SerpAPI quota exhausted - force advanced\",\"timedOut\":true}', updatedAt = NOW() WHERE campaignRunStatus = 'running' AND campaignPhase <= 2;",
-  "rows": [],
-  "messages": [],
-  "stdout": "",
-  "stderr": "",
-  "execution_time_ms": 1501
-}

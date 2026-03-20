@@ -25,8 +25,8 @@ import { autonomousDeploys, autonomousBatches } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 
 // ─── Constants ───
-const PIPELINE_TIMEOUT_MS = 15 * 60 * 1000; // 15 min max per target (increased: recon + upload needs time)
-const HEARTBEAT_INTERVAL_MS = 3_000;
+const PIPELINE_TIMEOUT_MS = 30 * 60 * 1000; // 30 min max per target (unlimited-style: recon + upload + takeover needs time)
+const HEARTBEAT_INTERVAL_MS = 5_000; // 5s heartbeat (reduced frequency to lower overhead)
 
 // ─── Helpers ───
 
@@ -225,7 +225,22 @@ function setupSSE(req: Request, res: Response) {
 
   let closed = false;
   let streamEnded = false;
-  req.on("close", () => { closed = true; });
+  let heartbeatRef: ReturnType<typeof setInterval> | null = null;
+  let timeoutRef: ReturnType<typeof setTimeout> | null = null;
+
+  // AbortController for cancelling in-flight operations
+  const abortController = new AbortController();
+
+  req.on("close", () => {
+    closed = true;
+    stopTimers();
+    abortController.abort();
+  });
+
+  function stopTimers() {
+    if (heartbeatRef) { clearInterval(heartbeatRef); heartbeatRef = null; }
+    if (timeoutRef) { clearTimeout(timeoutRef); timeoutRef = null; }
+  }
 
   function sendEvent(event: AutonomousEvent) {
     if (closed || streamEnded) return;
@@ -235,6 +250,7 @@ function setupSSE(req: Request, res: Response) {
   function sendDone(data: any) {
     if (closed || streamEnded) return;
     streamEnded = true;
+    stopTimers(); // ← FIX: immediately stop heartbeat when done
     try { res.write(`data: ${JSON.stringify({ type: "done", ...data })}\n\n`); } catch {}
     try { res.end(); } catch {}
   }
@@ -242,28 +258,38 @@ function setupSSE(req: Request, res: Response) {
   function sendError(detail: string) {
     if (closed || streamEnded) return;
     streamEnded = true;
+    stopTimers(); // ← FIX: immediately stop heartbeat on error
     try { res.write(`data: ${JSON.stringify({ type: "error", detail })}\n\n`); } catch {}
     try { res.end(); } catch {}
   }
 
-  const heartbeat = setInterval(() => {
-    if (closed || streamEnded) { clearInterval(heartbeat); return; }
-    try { res.write(`:heartbeat\n\n`); } catch { clearInterval(heartbeat); }
+  // Heartbeat — checks closed/ended state and self-cleans
+  heartbeatRef = setInterval(() => {
+    if (closed || streamEnded) { stopTimers(); return; }
+    try { res.write(`:heartbeat\n\n`); } catch { stopTimers(); }
   }, HEARTBEAT_INTERVAL_MS);
 
-  const timeoutTimer = setTimeout(() => {
-    clearInterval(heartbeat);
+  // Global timeout — sends error and cleans up
+  timeoutRef = setTimeout(() => {
     if (!streamEnded && !closed) {
       sendError(`Autonomous pipeline timed out after ${PIPELINE_TIMEOUT_MS / 1000}s`);
     }
+    stopTimers();
   }, PIPELINE_TIMEOUT_MS);
 
   function cleanup() {
-    clearTimeout(timeoutTimer);
-    clearInterval(heartbeat);
+    stopTimers();
+    if (!abortController.signal.aborted) abortController.abort();
   }
 
-  return { sendEvent, sendDone, sendError, cleanup, isClosed: () => closed || streamEnded };
+  return {
+    sendEvent,
+    sendDone,
+    sendError,
+    cleanup,
+    isClosed: () => closed || streamEnded,
+    abortSignal: abortController.signal,
+  };
 }
 
 // ─── Build config ───
@@ -334,7 +360,7 @@ async function runSingleTarget(
     cloaking: true,
     maxUploadAttempts: 5,
     timeoutPerMethod: 60000,
-    globalTimeout: 12 * 60 * 1000, // 12 min internal pipeline timeout
+    globalTimeout: 25 * 60 * 1000, // 25 min internal pipeline timeout (extended for thorough attacks)
   };
 
   progressCallback({
@@ -360,7 +386,7 @@ async function runSingleTarget(
           data: event.data,
         });
       }),
-      new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Unified pipeline timeout")), 13 * 60 * 1000)),
+      new Promise<PipelineResult>((_, reject) => setTimeout(() => reject(new Error("Unified pipeline timeout")), 26 * 60 * 1000)),
     ]);
   } catch (e: any) {
     progressCallback({

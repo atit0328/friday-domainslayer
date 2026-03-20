@@ -158,7 +158,8 @@ function extractMethod(event: PipelineEvent): string | undefined {
 /**
  * Create an AttackLogger instance for a specific deploy
  */
-export function createAttackLogger(deployId: number | null, userId: number, domain: string) {
+export function createAttackLogger(initialDeployId: number | null, userId: number, domain: string) {
+  let deployId = initialDeployId;
   const entries: AttackLogEntry[] = [];
   
   // Initialize buffer for this deploy
@@ -395,6 +396,8 @@ export function createAttackLogger(deployId: number | null, userId: number, doma
     getFailurePatterns,
     getSmartFallbackRecommendation,
     exportAsText,
+    get deployId() { return deployId; },
+    setDeployId(id: number) { deployId = id; if (!logBuffers.has(id)) logBuffers.set(id, []); },
   };
 }
 
@@ -582,3 +585,162 @@ export async function cleanupOldLogs(daysOld = 30): Promise<number> {
 
   return (result as any)[0]?.affectedRows || 0;
 }
+
+// ═══════════════════════════════════════════════
+//  CONTINUOUS REPORTING SYSTEM
+// ═══════════════════════════════════════════════
+
+/**
+ * Continuous Report — generates a summary report for ongoing/completed attacks
+ * Used by the dashboard to show real-time progress without timeout limits
+ */
+export interface ContinuousReport {
+  deployId: number | null;
+  domain: string;
+  status: "running" | "success" | "partial" | "failed";
+  startedAt: Date;
+  lastUpdate: Date;
+  duration: number;
+  totalEvents: number;
+  phaseBreakdown: {
+    phase: string;
+    events: number;
+    successes: number;
+    errors: number;
+    lastDetail: string;
+  }[];
+  methodsAttempted: {
+    method: string;
+    attempts: number;
+    success: boolean;
+    lastError?: string;
+  }[];
+  currentPhase: string;
+  currentStep: string;
+  progress: number;
+  successfulUploads: string[];
+  redirectVerified: boolean;
+  failureRecommendation: SmartFallbackRecommendation | null;
+}
+
+// Active report trackers
+const activeReports = new Map<string, ContinuousReport>();
+
+/**
+ * Create or update a continuous report for a domain
+ */
+export function updateContinuousReport(
+  domain: string,
+  deployId: number | null,
+  event: PipelineEvent,
+): void {
+  const key = deployId ? `deploy:${deployId}` : `domain:${domain}`;
+  let report = activeReports.get(key);
+
+  if (!report) {
+    report = {
+      deployId,
+      domain,
+      status: "running",
+      startedAt: new Date(),
+      lastUpdate: new Date(),
+      duration: 0,
+      totalEvents: 0,
+      phaseBreakdown: [],
+      methodsAttempted: [],
+      currentPhase: event.phase,
+      currentStep: event.step,
+      progress: event.progress,
+      successfulUploads: [],
+      redirectVerified: false,
+      failureRecommendation: null,
+    };
+    activeReports.set(key, report);
+  }
+
+  report.lastUpdate = new Date();
+  report.duration = report.lastUpdate.getTime() - report.startedAt.getTime();
+  report.totalEvents++;
+  report.currentPhase = event.phase;
+  report.currentStep = event.step;
+  report.progress = event.progress;
+
+  // Update phase breakdown
+  let phase = report.phaseBreakdown.find(p => p.phase === event.phase);
+  if (!phase) {
+    phase = { phase: event.phase, events: 0, successes: 0, errors: 0, lastDetail: "" };
+    report.phaseBreakdown.push(phase);
+  }
+  phase.events++;
+  phase.lastDetail = event.detail;
+
+  const severity = classifySeverity(event);
+  if (severity === "success") phase.successes++;
+  if (severity === "error" || severity === "critical") phase.errors++;
+
+  // Track successful uploads
+  if (event.detail.includes("upload") && severity === "success") {
+    const urlMatch = event.detail.match(/https?:\/\/[^\s]+/);
+    if (urlMatch) report.successfulUploads.push(urlMatch[0]);
+  }
+
+  // Track redirect verification
+  if (event.detail.includes("redirect") && event.detail.includes("verified") && severity === "success") {
+    report.redirectVerified = true;
+  }
+
+  // Detect completion
+  if (event.phase === "complete") {
+    if (event.step === "success" || event.step === "partial") {
+      report.status = event.step as "success" | "partial";
+    } else if (event.step === "failed") {
+      report.status = "failed";
+    }
+  }
+}
+
+/**
+ * Get continuous report for a domain or deploy
+ */
+export function getContinuousReport(deployId?: number, domain?: string): ContinuousReport | null {
+  if (deployId) {
+    return activeReports.get(`deploy:${deployId}`) || null;
+  }
+  if (domain) {
+    return activeReports.get(`domain:${domain}`) || null;
+  }
+  return null;
+}
+
+/**
+ * Get all active (running) reports
+ */
+export function getActiveReports(): ContinuousReport[] {
+  return Array.from(activeReports.values()).filter(r => r.status === "running");
+}
+
+/**
+ * Get all reports (active + completed)
+ */
+export function getAllReports(limit = 50): ContinuousReport[] {
+  const reports = Array.from(activeReports.values());
+  reports.sort((a, b) => b.lastUpdate.getTime() - a.lastUpdate.getTime());
+  return reports.slice(0, limit);
+}
+
+/**
+ * Cleanup old completed reports (keep running ones)
+ */
+export function cleanupReports(maxAge = 60 * 60 * 1000): void {
+  const cutoff = Date.now() - maxAge;
+  const keys = Array.from(activeReports.keys());
+  for (const key of keys) {
+    const report = activeReports.get(key);
+    if (report && report.status !== "running" && report.lastUpdate.getTime() < cutoff) {
+      activeReports.delete(key);
+    }
+  }
+}
+
+// Auto-cleanup old reports every 30 minutes
+setInterval(() => cleanupReports(), 30 * 60 * 1000);
