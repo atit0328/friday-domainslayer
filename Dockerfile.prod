@@ -4,11 +4,8 @@ WORKDIR /app
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm
-RUN npm install -g pnpm
-
-# Force install ALL dependencies including dev (vite is needed at runtime for SSR)
-RUN NODE_ENV=development pnpm install --dev
+# Install pnpm and production deps (vite is now in dependencies)
+RUN npm install -g pnpm && pnpm install --prod
 
 # Copy built files
 COPY dist ./dist
